@@ -24,3 +24,9 @@ Thumbs.db
 
 # Misc
 *.zip
+
+# Project-specific
+.ruff_cache/
+docs/superpowers/
+Documents/
+Preparation/

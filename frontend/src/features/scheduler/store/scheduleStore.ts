@@ -34,6 +34,7 @@ interface ScheduleState {
   // 뷰 상태
   viewFilter: ViewFilter;
   zoomLevel: ZoomLevel;
+  range: { start: number; end: number } | null;
 
   // 편집 모드 — 기본은 읽기 전용(false)
   isEditMode: boolean;
@@ -68,6 +69,7 @@ interface ScheduleActions {
   selectTask: (taskId: string | null) => void;
   setViewFilter: (filter: Partial<ViewFilter>) => void;
   setZoomLevel: (level: ZoomLevel) => void;
+  setRange: (range: { start: number; end: number }) => void;
   setUnscheduledOrders: (orders: Order[]) => void;
 
   // 편집 모드 토글
@@ -117,6 +119,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     items: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "week",
+    range: null,
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
