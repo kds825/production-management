@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import {
   TimelineContext,
   useTimelineContext,
@@ -16,7 +16,15 @@ import { useScheduleStore } from "../store/scheduleStore";
 import { useDragHandlers } from "../hooks/useDragHandlers";
 import { EquipmentSidebar } from "./EquipmentSidebar";
 import { TaskItem } from "./TaskItem";
-import type { TimelineItem, TimelineRow, ViewFilterType } from "../types";
+import { DeadlineMarker } from "./DeadlineMarker";
+import { DependencyArrows } from "./DependencyArrows";
+import { UtilizationRow } from "./UtilizationRow";
+import type {
+  ScheduleTask,
+  TimelineItem,
+  TimelineRow,
+  ViewFilterType,
+} from "../types";
 
 // ----- 상수 -----
 const SIDEBAR_WIDTH = 160; // px
@@ -96,15 +104,25 @@ function TimelineRowContainer({
     <div
       style={{
         ...rowWrapperStyle,
+        // dnd-timeline의 기본값 "inline-flex"를 "flex"로 덮어써서
+        // 각 row가 수평 전체 너비를 차지하도록 강제한다 (Gantt Y축 레이아웃)
+        display: "flex",
+        width: "100%",
         borderBottom: "1px solid #E5E7EB",
         minHeight: ROW_HEIGHT,
       }}
     >
-      {/* 사이드바: 설비 정보 */}
+      {/* 사이드바: 설비 정보 — position: sticky로 수평 스크롤 시에도 고정 */}
       <div
         style={{
           ...rowSidebarStyle,
           height: Math.max(ROW_HEIGHT, (subrows.length || 1) * ROW_HEIGHT),
+          position: "sticky",
+          left: 0,
+          zIndex: 3,
+          backgroundColor: "#FFFFFF",
+          borderRight: "1px solid #E5E7EB",
+          flexShrink: 0,
         }}
       >
         {equipment ? (
@@ -265,22 +283,34 @@ function DateHeader({ range }: { range: { start: number; end: number } }) {
 interface TimelineInnerProps {
   rows: TimelineRow[];
   items: TimelineItem[];
+  tasks: ScheduleTask[];
   range: { start: number; end: number };
 }
 
-function TimelineInner({ rows, items, range }: TimelineInnerProps) {
+function TimelineInner({ rows, items, tasks, range }: TimelineInnerProps) {
   const { setTimelineRef, style } = useTimelineContext();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // SVG 오버레이 크기는 컨테이너에서 동적으로 가져온다
+  const containerWidth = containerRef.current?.scrollWidth ?? 2000;
+  const totalHeight = rows.length * ROW_HEIGHT;
 
   return (
     <>
       <DateHeader range={range} />
       <div
-        ref={setTimelineRef}
+        ref={(el) => {
+          // setTimelineRef와 containerRef 동시 연결
+          (setTimelineRef as (el: HTMLElement | null) => void)(el);
+          (
+            containerRef as React.MutableRefObject<HTMLDivElement | null>
+          ).current = el;
+        }}
         style={{
           ...style,
           position: "relative",
         }}
-        className="border border-gray-200 rounded-b-lg overflow-hidden"
+        className="border border-gray-200 rounded-b-lg overflow-x-auto overflow-y-hidden"
       >
         {/* 주말 배경 */}
         <WeekendOverlay range={range} />
@@ -288,12 +318,15 @@ function TimelineInner({ rows, items, range }: TimelineInnerProps) {
         {/* 행 목록 */}
         <div style={{ position: "relative", zIndex: 1 }}>
           {rows.map((row) => (
-            <TimelineRowContainer
-              key={row.id}
-              row={row}
-              items={items}
-              range={range}
-            />
+            <div key={row.id}>
+              <TimelineRowContainer row={row} items={items} range={range} />
+              {/* 설비별 일별 가동률 행 */}
+              <UtilizationRow
+                equipmentId={row.id}
+                tasks={tasks}
+                range={range}
+              />
+            </div>
           ))}
 
           {rows.length === 0 && (
@@ -302,6 +335,17 @@ function TimelineInner({ rows, items, range }: TimelineInnerProps) {
             </div>
           )}
         </div>
+
+        {/* 납기일 마커 오버레이 */}
+        <DeadlineMarker tasks={tasks} range={range} />
+
+        {/* 의존 관계 화살표 오버레이 */}
+        <DependencyArrows
+          tasks={tasks}
+          rows={rows}
+          totalHeight={totalHeight}
+          totalWidth={containerWidth}
+        />
       </div>
     </>
   );
@@ -341,6 +385,7 @@ function useFilteredRows(
 export function SchedulerView() {
   const rows = useScheduleStore((s) => s.rows);
   const items = useScheduleStore((s) => s.items);
+  const tasks = useScheduleStore((s) => s.tasks);
   const viewFilter = useScheduleStore((s) => s.viewFilter);
   const equipment = useScheduleStore((s) => s.equipment);
 
@@ -396,7 +441,12 @@ export function SchedulerView() {
         sidebarWidth={SIDEBAR_WIDTH}
         resizeHandleWidth={8}
       >
-        <TimelineInner rows={filteredRows} items={items} range={range} />
+        <TimelineInner
+          rows={filteredRows}
+          items={items}
+          tasks={tasks}
+          range={range}
+        />
       </TimelineContext>
     </div>
   );

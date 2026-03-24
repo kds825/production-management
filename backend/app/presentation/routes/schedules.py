@@ -1,6 +1,10 @@
+import copy
 import uuid
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.domain.entities import ScheduleTask, TaskStatus
 from app.infrastructure.memory_store import store
@@ -11,6 +15,41 @@ from app.presentation.schemas import (
 )
 
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
+
+# ---------------------------------------------------------------------------
+# 인메모리 버전 스토어 — PoC 단계용 단순 리스트
+# ---------------------------------------------------------------------------
+_versions: list[dict[str, Any]] = []
+
+
+# ---------------------------------------------------------------------------
+# Pydantic 스키마 (버전 관련)
+# ---------------------------------------------------------------------------
+
+
+class VersionSaveRequest(BaseModel):
+    label: str = ""
+    tasks: list[dict[str, Any]]
+    created_at: datetime | None = None
+
+
+class VersionSummaryResponse(BaseModel):
+    id: str
+    label: str
+    created_at: datetime
+    task_count: int
+
+
+class VersionDetailResponse(BaseModel):
+    id: str
+    label: str
+    created_at: datetime
+    tasks: list[dict[str, Any]]
+
+
+# ---------------------------------------------------------------------------
+# 내부 헬퍼
+# ---------------------------------------------------------------------------
 
 
 def _to_response(task: ScheduleTask) -> ScheduleTaskResponse:
@@ -35,6 +74,11 @@ def _to_response(task: ScheduleTask) -> ScheduleTaskResponse:
         changeover_min=task.changeover_min,
         duration_hours=task.duration_hours,
     )
+
+
+# ---------------------------------------------------------------------------
+# 작업(Task) CRUD 엔드포인트
+# ---------------------------------------------------------------------------
 
 
 @router.get("/tasks", response_model=list[ScheduleTaskResponse])
@@ -120,3 +164,63 @@ def delete_task(task_id: str) -> None:
             status_code=404,
             detail=f"작업 '{task_id}'를 찾을 수 없습니다.",
         )
+
+
+# ---------------------------------------------------------------------------
+# 버전(Version) 엔드포인트 — 스케줄 스냅샷 저장/조회
+# ---------------------------------------------------------------------------
+
+
+@router.post("/versions", response_model=VersionSummaryResponse, status_code=201)
+def save_version(body: VersionSaveRequest) -> VersionSummaryResponse:
+    """현재 스케줄을 새 버전으로 저장 (타임스탬프 자동 생성)"""
+    now = body.created_at or datetime.now()
+    version_id = f"VER-{uuid.uuid4().hex[:8].upper()}"
+    label = body.label or f"버전 {now.strftime('%Y-%m-%d %H:%M')}"
+
+    version: dict[str, Any] = {
+        "id": version_id,
+        "label": label,
+        "created_at": now,
+        # 깊은 복사로 스냅샷 보존
+        "tasks": copy.deepcopy(body.tasks),
+    }
+    _versions.append(version)
+
+    return VersionSummaryResponse(
+        id=version_id,
+        label=label,
+        created_at=now,
+        task_count=len(body.tasks),
+    )
+
+
+@router.get("/versions", response_model=list[VersionSummaryResponse])
+def list_versions() -> list[VersionSummaryResponse]:
+    """저장된 모든 버전 목록 조회 (최신 순)"""
+    return [
+        VersionSummaryResponse(
+            id=v["id"],
+            label=v["label"],
+            created_at=v["created_at"],
+            task_count=len(v["tasks"]),
+        )
+        for v in reversed(_versions)
+    ]
+
+
+@router.get("/versions/{version_id}", response_model=VersionDetailResponse)
+def get_version(version_id: str) -> VersionDetailResponse:
+    """특정 버전의 전체 작업 목록 조회"""
+    version = next((v for v in _versions if v["id"] == version_id), None)
+    if version is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"버전 '{version_id}'를 찾을 수 없습니다.",
+        )
+    return VersionDetailResponse(
+        id=version["id"],
+        label=version["label"],
+        created_at=version["created_at"],
+        tasks=version["tasks"],
+    )

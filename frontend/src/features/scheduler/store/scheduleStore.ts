@@ -11,6 +11,7 @@ import type {
   ViewFilterType,
   ContextMenuState,
   TaskFormModalState,
+  ScheduleVersion,
 } from "../types";
 
 interface ViewFilter {
@@ -33,6 +34,15 @@ interface ScheduleState {
   // 뷰 상태
   viewFilter: ViewFilter;
   zoomLevel: ZoomLevel;
+
+  // 편집 모드 — 기본은 읽기 전용(false)
+  isEditMode: boolean;
+
+  // 버전 히스토리
+  savedVersions: ScheduleVersion[];
+
+  // 저장 완료 토스트 표시 여부
+  showSavedToast: boolean;
 
   // UI 상태
   contextMenu: ContextMenuState | null;
@@ -59,6 +69,15 @@ interface ScheduleActions {
   setViewFilter: (filter: Partial<ViewFilter>) => void;
   setZoomLevel: (level: ZoomLevel) => void;
   setUnscheduledOrders: (orders: Order[]) => void;
+
+  // 편집 모드 토글
+  toggleEditMode: () => void;
+
+  // 현재 스케줄을 버전으로 저장
+  saveVersion: (label?: string) => Promise<void>;
+
+  // 저장 완료 토스트 숨기기
+  hideSavedToast: () => void;
 
   // 컨텍스트 메뉴
   openContextMenu: (state: ContextMenuState) => void;
@@ -87,7 +106,7 @@ function taskToItem(task: ScheduleTask): TimelineItem {
 }
 
 export const useScheduleStore = create<ScheduleStore>()(
-  immer((set) => ({
+  immer((set, get) => ({
     // 초기 상태
     equipment: [],
     tasks: [],
@@ -98,6 +117,9 @@ export const useScheduleStore = create<ScheduleStore>()(
     items: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "week",
+    isEditMode: false,
+    savedVersions: [],
+    showSavedToast: false,
     contextMenu: null,
     taskFormModal: { isOpen: false, mode: "create" },
 
@@ -205,6 +227,64 @@ export const useScheduleStore = create<ScheduleStore>()(
     setUnscheduledOrders: (orders) => {
       set((state) => {
         state.unscheduledOrders = orders;
+      });
+    },
+
+    // 편집 모드 토글 — 읽기 전용 ↔ 수정 모드
+    toggleEditMode: () => {
+      set((state) => {
+        state.isEditMode = !state.isEditMode;
+      });
+    },
+
+    // 현재 스케줄을 버전으로 저장하고 읽기 전용 모드로 전환
+    saveVersion: async (label = "") => {
+      const { tasks } = get();
+      const now = new Date();
+      const versionLabel =
+        label ||
+        `저장 ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+      const newVersion: ScheduleVersion = {
+        id: `v-${Date.now()}`,
+        label: versionLabel,
+        created_at: now,
+        // 깊은 복사하여 현재 상태 스냅샷 보존
+        tasks: JSON.parse(JSON.stringify(tasks)),
+      };
+
+      // 백엔드에 버전 저장 시도 (실패해도 로컬 상태는 저장)
+      try {
+        await fetch("/api/schedules/versions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: versionLabel,
+            tasks,
+            created_at: now.toISOString(),
+          }),
+        });
+      } catch {
+        // PoC 단계에서는 백엔드 연결 실패를 무시하고 로컬 저장만 진행
+        console.warn("[saveVersion] 백엔드 연결 실패 — 로컬 버전만 저장됨");
+      }
+
+      set((state) => {
+        state.savedVersions.push(newVersion);
+        // 저장 완료 후 읽기 전용 모드로 전환
+        state.isEditMode = false;
+        state.showSavedToast = true;
+      });
+
+      // 3초 후 토스트 자동 숨김
+      setTimeout(() => {
+        get().hideSavedToast();
+      }, 3000);
+    },
+
+    hideSavedToast: () => {
+      set((state) => {
+        state.showSavedToast = false;
       });
     },
 

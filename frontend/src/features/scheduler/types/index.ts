@@ -103,3 +103,11 @@ export interface TaskFormModalState {
     end?: Date;
   };
 }
+
+/** 스케줄 버전 스냅샷 */
+export interface ScheduleVersion {
+  id: string;
+  label: string;
+  created_at: Date;
+  tasks: ScheduleTask[];
+}

@@ -12,7 +12,6 @@ interface TaskItemProps {
 
 /** 제품 그룹에서 색상 추출 */
 function getTaskColor(product: string): string {
-  // 제품명에서 그룹 키 매핑
   const colorMap = KBI_BRAND.colors.taskColors;
   for (const key of Object.keys(colorMap) as ProductGroup[]) {
     if (key !== "default" && product.includes(key)) {
@@ -68,6 +67,8 @@ export function TaskItem({ item }: TaskItemProps) {
 
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   const openContextMenu = useScheduleStore((s) => s.openContextMenu);
+  // 읽기 전용 모드에서는 드래그/리사이즈 비활성화
+  const isEditMode = useScheduleStore((s) => s.isEditMode);
 
   const {
     setNodeRef,
@@ -79,21 +80,25 @@ export function TaskItem({ item }: TaskItemProps) {
     id: item.id,
     span: item.span,
     data: { task },
+    // dnd-timeline의 disabled 옵션으로 드래그 비활성화
+    disabled: !isEditMode,
   });
 
-  // 더블클릭 → 수정 모달 열기
+  // 더블클릭 → 수정 모달 열기 (편집 모드에서만)
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
+      if (!isEditMode) return;
       e.stopPropagation();
       e.preventDefault();
       openTaskFormModal({ mode: "edit", taskId: task.id });
     },
-    [openTaskFormModal, task.id],
+    [isEditMode, openTaskFormModal, task.id],
   );
 
-  // 우클릭 → 작업 컨텍스트 메뉴 열기
+  // 우클릭 → 작업 컨텍스트 메뉴 열기 (편집 모드에서만)
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      if (!isEditMode) return;
       e.preventDefault();
       e.stopPropagation();
       openContextMenu({
@@ -103,7 +108,7 @@ export function TaskItem({ item }: TaskItemProps) {
         taskId: task.id,
       });
     },
-    [openContextMenu, task.id],
+    [isEditMode, openContextMenu, task.id],
   );
 
   const priorityStyle = getPriorityStyle(task.priority);
@@ -116,7 +121,8 @@ export function TaskItem({ item }: TaskItemProps) {
     boxShadow: isDragging
       ? "0 4px 12px rgba(0,0,0,0.3)"
       : "0 1px 3px rgba(0,0,0,0.15)",
-    cursor: isDragging ? "grabbing" : "grab",
+    // 읽기 전용 모드에서는 default 커서, 편집 모드에서는 grab
+    cursor: !isEditMode ? "default" : isDragging ? "grabbing" : "grab",
     userSelect: "none",
     overflow: "hidden",
     minWidth: "60px",
@@ -134,7 +140,8 @@ export function TaskItem({ item }: TaskItemProps) {
   return (
     <div ref={setNodeRef} style={itemStyle}>
       <div
-        ref={setActivatorNodeRef}
+        // 편집 모드에서만 activator ref 연결 (드래그 핸들)
+        ref={isEditMode ? setActivatorNodeRef : undefined}
         style={{ ...itemContentStyle, ...barStyle }}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
