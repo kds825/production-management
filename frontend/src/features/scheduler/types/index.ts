@@ -49,7 +49,8 @@ export interface TimelineRow {
 export interface TimelineItem {
   id: string;
   rowId: string;
-  span: { start: Date; end: Date };
+  /** dnd-timeline은 span의 start/end를 타임스탬프(number)로 요구한다 */
+  span: { start: number; end: number };
   data: ScheduleTask;
 }
 

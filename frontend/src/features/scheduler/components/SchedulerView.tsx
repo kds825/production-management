@@ -1,0 +1,347 @@
+"use client";
+
+import { useMemo, useState, useCallback } from "react";
+import {
+  TimelineContext,
+  useTimelineContext,
+  useRow,
+  groupItemsToSubrows,
+  useWheelStrategy,
+  type OnRangeChanged,
+  type ResizeEndEvent,
+  type DragEndEvent,
+} from "dnd-timeline";
+
+import { useScheduleStore } from "../store/scheduleStore";
+import { useDragHandlers } from "../hooks/useDragHandlers";
+import { EquipmentSidebar } from "./EquipmentSidebar";
+import { TaskItem } from "./TaskItem";
+import type { TimelineItem, TimelineRow } from "../types";
+
+// ----- 상수 -----
+const SIDEBAR_WIDTH = 160; // px
+const ROW_HEIGHT = 44; // px
+
+/** 토요일(6) / 일요일(0) 여부 */
+function isWeekend(date: Date): boolean {
+  const d = date.getDay();
+  return d === 0 || d === 6;
+}
+
+/** 현재 달의 시작(start)/끝(end) Date 반환 */
+function getCurrentMonthRange(): { start: Date; end: Date } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
+  return { start, end };
+}
+
+// ----- Row 컴포넌트 (dnd-timeline의 useRow 사용) -----
+interface TimelineRowContainerProps {
+  row: TimelineRow;
+  items: TimelineItem[];
+  range: { start: number; end: number };
+}
+
+function TimelineRowContainer({
+  row,
+  items,
+  range,
+}: TimelineRowContainerProps) {
+  const { setNodeRef, rowStyle, rowWrapperStyle, rowSidebarStyle } = useRow({
+    id: row.id,
+  });
+
+  const equipment = useScheduleStore((s) =>
+    s.equipment.find((eq) => eq.id === row.id),
+  );
+
+  // 이 row에 속한 items만 필터링 후 서브로우 그룹화
+  const rowItems = useMemo(
+    () => items.filter((item) => item.rowId === row.id),
+    [items, row.id],
+  );
+
+  const groupedSubrows = useMemo(
+    () => groupItemsToSubrows(rowItems, range),
+    [rowItems, range],
+  );
+
+  const subrows = groupedSubrows[row.id] ?? [];
+
+  return (
+    <div
+      style={{
+        ...rowWrapperStyle,
+        borderBottom: "1px solid #E5E7EB",
+        minHeight: ROW_HEIGHT,
+      }}
+    >
+      {/* 사이드바: 설비 정보 */}
+      <div
+        style={{
+          ...rowSidebarStyle,
+          height: Math.max(ROW_HEIGHT, (subrows.length || 1) * ROW_HEIGHT),
+        }}
+      >
+        {equipment ? (
+          <EquipmentSidebar equipment={equipment} />
+        ) : (
+          <div className="flex items-center px-2 h-full">
+            <span className="text-xs text-gray-400 truncate">{row.id}</span>
+          </div>
+        )}
+      </div>
+
+      {/* 타임라인 영역 */}
+      <div
+        ref={setNodeRef}
+        style={{
+          ...rowStyle,
+          height: Math.max(ROW_HEIGHT, (subrows.length || 1) * ROW_HEIGHT),
+          position: "relative",
+        }}
+      >
+        {subrows.length > 0
+          ? subrows.map((subrow, idx) => (
+              <div
+                key={`${row.id}-subrow-${idx}`}
+                style={{
+                  position: "absolute",
+                  top: idx * ROW_HEIGHT,
+                  left: 0,
+                  right: 0,
+                  height: ROW_HEIGHT,
+                }}
+              >
+                {subrow.map((item) => (
+                  <TaskItem key={item.id} item={item} />
+                ))}
+              </div>
+            ))
+          : null}
+      </div>
+    </div>
+  );
+}
+
+// ----- 주말 배경 오버레이 -----
+function WeekendOverlay({ range }: { range: { start: number; end: number } }) {
+  const { valueToPixels, sidebarWidth } = useTimelineContext();
+
+  const weekendColumns = useMemo(() => {
+    const cols: { left: number; width: number }[] = [];
+    const start = new Date(range.start);
+    const end = new Date(range.end);
+
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+
+    while (cursor <= end) {
+      if (isWeekend(cursor)) {
+        const dayStart = cursor.getTime();
+        const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+
+        const left =
+          valueToPixels(Math.max(dayStart, range.start)) + sidebarWidth;
+        const right = valueToPixels(Math.min(dayEnd, range.end)) + sidebarWidth;
+
+        cols.push({ left, width: right - left });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return cols;
+  }, [range, valueToPixels, sidebarWidth]);
+
+  return (
+    <>
+      {weekendColumns.map((col, idx) => (
+        <div
+          key={idx}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: col.left,
+            width: col.width,
+            backgroundColor: "#F3F4F6",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+// ----- 날짜 헤더 -----
+function DateHeader({ range }: { range: { start: number; end: number } }) {
+  const { valueToPixels, sidebarWidth } = useTimelineContext();
+
+  const days = useMemo(() => {
+    const result: { label: string; left: number; isWeekend: boolean }[] = [];
+    const cursor = new Date(range.start);
+    cursor.setHours(0, 0, 0, 0);
+
+    while (cursor.getTime() <= range.end) {
+      const ts = cursor.getTime();
+      const left = valueToPixels(ts) + sidebarWidth;
+      result.push({
+        label: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
+        left,
+        isWeekend: isWeekend(cursor),
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return result;
+  }, [range, valueToPixels, sidebarWidth]);
+
+  return (
+    <div
+      className="relative border-b border-gray-200 bg-white"
+      style={{ height: 32, position: "sticky", top: 56, zIndex: 10 }}
+    >
+      {/* 사이드바 헤더 */}
+      <div
+        className="absolute left-0 top-0 bottom-0 flex items-center px-2 bg-gray-50 border-r border-gray-200"
+        style={{ width: sidebarWidth }}
+      >
+        <span className="text-xs font-semibold text-gray-500">설비</span>
+      </div>
+
+      {/* 날짜 레이블 */}
+      {days.map((day, idx) => (
+        <div
+          key={idx}
+          style={{
+            position: "absolute",
+            left: day.left,
+            top: 0,
+            bottom: 0,
+            display: "flex",
+            alignItems: "center",
+            paddingLeft: 4,
+            borderLeft: "1px solid #E5E7EB",
+          }}
+        >
+          <span
+            className="text-[9px]"
+            style={{ color: day.isWeekend ? "#C41230" : "#6B7280" }}
+          >
+            {day.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ----- 타임라인 내부 (useTimelineContext 사용) -----
+interface TimelineInnerProps {
+  rows: TimelineRow[];
+  items: TimelineItem[];
+  range: { start: number; end: number };
+}
+
+function TimelineInner({ rows, items, range }: TimelineInnerProps) {
+  const { setTimelineRef, style } = useTimelineContext();
+
+  return (
+    <>
+      <DateHeader range={range} />
+      <div
+        ref={setTimelineRef}
+        style={{
+          ...style,
+          position: "relative",
+        }}
+        className="border border-gray-200 rounded-b-lg overflow-hidden"
+      >
+        {/* 주말 배경 */}
+        <WeekendOverlay range={range} />
+
+        {/* 행 목록 */}
+        <div style={{ position: "relative", zIndex: 1 }}>
+          {rows.map((row) => (
+            <TimelineRowContainer
+              key={row.id}
+              row={row}
+              items={items}
+              range={range}
+            />
+          ))}
+
+          {rows.length === 0 && (
+            <div className="flex items-center justify-center h-32 text-sm text-gray-400">
+              설비 데이터를 불러오는 중...
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ----- 메인 SchedulerView -----
+export function SchedulerView() {
+  const rows = useScheduleStore((s) => s.rows);
+  const items = useScheduleStore((s) => s.items);
+
+  const defaultRange = useMemo(() => {
+    const { start, end } = getCurrentMonthRange();
+    return { start: start.getTime(), end: end.getTime() };
+  }, []);
+
+  const [range, setRange] = useState(defaultRange);
+
+  const handleRangeChanged: OnRangeChanged = useCallback((updateFn) => {
+    setRange((prev) => updateFn(prev));
+  }, []);
+
+  const { onDragEnd: handleDragEnd, onResizeEnd: handleResizeEnd } =
+    useDragHandlers();
+
+  // onResizeEnd는 TimelineContext에 직접 전달 (필수)
+  const onResizeEnd = useCallback(
+    (event: ResizeEndEvent) => {
+      handleResizeEnd(event);
+    },
+    [handleResizeEnd],
+  );
+
+  // onDragEnd는 TimelineContext의 DndContext에 전달
+  const onDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      handleDragEnd(event);
+    },
+    [handleDragEnd],
+  );
+
+  return (
+    <div
+      className="flex flex-col flex-1 overflow-auto"
+      style={{ backgroundColor: "#FAFAFA" }}
+    >
+      <TimelineContext
+        range={range}
+        onRangeChanged={handleRangeChanged}
+        onResizeEnd={onResizeEnd}
+        onDragEnd={onDragEnd}
+        usePanStrategy={useWheelStrategy}
+        sidebarWidth={SIDEBAR_WIDTH}
+        resizeHandleWidth={8}
+      >
+        <TimelineInner rows={rows} items={items} range={range} />
+      </TimelineContext>
+    </div>
+  );
+}
