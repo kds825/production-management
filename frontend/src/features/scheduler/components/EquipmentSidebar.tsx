@@ -37,8 +37,9 @@ export function EquipmentSidebar({ equipment }: EquipmentSidebarProps) {
   const label =
     PROCESS_LABELS[equipment.process_type] ?? equipment.process_type;
 
-  const isActive = equipment.status === "active";
-  const statusColor = isActive ? "#16A34A" : "#9CA3AF";
+  // 백엔드 status 값은 "available" (FIX M-5: 과거 "active" 오류 수정)
+  const isAvailable = equipment.status === "available";
+  const statusColor = isAvailable ? "#16A34A" : "#9CA3AF";
 
   return (
     <div

@@ -8,7 +8,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.domain.entities import ProcessType, TaskPriority, TaskStatus
+from app.domain.entities import TaskPriority, TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ from app.domain.entities import ProcessType, TaskPriority, TaskStatus
 class EquipmentResponse(BaseModel):
     id: str
     name: str
-    process_type: ProcessType
+    process_type: str  # open string — 새 공정 타입도 그대로 직렬화
     capabilities: list[str]
     capacity_tons_per_month: float
     max_diameter_mm: Optional[float] = None
@@ -119,7 +119,7 @@ class ScheduleTaskUpdate(BaseModel):
 
 class ProcessStepResponse(BaseModel):
     order: int
-    process_type: ProcessType
+    process_type: str  # open string — 새 공정 타입도 그대로 직렬화
     equipment_ids: list[str]
     is_optional: bool
 

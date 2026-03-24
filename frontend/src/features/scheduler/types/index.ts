@@ -19,8 +19,10 @@ export interface ScheduleTask {
   end: Date;
   volume_m: number;
   line_speed_m_per_min: number;
-  priority: "normal" | "urgent" | "critical";
-  status: "planned" | "in_progress" | "completed" | "delayed";
+  // open string — 알려진 값: 'normal' | 'urgent' | 'critical'
+  priority: string;
+  // open string — 알려진 값: 'planned' | 'in_progress' | 'completed' | 'delayed'
+  status: string;
   delivery_date?: Date;
   process_step?: number;
   predecessors: string[];
@@ -29,12 +31,8 @@ export interface ScheduleTask {
 }
 
 export interface ConstraintViolation {
-  type:
-    | "overlap"
-    | "equipment_capability"
-    | "precedence"
-    | "delivery"
-    | "process_route";
+  // open string — 알려진 값: 'overlap' | 'equipment_capability' | 'precedence' | 'delivery' | 'process_route'
+  type: string;
   severity: "error" | "warning";
   message: string;
   task_id: string;
@@ -78,7 +76,8 @@ export interface Order {
   customer: string;
   delivery_date: string;
   total_length_m: number;
-  priority: "normal" | "urgent" | "critical";
+  // open string — 알려진 값: 'normal' | 'urgent' | 'critical'
+  priority: string;
 }
 
 /** 컨텍스트 메뉴 상태 */

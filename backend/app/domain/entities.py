@@ -4,7 +4,10 @@ from enum import Enum
 from typing import Optional
 
 
-class ProcessType(str, Enum):
+class ProcessType:
+    """Known process types — reference constants only, not enforced as an enum.
+    새 공정 타입이 추가되더라도 코드 변경 없이 str로 수용된다."""
+
     DRAWING = "drawing"
     STRANDING = "stranding"
     HV_INSULATION = "hv_insulation"
@@ -33,7 +36,7 @@ class TaskStatus(str, Enum):
 class Equipment:
     id: str
     name: str
-    process_type: ProcessType
+    process_type: str  # any string — ProcessType 상수는 참조용
     capabilities: list[str]
     capacity_tons_per_month: float
     max_diameter_mm: Optional[float] = None
@@ -47,7 +50,7 @@ class Equipment:
 @dataclass
 class ProcessStep:
     order: int
-    process_type: ProcessType
+    process_type: str  # any string — ProcessType 상수는 참조용
     equipment_ids: list[str]
     is_optional: bool = False
 

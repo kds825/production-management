@@ -677,6 +677,14 @@ LINE_SPEEDS: dict[str, dict[str, float]] = {
     },
 }
 
+
+def get_line_speed(spec: str, process_key: str) -> float:
+    """선속도 테이블에서 속도를 조회한다.
+    알 수 없는 규격/공정 키에는 10.0 m/min 을 기본값으로 반환한다."""
+    spec_speeds = LINE_SPEEDS.get(spec, {})
+    return spec_speeds.get(process_key, 10.0)
+
+
 # ---------------------------------------------------------------------------
 # 샘플 수주 (5건) — ERP 현장 실사 데이터 기반
 # ---------------------------------------------------------------------------
@@ -783,7 +791,7 @@ SAMPLE_TASKS: list[ScheduleTask] = [
         start=datetime(2026, 3, 25, 8, 0),
         end=datetime(2026, 3, 25, 15, 57),  # 5000m / 12m/min = ~417min
         volume_m=5000.0,
-        line_speed_m_per_min=12.0,
+        line_speed_m_per_min=get_line_speed("95SQ", "TFR-GV"),
         priority=TaskPriority.URGENT,
         status=TaskStatus.PLANNED,
         delivery_date=datetime(2026, 4, 15),
@@ -802,7 +810,7 @@ SAMPLE_TASKS: list[ScheduleTask] = [
         start=datetime(2026, 3, 26, 8, 0),
         end=datetime(2026, 3, 26, 19, 30),  # 6000m / 11m/min = ~545min
         volume_m=6000.0,
-        line_speed_m_per_min=11.0,
+        line_speed_m_per_min=get_line_speed("35SQ", "3C"),
         priority=TaskPriority.NORMAL,
         status=TaskStatus.PLANNED,
         delivery_date=datetime(2026, 4, 20),
@@ -819,9 +827,11 @@ SAMPLE_TASKS: list[ScheduleTask] = [
         core_count=1,
         color="흑색",
         start=datetime(2026, 3, 27, 6, 0),
-        end=datetime(2026, 3, 27, 11, 42),  # 3000m / 9m/min = ~333min
+        end=datetime(
+            2026, 3, 27, 11, 42
+        ),  # 3000m / get_line_speed("150SQ", "insulation") = ~333min
         volume_m=3000.0,
-        line_speed_m_per_min=9.0,
+        line_speed_m_per_min=get_line_speed("150SQ", "insulation"),
         priority=TaskPriority.CRITICAL,
         status=TaskStatus.PLANNED,
         delivery_date=datetime(2026, 4, 10),
@@ -838,9 +848,11 @@ SAMPLE_TASKS: list[ScheduleTask] = [
         core_count=1,
         color="흑색",
         start=datetime(2026, 3, 28, 8, 0),
-        end=datetime(2026, 3, 28, 13, 20),  # 1500m / 6m/min = 250min
+        end=datetime(
+            2026, 3, 28, 13, 20
+        ),  # 1500m / get_line_speed("240SQ", "insulation") = 200min
         volume_m=1500.0,
-        line_speed_m_per_min=6.0,
+        line_speed_m_per_min=get_line_speed("240SQ", "insulation"),
         priority=TaskPriority.NORMAL,
         status=TaskStatus.PLANNED,
         delivery_date=datetime(2026, 5, 1),
@@ -857,9 +869,11 @@ SAMPLE_TASKS: list[ScheduleTask] = [
         core_count=4,
         color="흑/적/청/녹황",
         start=datetime(2026, 3, 29, 8, 0),
-        end=datetime(2026, 3, 29, 22, 0),  # 5000m / 6m/min = ~833min
+        end=datetime(
+            2026, 3, 29, 22, 0
+        ),  # 5000m / get_line_speed("25SQ", "4C") = ~833min
         volume_m=5000.0,
-        line_speed_m_per_min=6.0,
+        line_speed_m_per_min=get_line_speed("25SQ", "4C"),
         priority=TaskPriority.NORMAL,
         status=TaskStatus.PLANNED,
         delivery_date=datetime(2026, 4, 25),

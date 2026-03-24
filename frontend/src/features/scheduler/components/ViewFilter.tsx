@@ -1,36 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { ViewFilterType } from "../types";
 
-// 공정 목록 (process_type 기준)
-const PROCESS_OPTIONS: { label: string; value: string }[] = [
-  { label: "신선", value: "drawing" },
-  { label: "연선", value: "stranding" },
-  { label: "절연", value: "lv_insulation" },
-  { label: "고압절연", value: "hv_insulation" },
-  { label: "테이핑", value: "taping" },
-  { label: "연합", value: "cabling" },
-  { label: "시스", value: "lv_jacketing" },
-  { label: "고압시스", value: "hv_jacketing" },
-];
-
 /**
- * 전압 분류 필터
- * 공통 설비(신선/연선)는 어떤 뷰에서도 항상 표시한다.
- * LV only: 저압절연, 저압자켓 공정
- * HV only: 고압절연, 고압자켓, 테이핑, 연합 등
+ * 공통 설비(신선/연선)는 전압 필터에서 항상 표시한다.
+ * 비즈니스 규칙이므로 상수로 관리한다.
  */
 const ALWAYS_SHOWN_PROCESS: string[] = ["drawing", "stranding"];
-const LV_PROCESS: string[] = ["lv_insulation", "lv_jacketing"];
-const HV_PROCESS: string[] = [
-  "hv_insulation",
-  "hv_jacketing",
-  "taping",
-  "cabling",
-  "neutral_wire",
-];
+
+/**
+ * 공정 유형 한국어 레이블 — best-effort 매핑.
+ * 테이블에 없는 공정은 raw string 그대로 표시된다 (폴백).
+ */
+const PROCESS_LABELS: Record<string, string> = {
+  drawing: "신선",
+  stranding: "연선",
+  lv_insulation: "저압절연",
+  hv_insulation: "고압절연",
+  taping: "테이핑",
+  cabling: "연합",
+  lv_jacketing: "저압시스",
+  hv_jacketing: "고압시스",
+  neutral_wire: "중성선",
+};
+
+/**
+ * 전압별 공정 분류 — 설비 데이터에서 동적으로 분류하기 위한 기준.
+ * LV: 저압절연/저압시스, HV: 고압절연/고압시스/테이핑/연합/중성선
+ * 미분류 공정(신선/연선 제외)은 고압(HV) 그룹에 포함된다.
+ */
+const LV_ONLY_PROCESS: Set<string> = new Set(["lv_insulation", "lv_jacketing"]);
 
 type VoltageMode = "lv" | "hv";
 
@@ -42,6 +43,12 @@ export function ViewFilter() {
 
   // 전압 토글 로컬 상태 (voltage 모드일 때 사용)
   const [voltageMode, setVoltageMode] = useState<VoltageMode>("lv");
+
+  // 설비 데이터에서 중복 없이 공정 목록을 동적으로 생성한다.
+  const processOptions = useMemo(() => {
+    const types = [...new Set(equipment.map((eq) => eq.process_type))];
+    return types.map((t) => ({ label: PROCESS_LABELS[t] ?? t, value: t }));
+  }, [equipment]);
 
   // 현재 filterType
   const activeType = viewFilter.filterType;
@@ -68,13 +75,15 @@ export function ViewFilter() {
 
   function applyVoltage(mode: VoltageMode) {
     setVoltageMode(mode);
-    // 공통 설비 equipment ids + 해당 전압 공정 equipment ids
-    const targetProcesses = [
-      ...ALWAYS_SHOWN_PROCESS,
-      ...(mode === "lv" ? LV_PROCESS : HV_PROCESS),
-    ];
+    // 설비 데이터에서 공통(항상 표시) + 해당 전압 공정에 해당하는 설비 id를 수집한다.
+    // 미등록 공정 타입은 고압(hv) 그룹으로 fallback 처리된다.
     const ids = equipment
-      .filter((eq) => targetProcesses.includes(eq.process_type))
+      .filter((eq) => {
+        if (ALWAYS_SHOWN_PROCESS.includes(eq.process_type)) return true;
+        if (mode === "lv") return LV_ONLY_PROCESS.has(eq.process_type);
+        // hv: 공통/LV 이외의 모든 공정
+        return !LV_ONLY_PROCESS.has(eq.process_type);
+      })
       .map((eq) => eq.id);
     setViewFilter({ filterType: "voltage", filterValue: ids });
   }
@@ -89,7 +98,7 @@ export function ViewFilter() {
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200"
+      className="flex items-center gap-3 px-4 py-2 bg-white"
       style={{ minHeight: 44 }}
     >
       <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-1">
@@ -116,12 +125,12 @@ export function ViewFilter() {
         ))}
       </div>
 
-      {/* 공정별 서브 필터 */}
+      {/* 공정별 서브 필터 — 설비 데이터에서 동적으로 생성 */}
       {activeType === "process" && (
         <>
           <div className="w-px h-4 bg-gray-300 mx-1" />
           <div className="flex flex-wrap gap-1">
-            {PROCESS_OPTIONS.map((opt) => {
+            {processOptions.map((opt) => {
               const isSelected = (viewFilter.filterValue ?? []).includes(
                 opt.value,
               );

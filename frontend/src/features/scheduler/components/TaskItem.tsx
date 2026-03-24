@@ -3,62 +3,15 @@
 import { useCallback } from "react";
 import { useItem } from "dnd-timeline";
 import type { TimelineItem } from "../types";
-import { KBI_BRAND, type ProductGroup } from "@/shared/constants/brand";
 import { useScheduleStore } from "../store/scheduleStore";
+import {
+  getTaskColor,
+  getPriorityStyle,
+  getStatusStyle,
+} from "../utils/colorCoding";
 
 interface TaskItemProps {
   item: TimelineItem;
-}
-
-/** 제품 그룹에서 색상 추출 */
-function getTaskColor(product: string): string {
-  const colorMap = KBI_BRAND.colors.taskColors;
-  for (const key of Object.keys(colorMap) as ProductGroup[]) {
-    if (key !== "default" && product.includes(key)) {
-      return colorMap[key];
-    }
-  }
-  return colorMap.default;
-}
-
-/** 우선순위별 스타일 */
-function getPriorityStyle(priority: string): React.CSSProperties {
-  switch (priority) {
-    case "critical":
-      return {
-        backgroundColor: "#DC2626",
-        animation: "pulse 1.5s ease-in-out infinite",
-      };
-    case "urgent":
-      return {
-        outline: "2px solid #DC2626",
-        outlineOffset: "-2px",
-      };
-    default:
-      return {};
-  }
-}
-
-/** 상태별 오버레이 스타일 */
-function getStatusStyle(
-  status: string,
-  baseColor: string,
-): React.CSSProperties {
-  switch (status) {
-    case "completed":
-      return { backgroundColor: "#16A34A" };
-    case "delayed":
-      return {
-        backgroundColor: baseColor,
-        outline: "2px solid #DC2626",
-        outlineOffset: "-2px",
-      };
-    case "in_progress":
-      // 기본 색상을 약간 어둡게
-      return { backgroundColor: baseColor, filter: "brightness(0.85)" };
-    default:
-      return { backgroundColor: baseColor };
-  }
 }
 
 export function TaskItem({ item }: TaskItemProps) {

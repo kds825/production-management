@@ -30,7 +30,8 @@ interface FormData {
   spec: string;
   core_count: number;
   color: string;
-  priority: "normal" | "urgent" | "critical";
+  // open string — 알려진 값: 'normal' | 'urgent' | 'critical'
+  priority: string;
   start: string; // datetime-local 문자열
   end: string;
   notes: string;

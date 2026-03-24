@@ -291,6 +291,15 @@ function TimelineInner({ rows, items, tasks, range }: TimelineInnerProps) {
   const { setTimelineRef, style } = useTimelineContext();
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // 안정적인 ref 콜백 — 무한 렌더링 방지
+  const combinedRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      containerRef.current = el;
+      (setTimelineRef as (el: HTMLElement | null) => void)(el);
+    },
+    [setTimelineRef],
+  );
+
   // SVG 오버레이 크기는 컨테이너에서 동적으로 가져온다
   const containerWidth = containerRef.current?.scrollWidth ?? 2000;
   const totalHeight = rows.length * ROW_HEIGHT;
@@ -299,13 +308,7 @@ function TimelineInner({ rows, items, tasks, range }: TimelineInnerProps) {
     <>
       <DateHeader range={range} />
       <div
-        ref={(el) => {
-          // setTimelineRef와 containerRef 동시 연결
-          (setTimelineRef as (el: HTMLElement | null) => void)(el);
-          (
-            containerRef as React.MutableRefObject<HTMLDivElement | null>
-          ).current = el;
-        }}
+        ref={combinedRef}
         style={{
           ...style,
           position: "relative",
