@@ -66,3 +66,40 @@ export type ContextAction =
   | "zoom_selection";
 
 export type ViewFilterType = "all" | "process" | "equipment" | "voltage";
+
+/** 수주 (미배정 주문) */
+export interface Order {
+  id: string;
+  order_number: string;
+  product: string;
+  spec: string;
+  core_count: number;
+  color: string;
+  customer: string;
+  delivery_date: string;
+  total_length_m: number;
+  priority: "normal" | "urgent" | "critical";
+}
+
+/** 컨텍스트 메뉴 상태 */
+export interface ContextMenuState {
+  x: number;
+  y: number;
+  type: "empty" | "task";
+  taskId?: string;
+  /** 빈 영역 우클릭 시 해당 설비 row / 날짜 prefill 용 */
+  equipmentId?: string;
+  clickTime?: Date;
+}
+
+/** 작업 폼 모달 상태 */
+export interface TaskFormModalState {
+  isOpen: boolean;
+  mode: "create" | "edit";
+  taskId?: string;
+  prefill?: {
+    equipmentId?: string;
+    start?: Date;
+    end?: Date;
+  };
+}

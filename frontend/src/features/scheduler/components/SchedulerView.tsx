@@ -16,7 +16,7 @@ import { useScheduleStore } from "../store/scheduleStore";
 import { useDragHandlers } from "../hooks/useDragHandlers";
 import { EquipmentSidebar } from "./EquipmentSidebar";
 import { TaskItem } from "./TaskItem";
-import type { TimelineItem, TimelineRow } from "../types";
+import type { TimelineItem, TimelineRow, ViewFilterType } from "../types";
 
 // ----- 상수 -----
 const SIDEBAR_WIDTH = 160; // px
@@ -63,6 +63,7 @@ function TimelineRowContainer({
   const equipment = useScheduleStore((s) =>
     s.equipment.find((eq) => eq.id === row.id),
   );
+  const openContextMenu = useScheduleStore((s) => s.openContextMenu);
 
   // 이 row에 속한 items만 필터링 후 서브로우 그룹화
   const rowItems = useMemo(
@@ -76,6 +77,20 @@ function TimelineRowContainer({
   );
 
   const subrows = groupedSubrows[row.id] ?? [];
+
+  // 빈 타임라인 영역 우클릭 → 빈 영역 컨텍스트 메뉴
+  const handleRowContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      openContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        type: "empty",
+        equipmentId: row.id,
+      });
+    },
+    [openContextMenu, row.id],
+  );
 
   return (
     <div
@@ -109,6 +124,7 @@ function TimelineRowContainer({
           height: Math.max(ROW_HEIGHT, (subrows.length || 1) * ROW_HEIGHT),
           position: "relative",
         }}
+        onContextMenu={handleRowContextMenu}
       >
         {subrows.length > 0
           ? subrows.map((subrow, idx) => (
@@ -291,10 +307,50 @@ function TimelineInner({ rows, items, range }: TimelineInnerProps) {
   );
 }
 
+/** 뷰 필터에 따라 표시할 rows 계산 */
+function useFilteredRows(
+  rows: TimelineRow[],
+  filterType: ViewFilterType,
+  filterValue: string[],
+  equipment: { id: string; process_type: string }[],
+): TimelineRow[] {
+  return useMemo(() => {
+    if (filterType === "all") return rows;
+
+    if (filterType === "voltage") {
+      // filterValue에 포함된 equipment id만 표시
+      if (filterValue.length === 0) return rows;
+      return rows.filter((r) => filterValue.includes(r.id));
+    }
+
+    if (filterType === "process") {
+      // 선택된 공정만 표시 (선택 없으면 전체)
+      if (filterValue.length === 0) return rows;
+      const eqMap = new Map(equipment.map((e) => [e.id, e.process_type]));
+      return rows.filter((r) => {
+        const pt = eqMap.get(r.id) ?? "";
+        return filterValue.includes(pt);
+      });
+    }
+
+    return rows;
+  }, [rows, filterType, filterValue, equipment]);
+}
+
 // ----- 메인 SchedulerView -----
 export function SchedulerView() {
   const rows = useScheduleStore((s) => s.rows);
   const items = useScheduleStore((s) => s.items);
+  const viewFilter = useScheduleStore((s) => s.viewFilter);
+  const equipment = useScheduleStore((s) => s.equipment);
+
+  // 필터 적용된 rows
+  const filteredRows = useFilteredRows(
+    rows,
+    viewFilter.filterType,
+    viewFilter.filterValue,
+    equipment,
+  );
 
   const defaultRange = useMemo(() => {
     const { start, end } = getCurrentMonthRange();
@@ -340,7 +396,7 @@ export function SchedulerView() {
         sidebarWidth={SIDEBAR_WIDTH}
         resizeHandleWidth={8}
       >
-        <TimelineInner rows={rows} items={items} range={range} />
+        <TimelineInner rows={filteredRows} items={items} range={range} />
       </TimelineContext>
     </div>
   );

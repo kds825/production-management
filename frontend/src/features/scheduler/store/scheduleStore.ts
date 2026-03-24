@@ -2,12 +2,15 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type {
   Equipment,
+  Order,
   ScheduleTask,
   ConstraintViolation,
   TimelineRow,
   TimelineItem,
   ZoomLevel,
   ViewFilterType,
+  ContextMenuState,
+  TaskFormModalState,
 } from "../types";
 
 interface ViewFilter {
@@ -21,6 +24,7 @@ interface ScheduleState {
   tasks: ScheduleTask[];
   violations: ConstraintViolation[];
   selectedTaskId: string | null;
+  unscheduledOrders: Order[];
 
   // dnd-timeline 데이터
   rows: TimelineRow[];
@@ -29,11 +33,17 @@ interface ScheduleState {
   // 뷰 상태
   viewFilter: ViewFilter;
   zoomLevel: ZoomLevel;
+
+  // UI 상태
+  contextMenu: ContextMenuState | null;
+  taskFormModal: TaskFormModalState;
 }
 
 interface ScheduleActions {
   setEquipment: (equipment: Equipment[]) => void;
   setTasks: (tasks: ScheduleTask[]) => void;
+  addTask: (task: ScheduleTask) => void;
+  deleteTask: (taskId: string) => void;
   updateTask: (
     taskId: string,
     updates: Partial<ScheduleTask> & { span?: { start: Date; end: Date } },
@@ -48,6 +58,15 @@ interface ScheduleActions {
   selectTask: (taskId: string | null) => void;
   setViewFilter: (filter: Partial<ViewFilter>) => void;
   setZoomLevel: (level: ZoomLevel) => void;
+  setUnscheduledOrders: (orders: Order[]) => void;
+
+  // 컨텍스트 메뉴
+  openContextMenu: (state: ContextMenuState) => void;
+  closeContextMenu: () => void;
+
+  // 작업 폼 모달
+  openTaskFormModal: (state: Omit<TaskFormModalState, "isOpen">) => void;
+  closeTaskFormModal: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -74,10 +93,13 @@ export const useScheduleStore = create<ScheduleStore>()(
     tasks: [],
     violations: [],
     selectedTaskId: null,
+    unscheduledOrders: [],
     rows: [],
     items: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "week",
+    contextMenu: null,
+    taskFormModal: { isOpen: false, mode: "create" },
 
     // 설비 목록 설정 → rows 동기화
     setEquipment: (equipment) => {
@@ -92,6 +114,22 @@ export const useScheduleStore = create<ScheduleStore>()(
       set((state) => {
         state.tasks = tasks;
         state.items = tasks.map(taskToItem);
+      });
+    },
+
+    // 단일 작업 추가
+    addTask: (task) => {
+      set((state) => {
+        state.tasks.push(task);
+        state.items.push(taskToItem(task));
+      });
+    },
+
+    // 작업 삭제
+    deleteTask: (taskId) => {
+      set((state) => {
+        state.tasks = state.tasks.filter((t) => t.id !== taskId);
+        state.items = state.items.filter((i) => i.id !== taskId);
       });
     },
 
@@ -161,6 +199,36 @@ export const useScheduleStore = create<ScheduleStore>()(
     setZoomLevel: (level) => {
       set((state) => {
         state.zoomLevel = level;
+      });
+    },
+
+    setUnscheduledOrders: (orders) => {
+      set((state) => {
+        state.unscheduledOrders = orders;
+      });
+    },
+
+    openContextMenu: (menuState) => {
+      set((state) => {
+        state.contextMenu = menuState;
+      });
+    },
+
+    closeContextMenu: () => {
+      set((state) => {
+        state.contextMenu = null;
+      });
+    },
+
+    openTaskFormModal: (modalState) => {
+      set((state) => {
+        state.taskFormModal = { ...modalState, isOpen: true };
+      });
+    },
+
+    closeTaskFormModal: () => {
+      set((state) => {
+        state.taskFormModal = { isOpen: false, mode: "create" };
       });
     },
   })),

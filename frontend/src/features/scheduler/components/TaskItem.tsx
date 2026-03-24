@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback } from "react";
 import { useItem } from "dnd-timeline";
 import type { TimelineItem } from "../types";
 import { KBI_BRAND, type ProductGroup } from "@/shared/constants/brand";
+import { useScheduleStore } from "../store/scheduleStore";
 
 interface TaskItemProps {
   item: TimelineItem;
@@ -64,6 +66,9 @@ export function TaskItem({ item }: TaskItemProps) {
   const task = item.data;
   const baseColor = getTaskColor(task.product);
 
+  const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
+  const openContextMenu = useScheduleStore((s) => s.openContextMenu);
+
   const {
     setNodeRef,
     setActivatorNodeRef,
@@ -75,6 +80,31 @@ export function TaskItem({ item }: TaskItemProps) {
     span: item.span,
     data: { task },
   });
+
+  // 더블클릭 → 수정 모달 열기
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      openTaskFormModal({ mode: "edit", taskId: task.id });
+    },
+    [openTaskFormModal, task.id],
+  );
+
+  // 우클릭 → 작업 컨텍스트 메뉴 열기
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        type: "task",
+        taskId: task.id,
+      });
+    },
+    [openContextMenu, task.id],
+  );
 
   const priorityStyle = getPriorityStyle(task.priority);
   const statusStyle = getStatusStyle(task.status, baseColor);
@@ -106,6 +136,8 @@ export function TaskItem({ item }: TaskItemProps) {
       <div
         ref={setActivatorNodeRef}
         style={{ ...itemContentStyle, ...barStyle }}
+        onDoubleClick={handleDoubleClick}
+        onContextMenu={handleContextMenu}
       >
         {/* 내부 텍스트 */}
         <div

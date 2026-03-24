@@ -1,16 +1,23 @@
 "use client";
 
+import { useCallback } from "react";
 import { Header } from "@/shared/components/Header";
 import { SchedulerView } from "@/features/scheduler/components/SchedulerView";
+import { ViewFilter } from "@/features/scheduler/components/ViewFilter";
+import { OrderInbox } from "@/features/scheduler/components/OrderInbox";
+import { ConstraintAlert } from "@/features/scheduler/components/ConstraintAlert";
+import { ContextMenu } from "@/features/scheduler/components/ContextMenu";
+import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
+import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 
 export default function SchedulerPage() {
   const { isLoading, error } = useScheduleData();
+  const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
 
-  function handleAddTask() {
-    // TODO: Task 5에서 작업 추가 모달 구현 예정
-    alert("작업 추가 기능은 준비 중입니다.");
-  }
+  const handleAddTask = useCallback(() => {
+    openTaskFormModal({ mode: "create" });
+  }, [openTaskFormModal]);
 
   return (
     <div
@@ -19,6 +26,9 @@ export default function SchedulerPage() {
     >
       {/* 상단 헤더 */}
       <Header onAddTask={handleAddTask} />
+
+      {/* 뷰 필터 */}
+      <ViewFilter />
 
       {/* 로딩 / 에러 배너 */}
       {isLoading && (
@@ -39,10 +49,21 @@ export default function SchedulerPage() {
         </div>
       )}
 
-      {/* 메인 스케줄러 */}
-      <main className="flex-1 overflow-hidden flex flex-col p-3 gap-2">
-        <SchedulerView />
+      {/* 메인 콘텐츠 영역 */}
+      <main className="flex-1 overflow-hidden flex">
+        {/* 좌측 미배정 수주 패널 */}
+        <OrderInbox />
+
+        {/* 스케줄러 + 제약 조건 패널 */}
+        <div className="flex-1 overflow-hidden flex flex-col p-3 gap-2">
+          <SchedulerView />
+          <ConstraintAlert />
+        </div>
       </main>
+
+      {/* 전역 오버레이 UI */}
+      <ContextMenu />
+      <TaskFormModal />
     </div>
   );
 }
