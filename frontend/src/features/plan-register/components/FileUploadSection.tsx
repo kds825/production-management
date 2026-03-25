@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { usePlanRegisterStore } from "../store/planRegisterStore";
 import { ALL_MOCK_BATCHES } from "../mock/mockBatchData";
 
@@ -37,6 +37,13 @@ export function FileUploadSection() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [showDeleteHover, setShowDeleteHover] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const analyzeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (analyzeTimerRef.current) clearTimeout(analyzeTimerRef.current);
+    };
+  }, []);
 
   const handleFile = useCallback(
     (file: File) => {
@@ -90,7 +97,8 @@ export function FileUploadSection() {
     setIsAnalyzing(true);
 
     // 1.5초 가짜 분석 후 목업 데이터 주입
-    setTimeout(() => {
+    analyzeTimerRef.current = setTimeout(() => {
+      analyzeTimerRef.current = null;
       setBatches(ALL_MOCK_BATCHES);
       setIsAnalyzing(false);
       setIsAnalyzed(true);
@@ -98,11 +106,16 @@ export function FileUploadSection() {
   }, [uploadedFile, isAnalyzing, setIsAnalyzing, setBatches, setIsAnalyzed]);
 
   const handleDelete = useCallback(() => {
+    if (analyzeTimerRef.current) {
+      clearTimeout(analyzeTimerRef.current);
+      analyzeTimerRef.current = null;
+    }
     setUploadedFile(null);
     setBatches([]);
+    setIsAnalyzing(false);
     setIsAnalyzed(false);
     setValidationError(null);
-  }, [setUploadedFile, setBatches, setIsAnalyzed]);
+  }, [setUploadedFile, setBatches, setIsAnalyzing, setIsAnalyzed]);
 
   const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
 

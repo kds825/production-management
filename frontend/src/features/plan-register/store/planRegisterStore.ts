@@ -87,9 +87,11 @@ export const usePlanRegisterStore = create<PlanRegisterStore>()(
     },
 
     reset: () => {
-      set((state) => {
-        Object.assign(state, initialState);
-      });
+      set(() => ({
+        ...initialState,
+        batches: [...ALL_MOCK_BATCHES],
+        confirmedBatches: [],
+      }));
     },
 
     setVoltageFilter: (v) => {
