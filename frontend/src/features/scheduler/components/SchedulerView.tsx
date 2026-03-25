@@ -436,8 +436,8 @@ function DateHeader({
             }}
           >
             <span
-              className="text-[9px]"
-              style={{ color: weekend ? "#C41230" : "#6B7280" }}
+              className="text-[10px] font-medium"
+              style={{ color: weekend ? "#C41230" : "#4B5563" }}
             >
               {day.date.getMonth() + 1}/{day.date.getDate()}
             </span>
@@ -509,7 +509,7 @@ function WeekendOverlay({
             left: col.left,
             width: col.width,
             height: totalHeight,
-            backgroundColor: "#F3F4F6",
+            backgroundColor: "#EEF0F2",
             pointerEvents: "none",
             zIndex: 0,
           }}

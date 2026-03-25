@@ -9,7 +9,8 @@
   --color-kbi-brown: #4a2c2a;
   --color-kbi-gold: #d4a574;
   --font-sans:
-    "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    var(--font-noto-sans-kr), "Pretendard Variable", "Pretendard",
+    "Apple SD Gothic Neo", sans-serif;
 }
 
 :root {

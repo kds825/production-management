@@ -151,6 +151,16 @@ export function FileUploadSection() {
             클릭하거나 파일을 끌어다 놓으세요
           </p>
           <p className="text-[10px] text-gray-400">.xls, .xlsx 파일 지원</p>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              inputRef.current?.click();
+            }}
+            className="mt-2 px-4 py-1.5 text-xs font-medium rounded-md text-white transition-colors"
+            style={{ backgroundColor: PRIMARY }}
+          >
+            파일 선택
+          </button>
           <input
             ref={inputRef}
             type="file"

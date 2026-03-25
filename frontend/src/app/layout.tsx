@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
+import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+
+const notoSansKR = Noto_Sans_KR({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-noto-sans-kr",
+});
 
 export const metadata: Metadata = {
   title: "KBI 생산계획 스케줄러",
@@ -12,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ko">
-      <body className="bg-gray-50 text-gray-900 antialiased min-h-screen">
+    <html lang="ko" className={notoSansKR.variable}>
+      <body className="bg-gray-50 text-gray-900 antialiased min-h-screen font-sans">
         {children}
       </body>
     </html>

@@ -72,9 +72,7 @@ export function Header({
           {isEditMode ? "저장하기" : "수정하기"}
         </button>
 
-        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded">
-          PoC v0.1
-        </span>
+        <span className="text-[9px] text-gray-300 px-1.5 py-0.5">v0.1</span>
       </div>
     </header>
   );
