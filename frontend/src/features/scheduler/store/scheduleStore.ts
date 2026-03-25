@@ -227,6 +227,12 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
+    setRange: (range) => {
+      set((state) => {
+        state.range = range;
+      });
+    },
+
     setUnscheduledOrders: (orders) => {
       set((state) => {
         state.unscheduledOrders = orders;
