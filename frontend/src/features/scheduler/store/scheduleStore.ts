@@ -5,14 +5,19 @@ import type {
   Order,
   ScheduleTask,
   ConstraintViolation,
-  TimelineRow,
-  TimelineItem,
   ZoomLevel,
   ViewFilterType,
   ContextMenuState,
   TaskFormModalState,
   ScheduleVersion,
+  LineSpeedEntry,
+  ProductionBatch,
 } from "../types";
+import {
+  getLineSpeed,
+  calculateTaskEnd,
+  getDefaultRange,
+} from "../utils/ganttUtils";
 
 interface ViewFilter {
   filterType: ViewFilterType;
@@ -27,14 +32,13 @@ interface ScheduleState {
   selectedTaskId: string | null;
   unscheduledOrders: Order[];
 
-  // dnd-timeline 데이터
-  rows: TimelineRow[];
-  items: TimelineItem[];
+  // 라인 속도 데이터 (API에서 로드)
+  lineSpeedData: LineSpeedEntry[];
 
   // 뷰 상태
   viewFilter: ViewFilter;
   zoomLevel: ZoomLevel;
-  range: { start: number; end: number } | null;
+  range: { start: number; end: number };
 
   // 편집 모드 — 기본은 읽기 전용(false)
   isEditMode: boolean;
@@ -55,10 +59,7 @@ interface ScheduleActions {
   setTasks: (tasks: ScheduleTask[]) => void;
   addTask: (task: ScheduleTask) => void;
   deleteTask: (taskId: string) => void;
-  updateTask: (
-    taskId: string,
-    updates: Partial<ScheduleTask> & { span?: { start: Date; end: Date } },
-  ) => void;
+  updateTask: (taskId: string, updates: Partial<ScheduleTask>) => void;
   moveTask: (
     taskId: string,
     newEquipmentId: string,
@@ -70,7 +71,22 @@ interface ScheduleActions {
   setViewFilter: (filter: Partial<ViewFilter>) => void;
   setZoomLevel: (level: ZoomLevel) => void;
   setRange: (range: { start: number; end: number }) => void;
+
+  /**
+   * 생산계획등록에서 확정된 배치를 간트 차트에 자동 배치한다.
+   * 각 배치를 equipment_group에 맞는 설비에 순차적으로 배치한다.
+   * 배치 실패 항목은 unscheduledOrders에 추가한다.
+   */
+  syncFromPlanRegister: (batches: ProductionBatch[]) => void;
   setUnscheduledOrders: (orders: Order[]) => void;
+  setLineSpeedData: (data: LineSpeedEntry[]) => void;
+
+  /**
+   * 수주를 스케줄러에 배정한다.
+   * - 라인 속도를 조회하여 종료 시각을 자동 계산한다.
+   * - 해당 수주를 unscheduledOrders에서 제거하고 tasks에 추가한다.
+   */
+  assignOrder: (orderId: string, equipmentId: string, startTime: Date) => void;
 
   // 편집 모드 토글
   toggleEditMode: () => void;
@@ -92,21 +108,6 @@ interface ScheduleActions {
 
 type ScheduleStore = ScheduleState & ScheduleActions;
 
-/** task → TimelineItem 변환 (span은 dnd-timeline이 요구하는 타임스탬프 number) */
-function taskToItem(task: ScheduleTask): TimelineItem {
-  const start = task.start instanceof Date ? task.start : new Date(task.start);
-  const end = task.end instanceof Date ? task.end : new Date(task.end);
-  return {
-    id: task.id,
-    rowId: task.equipment_id,
-    span: {
-      start: start.getTime(),
-      end: end.getTime(),
-    },
-    data: task,
-  };
-}
-
 export const useScheduleStore = create<ScheduleStore>()(
   immer((set, get) => ({
     // 초기 상태
@@ -115,30 +116,27 @@ export const useScheduleStore = create<ScheduleStore>()(
     violations: [],
     selectedTaskId: null,
     unscheduledOrders: [],
-    rows: [],
-    items: [],
+    lineSpeedData: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "week",
-    range: null,
+    range: getDefaultRange(),
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
     contextMenu: null,
     taskFormModal: { isOpen: false, mode: "create" },
 
-    // 설비 목록 설정 → rows 동기화
+    // 설비 목록 설정
     setEquipment: (equipment) => {
       set((state) => {
         state.equipment = equipment;
-        state.rows = equipment.map((eq) => ({ id: eq.id }));
       });
     },
 
-    // 작업 목록 설정 → items 동기화
+    // 작업 목록 설정
     setTasks: (tasks) => {
       set((state) => {
         state.tasks = tasks;
-        state.items = tasks.map(taskToItem);
       });
     },
 
@@ -146,7 +144,6 @@ export const useScheduleStore = create<ScheduleStore>()(
     addTask: (task) => {
       set((state) => {
         state.tasks.push(task);
-        state.items.push(taskToItem(task));
       });
     },
 
@@ -154,34 +151,15 @@ export const useScheduleStore = create<ScheduleStore>()(
     deleteTask: (taskId) => {
       set((state) => {
         state.tasks = state.tasks.filter((t) => t.id !== taskId);
-        state.items = state.items.filter((i) => i.id !== taskId);
       });
     },
 
-    // 개별 작업 업데이트 (리사이즈 등)
+    // 개별 작업 업데이트
     updateTask: (taskId, updates) => {
       set((state) => {
         const taskIdx = state.tasks.findIndex((t) => t.id === taskId);
         if (taskIdx === -1) return;
-
-        const task = state.tasks[taskIdx];
-
-        // span 업데이트가 포함된 경우 start/end에 반영
-        if ("span" in updates && updates.span) {
-          task.start = updates.span.start;
-          task.end = updates.span.end;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { span: _, ...rest } = updates;
-          Object.assign(task, rest);
-        } else {
-          Object.assign(task, updates);
-        }
-
-        // items 동기화
-        const itemIdx = state.items.findIndex((i) => i.id === taskId);
-        if (itemIdx !== -1) {
-          state.items[itemIdx] = taskToItem(task);
-        }
+        Object.assign(state.tasks[taskIdx], updates);
       });
     },
 
@@ -195,11 +173,6 @@ export const useScheduleStore = create<ScheduleStore>()(
         task.equipment_id = newEquipmentId;
         task.start = start;
         task.end = end;
-
-        const itemIdx = state.items.findIndex((i) => i.id === taskId);
-        if (itemIdx !== -1) {
-          state.items[itemIdx] = taskToItem(task);
-        }
       });
     },
 
@@ -236,6 +209,63 @@ export const useScheduleStore = create<ScheduleStore>()(
     setUnscheduledOrders: (orders) => {
       set((state) => {
         state.unscheduledOrders = orders;
+      });
+    },
+
+    setLineSpeedData: (data) => {
+      set((state) => {
+        state.lineSpeedData = data;
+      });
+    },
+
+    // 수주 → 스케줄 작업 배정
+    assignOrder: (orderId, equipmentId, startTime) => {
+      const { unscheduledOrders, lineSpeedData } = get();
+      const order = unscheduledOrders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      // 라인 속도 조회
+      const lineSpeed = getLineSpeed(
+        lineSpeedData,
+        order.spec,
+        order.product,
+        order.core_count,
+      );
+
+      // 종료 시각 계산
+      const endTime = calculateTaskEnd(
+        startTime,
+        order.total_length_m,
+        lineSpeed,
+      );
+
+      const newTask: ScheduleTask = {
+        id: `TASK-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        order_id: order.id,
+        equipment_id: equipmentId,
+        product: order.product,
+        spec: order.spec,
+        core_count: order.core_count,
+        color: order.color,
+        start: startTime,
+        end: endTime,
+        volume_m: order.total_length_m,
+        line_speed_m_per_min: lineSpeed,
+        priority: order.priority,
+        status: "planned",
+        delivery_date: order.delivery_date
+          ? new Date(order.delivery_date)
+          : undefined,
+        predecessors: [],
+        notes: "",
+        changeover_min: 0,
+      };
+
+      set((state) => {
+        state.tasks.push(newTask);
+        state.unscheduledOrders = state.unscheduledOrders.filter(
+          (o) => o.id !== orderId,
+        );
       });
     },
 
@@ -318,6 +348,120 @@ export const useScheduleStore = create<ScheduleStore>()(
     closeTaskFormModal: () => {
       set((state) => {
         state.taskFormModal = { isOpen: false, mode: "create" };
+      });
+    },
+
+    // 생산계획등록 배치를 간트 차트에 자동 배치
+    syncFromPlanRegister: (batches) => {
+      const { equipment, lineSpeedData, tasks: existingTasks } = get();
+
+      // 설비 그룹 → 설비 ID 매핑 (이름에 포함된 키워드로 매핑)
+      const equipmentGroupMap: Record<string, string[]> = {};
+      for (const eq of equipment) {
+        const name = eq.name.toLowerCase();
+        for (const group of ["연선", "b100", "a100", "a120"]) {
+          if (name.includes(group.toLowerCase())) {
+            if (!equipmentGroupMap[group]) equipmentGroupMap[group] = [];
+            equipmentGroupMap[group].push(eq.id);
+          }
+        }
+      }
+
+      // 설비별 마지막 종료 시각 추적 (기존 작업 기준)
+      const equipmentEndTimes: Record<string, number> = {};
+      for (const task of existingTasks) {
+        const endTs =
+          task.end instanceof Date
+            ? task.end.getTime()
+            : new Date(task.end).getTime();
+        if (
+          !equipmentEndTimes[task.equipment_id] ||
+          endTs > equipmentEndTimes[task.equipment_id]
+        ) {
+          equipmentEndTimes[task.equipment_id] = endTs;
+        }
+      }
+
+      const newTasks: ScheduleTask[] = [];
+      const failedOrders: Order[] = [];
+      const now = Date.now();
+
+      for (const batch of batches) {
+        const groupKey = batch.equipment_group;
+        const candidateEquipIds = equipmentGroupMap[groupKey];
+
+        if (!candidateEquipIds || candidateEquipIds.length === 0) {
+          // 매핑 실패 → 미배정
+          failedOrders.push({
+            id: `ORD-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            order_number: batch.id,
+            product: batch.product,
+            spec: batch.spec,
+            core_count: 0,
+            color: batch.color,
+            customer: batch.customer,
+            delivery_date: batch.delivery_date,
+            total_length_m: batch.total_length_m,
+            priority: "normal",
+            equipment_group: batch.equipment_group,
+          });
+          continue;
+        }
+
+        // 가장 빨리 비는 설비에 배치
+        let bestEquipId = candidateEquipIds[0];
+        let bestEndTime = equipmentEndTimes[bestEquipId] || now;
+        for (const eqId of candidateEquipIds) {
+          const endTime = equipmentEndTimes[eqId] || now;
+          if (endTime < bestEndTime) {
+            bestEndTime = endTime;
+            bestEquipId = eqId;
+          }
+        }
+
+        const lineSpeed = getLineSpeed(
+          lineSpeedData,
+          batch.spec,
+          batch.product,
+          0,
+        );
+        const startTime = new Date(Math.max(bestEndTime, now));
+        const endTime = calculateTaskEnd(
+          startTime,
+          batch.total_length_m,
+          lineSpeed,
+        );
+
+        const task: ScheduleTask = {
+          id: `SYNC-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          order_id: batch.id,
+          equipment_id: bestEquipId,
+          product: batch.product,
+          spec: batch.spec,
+          core_count: 0,
+          color: batch.color,
+          start: startTime,
+          end: endTime,
+          volume_m: batch.total_length_m,
+          line_speed_m_per_min: lineSpeed,
+          priority: "normal",
+          status: "planned",
+          delivery_date: batch.delivery_date
+            ? new Date(batch.delivery_date)
+            : undefined,
+          predecessors: [],
+          notes: batch.notes || "",
+          changeover_min: 0,
+        };
+
+        newTasks.push(task);
+        equipmentEndTimes[bestEquipId] = endTime.getTime();
+      }
+
+      set((state) => {
+        state.tasks.push(...newTasks);
+        state.unscheduledOrders.push(...failedOrders);
+        state.isEditMode = true;
       });
     },
   })),

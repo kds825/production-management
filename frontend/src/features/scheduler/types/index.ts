@@ -39,20 +39,13 @@ export interface ConstraintViolation {
   related_task_id?: string;
 }
 
-export interface TimelineRow {
-  id: string;
-  disabled?: boolean;
-}
-
-export interface TimelineItem {
-  id: string;
-  rowId: string;
-  /** dnd-timeline은 span의 start/end를 타임스탬프(number)로 요구한다 */
-  span: { start: number; end: number };
-  data: ScheduleTask;
-}
-
 export type ZoomLevel = "week" | "day" | "hour";
+
+/** 라인 속도 데이터 (API: GET /api/line-speeds) */
+export interface LineSpeedEntry {
+  spec: string;
+  speeds: Record<string, number>;
+}
 
 export type ContextAction =
   | "create_task"
@@ -78,6 +71,8 @@ export interface Order {
   total_length_m: number;
   // open string — 알려진 값: 'normal' | 'urgent' | 'critical'
   priority: string;
+  /** 생산계획등록에서 배정 실패 시 원본 equipment_group 보존 */
+  equipment_group?: string;
 }
 
 /** 컨텍스트 메뉴 상태 */
@@ -109,4 +104,32 @@ export interface ScheduleVersion {
   label: string;
   created_at: Date;
   tasks: ScheduleTask[];
+}
+
+/** 생산 배치 (생산계획등록에서 확정된 배치 항목) */
+export interface ProductionBatch {
+  id: string;
+  product: string;
+  spec: string;
+  color: string;
+  customer: string;
+  delivery_date: string;
+  length_per_unit_m: number;
+  unit_count: number;
+  total_length_m: number;
+  equipment_group: "연선" | "B100" | "A100" | "A120";
+  voltage_type: "저압" | "고압";
+  notes: string;
+  /** AI 분류 근거 */
+  classification_reason: string;
+  /** 원본 수주 데이터 */
+  rawData?: {
+    order_number?: string;
+    voltage?: string;
+    neutral_wire?: string;
+    core_color?: string;
+    product_group?: string;
+    unit_price_krw?: number;
+    total_price_krw?: number;
+  };
 }

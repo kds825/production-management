@@ -1,4 +1,5 @@
 "use client";
+
 import Image from "next/image";
 
 interface HeaderProps {
@@ -13,27 +14,19 @@ export function Header({
   onToggleEditMode,
 }: HeaderProps) {
   return (
-    <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm sticky top-0 z-50">
-      <div className="flex items-center gap-4">
+    <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-50">
+      <div className="flex items-center gap-3">
         <Image
           src="/kbi-group-logo.jpg"
           alt="KBI GROUP"
-          width={80}
-          height={40}
+          width={72}
+          height={36}
           className="object-contain"
         />
-        <div className="h-6 w-px bg-gray-300" />
-        <Image
-          src="/kbi-cosmolink-logo.png"
-          alt="KBI COSMOLINK"
-          width={140}
-          height={24}
-          className="object-contain"
-        />
-        <div className="h-6 w-px bg-gray-300" />
+        <div className="h-6 w-px bg-gray-200" />
         <h1
           className="text-sm font-semibold tracking-tight"
-          style={{ color: "#4A2C2A" }}
+          style={{ color: "#4A2C2A", letterSpacing: "-0.02em" }}
         >
           생산계획 스케줄러
         </h1>
@@ -75,22 +68,6 @@ export function Header({
                   cursor: "pointer",
                 }
           }
-          onMouseEnter={(e) => {
-            if (isEditMode) {
-              e.currentTarget.style.backgroundColor = "#9E0E27";
-              e.currentTarget.style.borderColor = "#9E0E27";
-            } else {
-              e.currentTarget.style.backgroundColor = "#F5F0EF";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (isEditMode) {
-              e.currentTarget.style.backgroundColor = "#C41230";
-              e.currentTarget.style.borderColor = "#C41230";
-            } else {
-              e.currentTarget.style.backgroundColor = "#FFFFFF";
-            }
-          }}
         >
           {isEditMode ? "저장하기" : "수정하기"}
         </button>
