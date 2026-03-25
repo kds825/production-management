@@ -3,28 +3,27 @@
 /**
  * DependencyArrows.tsx
  *
- * 선행 작업(predecessor) → 후행 작업(successor) 간 의존 관계를
+ * 선행 작업(predecessor) -> 후행 작업(successor) 간 의존 관계를
  * SVG 화살표 오버레이로 렌더링한다.
  *
  * - 정상 관계: 회색 화살표(#9CA3AF)
  * - 순서 위반(선행이 끝나기 전 후행 시작): 적색 화살표(#DC2626)
- * - useTimelineContext()를 통해 타임스탬프 → 픽셀 좌표를 계산한다.
- * - 각 task는 rowId(equipment_id)에 매핑되어 있으므로 row 인덱스 기반 Y 좌표를 사용한다.
+ * - ganttUtils의 timeToX를 사용하여 타임스탬프 -> 픽셀 좌표를 계산한다.
  */
 
 import { useMemo } from "react";
-import { useTimelineContext } from "dnd-timeline";
-import type { ScheduleTask, TimelineRow } from "../types";
+import type { ScheduleTask, Equipment } from "../types";
+import { timeToX, SIDEBAR_WIDTH, ROW_HEIGHT } from "../utils/ganttUtils";
 
-const ROW_HEIGHT = 44; // SchedulerView와 동일한 값
 const ARROW_COLOR_NORMAL = "#9CA3AF";
 const ARROW_COLOR_VIOLATION = "#DC2626";
 const MARKER_SIZE = 6;
 
 interface DependencyArrowsProps {
   tasks: ScheduleTask[];
-  rows: TimelineRow[];
-  /** SVG 오버레이 전체 높이 (rows.length * ROW_HEIGHT) */
+  equipment: Equipment[];
+  rangeStart: number;
+  dayWidth: number;
   totalHeight: number;
   totalWidth: number;
 }
@@ -40,22 +39,22 @@ interface ArrowInfo {
 
 export function DependencyArrows({
   tasks,
-  rows,
+  equipment,
+  rangeStart,
+  dayWidth,
   totalHeight,
   totalWidth,
 }: DependencyArrowsProps) {
-  const { valueToPixels, sidebarWidth } = useTimelineContext();
-
   const taskMap = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
-  // row id → y 중심 좌표 매핑
-  const rowYMap = useMemo(() => {
+  // 설비 id -> y 중심 좌표 매핑
+  const equipYMap = useMemo(() => {
     const map = new Map<string, number>();
-    rows.forEach((row, idx) => {
-      map.set(row.id, idx * ROW_HEIGHT + ROW_HEIGHT / 2);
+    equipment.forEach((eq, idx) => {
+      map.set(eq.id, idx * ROW_HEIGHT + ROW_HEIGHT / 2);
     });
     return map;
-  }, [rows]);
+  }, [equipment]);
 
   const arrows = useMemo<ArrowInfo[]>(() => {
     const result: ArrowInfo[] = [];
@@ -64,10 +63,10 @@ export function DependencyArrows({
       if (task.predecessors.length === 0) continue;
 
       const succStart = new Date(task.start).getTime();
-      const succY = rowYMap.get(task.equipment_id);
+      const succY = equipYMap.get(task.equipment_id);
       if (succY === undefined) continue;
 
-      const x2 = valueToPixels(succStart) + sidebarWidth;
+      const x2 = timeToX(succStart, rangeStart, dayWidth) + SIDEBAR_WIDTH;
       const y2 = succY;
 
       for (const predId of task.predecessors) {
@@ -75,13 +74,13 @@ export function DependencyArrows({
         if (!pred) continue;
 
         const predEnd = new Date(pred.end).getTime();
-        const predY = rowYMap.get(pred.equipment_id);
+        const predY = equipYMap.get(pred.equipment_id);
         if (predY === undefined) continue;
 
-        const x1 = valueToPixels(predEnd) + sidebarWidth;
+        const x1 = timeToX(predEnd, rangeStart, dayWidth) + SIDEBAR_WIDTH;
         const y1 = predY;
 
-        // 선행 완료 전 후행 시작 → 위반
+        // 선행 완료 전 후행 시작 -> 위반
         const isViolation = predEnd > succStart;
         const color = isViolation ? ARROW_COLOR_VIOLATION : ARROW_COLOR_NORMAL;
 
@@ -90,7 +89,7 @@ export function DependencyArrows({
     }
 
     return result;
-  }, [tasks, taskMap, rowYMap, valueToPixels, sidebarWidth]);
+  }, [tasks, taskMap, equipYMap, rangeStart, dayWidth]);
 
   if (arrows.length === 0) return null;
 

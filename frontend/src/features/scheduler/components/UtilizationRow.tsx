@@ -6,23 +6,31 @@
  * 각 설비 row 아래에 렌더링되는 얇은(20px) 일별 가동률 행.
  * 각 날짜 칸에 해당 설비에 배정된 작업의 합산 시간을 표시하고,
  * 색상 바로 가동률 수준을 시각화한다.
- *  - ≥80%: 적색(#DC2626)
+ *  - >=80%: 적색(#DC2626)
  *  - 50~80%: 황색(#F59E0B)
  *  - <50%: 녹색(#16A34A)
  */
 
 import { useMemo } from "react";
-import { useTimelineContext } from "dnd-timeline";
 import type { ScheduleTask } from "../types";
 import { getUtilizationColor } from "../utils/colorCoding";
+import {
+  SIDEBAR_WIDTH,
+  timeToX,
+  generateDays,
+  MS_PER_DAY,
+} from "../utils/ganttUtils";
 
 const WORKING_HOURS_PER_DAY = 8;
-const ROW_HEIGHT = 20;
+const UTIL_ROW_HEIGHT = 20;
 
 interface UtilizationRowProps {
   equipmentId: string;
   tasks: ScheduleTask[];
-  range: { start: number; end: number };
+  rangeStart: number;
+  rangeEnd: number;
+  dayWidth: number;
+  timelineWidth: number;
 }
 
 interface DayCell {
@@ -36,10 +44,11 @@ interface DayCell {
 export function UtilizationRow({
   equipmentId,
   tasks,
-  range,
+  rangeStart,
+  rangeEnd,
+  dayWidth,
+  timelineWidth,
 }: UtilizationRowProps) {
-  const { valueToPixels, sidebarWidth } = useTimelineContext();
-
   // 해당 설비에 배정된 작업만 필터링
   const eqTasks = useMemo(
     () => tasks.filter((t) => t.equipment_id === equipmentId),
@@ -48,12 +57,11 @@ export function UtilizationRow({
 
   const cells = useMemo<DayCell[]>(() => {
     const result: DayCell[] = [];
-    const cursor = new Date(range.start);
-    cursor.setHours(0, 0, 0, 0);
+    const days = generateDays(rangeStart, rangeEnd);
 
-    while (cursor.getTime() <= range.end) {
-      const dayStart = cursor.getTime();
-      const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+    for (const day of days) {
+      const dayStart = day.timestamp;
+      const dayEnd = dayStart + MS_PER_DAY;
 
       // 이 날짜에 중첩되는 작업들의 시간 합산
       let totalHours = 0;
@@ -71,33 +79,27 @@ export function UtilizationRow({
       const ratio = totalHours / WORKING_HOURS_PER_DAY;
       const clampedRatio = Math.min(ratio, 1);
 
-      const left = valueToPixels(dayStart) + sidebarWidth;
-      const right = valueToPixels(dayEnd) + sidebarWidth;
-      const width = right - left;
+      const left = timeToX(dayStart, rangeStart, dayWidth);
 
-      if (width > 0) {
-        result.push({
-          left,
-          width,
-          hours: totalHours,
-          label: totalHours > 0 ? `${totalHours.toFixed(1)}h` : "",
-          color: getUtilizationColor(clampedRatio),
-        });
-      }
-
-      cursor.setDate(cursor.getDate() + 1);
+      result.push({
+        left,
+        width: dayWidth,
+        hours: totalHours,
+        label: totalHours > 0 ? `${totalHours.toFixed(1)}h` : "",
+        color: getUtilizationColor(clampedRatio),
+      });
     }
 
     return result;
-  }, [eqTasks, range, valueToPixels, sidebarWidth]);
+  }, [eqTasks, rangeStart, rangeEnd, dayWidth]);
 
   return (
     <div
       style={{
         display: "flex",
-        width: "100%",
+        width: SIDEBAR_WIDTH + timelineWidth,
         position: "relative",
-        height: ROW_HEIGHT,
+        height: UTIL_ROW_HEIGHT,
         backgroundColor: "#F9FAFB",
         borderBottom: "1px solid #E5E7EB",
       }}
@@ -107,7 +109,8 @@ export function UtilizationRow({
         style={{
           position: "sticky",
           left: 0,
-          width: sidebarWidth,
+          width: SIDEBAR_WIDTH,
+          minWidth: SIDEBAR_WIDTH,
           flexShrink: 0,
           backgroundColor: "#F3F4F6",
           borderRight: "1px solid #E5E7EB",
@@ -122,17 +125,16 @@ export function UtilizationRow({
         </span>
       </div>
 
-      {/* 날짜별 가동률 셀 (절대 위치 기반, sidebarWidth만큼 offset) */}
+      {/* 날짜별 가동률 셀 */}
       <div style={{ position: "relative", flex: 1 }}>
         {cells.map((cell, idx) => (
           <div
             key={idx}
             style={{
               position: "absolute",
-              // 셀의 left에서 sidebarWidth를 빼서 flex 자식 기준으로 정렬
-              left: cell.left - sidebarWidth,
+              left: cell.left,
               width: cell.width,
-              height: ROW_HEIGHT,
+              height: UTIL_ROW_HEIGHT,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

@@ -6,17 +6,19 @@
  * 타임라인 위에 납기일 수직 점선을 오버레이로 렌더링한다.
  * - 작업이 납기일을 초과하는 경우 적색(#DC2626), 그 외 녹색(#16A34A).
  * - "납기" 레이블을 상단에 표시한다.
- * - useTimelineContext()의 valueToPixels / sidebarWidth를 사용하여
- *   타임스탬프 → 픽셀 위치를 계산한다.
+ * - ganttUtils의 timeToX를 사용하여 타임스탬프 -> 픽셀 위치를 계산한다.
  */
 
 import { useMemo } from "react";
-import { useTimelineContext } from "dnd-timeline";
 import type { ScheduleTask } from "../types";
+import { timeToX, SIDEBAR_WIDTH } from "../utils/ganttUtils";
 
 interface DeadlineMarkerProps {
   tasks: ScheduleTask[];
-  range: { start: number; end: number };
+  rangeStart: number;
+  rangeEnd: number;
+  dayWidth: number;
+  totalHeight: number;
 }
 
 interface MarkerInfo {
@@ -26,9 +28,13 @@ interface MarkerInfo {
   taskId: string;
 }
 
-export function DeadlineMarker({ tasks, range }: DeadlineMarkerProps) {
-  const { valueToPixels, sidebarWidth } = useTimelineContext();
-
+export function DeadlineMarker({
+  tasks,
+  rangeStart,
+  rangeEnd,
+  dayWidth,
+  totalHeight,
+}: DeadlineMarkerProps) {
   const markers = useMemo<MarkerInfo[]>(() => {
     const result: MarkerInfo[] = [];
 
@@ -38,19 +44,19 @@ export function DeadlineMarker({ tasks, range }: DeadlineMarkerProps) {
       const deliveryTs = new Date(task.delivery_date).getTime();
 
       // 타임라인 범위를 벗어난 납기일은 렌더링하지 않음
-      if (deliveryTs < range.start || deliveryTs > range.end) continue;
+      if (deliveryTs < rangeStart || deliveryTs > rangeEnd) continue;
 
       const taskEnd = new Date(task.end).getTime();
       // 납기일 초과 여부에 따라 색상 결정
       const color = taskEnd > deliveryTs ? "#DC2626" : "#16A34A";
 
-      const left = valueToPixels(deliveryTs) + sidebarWidth;
+      const left = timeToX(deliveryTs, rangeStart, dayWidth) + SIDEBAR_WIDTH;
 
       result.push({ left, color, label: "납기", taskId: task.id });
     }
 
     return result;
-  }, [tasks, range, valueToPixels, sidebarWidth]);
+  }, [tasks, rangeStart, rangeEnd, dayWidth]);
 
   if (markers.length === 0) return null;
 
@@ -63,7 +69,7 @@ export function DeadlineMarker({ tasks, range }: DeadlineMarkerProps) {
             position: "absolute",
             left: marker.left,
             top: 0,
-            bottom: 0,
+            height: totalHeight,
             width: 0,
             pointerEvents: "none",
             zIndex: 5,
