@@ -62,7 +62,6 @@ function cascadePush(
     // 겹침 발생: 현재 작업의 끝이 다음 작업의 시작보다 뒤에 있음
     if (currEnd > nextStart) {
       const duration = nextEnd - nextStart;
-      // 다음 작업을 현재 작업 끝으로 밀어냄 (duration 유지)
       next.start = new Date(currEnd);
       next.end = new Date(currEnd + duration);
     }
