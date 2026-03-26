@@ -176,19 +176,24 @@ export default function SchedulerPage() {
 
       const offsets: Record<string, number> = {};
 
-      // 드래그 중인 task의 예상 end 기준으로 겹침 계산
-      // 밀린 블록의 새 start는 previewEnd에 정확히 붙어야 함
-      let pushBoundary = previewEnd;
+      // Forward push: 드래그 블록의 end 이후에 겹치는 블록을 오른쪽으로
+      let fwdBoundary = previewEnd;
       for (const other of sameMachine) {
-        if (pushBoundary > other.start) {
-          // 밀어야 하는 양 = 드래그 블록 끝(또는 이전 밀린 블록 끝) - 이 블록 시작
-          const pushMs = pushBoundary - other.start;
-          offsets[other.id] = pushMs;
-          // 다음 블록의 pushBoundary = 이 블록의 새 end
-          const otherDuration = other.end - other.start;
-          pushBoundary = pushBoundary + otherDuration;
-        } else {
-          break;
+        if (other.start >= previewStart && fwdBoundary > other.start) {
+          const pushMs = fwdBoundary - other.start;
+          offsets[other.id] = pushMs; // 양수 = 오른쪽
+          fwdBoundary = fwdBoundary + (other.end - other.start);
+        }
+      }
+
+      // Backward push: 드래그 블록의 start 이전에 겹치는 블록을 왼쪽으로
+      const reverseSorted = [...sameMachine].reverse();
+      let bwdBoundary = previewStart;
+      for (const other of reverseSorted) {
+        if (other.end <= previewEnd && other.end > bwdBoundary) {
+          const pushMs = other.end - bwdBoundary;
+          offsets[other.id] = -pushMs; // 음수 = 왼쪽
+          bwdBoundary = bwdBoundary - (other.end - other.start);
         }
       }
 
