@@ -10,6 +10,7 @@ import {
   useSensors,
   type DragStartEvent,
   type DragEndEvent,
+  type DragMoveEvent,
 } from "@dnd-kit/core";
 
 import { Header } from "@/shared/components/Header";
@@ -46,6 +47,9 @@ export default function SchedulerPage() {
   const showSavedToast = useScheduleStore((s) => s.showSavedToast);
   const assignOrder = useScheduleStore((s) => s.assignOrder);
   const moveTask = useScheduleStore((s) => s.moveTask);
+  const setPreviewOffsets = useScheduleStore((s) => s.setPreviewOffsets);
+  const clearPreviewOffsets = useScheduleStore((s) => s.clearPreviewOffsets);
+  const tasks = useScheduleStore((s) => s.tasks);
   const equipment = useScheduleStore((s) => s.equipment);
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const range = useScheduleStore((s) => s.range);
@@ -110,10 +114,90 @@ export default function SchedulerPage() {
     }
   }, []);
 
+  // 드래그 중 — cascade preview 계산
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      if (!isEditMode) return;
+      const activeData = event.active.data.current;
+      const over = event.over;
+      if (!activeData || !over?.data?.current) {
+        clearPreviewOffsets();
+        return;
+      }
+      if (over.data.current.type !== "equipment-row") {
+        clearPreviewOffsets();
+        return;
+      }
+      if (activeData.type !== "task") {
+        clearPreviewOffsets();
+        return;
+      }
+
+      const task = activeData.task as ScheduleTask;
+      const targetEqId = over.data.current.equipmentId as string;
+
+      // 현재 드래그 위치에서 task의 예상 start/end 계산
+      const MS_PER_DAY = 24 * 60 * 60 * 1000;
+      const totalDays = Math.max((range.end - range.start) / MS_PER_DAY, 1);
+      const overWidth = over.rect?.width || 800;
+      const dynamicDayWidth = overWidth / totalDays;
+
+      const taskStartTs =
+        task.start instanceof Date
+          ? task.start.getTime()
+          : new Date(task.start).getTime();
+      const taskEndTs =
+        task.end instanceof Date
+          ? task.end.getTime()
+          : new Date(task.end).getTime();
+      const durationMs = taskEndTs - taskStartTs;
+      const deltaMs = (event.delta.x / dynamicDayWidth) * MS_PER_DAY;
+      const previewStart = taskStartTs + deltaMs;
+      const previewEnd = previewStart + durationMs;
+
+      // 같은 설비의 다른 task들에 대해 cascade offset 계산
+      const sameMachine = tasks
+        .filter((t) => t.equipment_id === targetEqId && t.id !== task.id)
+        .map((t) => ({
+          id: t.id,
+          start:
+            t.start instanceof Date
+              ? t.start.getTime()
+              : new Date(t.start).getTime(),
+          end:
+            t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime(),
+        }))
+        .sort((a, b) => a.start - b.start);
+
+      const offsets: Record<string, number> = {};
+
+      // 드래그 중인 task의 예상 end가 다른 task의 start보다 뒤면 → 밀어야 함
+      let pushBoundary = previewEnd;
+      for (const other of sameMachine) {
+        if (pushBoundary > other.start) {
+          const pushMs = pushBoundary - other.start;
+          offsets[other.id] = pushMs;
+          const otherDuration = other.end - other.start;
+          pushBoundary = other.start + pushMs + otherDuration;
+        } else {
+          break; // 더 이상 겹침 없음
+        }
+      }
+
+      if (Object.keys(offsets).length > 0) {
+        setPreviewOffsets(offsets);
+      } else {
+        clearPreviewOffsets();
+      }
+    },
+    [isEditMode, tasks, range, setPreviewOffsets, clearPreviewOffsets],
+  );
+
   // 드래그 종료
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setActiveDrag(null);
+      clearPreviewOffsets();
 
       const { active, over } = event;
       if (!over) return;
@@ -281,6 +365,7 @@ export default function SchedulerPage() {
       <DndContext
         sensors={sensors}
         onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
       >
         <main className="flex-1 overflow-hidden flex flex-col">

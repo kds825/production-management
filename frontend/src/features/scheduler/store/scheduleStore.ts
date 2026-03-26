@@ -98,6 +98,9 @@ interface ScheduleState {
   // 저장 완료 토스트 표시 여부
   showSavedToast: boolean;
 
+  // 드래그 중 cascade preview — task별 시간 오프셋(ms)
+  previewOffsets: Record<string, number>;
+
   // UI 상태
   contextMenu: ContextMenuState | null;
   taskFormModal: TaskFormModalState;
@@ -153,6 +156,10 @@ interface ScheduleActions {
   // 작업 폼 모달
   openTaskFormModal: (state: Omit<TaskFormModalState, "isOpen">) => void;
   closeTaskFormModal: () => void;
+
+  // 드래그 중 cascade preview
+  setPreviewOffsets: (offsets: Record<string, number>) => void;
+  clearPreviewOffsets: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -172,6 +179,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
+    previewOffsets: {},
     contextMenu: null,
     taskFormModal: { isOpen: false, mode: "create" },
 
@@ -403,6 +411,18 @@ export const useScheduleStore = create<ScheduleStore>()(
     closeTaskFormModal: () => {
       set((state) => {
         state.taskFormModal = { isOpen: false, mode: "create" };
+      });
+    },
+
+    setPreviewOffsets: (offsets) => {
+      set((state) => {
+        state.previewOffsets = offsets;
+      });
+    },
+
+    clearPreviewOffsets: () => {
+      set((state) => {
+        state.previewOffsets = {};
       });
     },
 

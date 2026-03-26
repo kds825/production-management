@@ -34,6 +34,9 @@ export function GanttTaskBlock({
   const openContextMenu = useScheduleStore((s) => s.openContextMenu);
   const updateTask = useScheduleStore((s) => s.updateTask);
   const isEditMode = useScheduleStore((s) => s.isEditMode);
+  const previewOffsetMs = useScheduleStore(
+    (s) => s.previewOffsets[task.id] ?? 0,
+  );
 
   const startTs =
     task.start instanceof Date
@@ -44,8 +47,15 @@ export function GanttTaskBlock({
       ? task.end.getTime()
       : new Date(task.end).getTime();
 
-  const left = timeToX(startTs, rangeStart, dayWidth);
-  const width = timeToX(endTs, rangeStart, dayWidth) - left;
+  // preview offset 적용: 드래그 중 밀려야 하는 만큼 시각적으로 이동
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const previewOffsetPx =
+    previewOffsetMs > 0 ? (previewOffsetMs / MS_PER_DAY) * dayWidth : 0;
+
+  const left = timeToX(startTs, rangeStart, dayWidth) + previewOffsetPx;
+  const width =
+    timeToX(endTs, rangeStart, dayWidth) -
+    timeToX(startTs, rangeStart, dayWidth);
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
@@ -170,6 +180,7 @@ export function GanttTaskBlock({
         top: 4,
         width: Math.max(width, 30),
         zIndex: isDragging ? 20 : 2,
+        transition: previewOffsetPx > 0 ? "left 0.15s ease-out" : "none",
       }}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
