@@ -149,7 +149,7 @@ export function GanttTaskBlock({
     userSelect: "none",
     overflow: "hidden",
     height: ROW_HEIGHT - 8,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0 : 1,
     transition: isDragging ? "none" : "box-shadow 0.15s ease",
     position: "relative",
     display: "flex",

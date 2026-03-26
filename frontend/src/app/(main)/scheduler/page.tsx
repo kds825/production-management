@@ -156,8 +156,13 @@ export default function SchedulerPage() {
       const previewEnd = previewStart + durationMs;
 
       // 같은 설비의 다른 task들에 대해 cascade offset 계산
+      // 대상: 현재 드래그 대상 설비에 있는 task + 드래그 전 설비에 있던 task 중 targetEqId와 같은 것
       const sameMachine = tasks
-        .filter((t) => t.equipment_id === targetEqId && t.id !== task.id)
+        .filter((t) => {
+          if (t.id === task.id) return false;
+          // 이미 targetEqId에 있거나, 드래그로 targetEqId에 올 예정인 것
+          return t.equipment_id === targetEqId;
+        })
         .map((t) => ({
           id: t.id,
           start:
@@ -171,16 +176,19 @@ export default function SchedulerPage() {
 
       const offsets: Record<string, number> = {};
 
-      // 드래그 중인 task의 예상 end가 다른 task의 start보다 뒤면 → 밀어야 함
+      // 드래그 중인 task의 예상 end 기준으로 겹침 계산
+      // 밀린 블록의 새 start는 previewEnd에 정확히 붙어야 함
       let pushBoundary = previewEnd;
       for (const other of sameMachine) {
         if (pushBoundary > other.start) {
+          // 밀어야 하는 양 = 드래그 블록 끝(또는 이전 밀린 블록 끝) - 이 블록 시작
           const pushMs = pushBoundary - other.start;
           offsets[other.id] = pushMs;
+          // 다음 블록의 pushBoundary = 이 블록의 새 end
           const otherDuration = other.end - other.start;
-          pushBoundary = other.start + pushMs + otherDuration;
+          pushBoundary = pushBoundary + otherDuration;
         } else {
-          break; // 더 이상 겹침 없음
+          break;
         }
       }
 
