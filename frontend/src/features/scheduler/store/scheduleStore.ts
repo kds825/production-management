@@ -167,8 +167,8 @@ export const useScheduleStore = create<ScheduleStore>()(
     unscheduledOrders: [],
     lineSpeedData: [],
     viewFilter: { filterType: "all", filterValue: [] },
-    zoomLevel: "week",
-    range: getDefaultRange(),
+    zoomLevel: "day",
+    range: getDefaultRange(3), // day 줌: ±3일 = 7일 뷰
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
