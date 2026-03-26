@@ -162,6 +162,8 @@ export function GanttTaskBlock({
     <div
       ref={setNodeRef}
       data-draggable
+      data-task-id={task.id}
+      data-equipment-id={task.equipment_id}
       style={{
         position: "absolute",
         left,

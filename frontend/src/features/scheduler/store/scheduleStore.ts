@@ -19,64 +19,52 @@ import {
   getDefaultRange,
 } from "../utils/ganttUtils";
 
+/** timestamp 추출 헬퍼 */
+function toMs(d: Date | string | number): number {
+  if (typeof d === "number") return d;
+  if (d instanceof Date) return d.getTime();
+  return new Date(d).getTime();
+}
+
 /**
  * Cascade push: 같은 설비에서 작업이 겹치면 뒤에 있는 작업을 연쇄적으로 밀어냄.
  * 기계는 동시에 하나의 작업만 처리할 수 있으므로, 겹침(overlap)이 발생하면
  * 뒤쪽 작업을 앞 작업의 end 시점으로 밀어낸다.
  *
- * @param tasks - 전체 작업 목록 (immer draft)
- * @param movedTaskId - 방금 이동/추가된 작업 ID
- * @param equipmentId - 해당 설비 ID
+ * immer draft 배열에서 안전하게 동작하도록 인덱스 기반으로 구현.
  */
 function cascadePush(
   tasks: ScheduleTask[],
-  movedTaskId: string,
+  _movedTaskId: string,
   equipmentId: string,
 ): void {
-  // 같은 설비의 작업만 필터 + 시작시간 순 정렬
-  const sameMachineTasks = tasks
-    .filter((t) => t.equipment_id === equipmentId)
-    .sort((a, b) => {
-      const aStart =
-        a.start instanceof Date
-          ? a.start.getTime()
-          : new Date(a.start).getTime();
-      const bStart =
-        b.start instanceof Date
-          ? b.start.getTime()
-          : new Date(b.start).getTime();
-      return aStart - bStart;
-    });
+  // 같은 설비의 작업 인덱스 수집 + 시작시간 기준 정렬
+  const indices: number[] = [];
+  for (let i = 0; i < tasks.length; i++) {
+    if (tasks[i].equipment_id === equipmentId) {
+      indices.push(i);
+    }
+  }
+  if (indices.length < 2) return;
 
-  if (sameMachineTasks.length < 2) return;
+  // 시작시간 기준 정렬 (인덱스 배열만 정렬, tasks 배열은 그대로)
+  indices.sort((a, b) => toMs(tasks[a].start) - toMs(tasks[b].start));
 
   // 정렬된 순서대로 순회하며 겹침 해소
-  for (let i = 0; i < sameMachineTasks.length - 1; i++) {
-    const current = sameMachineTasks[i];
-    const next = sameMachineTasks[i + 1];
+  for (let i = 0; i < indices.length - 1; i++) {
+    const curr = tasks[indices[i]];
+    const next = tasks[indices[i + 1]];
 
-    const currentEnd =
-      current.end instanceof Date
-        ? current.end.getTime()
-        : new Date(current.end).getTime();
-    const nextStart =
-      next.start instanceof Date
-        ? next.start.getTime()
-        : new Date(next.start).getTime();
-    const nextEnd =
-      next.end instanceof Date
-        ? next.end.getTime()
-        : new Date(next.end).getTime();
+    const currEnd = toMs(curr.end);
+    const nextStart = toMs(next.start);
+    const nextEnd = toMs(next.end);
 
-    // 겹침 발생: current.end > next.start
-    if (currentEnd > nextStart) {
+    // 겹침 발생: 현재 작업의 끝이 다음 작업의 시작보다 뒤에 있음
+    if (currEnd > nextStart) {
       const duration = nextEnd - nextStart;
-      // next를 current.end로 밀어냄 (duration 유지)
-      const realNext = tasks.find((t) => t.id === next.id);
-      if (realNext) {
-        realNext.start = new Date(currentEnd);
-        realNext.end = new Date(currentEnd + duration);
-      }
+      // 다음 작업을 현재 작업 끝으로 밀어냄 (duration 유지)
+      next.start = new Date(currEnd);
+      next.end = new Date(currEnd + duration);
     }
   }
 }
