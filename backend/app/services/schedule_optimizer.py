@@ -330,12 +330,18 @@ def _find_eligible_equipment(
             ):
                 continue
 
-        # SQ range filter
-        sq = float(batch.sq_mm2) if batch.sq_mm2 else None
-        if sq and eq.range_min and sq < float(eq.range_min):
-            continue
-        if sq and eq.range_max and sq > float(eq.range_max):
-            continue
+        # Range filter — 단위에 따라 다른 비교
+        # 신선: range_unit="mm" → 소선경과 비교 (SQ 비교 안함, 신선은 모든 SQ 가능)
+        # 연선/절연/시스: range_unit="SQ" → SQ로 비교
+        if eq.range_unit == "mm":
+            # 신선 설비: mm 범위는 소선경 기준. 배치에서 소선경 정보 없으면 통과시킴
+            pass  # 신선 설비는 재질만으로 필터링 (소선경 정보는 drum_lot_master에 있음)
+        else:
+            sq = float(batch.sq_mm2) if batch.sq_mm2 else None
+            if sq and eq.range_min and sq < float(eq.range_min):
+                continue
+            if sq and eq.range_max and sq > float(eq.range_max):
+                continue
 
         # Color group filter (저압시스)
         if eq.color_group:

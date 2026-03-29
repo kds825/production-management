@@ -115,6 +115,10 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
 
     match proc:
         case "연선":
+            # 고압 제품은 별도 시트
+            v = (batch.voltage or "").strip()
+            if "22.9" in v or "35" in v or "URD" in (batch.product_group or "").upper():
+                return "고압연선"
             return "연선"
         case "저압절연":
             return "B100"
