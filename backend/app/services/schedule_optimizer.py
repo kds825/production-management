@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.equipment_master import EquipmentMaster
+from app.infrastructure.models.speed_master import SpeedMaster
+from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.services.calendar_engine import calculate_end_datetime
 from app.services.audit_logger import log_decision
 

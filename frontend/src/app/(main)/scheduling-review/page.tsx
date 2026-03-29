@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import { useSchedulingReviewStore } from "@/features/scheduling-review/store/schedulingReviewStore";
 import { assignBatchNumbers } from "@/shared/utils/batchGrouping";
@@ -8,6 +8,28 @@ import { ProcessOptimizationSection } from "@/features/scheduling-review/compone
 import { BatchCalculateButton } from "@/features/scheduling-review/components/BatchCalculateButton";
 import { SchedulingResultTable } from "@/features/scheduling-review/components/SchedulingResultTable";
 import { AiInsightCard } from "@/features/scheduling-review/components/AiInsightCard";
+
+const API_BASE = "http://localhost:8000/api";
+
+/** 파이프라인 실행 레코드 (GET /api/pipeline/runs) */
+interface PipelineRun {
+  run_label: string;
+  created_at?: string;
+  status?: string;
+  warning_count?: number;
+  batch_count?: number;
+}
+
+const PROCESS_TABS = [
+  "연선",
+  "B100",
+  "A100",
+  "A120",
+  "연합",
+  "CV절연",
+  "A150시스",
+] as const;
+type ProcessTab = (typeof PROCESS_TABS)[number];
 
 const PRIMARY = "#C41230";
 
@@ -28,9 +50,72 @@ export default function SchedulingReviewPage() {
     setActiveTab,
   } = useSchedulingReviewStore();
 
+  // ── 파이프라인 런 목록 ──
+  const [runs, setRuns] = useState<PipelineRun[]>([]);
+  const [selectedRun, setSelectedRun] = useState<string>("");
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [activeProcessTab, setActiveProcessTab] = useState<ProcessTab>("연선");
+  const [excelLoading, setExcelLoading] = useState(false);
+
+  // 런 목록 로드
+  const loadRuns = useCallback(async () => {
+    setRunsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/pipeline/runs`);
+      if (res.ok) {
+        const data: PipelineRun[] = await res.json();
+        setRuns(data);
+        if (data.length > 0 && !selectedRun) {
+          setSelectedRun(data[0].run_label);
+        }
+      }
+    } catch {
+      // 연결 실패 시 조용히 처리 — 기존 기능에 영향 없음
+    } finally {
+      setRunsLoading(false);
+    }
+  }, [selectedRun]);
+
+  // Excel 다운로드
+  const handleExcelDownload = useCallback(async () => {
+    if (!selectedRun) return;
+    setExcelLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/pipeline/stage1/${encodeURIComponent(selectedRun)}/export`,
+      );
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        // Content-Disposition 헤더에서 파일명을 추출하거나 기본값 사용
+        const disposition = res.headers.get("content-disposition");
+        const match = disposition?.match(
+          /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
+        );
+        a.download =
+          match?.[1]?.replace(/['"]/g, "") ?? `schedule_${selectedRun}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // 에러 처리 생략 — 백엔드 미연결 환경 고려
+    } finally {
+      setExcelLoading(false);
+    }
+  }, [selectedRun]);
+
   useEffect(() => {
     loadFromPlanRegister();
-  }, [loadFromPlanRegister]);
+    loadRuns();
+  }, [loadFromPlanRegister, loadRuns]);
+
+  // 선택된 런의 요약 정보
+  const selectedRunInfo = useMemo(
+    () => runs.find((r) => r.run_label === selectedRun),
+    [runs, selectedRun],
+  );
 
   const yeonseoGroupCount = useMemo(
     () => assignBatchNumbers(yeonseoBatches).size,
@@ -54,7 +139,7 @@ export default function SchedulingReviewPage() {
       style={{ backgroundColor: "#FAFAFA" }}
     >
       {/* 헤더 */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center px-6 sticky top-0 z-50 shrink-0">
+      <header className="h-14 bg-white border-b border-gray-200 flex items-center px-6 sticky top-0 z-50 shrink-0 gap-4">
         <div className="flex items-center gap-3">
           <Image
             src="/kbi-group-logo.jpg"
@@ -71,13 +156,64 @@ export default function SchedulingReviewPage() {
             생산스케줄링 검토
           </h1>
         </div>
+
+        {/* 런 선택 드롭다운 */}
+        <div className="flex items-center gap-2 ml-4">
+          <label className="text-[11px] text-gray-500 whitespace-nowrap">
+            실행 버전
+          </label>
+          <select
+            value={selectedRun}
+            onChange={(e) => setSelectedRun(e.target.value)}
+            disabled={runsLoading || runs.length === 0}
+            className="text-[11px] border border-gray-200 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1"
+            style={{ minWidth: 160, fontSize: 11 }}
+          >
+            {runs.length === 0 && (
+              <option value="">{runsLoading ? "로드 중..." : "런 없음"}</option>
+            )}
+            {runs.map((r) => (
+              <option key={r.run_label} value={r.run_label}>
+                {r.run_label}
+                {r.created_at ? ` (${r.created_at.slice(0, 10)})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Excel 다운로드 버튼 — 런이 선택된 경우에만 활성화 */}
+        <button
+          onClick={handleExcelDownload}
+          disabled={!selectedRun || excelLoading}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-40"
+          style={{ backgroundColor: "#16A34A" }}
+          title={
+            selectedRun
+              ? `${selectedRun} Excel 다운로드`
+              : "런을 먼저 선택하세요"
+          }
+        >
+          {excelLoading ? (
+            <span
+              className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 12l-4-4h2.5V4h3v4H12L8 12z" />
+              <path d="M2 14h12v-2H2v2z" />
+            </svg>
+          )}
+          Excel 다운로드
+        </button>
       </header>
 
-      {/* 서머리 바 */}
+      {/* 서머리 배너 */}
       <div
-        className="sticky top-14 z-40 bg-white border-b border-gray-200 px-6 py-2.5 flex items-center gap-4"
+        className="sticky top-14 z-40 bg-white border-b border-gray-200 px-6 py-2.5 flex items-center gap-4 flex-wrap"
         style={{ minHeight: 44 }}
       >
+        {/* 배치 카운트 */}
         <div className="flex items-center gap-2">
           <span
             className="text-[11px] font-medium px-2 py-1 rounded"
@@ -98,6 +234,39 @@ export default function SchedulingReviewPage() {
             시스 {sheatGroupCount}배치
           </span>
         </div>
+
+        <div className="h-4 w-px bg-gray-200" />
+
+        {/* 전체 배치 수 */}
+        <span className="text-[11px] text-gray-500">
+          총{" "}
+          <span style={{ color: "#111827", fontWeight: 600 }}>
+            {selectedRunInfo?.batch_count ?? totalBatches}
+          </span>
+          건
+        </span>
+
+        {/* 경고 수 (런 정보에 있을 때만 표시) */}
+        {selectedRunInfo?.warning_count !== undefined &&
+          selectedRunInfo.warning_count > 0 && (
+            <>
+              <div className="h-4 w-px bg-gray-200" />
+              <span
+                className="text-[11px] font-medium flex items-center gap-1"
+                style={{ color: "#D97706" }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M8 1L1 14h14L8 1zm0 2.5l5.5 9.5h-11L8 3.5zM7.25 7v3.5h1.5V7h-1.5zm0 4.5v1.5h1.5v-1.5h-1.5z" />
+                </svg>
+                경고 {selectedRunInfo.warning_count}건
+              </span>
+            </>
+          )}
 
         <div className="h-4 w-px bg-gray-200" />
 
@@ -126,35 +295,107 @@ export default function SchedulingReviewPage() {
         </span>
       </div>
 
+      {/* 공정별 탭 */}
+      <div
+        className="sticky bg-white border-b border-gray-200 px-6 flex items-center gap-0 shrink-0 overflow-x-auto"
+        style={{ top: "calc(3.5rem + 44px)", zIndex: 39 }}
+      >
+        {PROCESS_TABS.map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveProcessTab(tab)}
+            className="px-4 py-2.5 text-[11px] font-medium whitespace-nowrap transition-colors border-b-2"
+            style={{
+              borderBottomColor:
+                activeProcessTab === tab ? PRIMARY : "transparent",
+              color: activeProcessTab === tab ? PRIMARY : "#6B7280",
+            }}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
       {/* 본문 */}
       <div className="flex-1 overflow-auto px-6 py-6 flex flex-col gap-0">
-        {/* Section 1: 연선 생산 최적화 */}
-        <ProcessOptimizationSection
-          sectionNumber={1}
-          title="연선 생산 최적화"
-          processGroup="연선"
-          batches={yeonseoBatches}
-          wipItems={yeonaeoWip}
-          wipTitle="연선 재공(WIP) 재고"
-        />
+        {/* 공정 탭 필터 메시지 — 연선/절연/시스 이외 탭 선택 시 안내 */}
+        {activeProcessTab !== "연선" &&
+          activeProcessTab !== "B100" &&
+          activeProcessTab !== "A100" &&
+          activeProcessTab !== "A120" && (
+            <div
+              className="mb-4 px-4 py-3 rounded-lg text-[11px] text-gray-500 border border-gray-100"
+              style={{ backgroundColor: "#F9FAFB" }}
+            >
+              <span className="font-medium" style={{ color: "#4A2C2A" }}>
+                {activeProcessTab}
+              </span>{" "}
+              공정 데이터는 런 실행 결과에서 확인하세요. 아래는 전체 배치
+              현황입니다.
+            </div>
+          )}
 
-        {/* Section 2: 절연 생산 최적화 */}
-        <ProcessOptimizationSection
-          sectionNumber={2}
-          title="절연 생산 최적화"
-          processGroup="절연"
-          batches={insulationBatches}
-          wipItems={insulationWip}
-          wipTitle="절연 재공(WIP) 재고"
-        />
+        {/* Section 1: 연선 생산 최적화 — 연선 탭 또는 전체 표시 */}
+        {(activeProcessTab === "연선" ||
+          activeProcessTab === "B100" ||
+          activeProcessTab === "A100" ||
+          activeProcessTab === "A120") && (
+          <ProcessOptimizationSection
+            sectionNumber={1}
+            title="연선 생산 최적화"
+            processGroup="연선"
+            batches={yeonseoBatches}
+            wipItems={yeonaeoWip}
+            wipTitle="연선 재공(WIP) 재고"
+          />
+        )}
 
-        {/* Section 3: 시스 최적화 */}
-        <ProcessOptimizationSection
-          sectionNumber={3}
-          title="시스 최적화"
-          processGroup="시스"
-          batches={sheatBatches}
-        />
+        {/* Section 2: 절연 생산 최적화 — 절연 계열 탭 또는 전체 표시 */}
+        {(activeProcessTab === "연합" || activeProcessTab === "CV절연") && (
+          <ProcessOptimizationSection
+            sectionNumber={2}
+            title="절연 생산 최적화"
+            processGroup="절연"
+            batches={insulationBatches}
+            wipItems={insulationWip}
+            wipTitle="절연 재공(WIP) 재고"
+          />
+        )}
+
+        {/* 비연선/비절연 탭: 전체 섹션 표시 */}
+        {activeProcessTab === "A150시스" && (
+          <>
+            <ProcessOptimizationSection
+              sectionNumber={2}
+              title="절연 생산 최적화"
+              processGroup="절연"
+              batches={insulationBatches}
+              wipItems={insulationWip}
+              wipTitle="절연 재공(WIP) 재고"
+            />
+            <ProcessOptimizationSection
+              sectionNumber={3}
+              title="시스 최적화"
+              processGroup="시스"
+              batches={sheatBatches}
+            />
+          </>
+        )}
+
+        {/* Section 3: 시스 최적화 — 연선/절연 탭에서도 표시 */}
+        {(activeProcessTab === "연선" ||
+          activeProcessTab === "B100" ||
+          activeProcessTab === "A100" ||
+          activeProcessTab === "A120" ||
+          activeProcessTab === "연합" ||
+          activeProcessTab === "CV절연") && (
+          <ProcessOptimizationSection
+            sectionNumber={3}
+            title="시스 최적화"
+            processGroup="시스"
+            batches={sheatBatches}
+          />
+        )}
 
         {/* 배치 계산 버튼 */}
         <BatchCalculateButton

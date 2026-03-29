@@ -111,6 +111,20 @@ export function GanttTaskBlock({
     [isEditMode, startTs, endTs, dayWidth, task.id, updateTask],
   );
 
+  const selectTask = useScheduleStore((s) => s.selectTask);
+  const selectedTaskId = useScheduleStore((s) => s.selectedTaskId);
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // 리사이즈 핸들에서 발생한 이벤트는 무시
+      if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
+      e.stopPropagation();
+      // 이미 선택된 경우 선택 해제, 아니면 선택
+      selectTask(selectedTaskId === task.id ? null : task.id);
+    },
+    [selectTask, selectedTaskId, task.id],
+  );
+
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       if (!isEditMode) return;
@@ -168,6 +182,8 @@ export function GanttTaskBlock({
 
   const volumeLabel = `${task.volume_m.toLocaleString()}m`;
 
+  const isSelected = selectedTaskId === task.id;
+
   return (
     <div
       ref={setNodeRef}
@@ -179,9 +195,13 @@ export function GanttTaskBlock({
         left,
         top: 4,
         width: Math.max(width, 30),
-        zIndex: isDragging ? 20 : 2,
+        zIndex: isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
+        outline: isSelected ? "2px solid #FBBF24" : "none",
+        outlineOffset: 1,
+        borderRadius: 4,
       }}
+      onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
     >
@@ -189,6 +209,7 @@ export function GanttTaskBlock({
         {/* 좌측 리사이즈 핸들 — dnd 없음 */}
         {isEditMode && (
           <div
+            data-resize-handle="left"
             style={{
               width: HANDLE_W,
               flexShrink: 0,
@@ -238,6 +259,7 @@ export function GanttTaskBlock({
         {/* 우측 리사이즈 핸들 — dnd 없음 */}
         {isEditMode && (
           <div
+            data-resize-handle="right"
             style={{
               width: HANDLE_W,
               flexShrink: 0,
