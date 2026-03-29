@@ -4,9 +4,21 @@
 - 수주 1건은 라우팅에 정의된 공정 수만큼 ProductionBatch 행으로 펼쳐진다.
 - 모든 마스터 데이터를 함수 진입 시점에 메모리로 로드해 N+1 쿼리를 원천 차단한다.
 - 정렬은 DB flush 전에 Python 레벨에서 수행해 INSERT 순서가 곧 작업 순서가 된다.
+
+적용 제약 조건:
+  2-2  외주 자동분류: SQ<=10 또는 product_group에 '고내화' 포함 시 외주 처리
+  2-3  틀단위 분할: total_length_m > lot_stranding 이면 배치를 복수로 분할
+  3-4  잔량 흑색 소진: total_length_m < 200m 배치는 sheath_color='흑' 강제
+  5-2  연선방식 구분: 정렬 키에 stranding_type 추가 (압축/원형/수밀 혼합 방지)
+  5-3  다심 우선 완성: 납기 3일 이내 차이 시 core_count>1 우선
+  7-1  불량 재작업 버퍼: total_length_m에 defect_buffer_pct(기본 5%) 가산
+  10-4 전압별 드럼 분류: 정렬 키에 voltage 추가
+  10-5 4심 계산법: core_count==4 시 product_type 키를 '4C'로 사용
 """
 
+import math
 import re
+from datetime import date
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.sales_order import SalesOrder
@@ -75,6 +87,30 @@ def create_batches(run_label: str, db: Session) -> dict:
     # sample_extra: 아이마켓코리아 등 샘플 요청 고객 추가 여척 10M
     sample_extra: float = float(extra_params.get("sample_extra_m", 10))
 
+    # ── 불량 재작업 버퍼 파라미터 로드 (7-1) ────────────────────────────────
+    defect_cfg = (
+        db.query(ConstraintConfig)
+        .filter(ConstraintConfig.constraint_id == "7-1")
+        .first()
+    )
+    defect_params: dict = (
+        defect_cfg.params_json if defect_cfg and defect_cfg.params_json else {}
+    )
+    # defect_buffer_pct: 불량 재작업 대비 생산 길이 가산 비율, 기본값 5%
+    defect_buffer_pct: float = float(defect_params.get("defect_buffer_pct", 0.05))
+
+    # ── 잔량 흑색 소진 임계값 파라미터 로드 (3-4) ───────────────────────────
+    remnant_cfg = (
+        db.query(ConstraintConfig)
+        .filter(ConstraintConfig.constraint_id == "3-4")
+        .first()
+    )
+    remnant_params: dict = (
+        remnant_cfg.params_json if remnant_cfg and remnant_cfg.params_json else {}
+    )
+    # remnant_threshold_m: 이 길이 미만이면 잔량 흑색 소진 처리, 기본값 200m
+    remnant_threshold_m: float = float(remnant_params.get("remnant_threshold_m", 200))
+
     # ── 선속 룩업 테이블 빌드 ────────────────────────────────────────────────
     # 키: (equipment_code, product_type, cross_section_float) → SpeedMaster
     speed_lookup: dict[tuple, SpeedMaster] = {}
@@ -94,6 +130,16 @@ def create_batches(run_label: str, db: Session) -> dict:
         if sq is None:
             result["warnings"].append(
                 f"수주 {order_ref}: SQ 파싱 실패 (spec_raw={order.spec_raw!r})"
+            )
+            continue
+
+        # ── 외주 자동분류 (2-2) ─────────────────────────────────────────────
+        # ERP 플래그와 무관하게 SQ 기준 또는 고내화 제품군이면 외주로 처리한다.
+        # SQ <= 10: 소단면적 특수 공정은 사내 설비로 생산 불가
+        # 고내화: 고내화 케이블은 전문 외주 업체 전용 품목
+        if sq <= 10 or "고내화" in (order.product_group or ""):
+            result["warnings"].append(
+                f"수주 {order_ref}: 외주 자동분류 (SQ={sq}, 제품군={order.product_group})"
             )
             continue
 
@@ -124,6 +170,11 @@ def create_batches(run_label: str, db: Session) -> dict:
             )
             continue
 
+        # ── 불량 재작업 버퍼 가산 (7-1) ─────────────────────────────────────
+        # 불량 발생 시 재작업 물량을 별도 발주하지 않도록 생산 수량을 선제적으로 늘린다.
+        # total_qty에 버퍼를 포함시켜 이후 모든 계산(여척, 선속 등)에 일관 적용된다.
+        total_qty = total_qty * (1.0 + defect_buffer_pct)
+
         drum_length: float = float(order.drum_length_m or total_qty)
         drum_count: int = int(order.drum_count or 1)
         core_count: int = int(order.core_count or 1)
@@ -141,7 +192,28 @@ def create_batches(run_label: str, db: Session) -> dict:
             item.stranding_type if item and item.stranding_type else "압축"
         )
 
-        # 공정별 배치 생성
+        # ── 틀단위 분할 계산 (2-3) ───────────────────────────────────────────
+        # drum_lot_master의 lot_stranding(연선 틀단위 m)을 기준으로 분할 틀 수를 계산.
+        # lot_stranding 정보가 없으면 분할하지 않고 단일 배치로 처리한다.
+        drum_lot = drum_lots.get(float(sq))
+        lot_stranding: float | None = (
+            float(drum_lot.lot_stranding)
+            if drum_lot and drum_lot.lot_stranding is not None
+            else None
+        )
+
+        if lot_stranding and total_qty > lot_stranding:
+            # floor(total / lot_size) 개의 풀 배치 + 나머지 1개 (나머지 > 0이면)
+            full_lots = math.floor(total_qty / lot_stranding)
+            remainder = total_qty - full_lots * lot_stranding
+            lot_lengths: list[float] = [lot_stranding] * full_lots
+            if remainder > 0:
+                lot_lengths.append(remainder)
+        else:
+            # 분할 불필요 — 단일 틀로 처리
+            lot_lengths = [total_qty]
+
+        # 공정별 배치 생성 (틀 분할 포함)
         for batch_seq, process_name in enumerate(processes, start=1):
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
@@ -155,57 +227,93 @@ def create_batches(run_label: str, db: Session) -> dict:
                 else 0.0
             )
 
-            # 유효 길이: 총 수량 + (여척 × 심선수)
-            # 여척은 색상/컴파운드 전환 낭비분이므로 심선수에 비례한다
-            extra_total: float = extra * core_count
-            effective_length: float = total_qty + extra_total
+            for lot_idx, lot_length in enumerate(lot_lengths, start=1):
+                # 유효 길이: 틀 수량 + (여척 × 심선수)
+                # 여척은 색상/컴파운드 전환 낭비분이므로 심선수에 비례한다
+                extra_total: float = extra * core_count
+                effective_length: float = lot_length + extra_total
 
-            duration_min: float | None = (
-                effective_length / line_speed if line_speed else None
+                duration_min: float | None = (
+                    effective_length / line_speed if line_speed else None
+                )
+
+                # 틀단위 분할 시 remarks에 틀 번호 기입 (틀1, 틀2, ...)
+                # 단일 틀이면 remarks를 비워 불필요한 노이즈를 방지한다
+                remarks: str | None = f"틀{lot_idx}" if len(lot_lengths) > 1 else None
+
+                batch = ProductionBatch(
+                    run_label=run_label,
+                    sales_order_id=order.order_id,
+                    sales_order_line=order.order_line,
+                    item_code=item.item_code if item else None,
+                    routing_code=routing_code,
+                    process_name=process_name,
+                    batch_seq=batch_seq,
+                    drum_length_m=drum_length,
+                    drum_count=drum_count,
+                    total_length_m=lot_length,
+                    extra_length_m=extra_total,
+                    sq_mm2=sq,
+                    core_count=core_count,
+                    core_colors=order.core_colors,
+                    sheath_color=order.sheath_color,
+                    customer_name=order.customer_name,
+                    due_date=order.due_date,
+                    customer_priority=priority,
+                    line_speed_mpm=line_speed,
+                    setup_time_min=setup_time,
+                    estimated_duration_min=duration_min,
+                    status="planned",
+                    product_group=order.product_group,
+                    voltage=order.voltage,
+                    conductor_material=conductor_material,
+                    stranding_type=stranding_type,
+                    remarks=remarks,
+                    # equipment_code는 Stage 2 스케줄링 단계에서 설비 배정 후 기입
+                    equipment_code=None,
+                )
+                batches.append(batch)
+
+    # ── 잔량 흑색 소진 후처리 (3-4) ─────────────────────────────────────────
+    # 배치 생성이 모두 끝난 후에 길이 기준으로 일괄 처리한다.
+    # 잔량(짧은 배치)의 외피 색상을 흑색으로 맞춰 흑색 원재료 재고를 우선 소진한다.
+    for b in batches:
+        batch_len = float(b.total_length_m) if b.total_length_m is not None else 0.0
+        if 0 < batch_len < remnant_threshold_m:
+            b.sheath_color = "흑"
+            existing_remarks = b.remarks or ""
+            b.remarks = (
+                f"{existing_remarks} 잔량흑색소진".strip()
+                if existing_remarks
+                else "잔량흑색소진"
             )
 
-            batch = ProductionBatch(
-                run_label=run_label,
-                sales_order_id=order.order_id,
-                sales_order_line=order.order_line,
-                item_code=item.item_code if item else None,
-                routing_code=routing_code,
-                process_name=process_name,
-                batch_seq=batch_seq,
-                drum_length_m=drum_length,
-                drum_count=drum_count,
-                total_length_m=total_qty,
-                extra_length_m=extra_total,
-                sq_mm2=sq,
-                core_count=core_count,
-                core_colors=order.core_colors,
-                sheath_color=order.sheath_color,
-                customer_name=order.customer_name,
-                due_date=order.due_date,
-                customer_priority=priority,
-                line_speed_mpm=line_speed,
-                setup_time_min=setup_time,
-                estimated_duration_min=duration_min,
-                status="planned",
-                product_group=order.product_group,
-                voltage=order.voltage,
-                conductor_material=conductor_material,
-                stranding_type=stranding_type,
-                # equipment_code는 Stage 2 스케줄링 단계에서 설비 배정 후 기입
-                equipment_code=None,
-            )
-            batches.append(batch)
+    # ── 정렬: 공정 → 전압 → 연선방식 → SQ 내림차순 → 다심 우선 → 색상 그루핑 ──
+    # 5-2: stranding_type을 키에 추가 — 연선방식이 다른 배치끼리 섞이지 않도록 격리
+    # 5-3: due_date가 비슷한(3일 이내) 배치 사이에서 다심(core_count>1)을 우선 처리.
+    #       Python sort는 stable하므로 같은 날짜 bucket 안에서 0/1 키로 단심을 뒤로 민다.
+    # 10-4: voltage를 키에 추가 — 전압이 다른 배치끼리 드럼 혼용을 방지
+    today: date = date.today()
 
-    # ── 정렬: 공정 순서 → SQ 내림차순 → 색상 그루핑 ──────────────────────────
-    # 동일 공정 내에서 SQ가 같은 것끼리 모이고, 그 안에서 색상 전환을 최소화한다.
-    batches.sort(
-        key=lambda b: (
-            _process_order(b.process_name),
-            -(b.sq_mm2 or 0),
-            b.sheath_color or "",
+    def _sort_key(b: ProductionBatch) -> tuple:
+        # 납기 bucket: 오늘 기준 3일 단위로 반올림 → 같은 bucket 안에서 다심 우선 적용
+        due = b.due_date or date.max
+        days_until_due = (due - today).days if due != date.max else 9999
+        due_bucket = math.floor(days_until_due / 3)  # 3일 단위 버킷
+        # core_count>1이면 0(우선), 단심이면 1(후순위) — bucket 내 다심 우선 완성 (5-3)
+        multi_core_penalty = 0 if (b.core_count or 1) > 1 else 1
+        return (
+            _process_order(b.process_name),  # 공정 순서
+            b.voltage or "",  # 전압별 드럼 분류 (10-4)
+            b.stranding_type or "",  # 연선방식 구분 (5-2)
+            -(b.sq_mm2 or 0),  # SQ 내림차순
+            due_bucket,  # 납기 버킷 (빠른 납기 우선)
+            multi_core_penalty,  # 다심 우선 완성 (5-3)
+            b.sheath_color or "",  # 색상 전환 최소화
             b.core_colors or "",
         )
-    )
+
+    batches.sort(key=_sort_key)
 
     # ── DB 기록 및 집계 ───────────────────────────────────────────────────────
     db.add_all(batches)
@@ -365,9 +473,12 @@ def _find_speed(
     elif process_name == "저압절연":
         product_type = "저압절연"
     elif process_name in ("저압시스", "고압시스"):
-        # 다심 4C 초과는 4C 규격으로 적용 (테이블 한계)
-        nc = min(core_count, 4)
-        product_type = f"TFR-CV {nc}C"
+        # 10-5: core_count == 4 일 때 SpeedMaster 키를 "4C"로 직접 조회한다.
+        # 4C 초과 심선수도 현장 기준 4C 테이블을 그대로 적용한다.
+        if core_count >= 4:
+            product_type = "4C"
+        else:
+            product_type = f"TFR-CV {core_count}C"
     else:
         product_type = None
 

@@ -1,5 +1,7 @@
 """28개 제약조건 검증 엔진 — 스케줄링 결과 사후 검증"""
 
+from datetime import timedelta
+
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -28,7 +30,8 @@ def validate_all(run_label: str, db: Session) -> list[dict]:
 
     constraint_map = {c.constraint_id: c for c in constraints}
 
-    # Run each enabled constraint checker
+    # 체커 함수 시그니처: (tasks, batches, equipment, config) → list[dict]
+    # db 접근이 필요한 체커는 클로저로 db 캡처
     checkers = {
         "1-1": _check_priority_order,
         "1-2": _check_due_type,
@@ -37,7 +40,15 @@ def validate_all(run_label: str, db: Session) -> list[dict]:
         "5-1": _check_sq_range,
         "6-1": _check_safety_education,
         "6-2": _check_friday_hours,
+        "6-3": lambda t, b, e, c: _check_absence_hours(t, b, e, c, db),
+        "6-4": lambda t, b, e, c: _check_holiday(t, b, e, c, db),
+        "7-1": _check_defect_buffer,
+        "7-2": lambda t, b, e, c: _check_equipment_utilization(t, b, e, c, db),
+        "8-1": _check_material_availability,
+        "8-2": _check_procurement_lead_time,
+        "8-3": _check_raw_material_availability,
         "9-1": _check_precedence,
+        "9-2": _check_gc_routing,
         "10-2": _check_material_separation,
     }
 
@@ -134,7 +145,6 @@ def _check_priority_order(tasks, batches, equipment, config) -> list[dict]:
 
 def _check_due_type(tasks, batches, equipment, config) -> list[dict]:
     """도착기준 고객은 운송일 1일 차감하여 실질 납기 체크"""
-    from datetime import timedelta
 
     violations = []
     transport_days = 1  # default

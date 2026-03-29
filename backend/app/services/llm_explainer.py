@@ -2,10 +2,21 @@
 
 import json
 import os
+from pathlib import Path
 from typing import Optional
 
 import httpx
 from sqlalchemy.orm import Session
+
+# .env 파일에서 환경변수 로드 (서버 프로세스에서도 동작하도록)
+_env_path = Path(__file__).resolve().parents[2] / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 from app.infrastructure.models.audit_log import AuditLog
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -88,7 +99,7 @@ def explain_decision_sync(
     db: Session,
     task_id: Optional[int] = None,
 ) -> dict:
-    """동기 버전 — LLM 없이 템플릿 기반 설명"""
+    """동기 버전 — LLM 동기 호출 시도 후 실패 시 템플릿 폴백"""
     batch = (
         db.query(ProductionBatch).filter(ProductionBatch.batch_id == batch_id).first()
     )
@@ -110,6 +121,12 @@ def explain_decision_sync(
     if task_id:
         query = query.filter(AuditLog.task_id == task_id)
     logs = query.order_by(AuditLog.created_at.asc()).all()
+
+    # Try sync LLM call first
+    context = _build_context(batch, equipment, logs)
+    llm_result = _call_llm_sync(context)
+    if llm_result:
+        return {"explanation": llm_result, "source": "llm", "batch_id": batch_id}
 
     explanation = _template_explanation(batch, equipment, logs)
     return {"explanation": explanation, "source": "template", "batch_id": batch_id}
@@ -232,6 +249,65 @@ async def _call_anthropic(context: str) -> Optional[str]:
                 return data["content"][0]["text"]
     except Exception:
         pass
+    return None
+
+
+def _call_llm_sync(context: str) -> Optional[str]:
+    """동기 LLM 호출 — httpx 동기 클라이언트 사용"""
+    if LLM_PROVIDER == "openai" and OPENAI_API_KEY:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENAI_MODEL,
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}",
+                            },
+                        ],
+                        "max_completion_tokens": 500,
+                        "temperature": 0.3,
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+        except Exception:
+            pass
+    elif LLM_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    ANTHROPIC_API_URL,
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": ANTHROPIC_MODEL,
+                        "max_tokens": 500,
+                        "system": SYSTEM_PROMPT,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}",
+                            }
+                        ],
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["content"][0]["text"]
+        except Exception:
+            pass
     return None
 
 
