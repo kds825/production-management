@@ -113,7 +113,7 @@ export default function SchedulerPage() {
         const text = await res.text();
         setAutoScheduleResult(`오류: ${res.status} — ${text.slice(0, 120)}`);
       }
-    } catch (e) {
+    } catch {
       setAutoScheduleResult(
         `연결 실패: 백엔드 서버(localhost:8000)를 확인하세요.`,
       );
@@ -157,6 +157,17 @@ export default function SchedulerPage() {
         }));
       });
   }, []);
+
+  // selectedTaskId 변경 시 감사 패널 자동 열기
+  const selectedTaskId = useScheduleStore((s) => s.selectedTaskId);
+  const selectTask = useScheduleStore((s) => s.selectTask);
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setAuditPanel((prev) => ({ ...prev, open: false }));
+      return;
+    }
+    handleTaskClick(selectedTaskId);
+  }, [selectedTaskId, handleTaskClick]);
 
   const [activeDrag, setActiveDrag] = useState<ActiveDragItem | null>(null);
 
@@ -665,6 +676,90 @@ export default function SchedulerPage() {
           </div>,
           document.body,
         )}
+
+      {/* 감사 트레일 패널 — 태스크 블록 클릭 시 하단에 표시 */}
+      {auditPanel.open && (
+        <div
+          className="shrink-0 border-t border-gray-200 bg-white"
+          style={{ maxHeight: 220, overflowY: "auto" }}
+        >
+          {/* 패널 헤더 */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <span className="text-[11px] font-semibold text-gray-700">
+              AI 스케줄링 근거
+              {auditPanel.batchId && (
+                <span className="ml-2 text-gray-400 font-normal">
+                  — {auditPanel.batchId}
+                </span>
+              )}
+            </span>
+            <button
+              onClick={() => {
+                setAuditPanel((prev) => ({ ...prev, open: false }));
+                selectTask(null);
+              }}
+              className="text-gray-400 hover:text-gray-600 text-xs leading-none"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 패널 본문 */}
+          <div className="px-4 py-3">
+            {auditPanel.loading && (
+              <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                <span
+                  className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+                AI 설명 로드 중...
+              </div>
+            )}
+            {auditPanel.error && !auditPanel.loading && (
+              <p className="text-[11px] text-red-500">{auditPanel.error}</p>
+            )}
+            {auditPanel.data && !auditPanel.loading && (
+              <div className="flex flex-col gap-2">
+                {(auditPanel.data.explanation || auditPanel.data.reasoning) && (
+                  <p className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap">
+                    {auditPanel.data.explanation ?? auditPanel.data.reasoning}
+                  </p>
+                )}
+                {auditPanel.data.scheduled_at && (
+                  <p className="text-[10px] text-gray-400">
+                    배정 시각:{" "}
+                    {new Date(auditPanel.data.scheduled_at).toLocaleString(
+                      "ko-KR",
+                    )}
+                  </p>
+                )}
+                {auditPanel.data.changed_by && (
+                  <p className="text-[10px] text-gray-400">
+                    변경자: {auditPanel.data.changed_by}
+                  </p>
+                )}
+                {/* 나머지 필드를 key-value로 표시 */}
+                {Object.entries(auditPanel.data)
+                  .filter(
+                    ([k]) =>
+                      ![
+                        "batch_id",
+                        "explanation",
+                        "reasoning",
+                        "scheduled_at",
+                        "changed_by",
+                      ].includes(k),
+                  )
+                  .map(([k, v]) => (
+                    <p key={k} className="text-[10px] text-gray-500">
+                      <span className="font-medium">{k}</span>: {String(v)}
+                    </p>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 전역 오버레이 UI */}
       <ContextMenu />
