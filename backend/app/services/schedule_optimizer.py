@@ -334,10 +334,17 @@ def _find_eligible_equipment(
         # 신선: range_unit="mm" → 소선경과 비교 (SQ 비교 안함, 신선은 모든 SQ 가능)
         # 연합/T/P: range_unit="Ø" → 외경 기준 (배치에 외경 정보 없으므로 SQ 비교 안함)
         # 연선/절연/시스: range_unit="SQ" → SQ로 비교
-        if eq.range_unit in ("mm", "Ø"):
-            # mm(신선): 소선경 기준, Ø(연합/T/P): 외경 기준
-            # 두 경우 모두 배치에 해당 치수 정보가 없으므로 재질·공정명으로만 필터링
+        if eq.range_unit == "mm":
+            # 신선: 소선경 기준 — 배치에 소선경 정보 없으므로 재질로만 필터링
             pass
+        elif eq.range_unit == "Ø":
+            # 연합/T/P/시스: 외경(Ø) 기준 — SQ에서 근사 외경으로 변환 후 비교
+            sq = float(batch.sq_mm2) if batch.sq_mm2 else None
+            if sq and eq.range_max:
+                # SQ → 근사 외경(mm) 변환: Ø ≈ sqrt(SQ) * 1.5 + 5 (단심 기준 경험식)
+                approx_od = (sq**0.5) * 1.5 + 5
+                if approx_od > float(eq.range_max):
+                    continue
         else:
             sq = float(batch.sq_mm2) if batch.sq_mm2 else None
             if sq and eq.range_min and sq < float(eq.range_min):
