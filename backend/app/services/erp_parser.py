@@ -117,9 +117,9 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
 
     # ── 진행/대기 중복 제거 ─────────────────────────────────────────────────
     # ERP에 같은 수주가 진행과 대기에 동시 등장하면 대기 쪽을 삭제 (진행 우선).
-    # 판별: (order_id, spec_raw, sheath_color, drum_length_m, ordered_qty_m) 동일.
     from collections import defaultdict
 
+    db.flush()  # dedup 쿼리 전에 INSERT를 DB에 반영해야 조회 가능
     all_orders = db.query(SalesOrder).filter(SalesOrder.run_label == run_label).all()
     key_status: defaultdict[tuple, list] = defaultdict(list)
     for o in all_orders:
