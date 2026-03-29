@@ -8,6 +8,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
+from app.infrastructure.models.sales_order import SalesOrder
 
 
 # Visible columns rendered in the sheet
@@ -24,6 +25,18 @@ VISIBLE_COLS = [
 ]
 # Hidden columns appended after visible ones (preserved for downstream use)
 HIDDEN_COLS = ["수주번호", "batch_id", "단가", "CU/AL량", "상태", "재공매칭"]
+
+# Columns for 진행/대기 sheets (sales order raw view)
+STATUS_SHEET_COLS = [
+    "품종",
+    "규격",
+    "색상",
+    "거래처",
+    "납기",
+    "조장",
+    "개수",
+    "수량",
+]
 
 # Preferred sheet creation order
 _SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시스"]
@@ -46,12 +59,20 @@ _CENTER = Alignment(horizontal="center", vertical="center")
 # Column widths (index-aligned to VISIBLE_COLS + HIDDEN_COLS)
 _COL_WIDTHS = [15, 22, 8, 18, 12, 10, 8, 12, 25, 14, 10, 10, 10, 8, 10]
 
+# Column widths for 진행/대기 sheets (aligned to STATUS_SHEET_COLS)
+_STATUS_COL_WIDTHS = [15, 22, 8, 18, 12, 10, 8, 12]
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
 def export_plan(run_label: str, db: Session) -> BytesIO:
     """production_batch 데이터를 공정별 시트로 구성한 Excel 파일 반환.
+
+    시트 구성:
+      1. 진행  — 수주 상태가 "진행"인 sales_order 원본
+      2. 대기  — 수주 상태가 "대기"인 sales_order 원본
+      3~N. 공정별 배치 시트 (연선, B100, A100, A120, 연합, CV절연, A150시스 …)
 
     Args:
         run_label: 계획 실행 식별자 (pipeline에서 생성한 타임스탬프 문자열)
@@ -77,10 +98,24 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     if not batches:
         raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다.")
 
+    # 진행/대기 수주 데이터 조회
+    sales_orders = (
+        db.query(SalesOrder)
+        .filter(SalesOrder.run_label == run_label)
+        .order_by(SalesOrder.due_date, SalesOrder.order_id)
+        .all()
+    )
+
     wb = Workbook()
     wb.remove(wb.active)  # 기본 Sheet1 제거
 
-    # process_name 기준으로 배치를 시트별 버킷에 분류
+    # ── 앞쪽에 진행/대기 시트 추가 ───────────────────────────────────────────
+    for status_label in ("진행", "대기"):
+        filtered = [so for so in sales_orders if so.order_status == status_label]
+        ws = wb.create_sheet(title=status_label)
+        _write_status_sheet(ws, filtered)
+
+    # ── process_name 기준으로 배치를 시트별 버킷에 분류 ─────────────────────
     sheet_data: dict[str, list[ProductionBatch]] = {}
     for batch in batches:
         sname = _resolve_sheet_name(batch)
@@ -139,6 +174,37 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
             return proc
 
 
+def _write_status_sheet(ws, orders: list) -> None:
+    """진행/대기 시트: 수주 원본 데이터를 컬럼별로 출력한다."""
+    _write_header(ws, STATUS_SHEET_COLS)
+    _apply_col_widths_list(ws, _STATUS_COL_WIDTHS)
+
+    ws.freeze_panes = "A2"
+    last_letter = _col_letter(len(STATUS_SHEET_COLS))
+    ws.auto_filter.ref = f"A1:{last_letter}1"
+
+    for row_num, so in enumerate(orders, start=2):
+        due_str = (
+            so.due_date.strftime("%Y%m%d")
+            if isinstance(so.due_date, date)
+            else str(so.due_date or "")
+        )
+        color_val = so.sheath_color or so.core_colors or ""
+        values = [
+            so.product_group or "",
+            so.spec_raw or "",
+            color_val,
+            so.customer_name or "",
+            due_str,
+            so.drum_length_m,
+            so.drum_count,
+            so.ordered_qty_m,
+        ]
+        for col_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell.border = _THIN_BORDER
+
+
 def _write_sheet(ws, batches: list[ProductionBatch]) -> None:
     """단일 시트에 헤더 → 데이터 행(SQ 그룹 소계 포함) → 서식 적용."""
     all_cols = VISIBLE_COLS + HIDDEN_COLS
@@ -165,10 +231,15 @@ def _write_sheet(ws, batches: list[ProductionBatch]) -> None:
             sq_batch_count = 0
 
         current_sq = sq
-        sq_total_m += float(batch.total_length_m or 0)
-        sq_batch_count += 1
 
-        row_num = _write_data_row(ws, row_num, batch, all_cols)
+        # 멀티코어 배치는 색상별로 행 분리
+        color_rows = _expand_color_rows(batch)
+        for color_label, length_m in color_rows:
+            sq_total_m += length_m
+            sq_batch_count += 1
+            row_num = _write_data_row(
+                ws, row_num, batch, all_cols, color_label, length_m
+            )
 
     # 마지막 그룹 소계
     if current_sq is not None:
@@ -183,6 +254,82 @@ def _write_sheet(ws, batches: list[ProductionBatch]) -> None:
 # ── Row-level helpers ─────────────────────────────────────────────────────────
 
 
+def _expand_color_rows(batch: ProductionBatch) -> list[tuple[str, float]]:
+    """배치를 색상별 (색상 레이블, 길이) 목록으로 변환한다.
+
+    멀티코어(core_count > 1)이고 core_colors에 복수 색상이 있으면
+    총길이를 색상 수로 균등 분배하여 행을 분리한다.
+    싱글코어 또는 색상 정보가 없으면 단일 행으로 반환한다.
+    """
+    core_count = batch.core_count or 1
+    total_m = float(batch.total_length_m or 0)
+
+    # 단일 코어는 분리 불필요
+    if core_count <= 1:
+        color = batch.sheath_color or batch.core_colors or ""
+        return [(color, total_m)]
+
+    # core_colors 파싱 — "갈/흑/회" 또는 "갈,흑,회" 형식 지원
+    raw_colors = batch.core_colors or ""
+    if "/" in raw_colors:
+        colors = [c.strip() for c in raw_colors.split("/") if c.strip()]
+    elif "," in raw_colors:
+        colors = [c.strip() for c in raw_colors.split(",") if c.strip()]
+    else:
+        # 파싱 불가 — 단일 행으로 fallback
+        color = batch.sheath_color or raw_colors or ""
+        return [(color, total_m)]
+
+    if not colors:
+        color = batch.sheath_color or raw_colors or ""
+        return [(color, total_m)]
+
+    # 총길이를 색상 수로 균등 분배 (소수점 버림, 마지막 행에서 나머지 보정)
+    n = len(colors)
+    per_color_m = round(total_m / n, 1)
+    rows: list[tuple[str, float]] = []
+    allocated = 0.0
+    for i, color in enumerate(colors):
+        if i == n - 1:
+            # 마지막 행: 반올림 오차를 흡수
+            length = round(total_m - allocated, 1)
+        else:
+            length = per_color_m
+            allocated += length
+        rows.append((color, length))
+    return rows
+
+
+def _build_remarks(batch: ProductionBatch, base_remarks: str | None = None) -> str:
+    """비고 문자열을 조합한다.
+
+    WIP 매칭 여부에 따라 재고 사용 텍스트를 자동 추가하고,
+    SM 재고 발생 예정이면 "SM Xm" 텍스트를 덧붙인다.
+    """
+    parts: list[str] = []
+
+    # 원본 비고 우선
+    if base_remarks:
+        parts.append(base_remarks.strip())
+
+    # WIP 매칭 텍스트
+    if batch.wip_matched_id is not None:
+        proc = (batch.process_name or "").strip()
+        if proc == "연선":
+            parts.append("연선재고 사용")
+        elif proc in ("저압절연", "고압절연"):
+            parts.append("절연재고 사용")
+        else:
+            parts.append("재공재고 사용")
+
+    # SM 재고 발생 예정량
+    wip_out = float(batch.wip_output_expected_m or 0)
+    if wip_out > 0:
+        parts.append(f"SM {int(wip_out)}m")
+
+    return " / ".join(parts)
+
+
 def _write_header(ws, all_cols: list[str]) -> None:
     """행 1에 헤더 셀을 쓰고 스타일을 적용한다."""
     for col_idx, col_name in enumerate(all_cols, 1):
@@ -194,9 +341,14 @@ def _write_header(ws, all_cols: list[str]) -> None:
 
 
 def _write_data_row(
-    ws, row_num: int, batch: ProductionBatch, all_cols: list[str]
+    ws,
+    row_num: int,
+    batch: ProductionBatch,
+    all_cols: list[str],
+    color_label: str,
+    length_m: float,
 ) -> int:
-    """배치 1건을 데이터 행으로 작성하고 다음 row_num을 반환한다."""
+    """배치 1건(색상 분리 후 단일 행)을 데이터 행으로 작성하고 다음 row_num을 반환한다."""
     due_str = (
         batch.due_date.strftime("%Y%m%d")
         if isinstance(batch.due_date, date)
@@ -210,16 +362,18 @@ def _write_data_row(
         cores = batch.core_count or 1
         spec_str = f"{cores}C x {sq_int}SQ"
 
+    remarks = _build_remarks(batch, batch.remarks)
+
     visible_values = [
         batch.product_group or "",
         spec_str,
-        batch.sheath_color or batch.core_colors or "",
+        color_label,
         batch.customer_name or "",
         due_str,
         batch.drum_length_m,
         batch.drum_count,
-        batch.total_length_m,
-        batch.remarks or "",
+        length_m,
+        remarks,
     ]
     hidden_values = [
         batch.sales_order_id or "",
@@ -275,6 +429,12 @@ def _apply_col_widths(ws, total_cols: int) -> None:
         letter = _col_letter(i)
         width = _COL_WIDTHS[i - 1] if i - 1 < len(_COL_WIDTHS) else 12
         ws.column_dimensions[letter].width = width
+
+
+def _apply_col_widths_list(ws, widths: list[int]) -> None:
+    """명시적 너비 리스트로 열 너비 적용."""
+    for i, width in enumerate(widths, 1):
+        ws.column_dimensions[_col_letter(i)].width = width
 
 
 def _hide_trailing_cols(ws, start_col: int, end_col: int) -> None:

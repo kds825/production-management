@@ -220,6 +220,15 @@ def _parse_date(val, datemode: int):
         return None
 
     if isinstance(val, float):
+        # YYYYMMDD 형식 숫자 (예: 20260529.0) → 문자열 변환 후 파싱
+        int_val = int(val)
+        if 19000101 <= int_val <= 29991231:
+            s = str(int_val)
+            try:
+                return datetime.strptime(s, "%Y%m%d").date()
+            except ValueError:
+                pass
+        # Excel serial date (작은 숫자)
         try:
             dt_tuple = xlrd.xldate_as_tuple(val, datemode)
             return datetime(*dt_tuple).date()

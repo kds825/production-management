@@ -3,11 +3,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from app.domain.entities import ScheduleTask, TaskStatus
+from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
+from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
+from app.infrastructure.models.production_batch import (
+    ProductionBatch as ProductionBatchModel,
+)
+from app.infrastructure.models.schedule_task import (
+    ScheduleTask as ScheduleTaskModel,
+)
 from app.presentation.schemas import (
     ScheduleTaskCreate,
     ScheduleTaskResponse,
@@ -76,20 +84,105 @@ def _to_response(task: ScheduleTask) -> ScheduleTaskResponse:
     )
 
 
+def _db_task_to_response(
+    task: ScheduleTaskModel, batch: ProductionBatchModel
+) -> ScheduleTaskResponse:
+    """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
+
+    JOIN 결과를 직접 매핑하여 인메모리 엔티티 경유 없이 응답을 구성한다.
+    priority는 customer_priority(int)를 TaskPriority enum으로 변환:
+      1~3 → critical, 4~7 → urgent, 나머지 → normal
+    """
+    # customer_priority(int) → TaskPriority
+    cp = batch.customer_priority or 99
+    if cp <= 3:
+        priority = TaskPriority.CRITICAL
+    elif cp <= 7:
+        priority = TaskPriority.URGENT
+    else:
+        priority = TaskPriority.NORMAL
+
+    # spec: "1C x 633SQ" 형태
+    core_count = batch.core_count or 1
+    sq_mm2 = batch.sq_mm2 or 0
+    spec = f"{core_count}C x {int(sq_mm2)}SQ"
+
+    # color: sheath_color 우선, 없으면 core_colors
+    color = batch.sheath_color or batch.core_colors or ""
+
+    # status: DB 값을 TaskStatus enum으로 안전하게 파싱 (알 수 없는 값은 PLANNED)
+    try:
+        status = TaskStatus(task.status)
+    except (ValueError, KeyError):
+        status = TaskStatus.PLANNED
+
+    # duration_hours: start~end 차이 (ScheduleTask 도메인 프로퍼티와 동일 계산)
+    duration_hours = (task.end_datetime - task.start_datetime).total_seconds() / 3600
+
+    return ScheduleTaskResponse(
+        id=f"TASK-{task.task_id}",
+        order_id=batch.sales_order_id or "",
+        equipment_id=task.equipment_code,
+        product=batch.product_group or "",
+        spec=spec,
+        core_count=core_count,
+        color=color,
+        start=task.start_datetime,
+        end=task.end_datetime,
+        volume_m=float(batch.total_length_m or 0),
+        line_speed_m_per_min=float(batch.line_speed_mpm or 0),
+        priority=priority,
+        status=status,
+        delivery_date=datetime(
+            batch.due_date.year,
+            batch.due_date.month,
+            batch.due_date.day,
+        )
+        if batch.due_date
+        else None,
+        process_step=batch.batch_seq,
+        predecessors=[f"TASK-{task.predecessor_task_id}"]
+        if task.predecessor_task_id
+        else [],
+        notes=batch.remarks or "",
+        changeover_min=int(task.setup_time_min or 0),
+        duration_hours=duration_hours,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 작업(Task) CRUD 엔드포인트
 # ---------------------------------------------------------------------------
 
 
 @router.get("/tasks", response_model=list[ScheduleTaskResponse])
-def list_tasks() -> list[ScheduleTaskResponse]:
-    """전체 스케줄 작업 목록 조회 (시작 시간 오름차순)"""
+def list_tasks(db: Session = Depends(get_db)) -> list[ScheduleTaskResponse]:
+    """전체 스케줄 작업 목록 조회 (시작 시간 오름차순).
+
+    Stage 2 auto-scheduling 결과를 PostgreSQL에서 읽어 반환한다.
+    DB에 schedule_task 레코드가 없을 경우 인메모리 store로 폴백하여
+    개발 초기 샘플 데이터도 계속 볼 수 있다.
+    """
+    db_tasks = (
+        db.query(ScheduleTaskModel, ProductionBatchModel)
+        .join(
+            ProductionBatchModel,
+            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
+        )
+        .order_by(ScheduleTaskModel.start_datetime)
+        .all()
+    )
+
+    if db_tasks:
+        return [_db_task_to_response(task, batch) for task, batch in db_tasks]
+
+    # DB에 데이터 없음 → 인메모리 샘플 데이터로 폴백
     return [_to_response(t) for t in store.list_tasks()]
 
 
 @router.post("/tasks", response_model=ScheduleTaskResponse, status_code=201)
 def create_task(body: ScheduleTaskCreate) -> ScheduleTaskResponse:
-    """새 스케줄 작업 등록"""
+    """새 스케줄 작업 등록 (D&D 수동 배치용 — 인메모리 store 사용)"""
     # 설비 존재 확인
     equipment = store.get_equipment(body.equipment_id)
     if equipment is None:
@@ -134,7 +227,7 @@ def create_task(body: ScheduleTaskCreate) -> ScheduleTaskResponse:
 
 @router.put("/tasks/{task_id}", response_model=ScheduleTaskResponse)
 def update_task(task_id: str, body: ScheduleTaskUpdate) -> ScheduleTaskResponse:
-    """스케줄 작업 수정 (부분 업데이트)"""
+    """스케줄 작업 수정 (부분 업데이트 — D&D용, 인메모리 store 사용)"""
     # 존재 여부 확인
     existing = store.get_task(task_id)
     if existing is None:
