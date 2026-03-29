@@ -209,11 +209,7 @@ def list_tasks(
 
     db_tasks = q.order_by(ScheduleTaskModel.start_datetime).all()
 
-    if db_tasks:
-        return [_db_task_to_response(task, batch) for task, batch in db_tasks]
-
-    # DB에 데이터 없음 → 인메모리 샘플 데이터로 폴백
-    return [_to_response(t) for t in store.list_tasks()]
+    return [_db_task_to_response(task, batch) for task, batch in db_tasks]
 
 
 @router.post("/tasks", response_model=ScheduleTaskResponse, status_code=201)

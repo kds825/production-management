@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database import get_db
-from app.infrastructure.memory_store import store
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.presentation.schemas import EquipmentResponse
 
@@ -72,22 +71,7 @@ def list_equipment(db: Session = Depends(get_db)) -> list[EquipmentResponse]:
     """
     db_equips = db.query(EquipmentMaster).order_by(EquipmentMaster.equipment_code).all()
 
-    if db_equips:
-        return [_db_equipment_to_response(eq) for eq in db_equips]
-
-    # DB에 데이터 없음 → 인메모리 샘플 데이터로 폴백
-    return [
-        EquipmentResponse(
-            id=eq.id,
-            name=eq.name,
-            process_type=eq.process_type,
-            capabilities=eq.capabilities,
-            capacity_tons_per_month=eq.capacity_tons_per_month,
-            max_diameter_mm=eq.max_diameter_mm,
-            status=eq.status,
-        )
-        for eq in store.list_equipment()
-    ]
+    return [_db_equipment_to_response(eq) for eq in db_equips]
 
 
 @router.get("/{equipment_id}", response_model=EquipmentResponse)
@@ -107,18 +91,6 @@ def get_equipment(
     if db_eq:
         return _db_equipment_to_response(db_eq)
 
-    # DB에 없으면 인메모리 폴백
-    eq = store.get_equipment(equipment_id)
-    if eq is None:
-        raise HTTPException(
-            status_code=404, detail=f"설비 '{equipment_id}'를 찾을 수 없습니다."
-        )
-    return EquipmentResponse(
-        id=eq.id,
-        name=eq.name,
-        process_type=eq.process_type,
-        capabilities=eq.capabilities,
-        capacity_tons_per_month=eq.capacity_tons_per_month,
-        max_diameter_mm=eq.max_diameter_mm,
-        status=eq.status,
+    raise HTTPException(
+        status_code=404, detail=f"설비 '{equipment_id}'를 찾을 수 없습니다."
     )
