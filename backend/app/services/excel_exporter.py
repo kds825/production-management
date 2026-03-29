@@ -98,6 +98,15 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     if not batches:
         raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다.")
 
+    # ── WIP 룩업: wip_id → process_stage (비고에 실제 WIP 종류 표시용) ───────
+    from app.infrastructure.models.wip_inventory import WipInventory
+
+    wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id is not None}
+    wip_stage_lookup: dict[int, str] = {}
+    if wip_ids:
+        wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
+        wip_stage_lookup = {w.wip_id: w.process_stage or "" for w in wips}
+
     # 진행/대기 수주 데이터 조회
     sales_orders = (
         db.query(SalesOrder)
@@ -128,7 +137,7 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         if sname not in sheet_data:
             continue
         ws = wb.create_sheet(title=sname)
-        _write_sheet(ws, sheet_data[sname])
+        _write_sheet(ws, sheet_data[sname], wip_stage_lookup)
 
     output = BytesIO()
     wb.save(output)
@@ -205,7 +214,9 @@ def _write_status_sheet(ws, orders: list) -> None:
             cell.border = _THIN_BORDER
 
 
-def _write_sheet(ws, batches: list[ProductionBatch]) -> None:
+def _write_sheet(
+    ws, batches: list[ProductionBatch], wip_stage_lookup: dict[int, str]
+) -> None:
     """단일 시트에 헤더 → 데이터 행(SQ 그룹 소계 포함) → 서식 적용."""
     all_cols = VISIBLE_COLS + HIDDEN_COLS
     total_cols = len(all_cols)
@@ -238,7 +249,13 @@ def _write_sheet(ws, batches: list[ProductionBatch]) -> None:
             sq_total_m += length_m
             sq_batch_count += 1
             row_num = _write_data_row(
-                ws, row_num, batch, all_cols, color_label, length_m
+                ws,
+                row_num,
+                batch,
+                all_cols,
+                color_label,
+                length_m,
+                wip_stage_lookup,
             )
 
     # 마지막 그룹 소계
@@ -300,11 +317,17 @@ def _expand_color_rows(batch: ProductionBatch) -> list[tuple[str, float]]:
     return rows
 
 
-def _build_remarks(batch: ProductionBatch, base_remarks: str | None = None) -> str:
+def _build_remarks(
+    batch: ProductionBatch,
+    base_remarks: str | None = None,
+    *,
+    wip_stage: str | None = None,
+) -> str:
     """비고 문자열을 조합한다.
 
-    WIP 매칭 여부에 따라 재고 사용 텍스트를 자동 추가하고,
-    SM 재고 발생 예정이면 "SM Xm" 텍스트를 덧붙인다.
+    wip_stage: WIP의 실제 process_stage ("연선재고", "절연재고" 등).
+    절연재고는 연선·절연 공정 모두에서 "절연재고 사용"으로 표시한다.
+    (이전: batch.process_name에서 유도 → 연선 시트에서 잘못 표시되던 버그 수정)
     """
     parts: list[str] = []
 
@@ -312,13 +335,10 @@ def _build_remarks(batch: ProductionBatch, base_remarks: str | None = None) -> s
     if base_remarks:
         parts.append(base_remarks.strip())
 
-    # WIP 매칭 텍스트
+    # WIP 매칭 텍스트 — 실제 WIP 종류를 그대로 사용
     if batch.wip_matched_id is not None:
-        proc = (batch.process_name or "").strip()
-        if proc == "연선":
-            parts.append("연선재고 사용")
-        elif proc in ("저압절연", "고압절연"):
-            parts.append("절연재고 사용")
+        if wip_stage:
+            parts.append(f"{wip_stage} 사용")
         else:
             parts.append("재공재고 사용")
 
@@ -347,6 +367,7 @@ def _write_data_row(
     all_cols: list[str],
     color_label: str,
     length_m: float,
+    wip_stage_lookup: dict[int, str],
 ) -> int:
     """배치 1건(색상 분리 후 단일 행)을 데이터 행으로 작성하고 다음 row_num을 반환한다."""
     due_str = (
@@ -362,7 +383,11 @@ def _write_data_row(
         cores = batch.core_count or 1
         spec_str = f"{cores}C x {sq_int}SQ"
 
-    remarks = _build_remarks(batch, batch.remarks)
+    # WIP 실제 종류 조회: wip_stage_lookup에서 process_stage 가져옴
+    wip_stage: str | None = None
+    if batch.wip_matched_id is not None:
+        wip_stage = wip_stage_lookup.get(batch.wip_matched_id)
+    remarks = _build_remarks(batch, batch.remarks, wip_stage=wip_stage)
 
     visible_values = [
         batch.product_group or "",

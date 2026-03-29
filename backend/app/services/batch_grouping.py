@@ -29,6 +29,7 @@ from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.process_routing import ProcessRouting
 from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.customer_master import CustomerMaster
+from app.infrastructure.models.wip_inventory import WipInventory
 
 
 def create_batches(
@@ -63,6 +64,18 @@ def create_batches(
     if date_to is not None:
         query = query.filter(SalesOrder.due_date <= date_to)
     orders = query.all()
+
+    # ── WIP 매칭 룩업: order_id → wip (match_wip 후 이미 설정됨) ───────────
+    wip_by_order: dict[str, WipInventory] = {}
+    matched_order_ids = [o.order_id for o in orders if o.use_wip]
+    if matched_order_ids:
+        matched_wips = (
+            db.query(WipInventory)
+            .filter(WipInventory.matched_order_id.in_(matched_order_ids))
+            .all()
+        )
+        for w in matched_wips:
+            wip_by_order[w.matched_order_id] = w
 
     # float 변환 후 키로 사용해야 dict lookup이 안전하게 동작한다
     drum_lots: dict[float, DrumLotMaster] = {
@@ -222,6 +235,10 @@ def create_batches(
         else:
             lot_lengths = [per_drum_qty]
 
+        # WIP 매칭된 수주 → 배치에 wip_matched_id 전파
+        matched_wip = wip_by_order.get(order.order_id)
+        wip_id: int | None = matched_wip.wip_id if matched_wip else None
+
         # 드럼별 × 공정별 배치 생성 — 원본 계획서와 동일하게 드럼 1개 = 1행
         for drum_idx in range(1, drum_count + 1):
             for batch_seq, process_name in enumerate(processes, start=1):
@@ -282,6 +299,7 @@ def create_batches(
                         stranding_type=stranding_type,
                         remarks=remarks,
                         equipment_code=None,
+                        wip_matched_id=wip_id,
                     )
                     batches.append(batch)
 
