@@ -190,18 +190,12 @@ def create_batches(
             )
             continue
 
+        # ── 불량 재작업 버퍼 가산 (7-1) ─────────────────────────────────────
+        total_qty = total_qty * (1.0 + defect_buffer_pct)
+
+        drum_length: float = float(order.drum_length_m or total_qty)
         drum_count: int = int(order.drum_count or 1)
         core_count: int = int(order.core_count or 1)
-
-        # 드럼별 수량 계산 — 원본 계획서와 동일하게 드럼 1개 = 1행
-        drum_length: float = float(order.drum_length_m or 0)
-        if drum_length <= 0:
-            drum_length = total_qty / drum_count
-
-        # ── 불량 재작업 버퍼 가산 (7-1) ─────────────────────────────────────
-        # 불량 발생 시 재작업 물량을 별도 발주하지 않도록 생산 수량을 선제적으로 늘린다.
-        # 드럼별 수량에 버퍼를 포함시켜 이후 모든 계산(여척, 선속 등)에 일관 적용된다.
-        per_drum_qty: float = drum_length * (1.0 + defect_buffer_pct)
 
         # 공정 목록 추출
         processes = _get_processes(routing)
@@ -226,82 +220,75 @@ def create_batches(
             else None
         )
 
-        if lot_stranding and per_drum_qty > lot_stranding:
-            full_lots = math.floor(per_drum_qty / lot_stranding)
-            remainder = per_drum_qty - full_lots * lot_stranding
+        if lot_stranding and total_qty > lot_stranding:
+            full_lots = math.floor(total_qty / lot_stranding)
+            remainder = total_qty - full_lots * lot_stranding
             lot_lengths: list[float] = [lot_stranding] * full_lots
             if remainder > 0:
                 lot_lengths.append(remainder)
         else:
-            lot_lengths = [per_drum_qty]
+            lot_lengths = [total_qty]
 
         # WIP 매칭된 수주 → 배치에 wip_matched_id 전파
         matched_wip = wip_by_order.get(order.order_id)
         wip_id: int | None = matched_wip.wip_id if matched_wip else None
 
-        # 드럼별 × 공정별 배치 생성 — 원본 계획서와 동일하게 드럼 1개 = 1행
-        for drum_idx in range(1, drum_count + 1):
-            for batch_seq, process_name in enumerate(processes, start=1):
-                speed_info = _find_speed(speed_lookup, process_name, order, sq)
-                line_speed = (
-                    float(speed_info.line_speed_mpm)
-                    if speed_info and speed_info.line_speed_mpm is not None
-                    else None
+        # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
+        for batch_seq, process_name in enumerate(processes, start=1):
+            speed_info = _find_speed(speed_lookup, process_name, order, sq)
+            line_speed = (
+                float(speed_info.line_speed_mpm)
+                if speed_info and speed_info.line_speed_mpm is not None
+                else None
+            )
+            setup_time: float = (
+                float(speed_info.setup_spec_min)
+                if speed_info and speed_info.setup_spec_min is not None
+                else 0.0
+            )
+
+            for lot_idx, lot_length in enumerate(lot_lengths, start=1):
+                extra_total: float = extra * core_count
+                effective_length: float = lot_length + extra_total
+
+                duration_min: float | None = (
+                    effective_length / line_speed if line_speed else None
                 )
-                setup_time: float = (
-                    float(speed_info.setup_spec_min)
-                    if speed_info and speed_info.setup_spec_min is not None
-                    else 0.0
+
+                remarks: str | None = f"틀{lot_idx}" if len(lot_lengths) > 1 else None
+
+                batch = ProductionBatch(
+                    run_label=run_label,
+                    sales_order_id=order.order_id,
+                    sales_order_line=order.order_line,
+                    item_code=item.item_code if item else None,
+                    routing_code=routing_code,
+                    process_name=process_name,
+                    batch_seq=batch_seq,
+                    drum_length_m=drum_length,
+                    drum_count=drum_count,
+                    total_length_m=lot_length,
+                    extra_length_m=extra_total,
+                    sq_mm2=sq,
+                    core_count=core_count,
+                    core_colors=order.core_colors,
+                    sheath_color=order.sheath_color,
+                    customer_name=order.customer_name,
+                    due_date=order.due_date,
+                    customer_priority=priority,
+                    line_speed_mpm=line_speed,
+                    setup_time_min=setup_time,
+                    estimated_duration_min=duration_min,
+                    status="planned",
+                    product_group=order.product_group,
+                    voltage=order.voltage,
+                    conductor_material=conductor_material,
+                    stranding_type=stranding_type,
+                    remarks=remarks,
+                    equipment_code=None,
+                    wip_matched_id=wip_id,
                 )
-
-                for lot_idx, lot_length in enumerate(lot_lengths, start=1):
-                    extra_total: float = extra * core_count
-                    effective_length: float = lot_length + extra_total
-
-                    duration_min: float | None = (
-                        effective_length / line_speed if line_speed else None
-                    )
-
-                    # 식별 라벨: 드럼/틀 번호 표기
-                    remark_parts: list[str] = []
-                    if drum_count > 1:
-                        remark_parts.append(f"D{drum_idx}")
-                    if len(lot_lengths) > 1:
-                        remark_parts.append(f"틀{lot_idx}")
-                    remarks: str | None = " ".join(remark_parts) or None
-
-                    batch = ProductionBatch(
-                        run_label=run_label,
-                        sales_order_id=order.order_id,
-                        sales_order_line=order.order_line,
-                        item_code=item.item_code if item else None,
-                        routing_code=routing_code,
-                        process_name=process_name,
-                        batch_seq=batch_seq,
-                        drum_length_m=drum_length,
-                        drum_count=1,
-                        total_length_m=lot_length,
-                        extra_length_m=extra_total,
-                        sq_mm2=sq,
-                        core_count=core_count,
-                        core_colors=order.core_colors,
-                        sheath_color=order.sheath_color,
-                        customer_name=order.customer_name,
-                        due_date=order.due_date,
-                        customer_priority=priority,
-                        line_speed_mpm=line_speed,
-                        setup_time_min=setup_time,
-                        estimated_duration_min=duration_min,
-                        status="planned",
-                        product_group=order.product_group,
-                        voltage=order.voltage,
-                        conductor_material=conductor_material,
-                        stranding_type=stranding_type,
-                        remarks=remarks,
-                        equipment_code=None,
-                        wip_matched_id=wip_id,
-                    )
-                    batches.append(batch)
+                batches.append(batch)
 
     # ── 잔량 흑색 소진 후처리 (3-4) ─────────────────────────────────────────
     # 배치 생성이 모두 끝난 후에 길이 기준으로 일괄 처리한다.
