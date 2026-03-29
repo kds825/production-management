@@ -126,11 +126,13 @@ def create_batches(
         .filter(ConstraintConfig.constraint_id == "3-4")
         .first()
     )
+    remnant_enabled: bool = bool(remnant_cfg.is_enabled) if remnant_cfg else False
     remnant_params: dict = (
         remnant_cfg.params_json if remnant_cfg and remnant_cfg.params_json else {}
     )
-    # remnant_threshold_m: 이 길이 미만이면 잔량 흑색 소진 처리, 기본값 200m
-    remnant_threshold_m: float = float(remnant_params.get("remnant_threshold_m", 200))
+    remnant_threshold_m: float = (
+        float(remnant_params.get("remnant_threshold_m", 200)) if remnant_enabled else 0
+    )
 
     # ── 선속 룩업 테이블 빌드 ────────────────────────────────────────────────
     # 키: (equipment_code, product_type, cross_section_float) → SpeedMaster
