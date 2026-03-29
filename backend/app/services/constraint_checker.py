@@ -133,9 +133,35 @@ def _check_priority_order(tasks, batches, equipment, config) -> list[dict]:
 
 
 def _check_due_type(tasks, batches, equipment, config) -> list[dict]:
-    """도착기준 고객은 운송일 차감 확인"""
-    # Simplified: just flag if 도착기준 customer's due_date might be tight
-    return []
+    """도착기준 고객은 운송일 1일 차감하여 실질 납기 체크"""
+    from datetime import timedelta
+
+    violations = []
+    transport_days = 1  # default
+    if config.params_json:
+        transport_days = config.params_json.get("transport_days", 1)
+
+    for t in tasks:
+        batch = batches.get(t.batch_id)
+        if not batch or not batch.due_date:
+            continue
+        # Check if customer is 도착기준 type
+        # For now, check customer_name against known 도착기준 customers
+        if batch.customer_name and "아이마켓" in batch.customer_name:
+            effective_due = batch.due_date - timedelta(days=transport_days)
+            if t.end_datetime.date() > effective_due:
+                violations.append(
+                    {
+                        "constraint_id": "1-2",
+                        "task_id": t.task_id,
+                        "severity": "warning",
+                        "detail": (
+                            f"도착기준 고객 {batch.customer_name}: 실질납기 {effective_due}"
+                            f" 초과 (완료: {t.end_datetime.date()})"
+                        ),
+                    }
+                )
+    return violations
 
 
 def _check_color_group(tasks, batches, equipment, config) -> list[dict]:
@@ -168,9 +194,45 @@ def _check_color_group(tasks, batches, equipment, config) -> list[dict]:
 
 
 def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
-    """규격교체 시간이 반영되었는지 확인"""
-    # Simplified: check if consecutive tasks on same equipment have different SQ
-    return []
+    """규격교체 시간이 연속 작업 간에 반영되었는지 확인"""
+    violations = []
+    setup_params = config.params_json or {}  # noqa: F841 — reserved for future param lookup
+
+    by_equip = {}
+    for t in tasks:
+        by_equip.setdefault(t.equipment_code, []).append(t)
+
+    for eq_code, eq_tasks in by_equip.items():
+        sorted_tasks = sorted(eq_tasks, key=lambda x: x.start_datetime)
+        for i in range(len(sorted_tasks) - 1):
+            curr = sorted_tasks[i]
+            next_task = sorted_tasks[i + 1]
+            curr_batch = batches.get(curr.batch_id)
+            next_batch = batches.get(next_task.batch_id)
+
+            if not curr_batch or not next_batch:
+                continue
+
+            # SQ 변경 발생 시 규격교체 준비시간 확보 여부 확인
+            if curr_batch.sq_mm2 != next_batch.sq_mm2:
+                gap_min = (
+                    next_task.start_datetime - curr.end_datetime
+                ).total_seconds() / 60
+                required_setup = float(curr.setup_time_min or 0)
+
+                if gap_min < required_setup * 0.5:  # Less than half the required setup
+                    violations.append(
+                        {
+                            "constraint_id": "4-1",
+                            "task_id": next_task.task_id,
+                            "severity": "warning",
+                            "detail": (
+                                f"설비 {eq_code}: SQ {curr_batch.sq_mm2}→{next_batch.sq_mm2}"
+                                f" 교체, 간격 {gap_min:.0f}분 (필요: {required_setup:.0f}분)"
+                            ),
+                        }
+                    )
+    return violations
 
 
 def _check_sq_range(tasks, batches, equipment, config) -> list[dict]:

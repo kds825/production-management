@@ -11,12 +11,20 @@ from app.infrastructure.models.audit_log import AuditLog
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.equipment_master import EquipmentMaster
 
-# PwC GenAI Gateway 또는 직접 Anthropic API
+# Provider selection: "openai" | "anthropic" (default: "openai")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+
+# OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# gpt-4.1은 2025년 기준 최신 안정 모델
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
+
+# Anthropic (PwC GenAI Gateway 또는 직접 Anthropic API)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = os.getenv(
     "ANTHROPIC_API_URL", "https://api.anthropic.com/v1/messages"
 )
-MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+ANTHROPIC_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
 
 
 SYSTEM_PROMPT = """당신은 전선 제조 공장의 생산계획 AI 어시스턴트입니다.
@@ -65,11 +73,10 @@ async def explain_decision(
     # Build context for LLM
     context = _build_context(batch, equipment, logs)
 
-    # Try LLM explanation
-    if ANTHROPIC_API_KEY:
-        explanation = await _call_llm(context)
-        if explanation:
-            return {"explanation": explanation, "source": "llm", "batch_id": batch_id}
+    # Try LLM explanation — configured provider first, then fallback to template
+    explanation = await _call_llm(context)
+    if explanation:
+        return {"explanation": explanation, "source": "llm", "batch_id": batch_id}
 
     # Fallback: template-based explanation
     explanation = _template_explanation(batch, equipment, logs)
@@ -158,10 +165,47 @@ def _build_context(batch, equipment, logs) -> str:
 
 
 async def _call_llm(context: str) -> Optional[str]:
-    """Anthropic Claude API 호출"""
-    if not ANTHROPIC_API_KEY:
-        return None
+    """설정된 provider로 LLM 호출. 실패 시 None 반환 → 템플릿 fallback."""
+    if LLM_PROVIDER == "openai" and OPENAI_API_KEY:
+        return await _call_openai(context)
+    elif LLM_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
+        return await _call_anthropic(context)
+    return None
 
+
+async def _call_openai(context: str) -> Optional[str]:
+    """OpenAI Chat Completions API 호출"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}",
+                        },
+                    ],
+                    "max_tokens": 500,
+                    "temperature": 0.3,
+                },
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+    except Exception:
+        pass
+    return None
+
+
+async def _call_anthropic(context: str) -> Optional[str]:
+    """Anthropic Claude API 호출 (PwC GenAI Gateway 또는 직접 호출)"""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -172,7 +216,7 @@ async def _call_llm(context: str) -> Optional[str]:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": MODEL,
+                    "model": ANTHROPIC_MODEL,
                     "max_tokens": 500,
                     "system": SYSTEM_PROMPT,
                     "messages": [
@@ -188,7 +232,6 @@ async def _call_llm(context: str) -> Optional[str]:
                 return data["content"][0]["text"]
     except Exception:
         pass
-
     return None
 
 
