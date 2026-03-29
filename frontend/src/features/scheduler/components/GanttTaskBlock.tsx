@@ -184,6 +184,20 @@ export function GanttTaskBlock({
 
   const isSelected = selectedTaskId === task.id;
 
+  // --- 규격교체 구간 계산 ---
+  // changeover_min을 px 폭으로 변환. 전체 블록 폭 대비 비율로 계산하되,
+  // 블록이 너무 좁을 경우 표시하지 않는다 (width < 40px).
+  const totalDurationMs = endTs - startTs;
+  const changeoverMs = (task.changeover_min ?? 0) * 60 * 1000;
+  const hasChangeover = changeoverMs > 0 && totalDurationMs > 0 && width >= 40;
+  // 규격교체 세그먼트 폭: 전체 폭에서 비율로 계산 (최소 6px, 최대 전체 폭의 40%)
+  const changeoverPx = hasChangeover
+    ? Math.min(
+        Math.max((changeoverMs / totalDurationMs) * width, 6),
+        width * 0.4,
+      )
+    : 0;
+
   return (
     <div
       ref={setNodeRef}
@@ -223,6 +237,44 @@ export function GanttTaskBlock({
           </div>
         )}
 
+        {/* 규격교체 세그먼트 — 좌측에 어두운 줄무늬 영역으로 표시 */}
+        {hasChangeover && (
+          <div
+            style={{
+              width: changeoverPx,
+              flexShrink: 0,
+              alignSelf: "stretch",
+              // 줄무늬 패턴: 어두운 반투명 색상 + 대각선 스트라이프
+              background:
+                "repeating-linear-gradient(45deg, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 3px, rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 6px)",
+              borderRight: "1px solid rgba(255,255,255,0.3)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              pointerEvents: "none",
+            }}
+            title={`규격교체: ${task.changeover_min}분`}
+          >
+            {/* 폭이 충분할 때만 교체 시간 텍스트 표시 */}
+            {changeoverPx >= 18 && (
+              <span
+                style={{
+                  fontSize: 7,
+                  color: "rgba(255,255,255,0.9)",
+                  fontWeight: 700,
+                  textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+                  writingMode:
+                    changeoverPx < 28 ? "vertical-rl" : "horizontal-tb",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                교체
+              </span>
+            )}
+          </div>
+        )}
+
         {/* 가운데 — dnd listeners 여기에만 */}
         <div
           {...listeners}
@@ -239,6 +291,19 @@ export function GanttTaskBlock({
             cursor: isDragging ? "grabbing" : "grab",
           }}
         >
+          {/* 수주 ID — 블록 상단에 작게 표시 */}
+          {task.order_id && width >= 50 && (
+            <span
+              className="text-[8px] truncate leading-tight"
+              style={{
+                color: "rgba(255,255,255,0.7)",
+                textShadow: "0 1px 1px rgba(0,0,0,0.4)",
+                letterSpacing: "0.02em",
+              }}
+            >
+              #{task.order_id}
+            </span>
+          )}
           <span
             className="text-white text-[10px] font-semibold truncate leading-tight"
             style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}

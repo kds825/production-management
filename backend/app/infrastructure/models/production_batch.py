@@ -53,3 +53,7 @@ class ProductionBatch(Base):
     conductor_material = Column(String(10))
     stranding_type = Column(String(20))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # SM 재고 출력 — 이 배치 생산 시 발생하는 반제품 재고량
+    wip_output_expected_m = Column(Numeric, default=0)  # 예상 SM재고 발생량
+    wip_output_actual_m = Column(Numeric, nullable=True)  # 실제 SM재고 발생량

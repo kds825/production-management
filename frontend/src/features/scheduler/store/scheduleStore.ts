@@ -232,19 +232,42 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
-    // 작업 이동 (드래그 앤 드롭) — 겹침 방지 + cascade push
+    // 작업 이동 (드래그 앤 드롭) — 겹침 방지 + cascade push + 후공정 연동
     moveTask: (taskId, newEquipmentId, start, end) => {
       set((state) => {
         const taskIdx = state.tasks.findIndex((t) => t.id === taskId);
         if (taskIdx === -1) return;
 
         const task = state.tasks[taskIdx];
+        const timeDelta = start.getTime() - task.start.getTime();
         task.equipment_id = newEquipmentId;
         task.start = start;
         task.end = end;
 
         // cascade push: 같은 설비의 다른 작업과 겹치면 뒤로 밀기
         cascadePush(state.tasks, taskId, newEquipmentId);
+
+        // 후공정 자동 연동: 같은 order_id의 후속 공정 작업도 시간 이동
+        if (task.order_id && timeDelta !== 0) {
+          const successors = state.tasks.filter(
+            (t) =>
+              t.id !== taskId &&
+              t.order_id === task.order_id &&
+              t.process_step !== undefined &&
+              task.process_step !== undefined &&
+              t.process_step > task.process_step,
+          );
+          for (const succ of successors) {
+            const succDuration = succ.end.getTime() - succ.start.getTime();
+            // 후공정은 현재 작업 종료 이후에 시작해야 함
+            const newSuccStart = new Date(
+              Math.max(succ.start.getTime() + timeDelta, end.getTime()),
+            );
+            succ.start = newSuccStart;
+            succ.end = new Date(newSuccStart.getTime() + succDuration);
+            cascadePush(state.tasks, succ.id, succ.equipment_id);
+          }
+        }
       });
     },
 

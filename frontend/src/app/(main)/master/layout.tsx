@@ -12,6 +12,7 @@ const MASTER_PAGES = [
   { href: "/master/customers", label: "거래처 관리", icon: "👥" },
   { href: "/master/routing", label: "공정 라우팅", icon: "🔀" },
   { href: "/master/items", label: "품목 관리", icon: "📦" },
+  { href: "/master/wip", label: "재공(SM) 재고", icon: "📋" },
 ];
 
 export default function MasterLayout({
