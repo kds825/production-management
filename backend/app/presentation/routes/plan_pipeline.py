@@ -137,13 +137,32 @@ def export_stage1(run_label: str, db: Session = Depends(get_db)) -> StreamingRes
 
 @router.post("/stage2", summary="Stage 2: 자동 스케줄링")
 def run_stage2(body: dict, db: Session = Depends(get_db)):
-    """Stage 2: production_batch → 간트 차트 자동배열 + 제약조건 검증"""
+    """Stage 2: production_batch → 간트 차트 자동배열 + 제약조건 검증
+
+    body:
+        run_label: str (필수)
+        base_date: str (선택, YYYYMMDD 형식 — 스케줄 시작 기준일)
+    """
     run_label = body.get("run_label")
     if not run_label:
         raise HTTPException(status_code=400, detail="run_label 필수")
 
+    # 기준일자 파싱 — 없으면 auto_schedule이 KST 당일 08:00 사용
+    base_date_dt = None
+    base_date_str = body.get("base_date")
+    if base_date_str:
+        try:
+            base_date_dt = datetime.strptime(base_date_str, "%Y%m%d").replace(
+                hour=8, minute=0
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"base_date 형식 오류: {base_date_str} (YYYYMMDD)",
+            )
+
     try:
-        schedule_result = auto_schedule(run_label, db)
+        schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"스케줄링 실패: {exc}") from exc
 

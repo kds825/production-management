@@ -103,7 +103,13 @@ export default function SchedulerPage() {
       const res = await fetch(`${API_BASE}/pipeline/stage2`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_label: runLabel }),
+        body: JSON.stringify({
+          run_label: runLabel,
+          base_date:
+            typeof window !== "undefined"
+              ? localStorage.getItem("plan_base_date") || undefined
+              : undefined,
+        }),
       });
       if (res.ok) {
         setAutoScheduleResult(

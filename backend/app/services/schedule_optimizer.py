@@ -32,9 +32,14 @@ _SHEATH_ROUTING = {
 }
 
 
-def auto_schedule(run_label: str, db: Session) -> dict:
+def auto_schedule(
+    run_label: str, db: Session, *, base_date: datetime | None = None
+) -> dict:
     """
     run_label의 production_batch를 간트 차트에 자동 배치.
+
+    Args:
+        base_date: 스케줄 시작 기준일시. None이면 KST 당일 08:00.
     Returns: {"total_tasks": int, "violations": list, "warnings": list}
     """
     result = {"total_tasks": 0, "violations": [], "warnings": []}
@@ -81,6 +86,15 @@ def auto_schedule(run_label: str, db: Session) -> dict:
     batches = schedulable
     if wip_skipped:
         result["wip_skipped"] = wip_skipped
+
+    # ── 기준일시 설정 — KST 당일 08:00 (현장 근무 시작) ───────────────────
+    if base_date is None:
+        from zoneinfo import ZoneInfo
+
+        kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
+        base_date = kst_now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if base_date.tzinfo:
+            base_date = base_date.replace(tzinfo=None)  # naive datetime for DB
 
     # Load equipment into memory
     equipment_list = db.query(EquipmentMaster).all()
@@ -215,7 +229,7 @@ def auto_schedule(run_label: str, db: Session) -> dict:
             predecessor_key = (batch.sales_order_id, batch.sales_order_line)
             predecessor_task_id = predecessor_map.get(predecessor_key)
 
-            earliest = datetime.now()
+            earliest = base_date
             if predecessor_task_id:
                 pred_task = next(
                     (t for t in tasks_created if t.task_id == predecessor_task_id), None
@@ -537,7 +551,9 @@ def _filter_by_sheath_routing(
     return equipment
 
 
-def reschedule(run_label: str, db: Session) -> dict:
+def reschedule(
+    run_label: str, db: Session, *, base_date: datetime | None = None
+) -> dict:
     """
     1-3: 긴급 변경 대응 — 기존 스케줄을 초기화하고 재스케줄링 수행.
 
@@ -565,6 +581,6 @@ def reschedule(run_label: str, db: Session) -> dict:
     db.flush()  # 삭제 반영 후 재스케줄
 
     # 재스케줄링 실행
-    result = auto_schedule(run_label, db)
+    result = auto_schedule(run_label, db, base_date=base_date)
     result["cleared_tasks"] = cleared_count
     return result

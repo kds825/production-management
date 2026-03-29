@@ -660,7 +660,19 @@ function ErpUploadSection() {
   );
 }
 
+function getKstToday(): string {
+  const kst = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }),
+  );
+  const y = kst.getFullYear();
+  const m = String(kst.getMonth() + 1).padStart(2, "0");
+  const d = String(kst.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 export default function PlanRegisterPage() {
+  const [baseDate, setBaseDate] = useState(getKstToday());
+
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
@@ -688,6 +700,38 @@ export default function PlanRegisterPage() {
 
       {/* 본문 */}
       <div className="flex-1 overflow-auto px-6 py-6 flex flex-col gap-0">
+        {/* 계획 기준일자 */}
+        <section className="mb-6">
+          <h3
+            className="text-sm font-semibold mb-1"
+            style={{ color: "#111827" }}
+          >
+            1. 계획 기준일자
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            생산계획의 시작 기준일을 선택하세요 (기본: 오늘)
+          </p>
+          <input
+            type="date"
+            value={baseDate}
+            onChange={(e) => {
+              setBaseDate(e.target.value);
+              if (typeof window !== "undefined") {
+                localStorage.setItem(
+                  "plan_base_date",
+                  e.target.value.replace(/-/g, ""),
+                );
+              }
+            }}
+            className="rounded-md px-3 py-2 text-sm border"
+            style={{
+              borderColor: "#D1D5DB",
+              color: "#111827",
+              outline: "none",
+            }}
+          />
+        </section>
+
         <div className="mb-8">
           <FileUploadSection />
         </div>
