@@ -10,6 +10,7 @@ from app.presentation.routes import (
     constraints,
     equipment,
     orders,
+    plan_pipeline,
     process_routes,
     schedules,
 )
@@ -35,6 +36,7 @@ app.include_router(orders.router, prefix="/api")
 app.include_router(schedules.router, prefix="/api")
 app.include_router(constraints.router, prefix="/api")
 app.include_router(process_routes.router, prefix="/api")
+app.include_router(plan_pipeline.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["헬스체크"])
