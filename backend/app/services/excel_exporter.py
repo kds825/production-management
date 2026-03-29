@@ -134,6 +134,8 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         _write_status_sheet(ws, filtered)
 
     # ── process_name 기준으로 배치를 시트별 버킷에 분류 ─────────────────────
+    # 모든 배치를 해당 시트에 표시 — WIP 매칭 항목도 표시하되 비고에 "재고 사용" 알람.
+    # WIP 공정 스킵은 간트차트(Stage 2) 스케줄링에서 처리한다.
     sheet_data: dict[str, list[ProductionBatch]] = {}
     for batch in batches:
         sname = _resolve_sheet_name(batch)

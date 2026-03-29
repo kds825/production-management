@@ -90,7 +90,7 @@ def match_wip(run_label: str, db: Session) -> dict:
             order.wip_type = wip.process_stage
             order.actual_length_m = wip_length
             wip.status = "사용완료"
-            wip.matched_order_id = order.order_id
+            wip.matched_order_id = f"{order.order_id}:{order.order_line}"
 
             result["matched"] += 1
             result["details"].append(

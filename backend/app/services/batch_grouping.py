@@ -65,17 +65,18 @@ def create_batches(
         query = query.filter(SalesOrder.due_date <= date_to)
     orders = query.all()
 
-    # ── WIP 매칭 룩업: order_id → wip (match_wip 후 이미 설정됨) ───────────
-    wip_by_order: dict[str, WipInventory] = {}
-    matched_order_ids = [o.order_id for o in orders if o.use_wip]
-    if matched_order_ids:
+    # ── WIP 매칭 룩업: "order_id:order_line" → wip ────────────────────────
+    # matched_order_id 형식: "S1202602260013M:37" (order_id:order_line)
+    # order_line 단위로 매칭해야 같은 수주번호의 다른 규격/색상은 스킵하지 않음
+    wip_by_order_line: dict[str, WipInventory] = {}
+    if any(o.use_wip for o in orders):
         matched_wips = (
             db.query(WipInventory)
-            .filter(WipInventory.matched_order_id.in_(matched_order_ids))
+            .filter(WipInventory.matched_order_id.isnot(None))
             .all()
         )
         for w in matched_wips:
-            wip_by_order[w.matched_order_id] = w
+            wip_by_order_line[w.matched_order_id] = w
 
     # float 변환 후 키로 사용해야 dict lookup이 안전하게 동작한다
     drum_lots: dict[float, DrumLotMaster] = {
@@ -229,11 +230,13 @@ def create_batches(
         else:
             lot_lengths = [total_qty]
 
-        # WIP 매칭된 수주 → 배치에 wip_matched_id 전파
-        matched_wip = wip_by_order.get(order.order_id)
+        # WIP 매칭된 수주 → 배치에 wip_matched_id 전파 + 공정 스킵
+        order_line_key = f"{order.order_id}:{order.order_line}"
+        matched_wip = wip_by_order_line.get(order_line_key)
         wip_id: int | None = matched_wip.wip_id if matched_wip else None
 
         # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
+        # WIP 항목도 모든 공정에 배치를 생성한다 (Excel 표기 + 간트 스킵은 Stage 2에서 처리)
         for batch_seq, process_name in enumerate(processes, start=1):
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
