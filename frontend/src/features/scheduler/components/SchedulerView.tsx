@@ -509,7 +509,7 @@ function WeekendOverlay({
             left: col.left,
             width: col.width,
             height: totalHeight,
-            backgroundColor: "#EEF0F2",
+            backgroundColor: "rgba(173, 216, 230, 0.35)",
             pointerEvents: "none",
             zIndex: 0,
           }}

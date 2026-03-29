@@ -179,6 +179,9 @@ def list_tasks(
         ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
     )
 
+    # WIP 완료 배치는 간트에 미표시 — 재고로 대체된 공정이므로 스케줄 불필요
+    q = q.filter(ProductionBatchModel.status != "wip_complete")
+
     # 날짜 범위 필터 — 태스크가 윈도우와 겹치는 것만 포함
     if date_from:
         q = q.filter(
