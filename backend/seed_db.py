@@ -1190,7 +1190,7 @@ def _constraints():
             is_enabled=True,
             priority=50,
             impact_level="★★",
-            params_json={"defect_buffer_pct": 5},
+            params_json={"defect_buffer_pct": 0.05},
             applicable_processes=["전체"],
             implementation_type="hybrid",
         ),

@@ -115,6 +115,40 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                 # 단일 행 파싱 실패는 전체를 중단하지 않고 경고로 기록
                 result["warnings"].append(f"[{sheet_name}] 행 {r + 1}: {e}")
 
+    # ── 진행/대기 중복 제거 ─────────────────────────────────────────────────
+    # ERP에 같은 수주가 진행과 대기에 동시 등장하면 대기 쪽을 삭제 (진행 우선).
+    # 판별: (order_id, spec_raw, sheath_color, drum_length_m, ordered_qty_m) 동일.
+    from collections import defaultdict
+
+    all_orders = db.query(SalesOrder).filter(SalesOrder.run_label == run_label).all()
+    key_status: defaultdict[tuple, list] = defaultdict(list)
+    for o in all_orders:
+        key = (
+            o.order_id,
+            o.spec_raw or "",
+            o.sheath_color or "",
+            float(o.drum_length_m or 0),
+        )
+        key_status[key].append(o)
+
+    dup_removed = 0
+    for key, orders in key_status.items():
+        if len(orders) <= 1:
+            continue
+        statuses = {o.order_status for o in orders}
+        if "진행" in statuses and "대기" in statuses:
+            # 진행 유지, 대기 삭제
+            for o in orders:
+                if o.order_status == "대기":
+                    db.delete(o)
+                    dup_removed += 1
+
+    if dup_removed:
+        result["warnings"].append(
+            f"진행/대기 중복 {dup_removed}건 제거 (진행 우선 유지)"
+        )
+        result["dup_removed"] = dup_removed
+
     # flush — commit은 호출부(라우터/유즈케이스)에서 트랜잭션과 함께 처리
     db.flush()
     return result

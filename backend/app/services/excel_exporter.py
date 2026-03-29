@@ -195,25 +195,10 @@ def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
 
         stage1.append(base)
 
-    # ── Stage 2: 진행/대기 중복 제거 ─────────────────────────────────────────
-    # 동일 수주번호+규격+색상+수량이 진행/대기에 각각 있으면 1건만 남긴다.
-    seen: set[tuple] = set()
-    merged: list[ProductionBatch] = []
-    for b in stage1:
-        dedup_key = (
-            b.sales_order_id,
-            b.process_name,
-            float(b.sq_mm2 or 0),
-            b.sheath_color or "",
-            float(b.drum_length_m or 0),
-            float(b.total_length_m or 0),
-        )
-        if dedup_key in seen:
-            continue
-        seen.add(dedup_key)
-        merged.append(b)
-
-    return merged
+    # Stage 2 dedup 제거 — 진행/대기 중복은 ERP 데이터 구조에 따른 것으로
+    # 별개 order_line을 잘못 제거하는 부작용이 더 크므로 비활성화.
+    # 진행/대기 중복(+3 35SQ)은 허용 가능한 차이.
+    return stage1
 
 
 # ── Sheet-level helpers ───────────────────────────────────────────────────────
