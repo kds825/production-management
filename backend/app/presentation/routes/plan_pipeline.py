@@ -51,11 +51,20 @@ async def run_stage1(
             status_code=422, detail=f"ERP 파일 파싱 실패: {exc}"
         ) from exc
 
-    # ── Step 2: WIP 매칭 — 재공 재고를 수주에 매칭하여 공정 생략 ──────────────
+    # ── Step 2: WIP 파일 파싱 + 매칭 ──────────────────────────────────────────
     wip_warnings: list[str] = []
     if wip_file:
-        # TODO: wip_parser 구현 후 연결
-        wip_warnings.append("재공 파일 파싱은 아직 구현되지 않았습니다 (무시됨).")
+        try:
+            from app.services.wip_parser import parse_wip_file
+
+            wip_content = await wip_file.read()
+            if wip_content:
+                wip_parse = parse_wip_file(wip_content, db)
+                wip_warnings.extend(wip_parse.get("warnings", []))
+                if wip_parse["total"] > 0:
+                    wip_warnings.append(f"재공실사 {wip_parse['total']}건 등록 완료.")
+        except Exception as exc:
+            wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
 
     try:
         wip_result = match_wip(run_label, db)

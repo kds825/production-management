@@ -185,12 +185,11 @@ def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
         total_len = sum(float(b.total_length_m or 0) for b in group)
         extra_len = sum(float(b.extra_length_m or 0) for b in group)
         duration = sum(float(b.estimated_duration_min or 0) for b in group) or None
-        total_drums = sum(int(b.drum_count or 1) for b in group)
 
         base.total_length_m = total_len
         base.extra_length_m = extra_len
         base.estimated_duration_min = duration
-        base.drum_count = total_drums
+        # drum_count는 합산하지 않음 — 틀분할은 길이를 나누는 것이지 드럼 수를 바꾸지 않음
         if base.remarks:
             base.remarks = _re.sub(r"틀\d+\s*/?", "", base.remarks).strip(" /") or None
 

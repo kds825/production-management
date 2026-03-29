@@ -281,9 +281,34 @@ def auto_schedule(
                     )
                     eq_total_duration = eq_duration + setup_min + eq_drum_winding
 
-            # 4-4: 스플라이스 용접 시간 — 직전 배치가 같은 SQ이나 다른 수주(접합 로트)이면 추가
-            extra_welding = 0.0
+            # ── 4-1: 동일SQ 셋업 스킵 — 같은 SQ 연속이면 규격교체 불필요 ────
             prev_batch = last_batch_on_equip.get(eq_code)
+            actual_setup = setup_min
+            if prev_batch is not None:
+                same_sq = (
+                    prev_batch.sq_mm2 is not None
+                    and batch.sq_mm2 is not None
+                    and float(prev_batch.sq_mm2) == float(batch.sq_mm2)
+                )
+                if same_sq:
+                    actual_setup = 0.0  # 동일 SQ 연속 → 셋업 스킵
+            eq_total_duration = eq_total_duration - setup_min + actual_setup
+
+            # ── 4-2: 색상교체 시간 — 시스 공정에서 색상 변경 시 120분 추가 ──
+            color_change_min = 0.0
+            if prev_batch is not None and batch.process_name in (
+                "저압시스",
+                "고압시스",
+                "HFCO시스",
+            ):
+                prev_color = (prev_batch.sheath_color or "").strip()
+                curr_color = (batch.sheath_color or "").strip()
+                if prev_color and curr_color and prev_color != curr_color:
+                    color_change_min = 120.0  # 색상교체 2시간
+            eq_total_duration += color_change_min
+
+            # ── 4-4: 스플라이스 용접 시간 ────────────────────────────────────
+            extra_welding = 0.0
             if prev_batch is not None:
                 same_sq = (
                     prev_batch.sq_mm2 is not None
@@ -292,7 +317,6 @@ def auto_schedule(
                 )
                 diff_order = prev_batch.sales_order_id != batch.sales_order_id
                 if same_sq and diff_order:
-                    # 접합(스플라이스) 로트 — 용접 시간 추가
                     extra_welding = welding_min
 
             eq_total_duration += extra_welding
