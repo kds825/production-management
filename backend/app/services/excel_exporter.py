@@ -98,6 +98,15 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     if not batches:
         raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다.")
 
+    # ── 신선 공정 제외 — 원본 계획서에 없는 공정 ─────────────────────────────
+    # 신선(wire drawing)은 연선의 전처리 공정으로 현장 계획서에 표시하지 않는다.
+    batches = [b for b in batches if b.process_name != "신선"]
+
+    # ── 틀분할 배치 병합 — 같은 수주+공정을 1행으로 합산 ──────────────────────
+    # batch_grouping의 틀분할(2-3)은 스케줄링에 필요하지만,
+    # Excel 계획서는 수주 단위 표시이므로 분할 행을 합쳐 원본과 동일한 행 구조를 만든다.
+    batches = _merge_lot_splits(batches)
+
     # ── WIP 룩업: wip_id → process_stage (비고에 실제 WIP 종류 표시용) ───────
     from app.infrastructure.models.wip_inventory import WipInventory
 
@@ -143,6 +152,55 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     wb.save(output)
     output.seek(0)
     return output
+
+
+# ── Batch merge helper ────────────────────────────────────────────────────────
+
+
+def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
+    """같은 수주+공정의 틀분할 배치를 1행으로 병합한다.
+
+    batch_grouping의 틀단위 분할(2-3)이 만든 복수 배치를 합쳐
+    원본 계획서와 동일한 수주 단위 행 구조를 만든다.
+
+    병합 대상: (sales_order_id, sales_order_line, process_name)이 동일한 배치 그룹.
+    합산 항목: total_length_m, extra_length_m, estimated_duration_min.
+    대표 배치: 그룹의 첫 번째 배치 (정렬 순서 유지).
+    remarks에서 '틀N' 표기를 제거한다.
+    """
+    from collections import OrderedDict
+
+    groups: OrderedDict[tuple, list[ProductionBatch]] = OrderedDict()
+    for b in batches:
+        key = (b.sales_order_id, b.sales_order_line, b.process_name)
+        groups.setdefault(key, []).append(b)
+
+    merged: list[ProductionBatch] = []
+    for key, group in groups.items():
+        base = group[0]
+        if len(group) == 1:
+            merged.append(base)
+            continue
+
+        # 합산: total_length, extra_length, duration
+        total_len = sum(float(b.total_length_m or 0) for b in group)
+        extra_len = sum(float(b.extra_length_m or 0) for b in group)
+        duration = sum(float(b.estimated_duration_min or 0) for b in group) or None
+
+        # DB 객체를 직접 수정 (export는 읽기 전용, commit하지 않음)
+        base.total_length_m = total_len
+        base.extra_length_m = extra_len
+        base.estimated_duration_min = duration
+
+        # remarks에서 '틀N' 제거 — 병합했으므로 불필요
+        if base.remarks:
+            import re
+
+            base.remarks = re.sub(r"틀\d+\s*/?", "", base.remarks).strip(" /") or None
+
+        merged.append(base)
+
+    return merged
 
 
 # ── Sheet-level helpers ───────────────────────────────────────────────────────
