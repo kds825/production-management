@@ -242,7 +242,7 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
 
 
 def _write_status_sheet(ws, orders: list) -> None:
-    """진행/대기 시트: 수주 원본 데이터를 컬럼별로 출력한다."""
+    """진행/대기 시트: ERP 수주 원본 데이터를 그대로 출력한다."""
     _write_header(ws, STATUS_SHEET_COLS)
     _apply_col_widths_list(ws, _STATUS_COL_WIDTHS)
 
@@ -301,20 +301,21 @@ def _write_sheet(
 
         current_sq = sq
 
-        # 멀티코어 배치는 색상별로 행 분리
-        color_rows = _expand_color_rows(batch)
-        for color_label, length_m in color_rows:
-            sq_total_m += length_m
-            sq_batch_count += 1
-            row_num = _write_data_row(
-                ws,
-                row_num,
-                batch,
-                all_cols,
-                color_label,
-                length_m,
-                wip_stage_lookup,
-            )
+        # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
+        # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
+        color_label = batch.sheath_color or batch.core_colors or ""
+        length_m = float(batch.total_length_m or 0)
+        sq_total_m += length_m
+        sq_batch_count += 1
+        row_num = _write_data_row(
+            ws,
+            row_num,
+            batch,
+            all_cols,
+            color_label,
+            length_m,
+            wip_stage_lookup,
+        )
 
     # 마지막 그룹 소계
     if current_sq is not None:
@@ -327,6 +328,45 @@ def _write_sheet(
 
 
 # ── Row-level helpers ─────────────────────────────────────────────────────────
+
+
+def _expand_status_colors(so) -> list[tuple[str, str, float]]:
+    """수주를 (색상, 규격, 수량) 목록으로 변환. 다심은 심선색상별 1C 행으로 펼침.
+
+    원본 계획서 진행/대기 시트 구조 재현:
+      4C x 35SQ (갈,흑,회,녹/황) 7000m → 4행의 1C x 35SQ 각 색상 7000m
+      1C x 300SQ 갈 1200m → 그대로 1행
+    """
+    import re
+
+    core_count = int(so.core_count or 1)
+    spec = so.spec_raw or ""
+    total_m = float(so.ordered_qty_m or 0)
+
+    if core_count <= 1:
+        color = so.sheath_color or so.core_colors or ""
+        return [(color, spec, total_m)]
+
+    # 다심: 심선색상 파싱
+    raw_colors = so.core_colors or ""
+    if "/" in raw_colors:
+        colors = [c.strip() for c in raw_colors.split("/") if c.strip()]
+    elif "," in raw_colors:
+        colors = [c.strip() for c in raw_colors.split(",") if c.strip()]
+    else:
+        # 파싱 불가 → sheath_color로 단일 행
+        color = so.sheath_color or raw_colors or ""
+        return [(color, spec, total_m)]
+
+    if not colors:
+        color = so.sheath_color or ""
+        return [(color, spec, total_m)]
+
+    # 규격을 1C 형태로 변환: "4C x 35SQ" → "1C x 35SQ"
+    spec_1c = re.sub(r"^\d+\s*[Cc]", "1C", spec)
+
+    # 각 색상별 동일 수량(원본 방식 — 드럼 단위이므로 분배가 아닌 동일값)
+    return [(color, spec_1c, total_m) for color in colors]
 
 
 def _expand_color_rows(batch: ProductionBatch) -> list[tuple[str, float]]:
