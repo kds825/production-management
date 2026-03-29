@@ -304,21 +304,45 @@ export function GanttTaskBlock({
               #{task.order_id}
             </span>
           )}
-          <span
-            className="text-white text-[10px] font-semibold truncate leading-tight"
-            style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-          >
-            {task.product}
-            {task.spec ? ` ${task.spec}` : ""}
-          </span>
-          <span
-            className="text-white/80 text-[9px] truncate leading-tight"
-            style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-          >
-            {task.color && `${task.color} `}
-            {task.core_count > 0 && `${task.core_count}C `}
-            {volumeLabel}
-          </span>
+          {/* 블록이 충분히 넓으면(>60px) 공장 수동 계획표 스타일로 2행 표시:
+              1행: "{spec} {color}"  (예: "95SQ 갈")
+              2행: "{volume_m}m"     (예: "1200m")
+              좁으면 기존 1행 스타일 유지 */}
+          {width > 60 ? (
+            <>
+              <span
+                className="text-white text-[10px] font-semibold truncate leading-tight"
+                style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+              >
+                {task.spec || task.product}
+                {task.color ? ` ${task.color}` : ""}
+              </span>
+              <span
+                className="text-white/80 text-[9px] truncate leading-tight"
+                style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
+              >
+                {volumeLabel}
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                className="text-white text-[10px] font-semibold truncate leading-tight"
+                style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+              >
+                {task.product}
+                {task.spec ? ` ${task.spec}` : ""}
+              </span>
+              <span
+                className="text-white/80 text-[9px] truncate leading-tight"
+                style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
+              >
+                {task.color && `${task.color} `}
+                {task.core_count > 0 && `${task.core_count}C `}
+                {volumeLabel}
+              </span>
+            </>
+          )}
         </div>
 
         {/* 우측 리사이즈 핸들 — dnd 없음 */}

@@ -11,6 +11,21 @@ import type { ViewFilterType } from "../types";
 const ALWAYS_SHOWN_PROCESS: string[] = ["drawing", "stranding"];
 
 /**
+ * 공장 수동 계획표(3/23~4/10)에 등장하는 저압 설비 7종.
+ * 수동 계획표와 1:1 대응되도록 ID를 하드코딩한다.
+ * (T8B0, 54B0#1, 12BO, 4BO, B100EXT, A100EXT, A120EXT)
+ */
+const LOW_VOLTAGE_EQUIPMENT_IDS: string[] = [
+  "ST-T6B0", // T8B0
+  "ST-54BO1", // 54B0 #1
+  "CA-12BO", // 12BO
+  "CA-4BO", // 4BO (T/P)
+  "EX-B100", // B100EXT
+  "SH-A100", // A100EXT
+  "SH-A120", // A120EXT
+];
+
+/**
  * 공정 유형 한국어 레이블 — best-effort 매핑.
  * 테이블에 없는 공정은 raw string 그대로 표시된다 (폴백).
  */
@@ -43,6 +58,27 @@ export function ViewFilter() {
 
   // 전압 토글 로컬 상태 (voltage 모드일 때 사용)
   const [voltageMode, setVoltageMode] = useState<VoltageMode>("lv");
+
+  // 저압만 퀵토글 — 수동 계획표 7개 설비만 보이도록 즉시 전환
+  const isLvOnly =
+    viewFilter.filterType === "voltage" &&
+    viewFilter.filterValue.length === LOW_VOLTAGE_EQUIPMENT_IDS.length &&
+    LOW_VOLTAGE_EQUIPMENT_IDS.every((id) =>
+      viewFilter.filterValue.includes(id),
+    );
+
+  function toggleLvOnly() {
+    if (isLvOnly) {
+      // 이미 저압만 상태 → 전체로 복귀
+      setViewFilter({ filterType: "all", filterValue: [] });
+    } else {
+      // 저압 7개 설비만 표시
+      setViewFilter({
+        filterType: "voltage",
+        filterValue: LOW_VOLTAGE_EQUIPMENT_IDS,
+      });
+    }
+  }
 
   // 설비 데이터에서 중복 없이 공정 목록을 동적으로 생성한다.
   const processOptions = useMemo(() => {
@@ -124,6 +160,22 @@ export function ViewFilter() {
           </button>
         ))}
       </div>
+
+      {/* 저압만 퀵토글 — 수동 계획표 기준 7개 저압 설비만 표시 */}
+      <div className="w-px h-4 bg-gray-200 mx-1" />
+      <button
+        onClick={toggleLvOnly}
+        className={[
+          "px-3 py-1.5 text-xs font-medium rounded-md transition-colors border",
+          isLvOnly
+            ? "text-white border-transparent"
+            : "text-gray-600 bg-white border-gray-200 hover:bg-gray-50",
+        ].join(" ")}
+        style={isLvOnly ? { backgroundColor: "#1565C0" } : {}}
+        title="수동 계획표 기준 저압 설비 7종만 표시 (T8B0, 54B0#1, 12BO, 4BO, B100EXT, A100EXT, A120EXT)"
+      >
+        {isLvOnly ? "전체" : "저압만"}
+      </button>
 
       {/* 공정별 서브 필터 — 설비 데이터에서 동적으로 생성 */}
       {activeType === "process" && (
