@@ -12,6 +12,14 @@ from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.services.calendar_engine import calculate_end_datetime
 from app.services.audit_logger import log_decision
 
+# WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
+# 절연재고: 신선/연선/절연까지 이미 완료 → 해당 공정 스케줄 불필요
+# 연선재고: 신선/연선까지 이미 완료
+_WIP_SKIP_PROCESSES: dict[str, set[str]] = {
+    "절연재고": {"신선", "연선", "저압절연", "고압절연"},
+    "연선재고": {"신선", "연선"},
+}
+
 # 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용
 _DEFAULT_WELDING_MIN = 30
 
@@ -48,6 +56,31 @@ def auto_schedule(run_label: str, db: Session) -> dict:
     if not batches:
         result["warnings"].append("배치 없음 — Stage 1을 먼저 실행하세요")
         return result
+
+    # ── WIP 공정 스킵: 재고로 대체 가능한 공정은 간트에 미배치 ───────────────
+    from app.infrastructure.models.wip_inventory import WipInventory
+
+    wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id is not None}
+    wip_stage_map: dict[int, str] = {}
+    if wip_ids:
+        wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
+        wip_stage_map = {w.wip_id: w.process_stage or "" for w in wips}
+
+    schedulable: list[ProductionBatch] = []
+    wip_skipped = 0
+    for batch in batches:
+        if batch.wip_matched_id and batch.wip_matched_id in wip_stage_map:
+            wip_stage = wip_stage_map[batch.wip_matched_id]
+            skip_set = _WIP_SKIP_PROCESSES.get(wip_stage, set())
+            if batch.process_name in skip_set:
+                batch.status = "wip_complete"
+                wip_skipped += 1
+                continue
+        schedulable.append(batch)
+
+    batches = schedulable
+    if wip_skipped:
+        result["wip_skipped"] = wip_skipped
 
     # Load equipment into memory
     equipment_list = db.query(EquipmentMaster).all()

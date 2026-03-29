@@ -235,9 +235,15 @@ def create_batches(
         matched_wip = wip_by_order_line.get(order_line_key)
         wip_id: int | None = matched_wip.wip_id if matched_wip else None
 
+        # TFR-GV 소단면(SQ ≤ 25): 단선 접지선 → 연선(stranding) 불필요
+        # 원본 계획서에서 16SQ/25SQ TFR-GV는 연선 시트에 미표시, 시스만 표시
+        skip_stranding = "TFR-GV" in (order.product_group or "").upper() and sq <= 25
+
         # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
         # WIP 항목도 모든 공정에 배치를 생성한다 (Excel 표기 + 간트 스킵은 Stage 2에서 처리)
         for batch_seq, process_name in enumerate(processes, start=1):
+            if skip_stranding and process_name in ("신선", "연선"):
+                continue
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
                 float(speed_info.line_speed_mpm)
