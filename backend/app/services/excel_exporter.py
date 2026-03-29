@@ -160,47 +160,59 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
 
 
 def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
-    """같은 수주+공정의 틀분할 배치를 1행으로 병합한다.
+    """두 단계 병합으로 원본 계획서와 동일한 행 구조를 만든다.
 
-    batch_grouping의 틀단위 분할(2-3)이 만든 복수 배치를 합쳐
-    원본 계획서와 동일한 수주 단위 행 구조를 만든다.
-
-    병합 대상: (sales_order_id, sales_order_line, process_name)이 동일한 배치 그룹.
-    합산 항목: total_length_m, extra_length_m, estimated_duration_min.
-    대표 배치: 그룹의 첫 번째 배치 (정렬 순서 유지).
-    remarks에서 '틀N' 표기를 제거한다.
+    Stage 1: 틀분할 병합 — (order_id, order_line, process_name) 동일한 배치 합산.
+    Stage 2: 진행/대기 중복 제거 — 같은 수주가 진행/대기에 각각 존재할 때,
+             (order_id, process, sq, color, drum_length, total_length)가 완전 동일하면 중복 제거.
     """
     from collections import OrderedDict
+    import re as _re
 
+    # ── Stage 1: 틀분할 배치 합산 ────────────────────────────────────────────
     groups: OrderedDict[tuple, list[ProductionBatch]] = OrderedDict()
     for b in batches:
         key = (b.sales_order_id, b.sales_order_line, b.process_name)
         groups.setdefault(key, []).append(b)
 
-    merged: list[ProductionBatch] = []
+    stage1: list[ProductionBatch] = []
     for key, group in groups.items():
         base = group[0]
         if len(group) == 1:
-            merged.append(base)
+            stage1.append(base)
             continue
 
-        # 합산: total_length, extra_length, duration
         total_len = sum(float(b.total_length_m or 0) for b in group)
         extra_len = sum(float(b.extra_length_m or 0) for b in group)
         duration = sum(float(b.estimated_duration_min or 0) for b in group) or None
+        total_drums = sum(int(b.drum_count or 1) for b in group)
 
-        # DB 객체를 직접 수정 (export는 읽기 전용, commit하지 않음)
         base.total_length_m = total_len
         base.extra_length_m = extra_len
         base.estimated_duration_min = duration
-
-        # remarks에서 '틀N' 제거 — 병합했으므로 불필요
+        base.drum_count = total_drums
         if base.remarks:
-            import re
+            base.remarks = _re.sub(r"틀\d+\s*/?", "", base.remarks).strip(" /") or None
 
-            base.remarks = re.sub(r"틀\d+\s*/?", "", base.remarks).strip(" /") or None
+        stage1.append(base)
 
-        merged.append(base)
+    # ── Stage 2: 진행/대기 중복 제거 ─────────────────────────────────────────
+    # 동일 수주번호+규격+색상+수량이 진행/대기에 각각 있으면 1건만 남긴다.
+    seen: set[tuple] = set()
+    merged: list[ProductionBatch] = []
+    for b in stage1:
+        dedup_key = (
+            b.sales_order_id,
+            b.process_name,
+            float(b.sq_mm2 or 0),
+            b.sheath_color or "",
+            float(b.drum_length_m or 0),
+            float(b.total_length_m or 0),
+        )
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        merged.append(b)
 
     return merged
 
