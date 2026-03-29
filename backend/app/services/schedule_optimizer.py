@@ -1,6 +1,6 @@
 """자동 스케줄링 엔진 — 납기역산 + 그리디 배치"""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -62,6 +62,19 @@ def auto_schedule(
     result = {"total_tasks": 0, "violations": [], "warnings": []}
 
     # Load all batches for this run, excluding outsourced and already-scheduled
+    # 공정 순서를 포함하여 정렬 — 같은 수주의 연선이 절연보다 먼저 스케줄링되어야
+    # predecessor_map이 올바르게 동작함
+    _PROC_ORDER = {
+        "신선": 0,
+        "연선": 1,
+        "저압절연": 2,
+        "고압절연": 2,
+        "연합": 3,
+        "T/P": 3,
+        "저압시스": 4,
+        "고압시스": 4,
+        "HFCO시스": 4,
+    }
     batches = (
         db.query(ProductionBatch)
         .filter(
@@ -71,8 +84,20 @@ def auto_schedule(
         .order_by(
             ProductionBatch.due_date.asc(),
             ProductionBatch.customer_priority.asc(),
+            ProductionBatch.batch_seq.asc(),
         )
         .all()
+    )
+    # Python 레벨 재정렬: batch_seq는 라우팅 내 공정 순서이지만,
+    # 같은 수주의 다른 공정 간 순서를 보장하기 위해 process_name 기준 추가 정렬
+    batches.sort(
+        key=lambda b: (
+            b.due_date or date.max,
+            b.customer_priority or 99,
+            b.sales_order_id or "",
+            b.sales_order_line or 0,
+            _PROC_ORDER.get(b.process_name, 50),
+        )
     )
 
     if not batches:

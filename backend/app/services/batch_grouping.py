@@ -306,6 +306,24 @@ def create_batches(
                 # 61연선: 7연선 코어 선행 배치 추가 (연선 공정일 때만)
                 # T6B0(7연선기)에서 코어 제작 → 54BO(대형 연선기)에서 61연선 완성
                 if is_61strand and process_name == "연선":
+                    # 7연선 코어 선속: T6B0에서 25mpm (7연선 35SQ 기준)
+                    core_speed_info = _find_speed(speed_lookup, "연선", order, 35.0)
+                    core_speed = (
+                        float(core_speed_info.line_speed_mpm)
+                        if core_speed_info and core_speed_info.line_speed_mpm
+                        else 25.0
+                    )
+                    core_setup = (
+                        float(core_speed_info.setup_spec_min)
+                        if core_speed_info and core_speed_info.setup_spec_min
+                        else 210.0
+                    )
+                    core_dur = (
+                        (lot_length + extra_total) / core_speed
+                        if core_speed > 0
+                        else None
+                    )
+
                     core_batch = ProductionBatch(
                         run_label=run_label,
                         sales_order_id=order.order_id,
@@ -325,9 +343,9 @@ def create_batches(
                         customer_name=order.customer_name,
                         due_date=order.due_date,
                         customer_priority=priority,
-                        line_speed_mpm=None,
-                        setup_time_min=0,
-                        estimated_duration_min=None,
+                        line_speed_mpm=core_speed,
+                        setup_time_min=core_setup,
+                        estimated_duration_min=core_dur,
                         status="planned",
                         product_group=order.product_group,
                         voltage=order.voltage,
@@ -519,7 +537,7 @@ def _find_speed(
         "저압시스": ["SH-A100", "SH-A120"],
         "고압절연": ["EX-CV1", "EX-CV2"],
         "고압시스": ["SH-A150", "SH-B100"],
-        "연선": ["ST-A100", "ST-A200"],
+        "연선": ["ST-T6B0", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
         "신선": ["WD-A100"],
         "연합": ["AS-A100"],
     }
@@ -528,8 +546,11 @@ def _find_speed(
     core_count = int(order.core_count or 1)
 
     # product_type 결정 — SpeedMaster.product_type 컬럼 값과 일치시킴
-    if "HFCO" in pg.upper():
-        product_type: str | None = "HFCO"
+    # 연선/신선 공정은 제품군 무관하게 설비 기준 선속 적용
+    if process_name in ("연선", "신선"):
+        product_type: str | None = process_name
+    elif "HFCO" in pg.upper():
+        product_type = "HFCO"
     elif "TFR-GV" in pg.upper():
         product_type = "TFR-GV"
     elif process_name == "저압절연":
