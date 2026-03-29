@@ -1,8 +1,8 @@
 """Stage 1 파이프라인 API — ERP 업로드 → 작업지시서 생성 → Excel 다운로드"""
 
-from datetime import datetime
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from app.services.constraint_checker import validate_all  # noqa: F401 — used 
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
+from app.services.wip_matching import match_wip
 
 router = APIRouter(prefix="/pipeline", tags=["파이프라인"])
 
@@ -22,16 +23,18 @@ router = APIRouter(prefix="/pipeline", tags=["파이프라인"])
 async def run_stage1(
     erp_file: UploadFile = File(..., description="ERP 수주 파일 (.xls)"),
     wip_file: UploadFile | None = File(None, description="재공 재고 파일 (선택)"),
+    date_from: str | None = Form(None, description="납기 시작일 (YYYYMMDD)"),
+    date_to: str | None = Form(None, description="납기 종료일 (YYYYMMDD)"),
     db: Session = Depends(get_db),
 ) -> dict:
     """Stage 1 파이프라인 실행:
 
     1. ERP .xls 파일을 파싱하여 sales_order 테이블에 적재
-    2. (선택) 재공 재고 파일 파싱
-    3. 수주 데이터를 공정별 production_batch로 변환
+    2. 재공(WIP) 매칭 — 기존 재고를 수주에 매칭하여 공정 생략
+    3. 수주 데이터를 공정별 production_batch로 변환 (납기 범위 필터 가능)
 
     Returns:
-        run_label, 파싱 결과, 배치 생성 결과, 통합 경고 목록
+        run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록
     """
     # run_label — 동일 계획 실행의 모든 레코드를 묶는 식별자
     run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -48,15 +51,43 @@ async def run_stage1(
             status_code=422, detail=f"ERP 파일 파싱 실패: {exc}"
         ) from exc
 
-    # ── Step 2: 재공 파일 파싱 (옵션) ─────────────────────────────────────────
+    # ── Step 2: WIP 매칭 — 재공 재고를 수주에 매칭하여 공정 생략 ──────────────
     wip_warnings: list[str] = []
     if wip_file:
         # TODO: wip_parser 구현 후 연결
         wip_warnings.append("재공 파일 파싱은 아직 구현되지 않았습니다 (무시됨).")
 
-    # ── Step 3: production_batch 생성 ─────────────────────────────────────────
     try:
-        batch_result = create_batches(run_label, db)
+        wip_result = match_wip(run_label, db)
+    except Exception as exc:
+        wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
+        wip_result = {"matched": 0, "skipped": 0, "details": []}
+
+    # ── Step 3: 납기 범위 파싱 ────────────────────────────────────────────────
+    parsed_from: date | None = None
+    parsed_to: date | None = None
+    if date_from:
+        try:
+            parsed_from = datetime.strptime(date_from, "%Y%m%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"date_from 형식 오류: {date_from} (YYYYMMDD)",
+            )
+    if date_to:
+        try:
+            parsed_to = datetime.strptime(date_to, "%Y%m%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"date_to 형식 오류: {date_to} (YYYYMMDD)",
+            )
+
+    # ── Step 4: production_batch 생성 ─────────────────────────────────────────
+    try:
+        batch_result = create_batches(
+            run_label, db, date_from=parsed_from, date_to=parsed_to
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"배치 생성 실패: {exc}") from exc
 
@@ -71,6 +102,7 @@ async def run_stage1(
     return {
         "run_label": run_label,
         "parse": parse_result,
+        "wip": wip_result,
         "batches": batch_result,
         "warnings": warnings,
     }
