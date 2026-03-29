@@ -11,6 +11,27 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   {
+    href: "/master/constraints",
+    label: "마스터 데이터",
+    icon: (
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+      </svg>
+    ),
+    matchPrefix: "/master",
+  },
+  {
     href: "/plan-register",
     label: "생산계획등록",
     icon: (
@@ -117,7 +138,9 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
       {/* 네비게이션 메뉴 */}
       <nav className="flex-1 py-2">
         {NAV_ITEMS.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive = (item as any).matchPrefix
+            ? pathname.startsWith((item as any).matchPrefix)
+            : pathname === item.href;
           return (
             <Link
               key={item.href}
