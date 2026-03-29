@@ -68,6 +68,19 @@ def get_record(table_name: str, record_id: str, db: Session = Depends(get_db)):
     return _row_to_dict(row)
 
 
+@router.post("/{table_name}")
+def create_record(table_name: str, body: dict, db: Session = Depends(get_db)):
+    model = _get_model(table_name)
+    row = model()
+    for key, value in body.items():
+        if hasattr(row, key):
+            setattr(row, key, value)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _row_to_dict(row)
+
+
 @router.put("/{table_name}/{record_id}")
 def update_record(
     table_name: str, record_id: str, body: dict, db: Session = Depends(get_db)
