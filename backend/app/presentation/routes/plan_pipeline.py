@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.infrastructure.database import get_db
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.services.batch_grouping import create_batches
+from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
+from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
 
 router = APIRouter(prefix="/pipeline", tags=["파이프라인"])
 

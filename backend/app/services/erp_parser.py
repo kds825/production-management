@@ -30,6 +30,8 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
     workbook = xlrd.open_workbook(file_contents=file_content)
     result: dict = {"total": 0, "진행": 0, "대기": 0, "외주_제외": 0, "warnings": []}
 
+    global_line_num = 0  # 시트 간 글로벌 라인 번호
+
     for sheet_name in ["진행", "대기"]:
         if sheet_name not in workbook.sheet_names():
             result["warnings"].append(f"시트 '{sheet_name}' 없음 — 건너뜀")
@@ -50,13 +52,12 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
         headers = _build_header_map(sheet, header_row_idx)
 
         # ── 데이터 행 파싱 ───────────────────────────────────────────────────────
-        line_num = 0
         for r in range(header_row_idx + 1, sheet.nrows):
             # 첫 번째 셀(수주번호 위치 또는 컬럼 0)이 비어 있으면 빈 행으로 간주
             if not str(sheet.cell_value(r, 0)).strip():
                 continue
 
-            line_num += 1
+            global_line_num += 1
 
             try:
                 order_id = _get_str(sheet, r, headers, "수주번호")
@@ -78,7 +79,7 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
 
                 order = SalesOrder(
                     order_id=order_id,
-                    order_line=line_num,
+                    order_line=global_line_num,
                     order_status=sheet_name,  # 진행 or 대기
                     product_group=_get_str(sheet, r, headers, "제품군"),
                     voltage=_get_str(sheet, r, headers, "전압"),
@@ -123,11 +124,22 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
 
 
 def _find_header_row(sheet, keyword: str, max_scan: int) -> int | None:
-    """keyword를 포함하는 첫 번째 행의 인덱스를 반환. 없으면 None."""
+    """헤더 행 탐지 — keyword를 포함하면서 다른 컬럼 키워드도 함께 있는 행.
+    메타데이터 행("수주번호 :")과 실제 헤더 행을 구분."""
+    confirm_keywords = {"전압", "제품군", "규격", "거래처", "납품일"}
     for r in range(min(max_scan, sheet.nrows)):
-        for c in range(sheet.ncols):
-            if keyword in str(sheet.cell_value(r, c)).strip():
-                return r
+        row_texts = [str(sheet.cell_value(r, c)).strip() for c in range(sheet.ncols)]
+        has_keyword = any(
+            keyword == t or keyword == t.rstrip(":").strip() for t in row_texts
+        )
+        if not has_keyword:
+            continue
+        # 다른 컬럼 키워드 최소 2개 이상 존재하면 헤더 행으로 인정
+        confirm_count = sum(
+            1 for ck in confirm_keywords if any(ck in t for t in row_texts)
+        )
+        if confirm_count >= 2:
+            return r
     return None
 
 
@@ -139,6 +151,8 @@ def _build_header_map(sheet, header_row_idx: int) -> dict[str, int]:
     headers: dict[str, int] = {}
     for c in range(sheet.ncols):
         val = str(sheet.cell_value(header_row_idx, c)).strip()
+        # 줄바꿈을 공백으로 치환 (ERP 엑셀의 셀 내 줄바꿈 처리)
+        val = val.replace("\n", " ").replace("\r", " ").strip()
         if val and val not in headers:
             headers[val] = c
     return headers
@@ -153,9 +167,11 @@ def _get_cell(sheet, row: int, headers: dict[str, int], col_name: str):
     """
     col_idx = headers.get(col_name)
     if col_idx is None:
-        # 부분 일치 폴백 — 컬럼명 표기 변형에 대응
+        # 부분 일치 폴백 — 공백/줄바꿈 변형에 대응
+        norm = col_name.replace(" ", "").replace("\n", "")
         for h, idx in headers.items():
-            if col_name in h:
+            h_norm = h.replace(" ", "").replace("\n", "")
+            if norm in h_norm or h_norm in norm:
                 col_idx = idx
                 break
     if col_idx is None:
