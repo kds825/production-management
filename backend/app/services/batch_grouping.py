@@ -239,6 +239,10 @@ def create_batches(
         # 원본 계획서에서 16SQ/25SQ TFR-GV는 연선 시트에 미표시, 시스만 표시
         skip_stranding = "TFR-GV" in (order.product_group or "").upper() and sq <= 25
 
+        # 61연선(300SQ+): 7연선 코어 선행 → 61연선 완성 2단계
+        # 7연선 코어를 T6B0에서 먼저 제작 후 54BO에서 외층 추가
+        is_61strand = sq >= 300 and conductor_material == "CU"
+
         # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
         # WIP 항목도 모든 공정에 배치를 생성한다 (Excel 표기 + 간트 스킵은 Stage 2에서 처리)
         for batch_seq, process_name in enumerate(processes, start=1):
@@ -298,6 +302,42 @@ def create_batches(
                     wip_matched_id=wip_id,
                 )
                 batches.append(batch)
+
+                # 61연선: 7연선 코어 선행 배치 추가 (연선 공정일 때만)
+                # T6B0(7연선기)에서 코어 제작 → 54BO(대형 연선기)에서 61연선 완성
+                if is_61strand and process_name == "연선":
+                    core_batch = ProductionBatch(
+                        run_label=run_label,
+                        sales_order_id=order.order_id,
+                        sales_order_line=order.order_line,
+                        item_code=item.item_code if item else None,
+                        routing_code=routing_code,
+                        process_name="연선",
+                        batch_seq=0,  # 선행 공정 = seq 0
+                        drum_length_m=drum_length,
+                        drum_count=drum_count,
+                        total_length_m=lot_length,
+                        extra_length_m=extra_total,
+                        sq_mm2=35,  # 7연선 코어는 소형 SQ로 T6B0에 배정
+                        core_count=core_count,
+                        core_colors=order.core_colors,
+                        sheath_color=order.sheath_color,
+                        customer_name=order.customer_name,
+                        due_date=order.due_date,
+                        customer_priority=priority,
+                        line_speed_mpm=None,
+                        setup_time_min=0,
+                        estimated_duration_min=None,
+                        status="planned",
+                        product_group=order.product_group,
+                        voltage=order.voltage,
+                        conductor_material=conductor_material,
+                        stranding_type="7연선코어",
+                        remarks=f"61연선 코어 ({int(sq)}SQ용)",
+                        equipment_code=None,
+                        wip_matched_id=wip_id,
+                    )
+                    batches.append(core_batch)
 
     # ── 잔량 흑색 소진 후처리 (3-4) ─────────────────────────────────────────
     # 배치 생성이 모두 끝난 후에 길이 기준으로 일괄 처리한다.

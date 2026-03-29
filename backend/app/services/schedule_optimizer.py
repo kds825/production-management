@@ -23,6 +23,23 @@ _WIP_SKIP_PROCESSES: dict[str, set[str]] = {
 # 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용
 _DEFAULT_WELDING_MIN = 30
 
+# ── 연선 설비 배정 규칙 (KBI 공정설비 규격 정리 기준) ──────────────────────
+# SQ → 소선경(mm) 매핑 — 같은 소선경 SQ를 같은 설비에 연속 배치 (규칙 3)
+_SQ_TO_WIRE_DIAMETER: dict[int, float] = {
+    16: 1.75,
+    25: 2.21,
+    35: 2.64,
+    50: 3.06,  # 7연선
+    70: 2.21,
+    95: 2.64,
+    120: 2.92,  # 19연선
+    150: 2.34,
+    185: 2.60,
+    240: 3.06,  # 37연선
+    300: 2.60,
+    400: 2.92,  # 61연선
+}
+
 # 시스 재질 → 설비 라우팅 규칙 (10-3)
 # 값은 equipment_code prefix 또는 특수 라우팅 키
 _SHEATH_ROUTING = {
@@ -142,6 +159,10 @@ def auto_schedule(
     # 용접 시간 추적 (4-4): equipment_code → last placed batch (sq_mm2, sales_order_id)
     last_batch_on_equip: dict[str, ProductionBatch] = {}
 
+    # ── 규칙 2: 19연선 이상(70SQ+)은 같은 SQ→같은 설비 고정 ────────────────
+    # 이미 배정된 SQ→설비 매핑을 추적하여 동일 SQ는 같은 설비에 배치
+    sq_to_equip: dict[tuple[str, int], str] = {}  # (process_name, sq) → equipment_code
+
     tasks_created = []
 
     for batch in batches:
@@ -152,6 +173,32 @@ def auto_schedule(
 
         # Find eligible equipment for this batch's process
         eligible = _find_eligible_equipment(batch, candidate_equip)
+
+        # ── 규칙 2: 같은 SQ → 같은 설비 (19연선 이상, 70SQ+) ────────────────
+        sq = int(batch.sq_mm2 or 0)
+        sq_key = (batch.process_name, sq)
+        if sq >= 70 and sq_key in sq_to_equip:
+            preferred_eq = sq_to_equip[sq_key]
+            # 선호 설비가 eligible에 있으면 그것만 사용
+            pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
+            if pref_match:
+                eligible = pref_match
+
+        # ── 규칙 3: 소선경 그루핑 — 같은 소선경 SQ가 있는 설비 선호 ──────────
+        if batch.process_name == "연선" and sq_key not in sq_to_equip:
+            wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
+            if wire_d > 0:
+                # 같은 소선경의 다른 SQ가 이미 배정된 설비를 찾기
+                same_wd_equips = set()
+                for (proc, s), eq_code in sq_to_equip.items():
+                    if proc == "연선" and _SQ_TO_WIRE_DIAMETER.get(s, -1) == wire_d:
+                        same_wd_equips.add(eq_code)
+                if same_wd_equips:
+                    wd_match = [
+                        e for e in eligible if e.equipment_code in same_wd_equips
+                    ]
+                    if wd_match:
+                        eligible = wd_match
 
         if not eligible:
             result["warnings"].append(
@@ -283,6 +330,9 @@ def auto_schedule(
         # Update batch status
         batch.equipment_code = best_eq.equipment_code
         batch.status = "scheduled"
+
+        # 규칙 2: SQ→설비 매핑 기록 (다음 같은 SQ 배치도 같은 설비에 배정)
+        sq_to_equip[sq_key] = best_eq.equipment_code
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신
         last_batch_on_equip[best_eq.equipment_code] = batch
