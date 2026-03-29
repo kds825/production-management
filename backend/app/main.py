@@ -6,14 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.presentation.routes import (
-    constraints,
-    equipment,
-    orders,
-    plan_pipeline,
-    process_routes,
-    schedules,
-)
+from app.presentation.routes import audit  # noqa: F401
+from app.presentation.routes import constraints  # noqa: F401
+from app.presentation.routes import equipment  # noqa: F401
+from app.presentation.routes import master_data  # noqa: F401
+from app.presentation.routes import orders  # noqa: F401
+from app.presentation.routes import plan_pipeline  # noqa: F401
+from app.presentation.routes import process_routes  # noqa: F401
+from app.presentation.routes import schedules  # noqa: F401
 
 app = FastAPI(
     title=settings.APP_TITLE,
@@ -37,6 +37,8 @@ app.include_router(schedules.router, prefix="/api")
 app.include_router(constraints.router, prefix="/api")
 app.include_router(process_routes.router, prefix="/api")
 app.include_router(plan_pipeline.router, prefix="/api")
+app.include_router(master_data.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["헬스체크"])

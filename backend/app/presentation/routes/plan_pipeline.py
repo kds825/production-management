@@ -101,6 +101,29 @@ def export_stage1(run_label: str, db: Session = Depends(get_db)) -> StreamingRes
     )
 
 
+@router.post("/stage2", summary="Stage 2: 자동 스케줄링")
+def run_stage2(body: dict, db: Session = Depends(get_db)):
+    """Stage 2: production_batch → 간트 차트 자동배열 + 제약조건 검증"""
+    run_label = body.get("run_label")
+    if not run_label:
+        raise HTTPException(status_code=400, detail="run_label 필수")
+
+    try:
+        schedule_result = auto_schedule(run_label, db)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"스케줄링 실패: {exc}") from exc
+
+    violations = validate_all(run_label, db)
+    db.commit()
+
+    return {
+        "run_label": run_label,
+        "schedule": schedule_result,
+        "violations": violations,
+        "total_violations": len(violations),
+    }
+
+
 @router.get("/runs", summary="계획 실행 이력 목록")
 def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     """저장된 모든 run_label 목록을 배치 수 및 최초 생성 시각과 함께 반환한다.

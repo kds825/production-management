@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from app.domain.constraints import validate_task
+from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
+from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.presentation.schemas import (
     ConstraintValidateRequest,
     ConstraintValidateResponse,
@@ -77,3 +80,49 @@ def validate_constraints(body: ConstraintValidateRequest) -> ConstraintValidateR
         error_count=error_count,
         warning_count=warning_count,
     )
+
+
+# ── 제약조건 마스터 CRUD (DB 기반) ───────────────────────────────────────────
+
+
+@router.get("", summary="제약조건 목록 조회")
+def list_constraints(db: Session = Depends(get_db)):
+    rows = db.query(ConstraintConfig).order_by(ConstraintConfig.priority).all()
+    return {
+        "constraints": [
+            {
+                "constraint_id": r.constraint_id,
+                "constraint_name": r.constraint_name,
+                "category": r.category,
+                "is_enabled": r.is_enabled,
+                "priority": r.priority,
+                "impact_level": r.impact_level,
+                "params_json": r.params_json,
+                "applicable_processes": r.applicable_processes,
+                "implementation_type": r.implementation_type,
+                "notes": r.notes,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+        "enabled": sum(1 for r in rows if r.is_enabled),
+    }
+
+
+@router.patch("/{constraint_id}", summary="제약조건 수정 (on/off, 파라미터)")
+def update_constraint(constraint_id: str, body: dict, db: Session = Depends(get_db)):
+    row = (
+        db.query(ConstraintConfig)
+        .filter(ConstraintConfig.constraint_id == constraint_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail=f"제약조건 '{constraint_id}' 없음")
+    if "is_enabled" in body:
+        row.is_enabled = body["is_enabled"]
+    if "params_json" in body:
+        row.params_json = body["params_json"]
+    if "priority" in body:
+        row.priority = body["priority"]
+    db.commit()
+    return {"constraint_id": constraint_id, "updated": True}
