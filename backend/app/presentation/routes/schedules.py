@@ -156,22 +156,55 @@ def _db_task_to_response(
 
 
 @router.get("/tasks", response_model=list[ScheduleTaskResponse])
-def list_tasks(db: Session = Depends(get_db)) -> list[ScheduleTaskResponse]:
-    """전체 스케줄 작업 목록 조회 (시작 시간 오름차순).
+def list_tasks(
+    date_from: str | None = Query(None, description="시작일 YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="종료일 YYYY-MM-DD"),
+    process_type: str | None = Query(
+        None, description="공정 필터 (연선,저압절연,저압시스 등)"
+    ),
+    equipment_id: str | None = Query(None, description="설비 필터"),
+    voltage: str | None = Query(None, description="전압 필터 (저압/고압)"),
+    db: Session = Depends(get_db),
+) -> list[ScheduleTaskResponse]:
+    """스케줄 작업 목록 조회 (시작 시간 오름차순).
 
     Stage 2 auto-scheduling 결과를 PostgreSQL에서 읽어 반환한다.
+    date_from/date_to/process_type/equipment_id/voltage 쿼리 파라미터로
+    Gantt 뷰에 필요한 구간만 필터링하여 전송량을 줄인다.
     DB에 schedule_task 레코드가 없을 경우 인메모리 store로 폴백하여
     개발 초기 샘플 데이터도 계속 볼 수 있다.
     """
-    db_tasks = (
-        db.query(ScheduleTaskModel, ProductionBatchModel)
-        .join(
-            ProductionBatchModel,
-            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
-        )
-        .order_by(ScheduleTaskModel.start_datetime)
-        .all()
+    q = db.query(ScheduleTaskModel, ProductionBatchModel).join(
+        ProductionBatchModel,
+        ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
     )
+
+    # 날짜 범위 필터 — 태스크가 윈도우와 겹치는 것만 포함
+    if date_from:
+        q = q.filter(
+            ScheduleTaskModel.start_datetime >= datetime.fromisoformat(date_from)
+        )
+    if date_to:
+        q = q.filter(ScheduleTaskModel.end_datetime <= datetime.fromisoformat(date_to))
+
+    # 공정명 필터
+    if process_type:
+        q = q.filter(ProductionBatchModel.process_name == process_type)
+
+    # 설비 코드 필터
+    if equipment_id:
+        q = q.filter(ScheduleTaskModel.equipment_code == equipment_id)
+
+    # 전압 필터 — 저압: 0.6kV 계열, 고압: 22.9kV / 35kV 계열
+    if voltage == "저압":
+        q = q.filter(ProductionBatchModel.voltage.contains("0.6"))
+    elif voltage == "고압":
+        q = q.filter(
+            ProductionBatchModel.voltage.contains("22.9")
+            | ProductionBatchModel.voltage.contains("35")
+        )
+
+    db_tasks = q.order_by(ScheduleTaskModel.start_datetime).all()
 
     if db_tasks:
         return [_db_task_to_response(task, batch) for task, batch in db_tasks]
