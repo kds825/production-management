@@ -1,0 +1,55 @@
+from sqlalchemy import (
+    Column,
+    String,
+    Integer,
+    Numeric,
+    Text,
+    Date,
+    DateTime,
+    ForeignKey,
+)
+from datetime import datetime
+from app.infrastructure.database import Base
+
+
+# Stage 1 <-> Stage 2 interface contract
+class ProductionBatch(Base):
+    __tablename__ = "production_batch"
+
+    batch_id = Column(Integer, primary_key=True, autoincrement=True)
+    run_label = Column(String(50), nullable=False, index=True)
+    sales_order_id = Column(String(30))
+    sales_order_line = Column(Integer, default=1)
+    item_code = Column(String(20), ForeignKey("item_master.item_code"), nullable=True)
+    routing_code = Column(
+        String(20), ForeignKey("process_routing.routing_code"), nullable=True
+    )
+    process_name = Column(String(30), nullable=False)  # 연선, 저압절연, ...
+    equipment_code = Column(
+        String(20), ForeignKey("equipment_master.equipment_code"), nullable=True
+    )
+    batch_seq = Column(Integer, default=1)
+    drum_length_m = Column(Numeric)
+    drum_count = Column(Integer, default=1)
+    total_length_m = Column(Numeric)
+    extra_length_m = Column(Numeric, default=0)
+    sq_mm2 = Column(Numeric)
+    core_count = Column(Integer, default=1)
+    core_colors = Column(String(100))
+    sheath_color = Column(String(50))
+    customer_name = Column(String(100))
+    due_date = Column(Date)
+    customer_priority = Column(Integer, default=99)
+    wip_matched_id = Column(Integer, ForeignKey("wip_inventory.wip_id"), nullable=True)
+    line_speed_mpm = Column(Numeric)
+    setup_time_min = Column(Numeric, default=0)
+    estimated_duration_min = Column(Numeric)
+    status = Column(
+        String(20), default="planned"
+    )  # planned, scheduled, in_progress, completed
+    remarks = Column(Text)
+    product_group = Column(String(50))
+    voltage = Column(String(20))
+    conductor_material = Column(String(10))
+    stranding_type = Column(String(20))
+    created_at = Column(DateTime, default=datetime.utcnow)
