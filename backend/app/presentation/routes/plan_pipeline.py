@@ -177,6 +177,19 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/wip-template", summary="재공실사 Excel 템플릿 다운로드")
+def download_wip_template() -> StreamingResponse:
+    """드롭다운 validation이 포함된 재공실사 데이터 입력 템플릿을 반환한다."""
+    from app.services.wip_template import generate_wip_template
+
+    output = generate_wip_template()
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=wip_template.xlsx"},
+    )
+
+
 @router.get("/runs", summary="계획 실행 이력 목록")
 def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     """저장된 모든 run_label 목록을 배치 수 및 최초 생성 시각과 함께 반환한다.

@@ -109,9 +109,22 @@ function WipUploadSection() {
 
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold mb-1" style={{ color: "#111827" }}>
-        2. 재공수량 파일 업로드
-      </h3>
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-semibold" style={{ color: "#111827" }}>
+          2. 재공수량 파일 업로드
+        </h3>
+        <a
+          href={`${API}/pipeline/wip-template`}
+          download="wip_template.xlsx"
+          className="text-[11px] font-medium px-3 py-1 rounded-md transition-colors"
+          style={{
+            border: `1px solid ${PRIMARY}`,
+            color: PRIMARY,
+          }}
+        >
+          템플릿 다운로드
+        </a>
+      </div>
       <p className="text-xs text-gray-500 mb-3">
         재공(WIP) 수량 데이터를 업로드해주세요
       </p>
