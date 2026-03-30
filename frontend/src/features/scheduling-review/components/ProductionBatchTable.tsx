@@ -17,6 +17,8 @@ interface ProductionBatchTableProps {
   showProcessColumn?: boolean;
   /** WIP 클릭 시 하이라이트할 배치 ID */
   highlightedBatchId?: string | null;
+  /** 재고 사용 배치 클릭 → WIP로 이동 */
+  onBatchWipClick?: (batchId: string) => void;
 }
 
 const COL_DEFS = [
@@ -30,14 +32,8 @@ const COL_DEFS = [
   { key: "length_per_unit_m", label: "조장(M)", align: "right", width: 80 },
   { key: "unit_count", label: "개수(ea)", align: "right", width: 80 },
   { key: "total_length_m", label: "수량(M)", align: "right", width: 80 },
-  { key: "notes", label: "비고", align: "left", width: 120 },
-  {
-    key: "classification_reason",
-    label: "분류근거",
-    align: "left",
-    width: 200,
-  },
   { key: "convertedQty", label: "환산수량", align: "right", width: 80 },
+  { key: "notes", label: "비고", align: "left", width: 100 },
 ] as const;
 
 const BATCH_BG_EVEN = "#FFFFFF";
@@ -50,6 +46,7 @@ export function ProductionBatchTable({
   batches,
   processGroup,
   highlightedBatchId,
+  onBatchWipClick,
   showProcessColumn,
 }: ProductionBatchTableProps) {
   const batchNumbers = useMemo(() => assignBatchNumbers(batches), [batches]);
@@ -218,6 +215,19 @@ export function ProductionBatchTable({
                             >
                               {getBatchLabel(batch)}
                             </span>
+                          ) : col.key === "notes" &&
+                            batch.notes === "재고 사용" ? (
+                            <button
+                              onClick={() => onBatchWipClick?.(batch.id)}
+                              className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
+                              style={{
+                                backgroundColor: "#FEF2F2",
+                                color: "#C41230",
+                                cursor: onBatchWipClick ? "pointer" : "default",
+                              }}
+                            >
+                              재고 사용 →
+                            </button>
                           ) : (
                             <span
                               className="block truncate text-[11px]"
