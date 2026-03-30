@@ -133,6 +133,9 @@ interface SchedulingReviewState {
 
   // Section 4 탭
   activeTab: ProcessGroup;
+
+  // 현재 로드된 run_label (ai-summary API 호출에 사용)
+  runLabel: string | null;
 }
 
 interface SchedulingReviewActions {
@@ -166,6 +169,7 @@ const initialState: SchedulingReviewState = {
   aiInsights: [],
   aiSummary: null,
   activeTab: "연선",
+  runLabel: null,
 };
 
 export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
@@ -206,6 +210,15 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.insulationBatches = insulation;
           state.sheatBatches = sheat;
           state.isLoading = false;
+          state.runLabel = runLabel;
+          // 배치 로드 완료 = 계산 완료 (별도 버튼 불필요)
+          state.isCalculated = true;
+          state.aiSummary = {
+            totalBatches: batches.length,
+            totalProductionM: batches.reduce((s, b) => s + b.total_length_m, 0),
+            riskCount: 0,
+            highlights: [],
+          };
 
           // WIP 매칭된 항목을 WIP 리스트로 표시
           const wipItems: WipItem[] = batches
@@ -289,27 +302,84 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         state.isCalculating = true;
       });
 
-      // AI 계산 시뮬레이션 (2초 딜레이)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const { runLabel, allBatches } = get();
 
-      const { allBatches } = get();
+      // runLabel이 없으면 로컬 계산 fallback
+      if (!runLabel) {
+        set((state) => {
+          state.isCalculating = false;
+          state.isCalculated = true;
+          state.aiInsights = [];
+          state.aiSummary = {
+            totalBatches: allBatches.length,
+            totalProductionM: allBatches.reduce(
+              (sum, b) => sum + b.total_length_m,
+              0,
+            ),
+            riskCount: 0,
+            highlights: [
+              `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
+            ],
+          };
+        });
+        return;
+      }
 
-      set((state) => {
-        state.isCalculating = false;
-        state.isCalculated = true;
-        state.aiInsights = [];
-        state.aiSummary = {
-          totalBatches: allBatches.length,
-          totalProductionM: allBatches.reduce(
-            (sum, b) => sum + b.total_length_m,
-            0,
-          ),
-          riskCount: 0,
-          highlights: [
-            `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
-          ],
-        };
-      });
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/stage1/${runLabel}/ai-summary`,
+        );
+        if (res.ok) {
+          const data = await res.json();
+          set((state) => {
+            state.isCalculating = false;
+            state.isCalculated = true;
+            state.aiInsights = data.insights || [];
+            state.aiSummary = {
+              totalBatches: data.totalBatches,
+              totalProductionM: data.totalProductionM,
+              riskCount: data.riskCount,
+              highlights: data.highlights,
+            };
+          });
+        } else {
+          // API 실패 시 로컬 fallback
+          set((state) => {
+            state.isCalculating = false;
+            state.isCalculated = true;
+            state.aiInsights = [];
+            state.aiSummary = {
+              totalBatches: allBatches.length,
+              totalProductionM: allBatches.reduce(
+                (sum, b) => sum + b.total_length_m,
+                0,
+              ),
+              riskCount: 0,
+              highlights: [
+                `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
+              ],
+            };
+          });
+        }
+      } catch {
+        // 네트워크 오류 시 로컬 fallback
+        set((state) => {
+          state.isCalculating = false;
+          state.isCalculated = true;
+          state.aiInsights = [];
+          state.aiSummary = {
+            totalBatches: allBatches.length,
+            totalProductionM: allBatches.reduce(
+              (sum, b) => sum + b.total_length_m,
+              0,
+            ),
+            riskCount: 0,
+            highlights: [
+              `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
+            ],
+          };
+        });
+      }
     },
 
     setActiveTab: (tab) => {
