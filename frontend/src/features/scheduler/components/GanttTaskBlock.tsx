@@ -20,6 +20,32 @@ interface GanttTaskBlockProps {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
 
+/** 시스 공정(SH-A100/SH-A120) 설비의 sheath_color → 블록 배경색 매핑 */
+const SHEATH_COLOR_MAP: Record<string, string> = {
+  흑: "#374151",
+  갈: "#92400E",
+  회: "#6B7280",
+  청: "#1E40AF",
+  녹: "#065F46",
+  황: "#065F46",
+  "흑/적": "#991B1B",
+};
+
+const SHEATH_EQUIPMENT_IDS = new Set(["SH-A100", "SH-A120"]);
+
+/** 시스 설비일 때 task.color 기반 배경색 반환, 아니면 null */
+function getSheathColor(equipmentId: string, color: string): string | null {
+  if (!SHEATH_EQUIPMENT_IDS.has(equipmentId)) return null;
+  if (!color) return null;
+  // 정확한 키 매칭 우선
+  if (SHEATH_COLOR_MAP[color]) return SHEATH_COLOR_MAP[color];
+  // 부분 매칭: 색상 문자열에 키워드가 포함되어 있으면 적용
+  for (const [key, hex] of Object.entries(SHEATH_COLOR_MAP)) {
+    if (color.includes(key)) return hex;
+  }
+  return null;
+}
+
 function snapToHour(ts: number): number {
   return Math.round(ts / MS_PER_HOUR) * MS_PER_HOUR;
 }
@@ -29,7 +55,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   rangeStart,
   dayWidth,
 }: GanttTaskBlockProps) {
-  const baseColor = getTaskColor(task.product);
+  // 시스 공정이면 sheath_color(task.color) 기반 색상 사용, 아니면 제품 그룹 색상
+  const sheathOverride = getSheathColor(task.equipment_id, task.color);
+  const baseColor = sheathOverride ?? getTaskColor(task.product);
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   const openContextMenu = useScheduleStore((s) => s.openContextMenu);
   const updateTask = useScheduleStore((s) => s.updateTask);

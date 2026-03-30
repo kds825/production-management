@@ -196,6 +196,9 @@ def auto_schedule(
     process_end_by_sq: dict[tuple[str, int], datetime] = {}
     # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
 
+    # 공정 전체 종료 시각 추적 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
+    process_end_all: dict[str, datetime] = {}  # "저압절연" → 마지막 절연 그룹 종료 시각
+
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
     from collections import OrderedDict
 
@@ -331,6 +334,12 @@ def auto_schedule(
                     if rep.process_name in ("고압시스",):
                         earliest += timedelta(hours=20)
 
+            # 시스 배치(A100/A120): 저압절연 전체 완료 후 시작
+            if group_key.startswith("A100_") or group_key.startswith("A120_"):
+                all_insul_end = process_end_all.get("저압절연")
+                if all_insul_end and all_insul_end > earliest:
+                    earliest = all_insul_end
+
             # 개별 수주 레벨 predecessor도 확인 (더 늦은 것 우선)
             for b in group_batches:
                 pred_key = (b.sales_order_id, b.sales_order_line)
@@ -385,6 +394,14 @@ def auto_schedule(
             or end_dt > process_end_by_sq[proc_sq_key]
         ):
             process_end_by_sq[proc_sq_key] = end_dt
+
+        # 공정 전체 종료 시각 갱신 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
+        if rep.process_name == "저압절연":
+            if (
+                "저압절연" not in process_end_all
+                or end_dt > process_end_all["저압절연"]
+            ):
+                process_end_all["저압절연"] = end_dt
 
         # 그룹 내 모든 배치의 predecessor + status 갱신
         for b in group_batches:

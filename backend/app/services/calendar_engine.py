@@ -27,6 +27,10 @@ def get_available_hours(
         if holiday:
             return 0.0
 
+    # 토/일: 공장 미가동
+    if weekday >= 5:
+        return 0.0
+
     # Friday: 16hr - 2hr deduction = 14hr
     if weekday == 4:
         return 14.0
