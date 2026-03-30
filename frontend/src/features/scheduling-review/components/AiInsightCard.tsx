@@ -41,7 +41,11 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
       >
         <span>
           총 배치{" "}
-          <strong style={{ color: "#111827" }}>{summary.totalBatches}건</strong>
+          <strong style={{ color: "#111827" }}>
+            {summary.totalGroups > 0
+              ? `${summary.totalGroups}배치 (${summary.totalBatches}수주)`
+              : `${summary.totalBatches}건`}
+          </strong>
         </span>
         <span style={{ color: "#D1D5DB" }}>|</span>
         <span>

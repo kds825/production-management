@@ -176,6 +176,7 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
     if total_batches == 0:
         return {
             "totalBatches": 0,
+            "totalGroups": 0,
             "totalProductionM": 0.0,
             "riskCount": 0,
             "highlights": ["해당 run_label의 배치 데이터가 없습니다."],
@@ -183,6 +184,8 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
         }
 
     total_m = sum(float(b.total_length_m or 0) for b in batches)
+    # 고유 배치 그룹 수 (간트 블록 단위)
+    total_groups = len({b.batch_group for b in batches if b.batch_group})
 
     # 공정별 집계
     by_process: dict[str, int] = {}
@@ -257,6 +260,7 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
 
     return {
         "totalBatches": total_batches,
+        "totalGroups": total_groups,
         "totalProductionM": round(total_m, 1),
         "riskCount": risk_count,
         "highlights": highlights,

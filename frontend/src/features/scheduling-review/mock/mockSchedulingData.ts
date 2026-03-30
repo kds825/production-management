@@ -1128,6 +1128,7 @@ export const MOCK_AI_INSIGHTS: AiInsight[] = [
 
 export const MOCK_AI_SUMMARY: AiSummary = {
   totalBatches: 52,
+  totalGroups: 12,
   totalProductionM: 124_622,
   riskCount: 3,
   highlights: [

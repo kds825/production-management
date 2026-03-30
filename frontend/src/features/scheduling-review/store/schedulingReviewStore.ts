@@ -215,6 +215,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.isCalculated = true;
           state.aiSummary = {
             totalBatches: batches.length,
+            totalGroups: new Set(
+              batches.map((b) => b.batch_group).filter(Boolean),
+            ).size,
             totalProductionM: batches.reduce((s, b) => s + b.total_length_m, 0),
             riskCount: 0,
             highlights: [],
@@ -312,6 +315,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.aiInsights = [];
           state.aiSummary = {
             totalBatches: allBatches.length,
+            totalGroups: new Set(
+              allBatches.map((b) => b.batch_group).filter(Boolean),
+            ).size,
             totalProductionM: allBatches.reduce(
               (sum, b) => sum + b.total_length_m,
               0,
@@ -337,6 +343,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             state.aiInsights = data.insights || [];
             state.aiSummary = {
               totalBatches: data.totalBatches,
+              totalGroups: data.totalGroups || 0,
               totalProductionM: data.totalProductionM,
               riskCount: data.riskCount,
               highlights: data.highlights,
@@ -350,6 +357,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             state.aiInsights = [];
             state.aiSummary = {
               totalBatches: allBatches.length,
+              totalGroups: new Set(
+                allBatches.map((b) => b.batch_group).filter(Boolean),
+              ).size,
               totalProductionM: allBatches.reduce(
                 (sum, b) => sum + b.total_length_m,
                 0,
@@ -369,6 +379,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.aiInsights = [];
           state.aiSummary = {
             totalBatches: allBatches.length,
+            totalGroups: new Set(
+              allBatches.map((b) => b.batch_group).filter(Boolean),
+            ).size,
             totalProductionM: allBatches.reduce(
               (sum, b) => sum + b.total_length_m,
               0,

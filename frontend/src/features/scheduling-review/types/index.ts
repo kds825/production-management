@@ -32,6 +32,7 @@ export interface AiInsight {
 
 export interface AiSummary {
   totalBatches: number;
+  totalGroups: number;
   totalProductionM: number;
   riskCount: number;
   highlights: string[];
