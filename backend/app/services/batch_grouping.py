@@ -235,7 +235,11 @@ def create_batches(
         # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
         # WIP 항목도 모든 공정에 배치를 생성한다 (Excel 표기 + 간트 스킵은 Stage 2에서 처리)
         for batch_seq, process_name in enumerate(processes, start=1):
-            if skip_stranding and process_name in ("신선", "연선"):
+            # 신선은 연선 설비에서 인라인 처리 — 별도 배치 미생성
+            # 원본 계획서에 신선 시트 없음 (연선 duration에 포함)
+            if process_name == "신선":
+                continue
+            if skip_stranding and process_name == "연선":
                 continue
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
