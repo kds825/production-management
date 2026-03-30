@@ -230,12 +230,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
   const setUnscheduledOrders = useScheduleStore((s) => s.setUnscheduledOrders);
   const [activeTab, setActiveTab] = useState<EquipmentGroup | "전체">("전체");
 
-  // PoC: plan-register mock 배치 데이터로 미배정 작업 초기화
-  useEffect(() => {
-    if (unscheduledOrders.length === 0) {
-      setUnscheduledOrders(MOCK_UNSCHEDULED_ORDERS);
-    }
-  }, [setUnscheduledOrders, unscheduledOrders.length]);
+  // mock 데이터 제거 — 미배정 작업은 DB 기반 (Stage 2 미실행 시 표시 없음)
 
   if (unscheduledOrders.length === 0) {
     return (
