@@ -222,6 +222,39 @@ export default function SchedulingReviewPage() {
           </select>
         </div>
 
+        {/* 계획 삭제 버튼 */}
+        <button
+          onClick={async () => {
+            if (!selectedRun) return;
+            if (!confirm(`"${selectedRun}" 계획을 삭제하시겠습니까?`)) return;
+            const res = await fetch(
+              `${API_BASE}/pipeline/runs/${encodeURIComponent(selectedRun)}`,
+              { method: "DELETE" },
+            );
+            if (res.ok) {
+              setSelectedRun("");
+              loadRuns();
+            }
+          }}
+          disabled={!selectedRun}
+          className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
+          style={{
+            backgroundColor: "#FEF2F2",
+            color: "#C41230",
+            border: "1px solid #FECACA",
+          }}
+          title="선택한 계획 실행 삭제"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M5.5 5.5A.5.5 0 016 6v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm2.5 0a.5.5 0 01.5.5v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm3 .5a.5.5 0 00-1 0v6a.5.5 0 001 0V6z" />
+            <path
+              fillRule="evenodd"
+              d="M14.5 3a1 1 0 01-1 1H13v9a2 2 0 01-2 2H5a2 2 0 01-2-2V4h-.5a1 1 0 010-2H6a1 1 0 011-1h2a1 1 0 011 1h3.5a1 1 0 011 1zM4.118 4L4 4.059V13a1 1 0 001 1h6a1 1 0 001-1V4.059L11.882 4H4.118z"
+            />
+          </svg>
+          삭제
+        </button>
+
         {/* Excel 다운로드 버튼 — 런이 선택된 경우에만 활성화 */}
         <button
           onClick={handleExcelDownload}
