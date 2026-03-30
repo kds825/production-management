@@ -89,14 +89,14 @@ def auto_schedule(
         .all()
     )
     # Python 레벨 재정렬: batch_seq는 라우팅 내 공정 순서이지만,
-    # 같은 수주의 다른 공정 간 순서를 보장하기 위해 process_name 기준 추가 정렬
+    # batch_group 스케줄링: 공정 순서 최우선 (연선→절연→시스 파이프라인)
+    # 같은 공정 내에서 SQ 내림차순, 납기순 정렬
     batches.sort(
         key=lambda b: (
+            _PROC_ORDER.get(b.process_name, 50),
+            -(float(b.sq_mm2 or 0)),
             b.due_date or date.max,
             b.customer_priority or 99,
-            b.sales_order_id or "",
-            b.sales_order_line or 0,
-            _PROC_ORDER.get(b.process_name, 50),
         )
     )
 
@@ -190,9 +190,13 @@ def auto_schedule(
 
     tasks_created = []
 
+    # 공정 간 선행관계 추적 — SQ 단위로 앞 공정의 종료 시각 기록
+    # 연선_120SQ 종료 → 저압절연_120SQ 시작 가능
+    # 저압절연_120SQ 종료 → A100_120SQ / A120_120SQ 시작 가능
+    process_end_by_sq: dict[tuple[str, int], datetime] = {}
+    # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
+
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
-    # 같은 (공정, SQ) 배치들을 하나의 간트 블록으로 묶어 스케줄링한다.
-    # 원본 계획서의 "120SQ--->1틀(연선5285)" = 1 batch_group = 1 schedule_task.
     from collections import OrderedDict
 
     batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
@@ -207,6 +211,17 @@ def auto_schedule(
         candidate_equip = equipment_by_process.get(rep.process_name, [])
         if rep.process_name in ("고압시스", "저압시스"):
             candidate_equip = _filter_by_sheath_routing(rep, candidate_equip)
+
+        # 저압시스 A100/A120 색상별 설비 강제 라우팅
+        # A120 배치(흑/청) → SH-A120 전용, A100 배치(갈/회/녹황) → SH-A100 전용
+        if group_key.startswith("A120_"):
+            candidate_equip = [
+                e for e in candidate_equip if e.equipment_code == "SH-A120"
+            ]
+        elif group_key.startswith("A100_"):
+            candidate_equip = [
+                e for e in candidate_equip if e.equipment_code == "SH-A100"
+            ]
 
         eligible = _find_eligible_equipment(rep, candidate_equip)
 
@@ -295,8 +310,28 @@ def auto_schedule(
                     color_change_min = 120.0
             eq_total_duration += color_change_min
 
-            # ── 선행공정(predecessor) — 그룹 내 모든 수주의 선행공정 중 가장 늦은 것 기준
+            # ── 선행공정(predecessor) — 공정 순서에 따라 앞 공정 종료 후 시작
             earliest = base_date
+            sq_int = int(rep.sq_mm2 or 0)
+
+            # 공정 간 선행관계: 연선→절연→시스 순서 강제
+            _PREDECESSOR_PROCESS = {
+                "저압절연": "연선",
+                "고압절연": "연선",
+                "저압시스": "저압절연",
+                "고압시스": "고압절연",
+                "연합": "연선",
+            }
+            pred_proc = _PREDECESSOR_PROCESS.get(rep.process_name)
+            if pred_proc:
+                pred_end = process_end_by_sq.get((pred_proc, sq_int))
+                if pred_end and pred_end > earliest:
+                    earliest = pred_end
+                    # 고압 건조대기 20hr
+                    if rep.process_name in ("고압시스",):
+                        earliest += timedelta(hours=20)
+
+            # 개별 수주 레벨 predecessor도 확인 (더 늦은 것 우선)
             for b in group_batches:
                 pred_key = (b.sales_order_id, b.sales_order_line)
                 pred_tid = predecessor_map.get(pred_key)
@@ -306,8 +341,6 @@ def auto_schedule(
                     )
                     if pred_task and pred_task.end_datetime > earliest:
                         earliest = pred_task.end_datetime
-                        if rep.process_name in ("고압시스",):
-                            earliest += timedelta(hours=20)
 
             slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
 
@@ -343,6 +376,15 @@ def auto_schedule(
         db.flush()
 
         timeline.setdefault(best_eq.equipment_code, []).append((best_start, end_dt))
+
+        # 공정+SQ별 종료 시각 갱신 (후공정 선행관계 추적)
+        sq_int = int(rep.sq_mm2 or 0)
+        proc_sq_key = (rep.process_name, sq_int)
+        if (
+            proc_sq_key not in process_end_by_sq
+            or end_dt > process_end_by_sq[proc_sq_key]
+        ):
+            process_end_by_sq[proc_sq_key] = end_dt
 
         # 그룹 내 모든 배치의 predecessor + status 갱신
         for b in group_batches:
