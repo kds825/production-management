@@ -117,6 +117,58 @@ async def run_stage1(
     }
 
 
+@router.get("/stage1/{run_label}/batches", summary="배치 목록 JSON")
+def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
+    """지정한 run_label의 production_batch 데이터를 JSON으로 반환한다.
+
+    공정 순서(연선→B100→A100→A120) 내림차순 SQ 정렬.
+    """
+    # 공정 정렬 우선순위 — CASE WHEN 대신 Python 후처리
+    PROCESS_ORDER = {"연선": 0, "B100": 1, "A100": 2, "A120": 3}
+
+    batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
+    )
+    if not batches:
+        raise HTTPException(
+            status_code=404,
+            detail=f"run_label '{run_label}'에 해당하는 배치가 없습니다.",
+        )
+
+    # 공정 순서 → SQ 내림차순 → 시스색 정렬
+    batches.sort(
+        key=lambda b: (
+            PROCESS_ORDER.get(b.process_name, 99),
+            -(float(b.sq_mm2 or 0)),
+            b.sheath_color or "",
+        )
+    )
+
+    return [
+        {
+            "batch_id": b.batch_id,
+            "process_name": b.process_name,
+            "sq_mm2": float(b.sq_mm2 or 0),
+            "core_count": b.core_count or 1,
+            "sheath_color": b.sheath_color or "",
+            "total_length_m": float(b.total_length_m or 0),
+            "drum_count": b.drum_count,
+            "drum_length_m": float(b.drum_length_m or 0),
+            "customer_name": b.customer_name,
+            "due_date": str(b.due_date or ""),
+            "product_group": b.product_group,
+            "sales_order_id": b.sales_order_id,
+            "wip_matched_id": b.wip_matched_id,
+            "status": b.status,
+            "remarks": b.remarks,
+            "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
+            "voltage": b.voltage,
+            "equipment_code": b.equipment_code,
+        }
+        for b in batches
+    ]
+
+
 @router.get("/stage1/{run_label}/export", summary="작업지시서 Excel 다운로드")
 def export_stage1(run_label: str, db: Session = Depends(get_db)) -> StreamingResponse:
     """지정한 run_label의 production_batch 데이터를 Excel(.xlsx)로 변환하여 반환한다.

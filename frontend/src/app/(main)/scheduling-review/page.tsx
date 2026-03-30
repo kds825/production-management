@@ -45,7 +45,9 @@ export default function SchedulingReviewPage() {
     aiInsights,
     aiSummary,
     activeTab,
-    loadFromPlanRegister,
+    loadBatchesFromApi,
+    isLoading: batchesLoading,
+    loadError,
     calculateBatches,
     setActiveTab,
   } = useSchedulingReviewStore();
@@ -106,10 +108,17 @@ export default function SchedulingReviewPage() {
     }
   }, [selectedRun]);
 
+  // 런 목록 초기 로드
   useEffect(() => {
-    loadFromPlanRegister();
     loadRuns();
-  }, [loadFromPlanRegister, loadRuns]);
+  }, [loadRuns]);
+
+  // 선택된 런이 바뀌면 배치 API 호출
+  useEffect(() => {
+    if (selectedRun) {
+      loadBatchesFromApi(selectedRun);
+    }
+  }, [selectedRun, loadBatchesFromApi]);
 
   // 선택된 런의 요약 정보
   const selectedRunInfo = useMemo(
