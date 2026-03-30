@@ -322,6 +322,12 @@ def auto_schedule(
 
         end_dt = calculate_end_datetime(best_start, best_total_duration, db)
 
+        # ── 시간 올림 — 간트 블록은 정각 단위로 표시 ────────────────────────
+        if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
+            end_dt = end_dt.replace(minute=0, second=0, microsecond=0) + timedelta(
+                hours=1
+            )
+
         # ── 그룹당 1 schedule_task 생성 ──────────────────────────────────────
         task = ScheduleTask(
             batch_id=rep.batch_id,  # 대표 배치 ID
