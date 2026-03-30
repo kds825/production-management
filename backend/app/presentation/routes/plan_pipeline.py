@@ -254,6 +254,117 @@ def download_wip_template() -> StreamingResponse:
     )
 
 
+@router.get("/batch-group/{batch_group}/orders", summary="배치 그룹 내 수주 목록")
+def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
+    """지정한 batch_group에 속하는 모든 production_batch(수주) 목록을 반환한다.
+
+    간트 블록 클릭 시 해당 블록에 포함된 개별 수주 상세를 보여주기 위한 API.
+    SQ 내림차순, 시스색 순서로 정렬.
+    """
+    batches = (
+        db.query(ProductionBatch)
+        .filter(ProductionBatch.batch_group == batch_group)
+        .order_by(ProductionBatch.sq_mm2.desc(), ProductionBatch.sheath_color)
+        .all()
+    )
+
+    if not batches:
+        raise HTTPException(
+            status_code=404,
+            detail=f"batch_group '{batch_group}'에 해당하는 배치가 없습니다.",
+        )
+
+    return [
+        {
+            "batch_id": b.batch_id,
+            "sales_order_id": b.sales_order_id,
+            "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
+            "sheath_color": b.sheath_color or "",
+            "customer_name": b.customer_name or "",
+            "due_date": str(b.due_date or ""),
+            "drum_length_m": float(b.drum_length_m or 0),
+            "drum_count": b.drum_count or 1,
+            "total_length_m": float(b.total_length_m or 0),
+            "wip_matched_id": b.wip_matched_id,
+            "product_group": b.product_group or "",
+            "status": b.status or "",
+        }
+        for b in batches
+    ]
+
+
+@router.post("/batch-group/{batch_group}/split", summary="배치 그룹 분할")
+def split_batch_group(
+    batch_group: str,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    """배치 그룹을 2개로 분할한다.
+
+    지정된 batch_ids의 batch_group을 '{원래그룹}_{suffix}'로 변경하고,
+    해당 batch_group의 기존 schedule_task를 삭제한다.
+    프론트에서 재스케줄링(Stage 2)을 트리거해야 한다.
+
+    body:
+        batch_ids: list[int]  — 새 그룹으로 이동할 batch_id 목록
+        new_group_suffix: str — 새 그룹 이름 접미사 (기본값: "B")
+    """
+    from app.infrastructure.models.schedule_task import (
+        ScheduleTask as ScheduleTaskModel,
+    )
+
+    batch_ids = body.get("batch_ids", [])
+    suffix = body.get("new_group_suffix", "B")
+
+    if not batch_ids:
+        raise HTTPException(status_code=400, detail="분리할 batch_ids가 비어 있습니다.")
+
+    # 원래 그룹에 해당 배치가 존재하는지 검증
+    existing = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_id.in_(batch_ids),
+            ProductionBatch.batch_group == batch_group,
+        )
+        .count()
+    )
+    if existing == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"batch_group '{batch_group}'에서 지정된 batch_ids를 찾을 수 없습니다.",
+        )
+
+    new_group = f"{batch_group}_{suffix}"
+
+    # 지정된 배치들의 그룹 변경
+    updated = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_id.in_(batch_ids),
+            ProductionBatch.batch_group == batch_group,
+        )
+        .update({ProductionBatch.batch_group: new_group}, synchronize_session=False)
+    )
+
+    # 기존 batch_group의 schedule_task 삭제 (분할 후 재스케줄링 필요)
+    db.query(ScheduleTaskModel).filter(
+        ScheduleTaskModel.batch_group == batch_group
+    ).delete(synchronize_session=False)
+
+    # 새 batch_group의 schedule_task도 삭제 (혹시 존재하면)
+    db.query(ScheduleTaskModel).filter(
+        ScheduleTaskModel.batch_group == new_group
+    ).delete(synchronize_session=False)
+
+    db.commit()
+
+    return {
+        "original_group": batch_group,
+        "new_group": new_group,
+        "moved_batches": updated,
+    }
+
+
 @router.get("/runs", summary="계획 실행 이력 목록")
 def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     """저장된 모든 run_label 목록을 배치 수 및 최초 생성 시각과 함께 반환한다.

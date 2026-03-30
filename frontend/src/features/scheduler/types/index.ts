@@ -30,6 +30,8 @@ export interface ScheduleTask {
   changeover_min: number;
   /** 거래처명 — production_batch.customer_name에서 가져옴 */
   customer?: string;
+  /** 배치 그룹 식별자 — 같은 간트 블록에 묶인 수주 그룹 */
+  batch_group?: string;
 }
 
 export interface ConstraintViolation {

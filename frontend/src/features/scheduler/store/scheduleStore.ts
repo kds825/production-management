@@ -116,6 +116,13 @@ interface ScheduleState {
   // UI 상태
   contextMenu: ContextMenuState | null;
   taskFormModal: TaskFormModalState;
+
+  // 배치 분할 모달 상태
+  splitModal: {
+    isOpen: boolean;
+    batchGroup: string;
+    taskId: string;
+  };
 }
 
 interface ScheduleActions {
@@ -172,6 +179,10 @@ interface ScheduleActions {
   // 드래그 중 cascade preview
   setPreviewOffsets: (offsets: Record<string, number>) => void;
   clearPreviewOffsets: () => void;
+
+  // 배치 분할 모달
+  openSplitModal: (batchGroup: string, taskId: string) => void;
+  closeSplitModal: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -194,6 +205,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     previewOffsets: {},
     contextMenu: null,
     taskFormModal: { isOpen: false, mode: "create" },
+    splitModal: { isOpen: false, batchGroup: "", taskId: "" },
 
     // 설비 목록 설정
     setEquipment: (equipment) => {
@@ -458,6 +470,20 @@ export const useScheduleStore = create<ScheduleStore>()(
     clearPreviewOffsets: () => {
       set((state) => {
         state.previewOffsets = {};
+      });
+    },
+
+    // 배치 분할 모달 열기
+    openSplitModal: (batchGroup, taskId) => {
+      set((state) => {
+        state.splitModal = { isOpen: true, batchGroup, taskId };
+      });
+    },
+
+    // 배치 분할 모달 닫기
+    closeSplitModal: () => {
+      set((state) => {
+        state.splitModal = { isOpen: false, batchGroup: "", taskId: "" };
       });
     },
 

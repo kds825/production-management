@@ -77,6 +77,7 @@ class ScheduleTaskResponse(BaseModel):
     changeover_min: int
     duration_hours: float  # 계산 프로퍼티를 직렬화
     customer: Optional[str] = None  # 거래처명 — production_batch.customer_name
+    batch_group: Optional[str] = None  # 배치 그룹 식별자 — 간트 블록 1개 단위
 
 
 class ScheduleTaskCreate(BaseModel):

@@ -27,6 +27,7 @@ import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
+import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
@@ -49,6 +50,22 @@ interface AuditExplanation {
   scheduled_at?: string;
   changed_by?: string;
   [key: string]: unknown;
+}
+
+/** 배치 그룹 내 개별 수주 (GET /api/pipeline/batch-group/{batch_group}/orders) */
+interface BatchGroupOrder {
+  batch_id: number;
+  sales_order_id: string;
+  spec_raw: string;
+  sheath_color: string;
+  customer_name: string;
+  due_date: string;
+  drum_length_m: number;
+  drum_count: number;
+  total_length_m: number;
+  wip_matched_id: number | null;
+  product_group: string;
+  status: string;
 }
 
 export default function SchedulerPage() {
@@ -87,6 +104,12 @@ export default function SchedulerPage() {
   const [autoScheduleResult, setAutoScheduleResult] = useState<string | null>(
     null,
   );
+
+  // ── 배치 그룹 수주 목록 상태 ──
+  const [batchGroupOrders, setBatchGroupOrders] = useState<BatchGroupOrder[]>(
+    [],
+  );
+  const [batchGroupLoading, setBatchGroupLoading] = useState(false);
 
   // ── 감사 트레일 패널 상태 ──
   const [auditPanel, setAuditPanel] = useState<{
@@ -189,6 +212,36 @@ export default function SchedulerPage() {
     }
     handleTaskClick(selectedTaskId);
   }, [selectedTaskId, handleTaskClick]);
+
+  // selectedTaskId 변경 시 batch_group 수주 목록 조회
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setBatchGroupOrders([]);
+      return;
+    }
+    const selectedTask = tasks.find((t) => t.id === selectedTaskId);
+    const bg = selectedTask?.batch_group;
+    if (!bg) {
+      setBatchGroupOrders([]);
+      return;
+    }
+    setBatchGroupLoading(true);
+    fetch(`${API_BASE}/pipeline/batch-group/${encodeURIComponent(bg)}/orders`)
+      .then(async (res) => {
+        if (res.ok) {
+          const data: BatchGroupOrder[] = await res.json();
+          setBatchGroupOrders(data);
+        } else {
+          setBatchGroupOrders([]);
+        }
+      })
+      .catch(() => {
+        setBatchGroupOrders([]);
+      })
+      .finally(() => {
+        setBatchGroupLoading(false);
+      });
+  }, [selectedTaskId, tasks]);
 
   const [activeDrag, setActiveDrag] = useState<ActiveDragItem | null>(null);
 
@@ -643,9 +696,11 @@ export default function SchedulerPage() {
                         className="text-[11px] font-semibold"
                         style={{ color: "#4A2C2A" }}
                       >
-                        수주 상세 정보
+                        {batchGroupOrders.length > 1
+                          ? "배치 그룹 수주 목록"
+                          : "수주 상세 정보"}
                       </span>
-                      {selectedTask?.order_id && (
+                      {selectedTask?.batch_group && (
                         <span
                           className="text-[10px] font-mono px-1.5 py-0.5 rounded"
                           style={{
@@ -653,7 +708,7 @@ export default function SchedulerPage() {
                             color: "#C41230",
                           }}
                         >
-                          {selectedTask.order_id}
+                          {selectedTask.batch_group}
                         </span>
                       )}
                     </div>
@@ -668,41 +723,20 @@ export default function SchedulerPage() {
                     </button>
                   </div>
 
-                  {/* 수주 상세 정보 카드 */}
+                  {/* 작업 요약 + 배치 그룹 수주 테이블 */}
                   {selectedTask && (
                     <div
                       className="px-4 py-3 border-b"
                       style={{ borderColor: "#F3F4F6" }}
                     >
-                      <div className="grid grid-cols-6 gap-x-6 gap-y-2">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            수주번호
-                          </span>
-                          <span
-                            className="text-[12px] font-semibold"
-                            style={{ color: "#1F2937" }}
-                          >
-                            {selectedTask.order_id || "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            거래처
-                          </span>
-                          <span
-                            className="text-[12px] font-semibold"
-                            style={{ color: "#1F2937" }}
-                          >
-                            {selectedTask.customer || "-"}
-                          </span>
-                        </div>
+                      {/* 작업 요약 1행 */}
+                      <div className="grid grid-cols-7 gap-x-4 gap-y-1 mb-2">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
                             규격
                           </span>
                           <span
-                            className="text-[12px] font-semibold"
+                            className="text-[11px] font-semibold"
                             style={{ color: "#1F2937" }}
                           >
                             {selectedTask.spec || "-"}
@@ -710,10 +744,23 @@ export default function SchedulerPage() {
                         </div>
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            길이
+                            배정 설비
                           </span>
                           <span
-                            className="text-[12px] font-semibold"
+                            className="text-[11px] font-semibold"
+                            style={{ color: "#1F2937" }}
+                          >
+                            {selectedEquipment?.name ||
+                              selectedTask.equipment_id ||
+                              "-"}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                            총 길이
+                          </span>
+                          <span
+                            className="text-[11px] font-semibold"
                             style={{ color: "#1F2937" }}
                           >
                             {selectedTask.volume_m
@@ -723,58 +770,38 @@ export default function SchedulerPage() {
                         </div>
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            납기
+                            작업 기간
                           </span>
-                          <span
-                            className="text-[12px] font-semibold"
-                            style={{
-                              color: selectedTask.delivery_date
-                                ? new Date(
-                                    selectedTask.delivery_date,
-                                  ).getTime() < Date.now()
-                                  ? "#DC2626"
-                                  : "#1F2937"
-                                : "#9CA3AF",
-                            }}
-                          >
-                            {selectedTask.delivery_date
-                              ? new Date(
-                                  selectedTask.delivery_date,
-                                ).toLocaleDateString("ko-KR")
+                          <span className="text-[11px] text-gray-600">
+                            {new Date(selectedTask.start).toLocaleString(
+                              "ko-KR",
+                              {
+                                month: "numeric",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              },
+                            )}
+                            {" ~ "}
+                            {new Date(selectedTask.end).toLocaleString(
+                              "ko-KR",
+                              {
+                                month: "numeric",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              },
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                            선속
+                          </span>
+                          <span className="text-[11px] text-gray-600">
+                            {selectedTask.line_speed_m_per_min
+                              ? `${selectedTask.line_speed_m_per_min}m/min`
                               : "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            배정 설비
-                          </span>
-                          <span
-                            className="text-[12px] font-semibold"
-                            style={{ color: "#1F2937" }}
-                          >
-                            {selectedEquipment?.name ||
-                              selectedTask.equipment_id ||
-                              "-"}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* 부가 정보 행 */}
-                      <div className="grid grid-cols-6 gap-x-6 gap-y-2 mt-2 pt-2 border-t border-gray-100">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            제품군
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {selectedTask.product || "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            색상
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {selectedTask.color || "-"}
                           </span>
                         </div>
                         <div className="flex flex-col gap-0.5">
@@ -801,47 +828,240 @@ export default function SchedulerPage() {
                         </div>
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            작업 시작
+                            수주 건수
                           </span>
-                          <span className="text-[11px] text-gray-600">
-                            {new Date(selectedTask.start).toLocaleString(
-                              "ko-KR",
-                              {
-                                month: "numeric",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              },
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            작업 종료
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {new Date(selectedTask.end).toLocaleString(
-                              "ko-KR",
-                              {
-                                month: "numeric",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              },
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            선속
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {selectedTask.line_speed_m_per_min
-                              ? `${selectedTask.line_speed_m_per_min}m/min`
+                          <span
+                            className="text-[11px] font-semibold"
+                            style={{ color: "#C41230" }}
+                          >
+                            {batchGroupOrders.length > 0
+                              ? `${batchGroupOrders.length}건`
                               : "-"}
                           </span>
                         </div>
                       </div>
+
+                      {/* 배치 그룹 수주 목록 테이블 */}
+                      {batchGroupLoading ? (
+                        <div className="flex items-center gap-2 py-2 text-[11px] text-gray-400">
+                          <span
+                            className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
+                            style={{ animation: "spin 1s linear infinite" }}
+                          />
+                          수주 목록 로드 중...
+                        </div>
+                      ) : batchGroupOrders.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[11px]">
+                            <thead>
+                              <tr
+                                style={{
+                                  backgroundColor: "#F9FAFB",
+                                  borderBottom: "1px solid #E5E7EB",
+                                }}
+                              >
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  수주번호
+                                </th>
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  거래처
+                                </th>
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  규격
+                                </th>
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  색상
+                                </th>
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  납기
+                                </th>
+                                <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  드럼
+                                </th>
+                                <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  총 길이
+                                </th>
+                                <th className="text-center py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  WIP
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {batchGroupOrders.map((order) => (
+                                <tr
+                                  key={order.batch_id}
+                                  className="hover:bg-gray-50 transition-colors"
+                                  style={{
+                                    borderBottom: "1px solid #F3F4F6",
+                                  }}
+                                >
+                                  <td className="py-1 px-2 font-mono text-gray-700">
+                                    {order.sales_order_id || "-"}
+                                  </td>
+                                  <td className="py-1 px-2 text-gray-700">
+                                    {order.customer_name || "-"}
+                                  </td>
+                                  <td className="py-1 px-2 text-gray-600">
+                                    {order.spec_raw}
+                                  </td>
+                                  <td className="py-1 px-2 text-gray-600">
+                                    {order.sheath_color || "-"}
+                                  </td>
+                                  <td
+                                    className="py-1 px-2"
+                                    style={{
+                                      color:
+                                        order.due_date &&
+                                        new Date(order.due_date).getTime() <
+                                          Date.now()
+                                          ? "#DC2626"
+                                          : "#4B5563",
+                                    }}
+                                  >
+                                    {order.due_date
+                                      ? new Date(
+                                          order.due_date,
+                                        ).toLocaleDateString("ko-KR")
+                                      : "-"}
+                                  </td>
+                                  <td className="py-1 px-2 text-right text-gray-600">
+                                    {order.drum_count} x{" "}
+                                    {order.drum_length_m.toLocaleString()}m
+                                  </td>
+                                  <td className="py-1 px-2 text-right font-medium text-gray-700">
+                                    {order.total_length_m.toLocaleString()}m
+                                  </td>
+                                  <td className="py-1 px-2 text-center">
+                                    {order.wip_matched_id ? (
+                                      <span
+                                        className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                                        style={{
+                                          backgroundColor: "#DCFCE7",
+                                          color: "#16A34A",
+                                        }}
+                                      >
+                                        매칭
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-300">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            {/* 합계 행 */}
+                            <tfoot>
+                              <tr
+                                style={{
+                                  borderTop: "2px solid #E5E7EB",
+                                  backgroundColor: "#FDF2F2",
+                                }}
+                              >
+                                <td
+                                  colSpan={5}
+                                  className="py-1 px-2 font-semibold"
+                                  style={{ color: "#C41230" }}
+                                >
+                                  합계 {batchGroupOrders.length}건
+                                </td>
+                                <td className="py-1 px-2 text-right font-medium text-gray-500">
+                                  {batchGroupOrders.reduce(
+                                    (s, o) => s + o.drum_count,
+                                    0,
+                                  )}{" "}
+                                  드럼
+                                </td>
+                                <td
+                                  className="py-1 px-2 text-right font-semibold"
+                                  style={{ color: "#C41230" }}
+                                >
+                                  {batchGroupOrders
+                                    .reduce((s, o) => s + o.total_length_m, 0)
+                                    .toLocaleString()}
+                                  m
+                                </td>
+                                <td className="py-1 px-2 text-center text-[10px] text-gray-400">
+                                  {
+                                    batchGroupOrders.filter(
+                                      (o) => o.wip_matched_id,
+                                    ).length
+                                  }
+                                  건
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      ) : (
+                        /* batch_group가 없거나 API 실패 시 기존 단일 수주 정보 표시 */
+                        <div className="grid grid-cols-6 gap-x-4 gap-y-1">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              수주번호
+                            </span>
+                            <span className="text-[11px] text-gray-700">
+                              {selectedTask.order_id || "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              거래처
+                            </span>
+                            <span className="text-[11px] text-gray-700">
+                              {selectedTask.customer || "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              제품군
+                            </span>
+                            <span className="text-[11px] text-gray-700">
+                              {selectedTask.product || "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              색상
+                            </span>
+                            <span className="text-[11px] text-gray-700">
+                              {selectedTask.color || "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              납기
+                            </span>
+                            <span
+                              className="text-[11px]"
+                              style={{
+                                color: selectedTask.delivery_date
+                                  ? new Date(
+                                      selectedTask.delivery_date,
+                                    ).getTime() < Date.now()
+                                    ? "#DC2626"
+                                    : "#4B5563"
+                                  : "#9CA3AF",
+                              }}
+                            >
+                              {selectedTask.delivery_date
+                                ? new Date(
+                                    selectedTask.delivery_date,
+                                  ).toLocaleDateString("ko-KR")
+                                : "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              길이
+                            </span>
+                            <span className="text-[11px] text-gray-700">
+                              {selectedTask.volume_m
+                                ? `${selectedTask.volume_m.toLocaleString()}m`
+                                : "-"}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -8,6 +8,7 @@ export function ContextMenu() {
   const contextMenu = useScheduleStore((s) => s.contextMenu);
   const closeContextMenu = useScheduleStore((s) => s.closeContextMenu);
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
+  const openSplitModal = useScheduleStore((s) => s.openSplitModal);
   const deleteTask = useScheduleStore((s) => s.deleteTask);
   const tasks = useScheduleStore((s) => s.tasks);
 
@@ -88,6 +89,12 @@ export function ContextMenu() {
     closeContextMenu();
   }
 
+  function handleSplitBatch() {
+    if (!selectedTask?.batch_group) return;
+    closeContextMenu();
+    openSplitModal(selectedTask.batch_group, selectedTask.id);
+  }
+
   const menuItemClass =
     "w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-red-50 hover:text-red-700 flex items-center gap-2 transition-colors";
 
@@ -127,6 +134,12 @@ export function ContextMenu() {
             <span>📋</span>
             복사
           </button>
+          {selectedTask?.batch_group && (
+            <button className={menuItemClass} onClick={handleSplitBatch}>
+              <span style={{ color: "#C41230" }}>&#x2702;</span>
+              배치 분할
+            </button>
+          )}
           <div className="border-t border-gray-100 my-1" />
           <button
             className={`${menuItemClass} text-red-600 hover:bg-red-50`}
