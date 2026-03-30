@@ -9,12 +9,11 @@ interface AiInsightCardProps {
 export function AiInsightCard({ summary }: AiInsightCardProps) {
   return (
     <div
-      className="rounded-lg p-4"
+      className="p-4"
       style={{
-        backgroundColor: "#F0F4FF",
-        border: "1px solid #E2E8F0",
-        borderLeftWidth: 3,
-        borderLeftColor: "#C41230",
+        backgroundColor: "#FFFFFF",
+        border: "1px solid #E5E7EB",
+        borderRadius: 0,
       }}
     >
       {/* Title */}

@@ -249,12 +249,21 @@ export function ProductionBatchTable({
               <tbody>
                 {sortedBatches.map((batch) => {
                   const isHighlighted = highlightedBatchId === batch.id;
-                  const rowBg = isHighlighted ? "#FEF2F2" : getRowBg(batch);
+                  const isWipSkipped = batch.notes === "재고 사용";
+                  const rowBg = isHighlighted
+                    ? "#FEF2F2"
+                    : isWipSkipped
+                      ? "#F3F4F6"
+                      : getRowBg(batch);
                   const hoverBg = isHighlighted
                     ? "#FEE2E2"
-                    : getRowHoverBg(batch);
+                    : isWipSkipped
+                      ? "#E5E7EB"
+                      : getRowHoverBg(batch);
                   const statusColor =
                     PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
+                  /** 재고 사용 행은 텍스트를 회색으로 -- 간트 차트 미반영 표시 */
+                  const textColor = isWipSkipped ? "#9CA3AF" : undefined;
 
                   return (
                     <tr
@@ -264,6 +273,7 @@ export function ProductionBatchTable({
                         backgroundColor: rowBg,
                         transition: "background-color 300ms",
                         outline: isHighlighted ? "2px solid #C41230" : "none",
+                        color: textColor,
                       }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as HTMLElement).style.backgroundColor =
@@ -271,7 +281,11 @@ export function ProductionBatchTable({
                       }}
                       onMouseLeave={(e) => {
                         (e.currentTarget as HTMLElement).style.backgroundColor =
-                          isHighlighted ? "#FEF2F2" : getRowBg(batch);
+                          isHighlighted
+                            ? "#FEF2F2"
+                            : isWipSkipped
+                              ? "#F3F4F6"
+                              : getRowBg(batch);
                       }}
                     >
                       {COL_DEFS.map((col, colIdx) => {
