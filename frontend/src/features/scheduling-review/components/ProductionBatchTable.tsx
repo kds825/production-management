@@ -15,6 +15,8 @@ interface ProductionBatchTableProps {
   batches: SchedulingBatch[];
   processGroup: ProcessGroup;
   showProcessColumn?: boolean;
+  /** WIP 클릭 시 하이라이트할 배치 ID */
+  highlightedBatchId?: string | null;
 }
 
 const COL_DEFS = [
@@ -47,6 +49,7 @@ export function ProductionBatchTable({
   title,
   batches,
   processGroup,
+  highlightedBatchId,
   showProcessColumn,
 }: ProductionBatchTableProps) {
   const batchNumbers = useMemo(() => assignBatchNumbers(batches), [batches]);
@@ -163,22 +166,30 @@ export function ProductionBatchTable({
               </thead>
               <tbody>
                 {batches.map((batch) => {
-                  const rowBg = getRowBg(batch);
-                  const hoverBg = getRowHoverBg(batch);
+                  const isHighlighted = highlightedBatchId === batch.id;
+                  const rowBg = isHighlighted ? "#FEF2F2" : getRowBg(batch);
+                  const hoverBg = isHighlighted
+                    ? "#FEE2E2"
+                    : getRowHoverBg(batch);
                   const statusColor =
                     PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
 
                   return (
                     <tr
                       key={batch.id}
-                      style={{ backgroundColor: rowBg }}
+                      data-batch-id={batch.id}
+                      style={{
+                        backgroundColor: rowBg,
+                        transition: "background-color 300ms",
+                        outline: isHighlighted ? "2px solid #C41230" : "none",
+                      }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as HTMLElement).style.backgroundColor =
                           hoverBg;
                       }}
                       onMouseLeave={(e) => {
                         (e.currentTarget as HTMLElement).style.backgroundColor =
-                          rowBg;
+                          isHighlighted ? "#FEF2F2" : getRowBg(batch);
                       }}
                     >
                       {COL_DEFS.map((col, colIdx) => (

@@ -18,6 +18,8 @@ export interface WipItem {
   color: string;
   stock: number;
   convertedQty: number;
+  /** 매칭된 배치 ID — 클릭 시 해당 배치로 스크롤 */
+  matchedBatchId?: string;
 }
 
 export interface AiInsight {

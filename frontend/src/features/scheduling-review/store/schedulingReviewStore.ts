@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import type { SchedulingBatch, WipItem, AiInsight, AiSummary } from "../types";
+import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -83,7 +84,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     classification_reason: "",
     processGroup: toProcessGroup(b.process_name),
     processStatus: "진행",
-    convertedQty: b.total_length_m,
+    convertedQty: calcConvertedQty(b.spec_raw, b.total_length_m),
     batch_group: b.batch_group || undefined,
   };
 }
@@ -188,6 +189,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             .filter((b) => b.notes === "재고 사용")
             .map((b) => ({
               id: `wip-${b.id}`,
+              matchedBatchId: b.id,
               processGroup: b.processGroup,
               product: b.product,
               spec: b.spec,

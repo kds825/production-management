@@ -5,11 +5,13 @@ import type { WipItem } from "../types";
 interface WipInventoryTableProps {
   title: string;
   items: WipItem[];
+  /** WIP 행 클릭 시 매칭 배치로 스크롤 */
+  onWipClick?: (matchedBatchId: string) => void;
+  /** 현재 하이라이트된 WIP ID */
+  activeWipId?: string | null;
 }
 
 const COL_DEFS = [
-  { key: "processGroup", label: "구분", align: "left", width: 60 },
-  { key: "product", label: "품목명", align: "left", width: 100 },
   { key: "spec", label: "규격", align: "left", width: 100 },
   { key: "color", label: "색상", align: "left", width: 60 },
   { key: "stock", label: "재고", align: "right", width: 70 },
@@ -18,7 +20,12 @@ const COL_DEFS = [
 
 const totalWidth = COL_DEFS.reduce((sum, c) => sum + c.width, 0);
 
-export function WipInventoryTable({ title, items }: WipInventoryTableProps) {
+export function WipInventoryTable({
+  title,
+  items,
+  onWipClick,
+  activeWipId,
+}: WipInventoryTableProps) {
   return (
     <div>
       <h4
@@ -77,58 +84,82 @@ export function WipInventoryTable({ title, items }: WipInventoryTableProps) {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr
-                    key={item.id}
-                    style={{ backgroundColor: "#FFFFFF" }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "#FEF9F9";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "#FFFFFF";
-                    }}
-                  >
-                    {COL_DEFS.map((col, colIdx) => {
-                      const raw = item[col.key as keyof WipItem];
-                      const display =
-                        typeof raw === "number"
-                          ? raw.toLocaleString()
-                          : String(raw ?? "");
-                      return (
-                        <td
-                          key={col.key}
-                          className="px-2"
-                          style={{
-                            height: 34,
-                            borderBottom: "1px solid #E5E7EB",
-                            borderRight:
-                              colIdx < COL_DEFS.length - 1
-                                ? "1px solid #F3F4F6"
-                                : "none",
-                            verticalAlign: "middle",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <span
-                            className="block truncate text-[11px]"
+                {items.map((item) => {
+                  const isActive = activeWipId === item.id;
+                  const hasMatch = !!item.matchedBatchId;
+                  return (
+                    <tr
+                      key={item.id}
+                      onClick={() => {
+                        if (hasMatch && onWipClick && item.matchedBatchId) {
+                          onWipClick(item.matchedBatchId);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: isActive ? "#FEF2F2" : "#FFFFFF",
+                        cursor: hasMatch ? "pointer" : "default",
+                        transition: "background-color 150ms",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.backgroundColor = hasMatch
+                            ? "#FEF9F9"
+                            : "#FAFAFA";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.backgroundColor = "#FFFFFF";
+                        }
+                      }}
+                    >
+                      {COL_DEFS.map((col, colIdx) => {
+                        const raw = item[col.key as keyof WipItem];
+                        const display =
+                          typeof raw === "number"
+                            ? raw.toLocaleString()
+                            : String(raw ?? "");
+                        return (
+                          <td
+                            key={col.key}
+                            className="px-2"
                             style={{
-                              textAlign: col.align as "left" | "right",
+                              height: 34,
+                              borderBottom: "1px solid #E5E7EB",
+                              borderRight:
+                                colIdx < COL_DEFS.length - 1
+                                  ? "1px solid #F3F4F6"
+                                  : "none",
+                              verticalAlign: "middle",
+                              overflow: "hidden",
                             }}
                           >
-                            {display || "\u2014"}
-                          </span>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                            <span
+                              className="block truncate text-[11px]"
+                              style={{
+                                textAlign: col.align as "left" | "right",
+                                fontWeight: isActive ? 600 : 400,
+                                color: isActive ? "#C41230" : undefined,
+                              }}
+                            >
+                              {display || "\u2014"}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
+      {items.some((i) => i.matchedBatchId) && (
+        <p className="text-[9px] text-gray-400 mt-1">
+          클릭하면 매칭된 배치로 이동합니다
+        </p>
+      )}
     </div>
   );
 }
