@@ -311,13 +311,13 @@ export default function SchedulingReviewPage() {
 
         <div className="h-4 w-px bg-gray-200" />
 
-        {/* 전체 배치 수 */}
+        {/* 배치 그룹 수 + 수주 행 수 */}
         <span className="text-[11px] text-gray-500">
           총{" "}
           <span style={{ color: "#111827", fontWeight: 600 }}>
-            {selectedRunInfo?.batch_count ?? totalBatches}
+            {yeonseoGroupCount + insulationGroupCount + sheatGroupCount}
           </span>
-          건
+          배치 ({selectedRunInfo?.batch_count ?? totalBatches}수주)
         </span>
 
         {/* 경고 수 (런 정보에 있을 때만 표시) */}
