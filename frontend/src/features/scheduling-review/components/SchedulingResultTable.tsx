@@ -2,20 +2,20 @@
 
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
-import type { SchedulingBatch, AiInsight } from "../types";
+import type { SchedulingBatch } from "../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
 import {
   assignBatchNumbers,
   getBatchGroupKey,
   formatDeliveryDate,
+  sortBatchesByBatchNumber,
 } from "@/shared/utils/batchGrouping";
 
 interface SchedulingResultTableProps {
   yeonseoBatches: SchedulingBatch[];
   insulationBatches: SchedulingBatch[];
   sheatBatches: SchedulingBatch[];
-  aiInsights: AiInsight[];
   activeTab: ProcessGroup;
   onTabChange: (tab: ProcessGroup) => void;
 }
@@ -39,15 +39,8 @@ const COL_DEFS = [
   { key: "unit_count", label: "개수(ea)", align: "right", width: 80 },
   { key: "total_length_m", label: "수량(M)", align: "right", width: 80 },
   { key: "notes", label: "비고", align: "left", width: 120 },
-  {
-    key: "classification_reason",
-    label: "분류근거",
-    align: "left",
-    width: 200,
-  },
   { key: "processStatus", label: "공정상태", align: "left", width: 64 },
   { key: "convertedQty", label: "환산수량", align: "right", width: 80 },
-  { key: "ai_insight", label: "AI 분석", align: "left", width: 200 },
 ] as const;
 
 const BATCH_BG_EVEN = "#FFFFFF";
@@ -59,7 +52,6 @@ export function SchedulingResultTable({
   yeonseoBatches,
   insulationBatches,
   sheatBatches,
-  aiInsights,
   activeTab,
   onTabChange,
 }: SchedulingResultTableProps) {
@@ -77,13 +69,11 @@ export function SchedulingResultTable({
     [activeBatches],
   );
 
-  const insightMap = useMemo(() => {
-    const map = new Map<string, AiInsight>();
-    for (const insight of aiInsights) {
-      map.set(insight.batchId, insight);
-    }
-    return map;
-  }, [aiInsights]);
+  // 배치번호 기준 오름차순 정렬 (납기 빠른 그룹 → 색상 순)
+  const sortedBatches = useMemo(
+    () => sortBatchesByBatchNumber(activeBatches, batchNumbers),
+    [activeBatches, batchNumbers],
+  );
 
   function getBatchLabel(b: SchedulingBatch): string {
     const num = batchNumbers.get(getBatchGroupKey(b));
@@ -107,10 +97,6 @@ export function SchedulingResultTable({
     if (col.key === "batch_label") return getBatchLabel(batch);
     if (col.key === "delivery_date")
       return formatDeliveryDate(batch.delivery_date);
-    if (col.key === "ai_insight") {
-      const insight = insightMap.get(batch.id);
-      return insight?.reasoning ?? "";
-    }
     const raw = batch[col.key as keyof SchedulingBatch];
     if (typeof raw === "number") return raw.toLocaleString();
     return String(raw ?? "");
@@ -165,7 +151,7 @@ export function SchedulingResultTable({
           borderTop: "none",
         }}
       >
-        {activeBatches.length === 0 ? (
+        {sortedBatches.length === 0 ? (
           <div
             className="flex items-center justify-center py-12 text-xs text-gray-400"
             style={{ backgroundColor: "#FAFAFA" }}
@@ -210,13 +196,11 @@ export function SchedulingResultTable({
                 </tr>
               </thead>
               <tbody>
-                {activeBatches.map((batch) => {
+                {sortedBatches.map((batch) => {
                   const rowBg = getRowBg(batch);
                   const hoverBg = getRowHoverBg(batch);
                   const statusColor =
                     PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
-                  const insight = insightMap.get(batch.id);
-                  const isHighRisk = insight?.riskLevel === "high";
 
                   return (
                     <tr
@@ -256,31 +240,6 @@ export function SchedulingResultTable({
                               style={{ color: "#9CA3AF" }}
                             >
                               {getBatchLabel(batch)}
-                            </span>
-                          ) : col.key === "ai_insight" ? (
-                            <span className="flex items-start gap-1">
-                              {isHighRisk && (
-                                <svg
-                                  className="shrink-0 mt-0.5"
-                                  style={{
-                                    width: 12,
-                                    height: 12,
-                                    color: "#DC2626",
-                                  }}
-                                  viewBox="0 0 24 24"
-                                  fill="currentColor"
-                                >
-                                  <path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z" />
-                                </svg>
-                              )}
-                              <span
-                                className="block text-[10px] leading-tight"
-                                style={{
-                                  color: isHighRisk ? "#DC2626" : "#374151",
-                                }}
-                              >
-                                {getCellValue(col, batch) || "\u2014"}
-                              </span>
                             </span>
                           ) : col.key === "notes" &&
                             batch.notes === "재고 사용" ? (

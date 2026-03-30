@@ -54,6 +54,64 @@ export function assignBatchNumbers(
   return map;
 }
 
+/** 색상 정렬 우선순위: 흑→갈→회→청→녹→황 (명시되지 않은 색상은 뒤로) */
+const COLOR_PRIORITY: Record<string, number> = {
+  흑: 0,
+  흑색: 0,
+  BLACK: 0,
+  갈: 1,
+  갈색: 1,
+  BROWN: 1,
+  회: 2,
+  회색: 2,
+  GRAY: 2,
+  청: 3,
+  청색: 3,
+  BLUE: 3,
+  녹: 4,
+  녹색: 4,
+  GREEN: 4,
+  황: 5,
+  황색: 5,
+  YELLOW: 5,
+};
+
+function getColorPriority(color: string): number {
+  if (!color) return 99;
+  const upper = color.trim().toUpperCase();
+  // 정확히 매칭되는 것 먼저
+  if (COLOR_PRIORITY[color.trim()] !== undefined)
+    return COLOR_PRIORITY[color.trim()];
+  // 접두사 매칭 (e.g., "흑색" matches "흑")
+  for (const [key, val] of Object.entries(COLOR_PRIORITY)) {
+    if (upper.startsWith(key.toUpperCase())) return val;
+  }
+  return 99;
+}
+
+/**
+ * 배치를 batch_group 번호(납기 빠른 순) → 색상 순으로 정렬.
+ * assignBatchNumbers 결과를 기반으로 정렬하므로 배치 번호와 표시 순서가 일치.
+ */
+export function sortBatchesByBatchNumber<
+  T extends { delivery_date: string; color: string },
+>(batches: T[], batchNumbers: Map<string, number>): T[] {
+  return [...batches].sort((a, b) => {
+    const numA =
+      batchNumbers.get(getBatchGroupKey(a as unknown as ProductionBatch)) ??
+      999;
+    const numB =
+      batchNumbers.get(getBatchGroupKey(b as unknown as ProductionBatch)) ??
+      999;
+    if (numA !== numB) return numA - numB;
+    // 같은 batch_group 내: 색상 순서
+    const colorA = getColorPriority(a.color);
+    const colorB = getColorPriority(b.color);
+    if (colorA !== colorB) return colorA - colorB;
+    return 0;
+  });
+}
+
 export function calcConvertedQty(spec: string, totalLengthM: number): number {
   const match = spec.match(/(\d+)C/);
   const coreCount = match ? parseInt(match[1], 10) : 1;

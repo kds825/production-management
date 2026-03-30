@@ -12,16 +12,15 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
       className="rounded-lg p-4"
       style={{
         backgroundColor: "#F0F4FF",
-        borderLeft: "3px solid #4A2C2A",
         border: "1px solid #E2E8F0",
         borderLeftWidth: 3,
-        borderLeftColor: "#4A2C2A",
+        borderLeftColor: "#C41230",
       }}
     >
       {/* Title */}
       <div className="flex items-center gap-2 mb-3">
         <svg
-          style={{ width: 16, height: 16, color: "#4A2C2A" }}
+          style={{ width: 16, height: 16, color: "#C41230" }}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -31,7 +30,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
         >
           <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
         </svg>
-        <span className="text-xs font-semibold" style={{ color: "#4A2C2A" }}>
+        <span className="text-xs font-semibold" style={{ color: "#C41230" }}>
           AI 배치 분석 결과
         </span>
       </div>
@@ -79,7 +78,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
                 style={{
                   width: 4,
                   height: 4,
-                  backgroundColor: "#4A2C2A",
+                  backgroundColor: "#C41230",
                 }}
               />
               {highlight}

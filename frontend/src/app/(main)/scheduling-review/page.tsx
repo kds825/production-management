@@ -422,7 +422,6 @@ export default function SchedulingReviewPage() {
                 yeonseoBatches={yeonseoBatches}
                 insulationBatches={insulationBatches}
                 sheatBatches={sheatBatches}
-                aiInsights={aiInsights}
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
               />
