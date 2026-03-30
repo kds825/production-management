@@ -232,6 +232,35 @@ def create_batches(
         else:
             lot_lengths = [total_qty]
 
+        # ── 일일 가동시간 기반 배치 분할 (변수정의_v2 행42: 작업단위 분할) ──
+        # 배치 작업시간이 일일 가동시간(20hr=1200분)을 넘으면
+        # 드럼 단위로 분할하여 하루치 작업단위로 나눔.
+        _DAILY_WORK_MIN = 1200.0  # 20시간 (2교대, 부동2hr 제외)
+        first_speed = _find_speed(speed_lookup, processes[0], order, sq)
+        est_speed: float = (
+            float(first_speed.line_speed_mpm)
+            if first_speed and first_speed.line_speed_mpm
+            else 0
+        )
+        if est_speed > 0 and drum_count > 1 and drum_length > 0:
+            split_lots: list[float] = []
+            for lot_len in lot_lengths:
+                lot_time = lot_len / est_speed
+                if lot_time > _DAILY_WORK_MIN:
+                    # 하루에 가공 가능한 길이 → 드럼 수로 환산
+                    daily_length = _DAILY_WORK_MIN * est_speed
+                    drums_per_day = max(1, int(daily_length / drum_length))
+                    drums_in_lot = max(1, round(lot_len / drum_length))
+                    remaining = drums_in_lot
+                    while remaining > 0:
+                        take = min(drums_per_day, remaining)
+                        split_lots.append(take * drum_length * (1 + defect_buffer_pct))
+                        remaining -= take
+                else:
+                    split_lots.append(lot_len)
+            if len(split_lots) > len(lot_lengths):
+                lot_lengths = split_lots
+
         # WIP 매칭된 수주 → 배치에 wip_matched_id 전파 + 공정 스킵
         order_line_key = f"{order.order_id}:{order.order_line}"
         matched_wip = wip_by_order_line.get(order_line_key)

@@ -189,6 +189,7 @@ def auto_schedule(
     sq_to_equip: dict[tuple[str, int], str] = {}  # (process_name, sq) → equipment_code
 
     tasks_created = []
+    pending_splits: list[ProductionBatch] = []  # 분할된 나머지 배치
 
     for batch in batches:
         # 10-3: 시스 재질 라우팅 — 고압시스 공정에서 sheath_type에 따라 설비 후보 필터
