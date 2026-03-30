@@ -25,6 +25,7 @@ interface ApiBatch {
   spec_raw: string;
   voltage: string | null;
   equipment_code: string | null;
+  batch_group: string | null;
 }
 
 /** process_name → equipment_group 매핑
@@ -83,6 +84,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     processGroup: toProcessGroup(b.process_name),
     processStatus: "진행",
     convertedQty: b.total_length_m,
+    batch_group: b.batch_group || undefined,
   };
 }
 

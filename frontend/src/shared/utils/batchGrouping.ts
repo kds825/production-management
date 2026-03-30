@@ -1,6 +1,8 @@
 import type { ProductionBatch } from "@/features/scheduler/types";
 
 export function getBatchGroupKey(b: ProductionBatch): string {
+  // batch_group이 있으면 그것을 사용 (같은 공정+SQ 묶음)
+  if (b.batch_group) return b.batch_group;
   return `${b.product}||${b.spec}||${b.customer}||${b.delivery_date}`;
 }
 
@@ -8,28 +10,46 @@ export function sortByDeliveryPriority(
   batches: ProductionBatch[],
 ): ProductionBatch[] {
   return [...batches].sort((a, b) => {
-    // 1. delivery_date ascending
+    // 1. delivery_date ascending (납기 빠른 순 = 먼저 투입)
     const dateCompare = a.delivery_date.localeCompare(b.delivery_date);
     if (dateCompare !== 0) return dateCompare;
-    // 2. product
-    const productCompare = a.product.localeCompare(b.product);
-    if (productCompare !== 0) return productCompare;
-    // 3. spec
-    return a.spec.localeCompare(b.spec);
+    // 2. SQ descending (같은 납기면 큰 SQ 먼저)
+    const sqA = parseInt(a.spec.match(/(\d+)SQ/)?.[1] || "0", 10);
+    const sqB = parseInt(b.spec.match(/(\d+)SQ/)?.[1] || "0", 10);
+    if (sqA !== sqB) return sqB - sqA;
+    // 3. color
+    return (a.color || "").localeCompare(b.color || "");
   });
 }
 
+/**
+ * 배치 번호 부여 — batch_group 기준, 납기 빠른 순 오름차순.
+ * batch_group 1개 = 배치 번호 1개.
+ * 같은 batch_group의 개별 수주는 모두 같은 번호.
+ */
 export function assignBatchNumbers(
   batches: ProductionBatch[],
 ): Map<string, number> {
-  const sorted = sortByDeliveryPriority(batches);
+  // batch_group별 가장 빠른 납기를 구해서 그룹 순서 결정
+  const groupEarliestDue = new Map<string, string>();
+  for (const b of batches) {
+    const key = getBatchGroupKey(b);
+    const existing = groupEarliestDue.get(key);
+    if (!existing || b.delivery_date < existing) {
+      groupEarliestDue.set(key, b.delivery_date);
+    }
+  }
+
+  // 납기 빠른 순으로 그룹 정렬
+  const sortedGroups = [...groupEarliestDue.entries()].sort((a, b) =>
+    a[1].localeCompare(b[1]),
+  );
+
+  // 번호 부여
   const map = new Map<string, number>();
   let counter = 1;
-  for (const b of sorted) {
-    const key = getBatchGroupKey(b);
-    if (!map.has(key)) {
-      map.set(key, counter++);
-    }
+  for (const [groupKey] of sortedGroups) {
+    map.set(groupKey, counter++);
   }
   return map;
 }

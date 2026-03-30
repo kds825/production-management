@@ -136,4 +136,6 @@ export interface ProductionBatch {
     unit_price_krw?: number;
     total_price_krw?: number;
   };
+  /** 배치 그룹 — 같은 (공정, SQ) 묶음 식별자 */
+  batch_group?: string;
 }
