@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
@@ -81,17 +82,20 @@ def _to_response(task: ScheduleTask) -> ScheduleTaskResponse:
         notes=task.notes,
         changeover_min=task.changeover_min,
         duration_hours=task.duration_hours,
+        customer=getattr(task, "customer", None),
     )
 
 
 def _db_task_to_response(
-    task: ScheduleTaskModel, batch: ProductionBatchModel
+    task: ScheduleTaskModel,
+    batch: ProductionBatchModel,
+    group_volume_m: float | None = None,
+    group_order_count: int = 1,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
-    JOIN 결과를 직접 매핑하여 인메모리 엔티티 경유 없이 응답을 구성한다.
-    priority는 customer_priority(int)를 TaskPriority enum으로 변환:
-      1~3 → critical, 4~7 → urgent, 나머지 → normal
+    group_volume_m: batch_group 전체 합산 길이 (None이면 단일 배치 길이 사용)
+    group_order_count: 그룹 내 개별 행 수
     """
     # customer_priority(int) → TaskPriority
     cp = batch.customer_priority or 99
@@ -129,7 +133,9 @@ def _db_task_to_response(
         color=color,
         start=task.start_datetime,
         end=task.end_datetime,
-        volume_m=float(batch.total_length_m or 0),
+        volume_m=group_volume_m
+        if group_volume_m is not None
+        else float(batch.total_length_m or 0),
         line_speed_m_per_min=float(batch.line_speed_mpm or 0),
         priority=priority,
         status=status,
@@ -147,6 +153,7 @@ def _db_task_to_response(
         notes=batch.remarks or "",
         changeover_min=int(task.setup_time_min or 0),
         duration_hours=duration_hours,
+        customer=batch.customer_name or "",
     )
 
 
@@ -209,7 +216,34 @@ def list_tasks(
 
     db_tasks = q.order_by(ScheduleTaskModel.start_datetime).all()
 
-    return [_db_task_to_response(task, batch) for task, batch in db_tasks]
+    # batch_group별 합산 volume 계산
+    group_volumes: dict[str, float] = {}
+    group_counts: dict[str, int] = {}
+    for task_row, batch_row in db_tasks:
+        bg = task_row.batch_group
+        if bg:
+            all_in_group = (
+                db.query(func.sum(ProductionBatchModel.total_length_m))
+                .filter(ProductionBatchModel.batch_group == bg)
+                .scalar()
+            )
+            group_volumes[bg] = float(all_in_group or 0)
+            cnt = (
+                db.query(func.count(ProductionBatchModel.batch_id))
+                .filter(ProductionBatchModel.batch_group == bg)
+                .scalar()
+            )
+            group_counts[bg] = int(cnt or 1)
+
+    return [
+        _db_task_to_response(
+            task,
+            batch,
+            group_volume_m=group_volumes.get(task.batch_group),
+            group_order_count=group_counts.get(task.batch_group, 1),
+        )
+        for task, batch in db_tasks
+    ]
 
 
 @router.post("/tasks", response_model=ScheduleTaskResponse, status_code=201)
