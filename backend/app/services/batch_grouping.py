@@ -219,7 +219,9 @@ def create_batches(
         # 분할은 batch_group 레벨에서 schedule_optimizer가 처리.
         lot_items: list[tuple[float, int]] = [(total_qty, drum_count)]
 
-        # WIP 매칭된 수주 → 배치에 wip_matched_id 전파 + 공정 스킵
+        # WIP 매칭된 수주 → 배치에 wip_matched_id 전파
+        # Stage 1에서는 모든 공정에 배치를 생성 (가시성 확보)
+        # Stage 2에서 WIP 커버 공정은 스케줄링 스킵
         order_line_key = f"{order.order_id}:{order.order_line}"
         matched_wip = wip_by_order_line.get(order_line_key)
         wip_id: int | None = matched_wip.wip_id if matched_wip else None
@@ -232,11 +234,9 @@ def create_batches(
         # 7연선 코어를 T6B0에서 먼저 제작 후 54BO에서 외층 추가
         is_61strand = sq >= 300 and conductor_material == "CU"
 
-        # 공정별 배치 생성 (틀 분할 포함) — ERP 수주 1행 = 배치 1행
-        # WIP 항목도 모든 공정에 배치를 생성한다 (Excel 표기 + 간트 스킵은 Stage 2에서 처리)
+        # 공정별 배치 생성 — ERP 수주 1행 = 배치 1행
+        # WIP 매칭 배치도 생성 (Stage 1 가시성) → Stage 2에서 스킵
         for batch_seq, process_name in enumerate(processes, start=1):
-            # 신선은 연선 설비에서 인라인 처리 — 별도 배치 미생성
-            # 원본 계획서에 신선 시트 없음 (연선 duration에 포함)
             if process_name == "신선":
                 continue
             if skip_stranding and process_name == "연선":
