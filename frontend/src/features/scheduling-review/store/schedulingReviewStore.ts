@@ -27,22 +27,37 @@ interface ApiBatch {
   equipment_code: string | null;
 }
 
-/** process_name → equipment_group 매핑 */
+/** process_name → equipment_group 매핑
+ * DB process_name: 연선, 신선, 연합, 고압절연, 저압절연, 고압시스, 저압시스
+ * → 3개 그룹으로 분류하여 scheduling-review 섹션에 매핑 */
 function toEquipmentGroup(
   processName: string,
 ): "연선" | "B100" | "A100" | "A120" {
-  if (processName === "연선") return "연선";
+  if (
+    processName === "연선" ||
+    processName === "신선" ||
+    processName === "연합"
+  )
+    return "연선";
+  if (processName.includes("절연")) return "B100";
+  if (processName.includes("시스")) return "A120";
+  // 장비 그룹 코드 직접 매핑 (레거시 호환)
   if (processName === "B100") return "B100";
   if (processName === "A100") return "A100";
   if (processName === "A120") return "A120";
-  // 기타 공정은 A120 기본값
   return "A120";
 }
 
 /** process_name → ProcessGroup 매핑 */
 function toProcessGroup(processName: string): ProcessGroup {
-  if (processName === "연선") return "연선";
-  // 나머지 공정은 해당 이름 그대로 (PROCESS_TABS에 따라 확장 가능)
+  if (
+    processName === "연선" ||
+    processName === "신선" ||
+    processName === "연합"
+  )
+    return "연선";
+  if (processName.includes("절연")) return "절연";
+  if (processName.includes("시스")) return "시스";
   return processName as ProcessGroup;
 }
 
