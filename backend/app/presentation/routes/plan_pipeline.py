@@ -420,6 +420,34 @@ def update_batch(batch_id: int, body: dict, db: Session = Depends(get_db)):
     return {"batch_id": batch_id, "updated": list(body.keys())}
 
 
+@router.delete("/runs/{run_label}", summary="특정 계획 실행 삭제")
+def delete_run(run_label: str, db: Session = Depends(get_db)):
+    """특정 run_label의 실행 데이터만 삭제한다.
+
+    삭제 대상: audit_log, schedule_task, production_batch, sales_order, wip_inventory
+    (해당 run_label 분만 삭제, 다른 실행분은 유지)
+    """
+    counts = {}
+    for table in [
+        "audit_log",
+        "schedule_task",
+        "production_batch",
+        "sales_order",
+        "wip_inventory",
+    ]:
+        result = db.execute(
+            text(f"DELETE FROM {table} WHERE run_label = :rl"),
+            {"rl": run_label},
+        )
+        counts[table] = result.rowcount
+
+    db.commit()
+    total = sum(counts.values())
+    if total == 0:
+        raise HTTPException(status_code=404, detail=f"run_label '{run_label}' 없음")
+    return {"run_label": run_label, "deleted": counts, "total": total}
+
+
 @router.get("/runs", summary="계획 실행 이력 목록")
 def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     """저장된 모든 run_label 목록을 배치 수 및 최초 생성 시각과 함께 반환한다.
