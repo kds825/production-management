@@ -220,69 +220,71 @@ Stage 2 스케줄링 알고리즘:
 
 ## 제약조건 전체 목록 (35/38 적용)
 
+> **제어** 컬럼: `DB` = is_enabled + params_json으로 동적 제어, `코드` = 코드에 하드코딩 (토글 미반영)
+
 ### 납기/우선순위 (3건)
 
-| ID  | 제약조건             | 적용 단계 | 코드 위치                                        |
-| --- | -------------------- | --------- | ------------------------------------------------ |
-| 1-1 | 거래처 우선순위      | Stage 1,2 | batch_grouping (정렬), schedule_optimizer (정렬) |
-| 1-2 | 납기 기준(도착/출하) | Stage 1,2 | batch_grouping (정렬), schedule_optimizer (정렬) |
-| 1-3 | 긴급 변경 대응       | 수동      | D&D로 블록 이동                                  |
+| ID  | 제약조건             | 적용 단계 | 제어 | 코드 위치                                              |
+| --- | -------------------- | --------- | ---- | ------------------------------------------------------ |
+| 1-1 | 거래처 우선순위      | Stage 1,2 | 코드 | batch_grouping (\_sort_key), schedule_optimizer (정렬) |
+| 1-2 | 납기 기준(도착/출하) | Stage 1,2 | 코드 | batch_grouping (\_sort_key), schedule_optimizer (정렬) |
+| 1-3 | 긴급 변경 대응       | 수동      | —    | D&D로 블록 이동                                        |
 
 ### SM수량/재고 (4건)
 
-| ID  | 제약조건                      | 적용 단계 | 코드 위치                        |
-| --- | ----------------------------- | --------- | -------------------------------- |
-| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | wip_matching, batch_grouping     |
-| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | batch_grouping                   |
-| 2-3 | 틀단위 기준 생산              | Stage 1   | batch_group으로 대체             |
-| 2-4 | 61연선 분리                   | Stage 1   | batch_grouping (7연선 코어 선행) |
+| ID  | 제약조건                      | 적용 단계 | 제어 | 코드 위치                             |
+| --- | ----------------------------- | --------- | ---- | ------------------------------------- |
+| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | 코드 | wip_matching, batch_grouping          |
+| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | 코드 | batch_grouping (sq<=10 or "고내화")   |
+| 2-3 | 틀단위 기준 생산              | Stage 1   | 코드 | batch_group으로 대체                  |
+| 2-4 | 61연선 분리                   | Stage 1   | 코드 | batch_grouping (is_61strand, sq>=300) |
 
 ### 색상관리 (3건)
 
-| ID  | 제약조건                      | 적용 단계 | 코드 위치                             |
-| --- | ----------------------------- | --------- | ------------------------------------- |
-| 3-1 | 색상별 여척 추가 (7m+시료10m) | Stage 1   | batch_grouping                        |
-| 3-2 | 색상 묶음 배치                | Stage 1   | batch_grouping (정렬 키)              |
-| 3-3 | 설비별 색상그룹 제한          | Stage 1   | batch_grouping (A100=갈회, A120=흑청) |
+| ID  | 제약조건                      | 적용 단계 | 제어   | 코드 위치                                       |
+| --- | ----------------------------- | --------- | ------ | ----------------------------------------------- |
+| 3-1 | 색상별 여척 추가 (7m+시료10m) | Stage 1   | **DB** | batch_grouping (extra_length_m, sample_extra_m) |
+| 3-2 | 색상 묶음 배치                | Stage 1   | 코드   | batch_grouping (\_sort_key: sheath_color)       |
+| 3-3 | 설비별 색상그룹 제한          | Stage 1   | 코드   | batch_grouping (A100=갈회, A120=흑청)           |
 
 ### 시간/속도 (5건)
 
-| ID  | 제약조건                   | 적용 단계 | 코드 위치          |
-| --- | -------------------------- | --------- | ------------------ |
-| 4-1 | 규격교체 시간 (동일SQ=0분) | Stage 2   | schedule_optimizer |
-| 4-2 | 색상교체 시간 (+120분)     | Stage 2   | schedule_optimizer |
-| 4-3 | 드럼 권취 시간             | Stage 2   | schedule_optimizer |
-| 4-4 | 용접 시간                  | Stage 2   | schedule_optimizer |
-| 4-5 | 테이핑 속도 제한           | Stage 2   | schedule_optimizer |
+| ID  | 제약조건                   | 적용 단계 | 제어   | 코드 위치                                 |
+| --- | -------------------------- | --------- | ------ | ----------------------------------------- |
+| 4-1 | 규격교체 시간 (동일SQ=0분) | Stage 2   | 코드   | schedule_optimizer (same_sq → setup=0)    |
+| 4-2 | 색상교체 시간 (+120분)     | Stage 2   | 코드   | schedule_optimizer (color_change_min=120) |
+| 4-3 | 드럼 권취 시간             | Stage 2   | 코드   | schedule_optimizer (setup_start_min)      |
+| 4-4 | 용접 시간                  | Stage 2   | **DB** | schedule_optimizer (welding_min)          |
+| 4-5 | 테이핑 속도 제한           | Stage 2   | 코드   | schedule_optimizer (\_get_tp_line_speed)  |
 
 ### 설비배정 (6건)
 
-| ID   | 제약조건                      | 적용 단계 | 코드 위치                                  |
-| ---- | ----------------------------- | --------- | ------------------------------------------ |
-| 5-1  | SQ 기준 설비 배정             | Stage 2   | schedule_optimizer (\_SQ_TO_WIRE_DIAMETER) |
-| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | batch_grouping (정렬 키)                   |
-| 5-3  | 다심 우선배치                 | Stage 1   | batch_grouping (정렬 키)                   |
-| 5-5  | TFR-GV 절연 생략              | Stage 1   | batch_grouping (skip_stranding)            |
-| 10-3 | 시스 재질 라우팅              | Stage 2   | schedule_optimizer                         |
-| 10-4 | 전압별 드럼 분류              | Stage 1   | batch_grouping (정렬 키)                   |
+| ID   | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                       |
+| ---- | ----------------------------- | --------- | ---- | ----------------------------------------------- |
+| 5-1  | SQ 기준 설비 배정             | Stage 2   | 코드 | schedule_optimizer (\_SQ_TO_WIRE_DIAMETER)      |
+| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | 코드 | batch_grouping (\_sort_key: stranding_type)     |
+| 5-3  | 다심 우선배치                 | Stage 1   | 코드 | batch_grouping (\_sort_key: multi_core_penalty) |
+| 5-5  | TFR-GV 절연 생략              | Stage 1   | 코드 | batch_grouping (skip_stranding, sq<=25)         |
+| 10-3 | 시스 재질 라우팅              | Stage 2   | 코드 | schedule_optimizer (\_filter_by_sheath_routing) |
+| 10-4 | 전압별 드럼 분류              | Stage 1   | 코드 | batch_grouping (\_sort_key: voltage)            |
 
 ### 가동시간 (4건)
 
-| ID  | 제약조건                       | 적용 단계 | 코드 위치       |
-| --- | ------------------------------ | --------- | --------------- |
-| 6-1 | 안전교육(매월 마지막2주 월-2h) | Stage 2   | calendar_engine |
-| 6-2 | 금요일 야간 단축 (14h)         | Stage 2   | calendar_engine |
-| 6-4 | 공휴일/휴무 (0h)               | Stage 2   | calendar_engine |
-| —   | 토/일 미가동 (0h)              | Stage 2   | calendar_engine |
+| ID  | 제약조건                       | 적용 단계 | 제어   | 코드 위치                               |
+| --- | ------------------------------ | --------- | ------ | --------------------------------------- |
+| 6-1 | 안전교육(매월 마지막2주 월-2h) | Stage 2   | 코드   | calendar_engine (\_is_last_two_mondays) |
+| 6-2 | 금요일 야간 단축 (14h)         | Stage 2   | 코드   | calendar_engine (weekday==4 → 14h)      |
+| 6-4 | 공휴일/휴무 (0h)               | Stage 2   | **DB** | calendar_engine (CAL-HOL 조회)          |
+| —   | 토/일 미가동 (0h)              | Stage 2   | 코드   | calendar_engine (weekday>=5 → 0h)       |
 
 ### 기타 (4건)
 
-| ID   | 제약조건               | 적용 단계 | 코드 위치                              |
-| ---- | ---------------------- | --------- | -------------------------------------- |
-| 7-1  | 불량 재작업 버퍼 (+5%) | Stage 1   | batch_grouping                         |
-| 9-1  | 선행공정 완료 체크     | Stage 2   | schedule_optimizer (process_end_by_sq) |
-| 10-2 | CU/AL 재질 분리        | Stage 2   | schedule_optimizer                     |
-| 10-5 | 4심 계산법             | Stage 1   | batch_grouping                         |
+| ID   | 제약조건               | 적용 단계 | 제어   | 코드 위치                              |
+| ---- | ---------------------- | --------- | ------ | -------------------------------------- |
+| 7-1  | 불량 재작업 버퍼 (+5%) | Stage 1   | **DB** | batch_grouping (defect_buffer_pct)     |
+| 9-1  | 선행공정 완료 체크     | Stage 2   | 코드   | schedule_optimizer (process_end_by_sq) |
+| 10-2 | CU/AL 재질 분리        | Stage 2   | 코드   | schedule_optimizer (\_infer_material)  |
+| 10-5 | 4심 계산법             | Stage 1   | 코드   | batch_grouping (core_count==4 → "4C")  |
 
 ### 미적용 (3건)
 
