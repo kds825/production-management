@@ -13,11 +13,8 @@ export const metadata: Metadata = {
   title: "KBI 생산계획 스케줄러",
   description: "KBI 코스모링크 생산계획 시각화 도구",
   icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon.png", type: "image/png" },
-    ],
-    apple: "/favicon.png",
+    icon: [{ url: "/favicon.png", type: "image/png", sizes: "96x92" }],
+    apple: "/apple-icon.png",
   },
 };
 
