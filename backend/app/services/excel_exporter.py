@@ -172,7 +172,14 @@ def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
     # ── Stage 1: 틀분할 배치 합산 ────────────────────────────────────────────
     groups: OrderedDict[tuple, list[ProductionBatch]] = OrderedDict()
     for b in batches:
-        key = (b.sales_order_id, b.sales_order_line, b.process_name)
+        # drum_count를 키에 포함 — 파이프라인 분할(dc=10+4)은 별도 행 유지,
+        # 틀분할(같은 dc)은 합산됨
+        key = (
+            b.sales_order_id,
+            b.sales_order_line,
+            b.process_name,
+            int(b.drum_count or 1),
+        )
         groups.setdefault(key, []).append(b)
 
     stage1: list[ProductionBatch] = []

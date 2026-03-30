@@ -223,43 +223,57 @@ def create_batches(
             else None
         )
 
+        # lot_items: (length_m, drums) 튜플 리스트
+        # 틀분할 + 파이프라인 분할 결과를 추적하여 배치별 drum_count를 정확히 설정
         if lot_stranding and total_qty > lot_stranding:
             full_lots = math.floor(total_qty / lot_stranding)
             remainder = total_qty - full_lots * lot_stranding
-            lot_lengths: list[float] = [lot_stranding] * full_lots
+            lot_items: list[tuple[float, int]] = [
+                (lot_stranding, drum_count) for _ in range(full_lots)
+            ]
             if remainder > 0:
-                lot_lengths.append(remainder)
+                lot_items.append((remainder, drum_count))
         else:
-            lot_lengths = [total_qty]
+            lot_items = [(total_qty, drum_count)]
 
-        # ── 일일 가동시간 기반 배치 분할 (변수정의_v2 행42: 작업단위 분할) ──
-        # 배치 작업시간이 일일 가동시간(20hr=1200분)을 넘으면
-        # 드럼 단위로 분할하여 하루치 작업단위로 나눔.
-        _DAILY_WORK_MIN = 1200.0  # 20시간 (2교대, 부동2hr 제외)
-        first_speed = _find_speed(speed_lookup, processes[0], order, sq)
-        est_speed: float = (
-            float(first_speed.line_speed_mpm)
-            if first_speed and first_speed.line_speed_mpm
-            else 0
-        )
-        if est_speed > 0 and drum_count > 1 and drum_length > 0:
-            split_lots: list[float] = []
-            for lot_len in lot_lengths:
-                lot_time = lot_len / est_speed
-                if lot_time > _DAILY_WORK_MIN:
-                    # 하루에 가공 가능한 길이 → 드럼 수로 환산
-                    daily_length = _DAILY_WORK_MIN * est_speed
-                    drums_per_day = max(1, int(daily_length / drum_length))
-                    drums_in_lot = max(1, round(lot_len / drum_length))
-                    remaining = drums_in_lot
-                    while remaining > 0:
-                        take = min(drums_per_day, remaining)
-                        split_lots.append(take * drum_length * (1 + defect_buffer_pct))
-                        remaining -= take
-                else:
-                    split_lots.append(lot_len)
-            if len(split_lots) > len(lot_lengths):
-                lot_lengths = split_lots
+        # ── 파이프라인 최적화 분할 (변수정의_v2 행42: 작업단위 분할) ────────
+        # 37연선 이상(150SQ+) 배치가 1교대(8hr=480분)를 넘으면
+        # 교대 단위로 드럼 분할 → 후공정이 교대 시작 시 즉시 투입 가능.
+        _SHIFT_MIN = 480.0  # 1교대 = 8시간
+        if sq >= 150 and drum_count > 1 and drum_length > 0:
+            # 연선 공정 선속으로 분할 판단 (processes[0]이 신선이면 선속 없음)
+            split_proc = "연선" if "연선" in processes else processes[0]
+            first_speed = _find_speed(speed_lookup, split_proc, order, sq)
+            first_mpm: float = (
+                float(first_speed.line_speed_mpm)
+                if first_speed and first_speed.line_speed_mpm
+                else 0
+            )
+            if first_mpm > 0:
+                split_items: list[tuple[float, int]] = []
+                for lot_len, lot_dc in lot_items:
+                    lot_time = lot_len / first_mpm
+                    if lot_time > _SHIFT_MIN:
+                        shift_length = _SHIFT_MIN * first_mpm
+                        drums_per_shift = max(1, int(shift_length / drum_length))
+                        # drum_length에 buffer가 미적용이므로 buffer 제거 후 역산
+                        drums_in_lot = max(
+                            1, round(lot_len / (drum_length * (1 + defect_buffer_pct)))
+                        )
+                        remaining = drums_in_lot
+                        while remaining > 0:
+                            take = min(drums_per_shift, remaining)
+                            split_items.append(
+                                (
+                                    take * drum_length * (1 + defect_buffer_pct),
+                                    take,
+                                )
+                            )
+                            remaining -= take
+                    else:
+                        split_items.append((lot_len, lot_dc))
+                if len(split_items) > len(lot_items):
+                    lot_items = split_items
 
         # WIP 매칭된 수주 → 배치에 wip_matched_id 전파 + 공정 스킵
         order_line_key = f"{order.order_id}:{order.order_line}"
@@ -291,7 +305,7 @@ def create_batches(
                 else 0.0
             )
 
-            for lot_idx, lot_length in enumerate(lot_lengths, start=1):
+            for lot_idx, (lot_length, lot_drums) in enumerate(lot_items, start=1):
                 extra_total: float = extra * core_count
                 effective_length: float = lot_length + extra_total
 
@@ -299,7 +313,7 @@ def create_batches(
                     effective_length / line_speed if line_speed else None
                 )
 
-                remarks: str | None = f"틀{lot_idx}" if len(lot_lengths) > 1 else None
+                remarks: str | None = f"틀{lot_idx}" if len(lot_items) > 1 else None
 
                 batch = ProductionBatch(
                     run_label=run_label,
@@ -310,7 +324,7 @@ def create_batches(
                     process_name=process_name,
                     batch_seq=batch_seq,
                     drum_length_m=drum_length,
-                    drum_count=drum_count,
+                    drum_count=lot_drums,
                     total_length_m=lot_length,
                     extra_length_m=extra_total,
                     sq_mm2=sq,
