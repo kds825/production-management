@@ -347,7 +347,19 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`서버 오류 (${res.status}): ${errText}`);
+        // 상세 SQL/파라미터 로그 제거 — 사용자에게 간결한 메시지만 표시
+        let userMsg = `서버 오류 (${res.status})`;
+        try {
+          const errJson = JSON.parse(errText);
+          const detail = errJson.detail || "";
+          // 첫 줄만 추출 (SQL 쿼리/파라미터 제거)
+          userMsg =
+            typeof detail === "string" ? detail.split("\n")[0] : String(detail);
+          if (userMsg.length > 100) userMsg = userMsg.slice(0, 100) + "...";
+        } catch {
+          if (errText.length > 100) userMsg = errText.slice(0, 100) + "...";
+        }
+        throw new Error(userMsg);
       }
 
       const data: Stage1Result = await res.json();

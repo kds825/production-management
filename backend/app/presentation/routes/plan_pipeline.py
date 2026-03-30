@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database import get_db
@@ -36,6 +36,17 @@ async def run_stage1(
     Returns:
         run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록
     """
+    # ── 기존 실행 데이터 정리 (재실행 시 중복 방지) ─────────────────────────
+    from app.infrastructure.models.schedule_task import ScheduleTask as ST
+
+    db.query(func.count(ST.task_id)).scalar()  # warm up
+    db.execute(text("DELETE FROM audit_log"))
+    db.execute(text("DELETE FROM schedule_task"))
+    db.execute(text("DELETE FROM production_batch"))
+    db.execute(text("DELETE FROM sales_order"))
+    db.execute(text("DELETE FROM wip_inventory"))
+    db.commit()
+
     # run_label — 동일 계획 실행의 모든 레코드를 묶는 식별자
     run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
 
