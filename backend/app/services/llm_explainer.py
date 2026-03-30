@@ -19,8 +19,9 @@ if _env_path.exists():
                 os.environ.setdefault(_key.strip(), _val.strip())
 
 from app.infrastructure.models.audit_log import AuditLog
-from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.equipment_master import EquipmentMaster
+from app.infrastructure.models.production_batch import ProductionBatch
+from app.infrastructure.models.schedule_task import ScheduleTask
 
 # Provider selection: "openai" | "anthropic" (default: "openai")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
@@ -49,6 +50,15 @@ SYSTEM_PROMPT = """당신은 전선 제조 공장의 생산계획 AI 어시스�
 - 납기 준수 여부를 명확히 언급
 - 3~5문장으로 간결하게"""
 
+SUMMARY_SYSTEM_PROMPT = """당신은 전선 제조 공장의 생산계획 AI 어시스턴트입니다.
+배치 목록을 분석하여 공장 관리자에게 핵심 인사이트를 요약합니다.
+
+규칙:
+- 전문 용어는 공장에서 쓰는 표현 그대로 사용
+- 리스크(납기 촉박, 설비 과부하, 재질 혼용 등)를 우선 보고
+- 3~5개 핵심 포인트를 bullet으로 반환
+- JSON 형식으로 응답: {"highlights": ["...", "..."], "riskCount": N}"""
+
 
 async def explain_decision(
     batch_id: int,
@@ -57,15 +67,25 @@ async def explain_decision(
 ) -> dict:
     """특정 배치/작업의 스케줄링 결정을 자연어로 설명"""
 
-    # Gather context
+    # Gather context — batch_id가 실제로 schedule_task.task_id일 수 있으므로 먼저 확인
     batch = (
         db.query(ProductionBatch).filter(ProductionBatch.batch_id == batch_id).first()
     )
     if not batch:
-        return {
-            "explanation": f"배치 {batch_id}를 찾을 수 없습니다.",
-            "source": "error",
-        }
+        # 간트가 TASK-{task_id} 형식으로 보내는 경우: schedule_task.task_id로 재조회
+        task = db.query(ScheduleTask).filter(ScheduleTask.task_id == batch_id).first()
+        if task:
+            batch_id = task.batch_id
+            batch = (
+                db.query(ProductionBatch)
+                .filter(ProductionBatch.batch_id == batch_id)
+                .first()
+            )
+        if not batch:
+            return {
+                "explanation": f"배치 {batch_id}를 찾을 수 없습니다.",
+                "source": "error",
+            }
 
     equipment = None
     if batch.equipment_code:
@@ -104,10 +124,20 @@ def explain_decision_sync(
         db.query(ProductionBatch).filter(ProductionBatch.batch_id == batch_id).first()
     )
     if not batch:
-        return {
-            "explanation": f"배치 {batch_id}를 찾을 수 없습니다.",
-            "source": "error",
-        }
+        # 간트가 TASK-{task_id} 형식으로 보내는 경우: schedule_task.task_id로 재조회
+        task = db.query(ScheduleTask).filter(ScheduleTask.task_id == batch_id).first()
+        if task:
+            batch_id = task.batch_id
+            batch = (
+                db.query(ProductionBatch)
+                .filter(ProductionBatch.batch_id == batch_id)
+                .first()
+            )
+        if not batch:
+            return {
+                "explanation": f"배치 {batch_id}를 찾을 수 없습니다.",
+                "source": "error",
+            }
 
     equipment = None
     if batch.equipment_code:
@@ -130,6 +160,108 @@ def explain_decision_sync(
 
     explanation = _template_explanation(batch, equipment, logs)
     return {"explanation": explanation, "source": "template", "batch_id": batch_id}
+
+
+def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
+    """run_label 전체 배치를 분석하여 AI 요약을 생성한다.
+
+    LLM 호출에 성공하면 highlights/riskCount를 LLM 결과에서 가져오고,
+    실패하면 통계 기반 템플릿으로 폴백한다.
+    """
+    batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
+    )
+
+    total_batches = len(batches)
+    if total_batches == 0:
+        return {
+            "totalBatches": 0,
+            "totalProductionM": 0.0,
+            "riskCount": 0,
+            "highlights": ["해당 run_label의 배치 데이터가 없습니다."],
+            "insights": [],
+        }
+
+    total_m = sum(float(b.total_length_m or 0) for b in batches)
+
+    # 공정별 집계
+    by_process: dict[str, int] = {}
+    for b in batches:
+        p = b.process_name or "기타"
+        by_process[p] = by_process.get(p, 0) + 1
+
+    # 거래처별 집계
+    by_customer: dict[str, int] = {}
+    for b in batches:
+        c = b.customer_name or "미지정"
+        by_customer[c] = by_customer.get(c, 0) + 1
+
+    # 납기일 범위
+    due_dates = [b.due_date for b in batches if b.due_date]
+    earliest = min(due_dates) if due_dates else None
+    latest = max(due_dates) if due_dates else None
+
+    # LLM용 컨텍스트 구성
+    process_summary = ", ".join(f"{p}:{n}건" for p, n in by_process.items())
+    customer_summary = ", ".join(
+        f"{c}:{n}건" for c, n in sorted(by_customer.items(), key=lambda x: -x[1])[:5]
+    )
+    context = (
+        f"총 배치 수: {total_batches}건\n"
+        f"총 생산량: {total_m:,.0f}m\n"
+        f"공정별: {process_summary}\n"
+        f"거래처별(상위5): {customer_summary}\n"
+        f"납기일 범위: {earliest} ~ {latest}"
+    )
+
+    # LLM 호출
+    llm_raw = _call_llm_sync(
+        context,
+        system_prompt=SUMMARY_SYSTEM_PROMPT,
+        user_prompt=f"다음 생산 배치 현황을 분석하여 핵심 인사이트를 JSON으로 요약해주세요:\n\n{context}",
+    )
+    risk_count = 0
+    highlights: list[str] = []
+
+    if llm_raw:
+        try:
+            # LLM이 JSON 블록을 마크다운 코드펜스로 감쌀 수 있으므로 추출
+            raw = llm_raw.strip()
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            parsed = json.loads(raw.strip())
+            highlights = parsed.get("highlights", [])
+            risk_count = int(parsed.get("riskCount", 0))
+        except Exception:
+            # JSON 파싱 실패 시 텍스트를 그대로 bullet으로 사용
+            highlights = [
+                line.strip("- •").strip()
+                for line in llm_raw.splitlines()
+                if line.strip()
+            ]
+
+    # 템플릿 폴백 — LLM 결과가 없거나 highlights가 비어 있으면 통계 기반 생성
+    if not highlights:
+        highlights = []
+        highlights.append(f"총 {total_batches}건의 배치, {total_m:,.0f}m 생산 계획")
+        highlights.append(f"공정 구성: {process_summary}")
+        if earliest and latest:
+            highlights.append(f"납기일 범위: {earliest} ~ {latest}")
+        top_customer = max(by_customer.items(), key=lambda x: x[1], default=None)
+        if top_customer:
+            highlights.append(
+                f"최다 수주 거래처: {top_customer[0]} ({top_customer[1]}건)"
+            )
+
+    return {
+        "totalBatches": total_batches,
+        "totalProductionM": round(total_m, 1),
+        "riskCount": risk_count,
+        "highlights": highlights,
+        "insights": [],
+    }
 
 
 def _build_context(batch, equipment, logs) -> str:
@@ -252,8 +384,22 @@ async def _call_anthropic(context: str) -> Optional[str]:
     return None
 
 
-def _call_llm_sync(context: str) -> Optional[str]:
-    """동기 LLM 호출 — httpx 동기 클라이언트 사용"""
+def _call_llm_sync(
+    context: str,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+) -> Optional[str]:
+    """동기 LLM 호출 — httpx 동기 클라이언트 사용.
+
+    system_prompt를 명시하지 않으면 기본 SYSTEM_PROMPT를 사용한다.
+    user_prompt를 명시하지 않으면 기본 스케줄링 설명 요청 문구를 사용한다.
+    """
+    effective_system = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    effective_user = (
+        user_prompt
+        if user_prompt is not None
+        else f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}"
+    )
     if LLM_PROVIDER == "openai" and OPENAI_API_KEY:
         try:
             with httpx.Client(timeout=30.0) as client:
@@ -266,11 +412,8 @@ def _call_llm_sync(context: str) -> Optional[str]:
                     json={
                         "model": OPENAI_MODEL,
                         "messages": [
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {
-                                "role": "user",
-                                "content": f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}",
-                            },
+                            {"role": "system", "content": effective_system},
+                            {"role": "user", "content": effective_user},
                         ],
                         "max_completion_tokens": 500,
                         "temperature": 0.3,
@@ -294,13 +437,8 @@ def _call_llm_sync(context: str) -> Optional[str]:
                     json={
                         "model": ANTHROPIC_MODEL,
                         "max_tokens": 500,
-                        "system": SYSTEM_PROMPT,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": f"다음 스케줄링 결정의 근거를 공장 관리자에게 설명해주세요:\n\n{context}",
-                            }
-                        ],
+                        "system": effective_system,
+                        "messages": [{"role": "user", "content": effective_user}],
                     },
                 )
                 if response.status_code == 200:

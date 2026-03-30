@@ -195,6 +195,18 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
+@router.get("/stage1/{run_label}/ai-summary", summary="AI 배치 분석 요약")
+def get_ai_summary(run_label: str, db: Session = Depends(get_db)):
+    """run_label 전체 배치를 LLM으로 분석하여 핵심 인사이트를 반환한다.
+
+    Returns:
+        totalBatches, totalProductionM, riskCount, highlights, insights
+    """
+    from app.services.llm_explainer import generate_batch_summary_sync
+
+    return generate_batch_summary_sync(run_label, db)
+
+
 @router.get("/stage1/{run_label}/export", summary="작업지시서 Excel 다운로드")
 def export_stage1(run_label: str, db: Session = Depends(get_db)) -> StreamingResponse:
     """지정한 run_label의 production_batch 데이터를 Excel(.xlsx)로 변환하여 반환한다.
