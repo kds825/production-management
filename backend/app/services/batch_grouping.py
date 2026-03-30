@@ -440,6 +440,21 @@ def create_batches(
 
     batches.sort(key=_sort_key)
 
+    # ── 배치 그룹 부여 ─────────────────────────────────────────────────────────
+    # 같은 (process_name, sq_mm2)를 하나의 batch_group으로 묶는다.
+    # 원본 계획서의 "120SQ--->1틀(연선5285)" 묶음 = 1 batch_group = 1 간트 블록.
+    # 틀분할(lot_stranding)이 있으면 lot_idx별로 별도 그룹 → 틀당 1블록.
+    group_counters: dict[str, int] = {}
+    for b in batches:
+        proc = b.process_name
+        sq_key = int(b.sq_mm2 or 0)
+        # 틀분할은 배치 내부 분할이므로 그룹에 포함하지 않음
+        # 원본 계획서: "150SQ--->2틀(연선5020)" = 1배치 그룹
+        group_key = f"{proc}_{sq_key}SQ"
+        if group_key not in group_counters:
+            group_counters[group_key] = len(group_counters) + 1
+        b.batch_group = group_key
+
     # ── DB 기록 및 집계 ───────────────────────────────────────────────────────
     db.add_all(batches)
     db.flush()  # batch_id 자동 채번 (autoincrement)을 트리거하되 커밋은 호출자에게 위임

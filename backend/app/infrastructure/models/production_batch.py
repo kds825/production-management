@@ -54,6 +54,10 @@ class ProductionBatch(Base):
     stranding_type = Column(String(20))
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # 배치 그룹 — 같은 (공정, SQ) 조합의 행들을 하나의 간트 블록으로 묶는 식별자
+    # 예: "연선_120SQ_G01" → 연선 120SQ 1번 그룹
+    batch_group = Column(String(50), index=True)
+
     # SM 재고 출력 — 이 배치 생산 시 발생하는 반제품 재고량
     wip_output_expected_m = Column(Numeric, default=0)  # 예상 SM재고 발생량
     wip_output_actual_m = Column(Numeric, nullable=True)  # 실제 SM재고 발생량

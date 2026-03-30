@@ -189,33 +189,41 @@ def auto_schedule(
     sq_to_equip: dict[tuple[str, int], str] = {}  # (process_name, sq) → equipment_code
 
     tasks_created = []
-    pending_splits: list[ProductionBatch] = []  # 분할된 나머지 배치
 
+    # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
+    # 같은 (공정, SQ) 배치들을 하나의 간트 블록으로 묶어 스케줄링한다.
+    # 원본 계획서의 "120SQ--->1틀(연선5285)" = 1 batch_group = 1 schedule_task.
+    from collections import OrderedDict
+
+    batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
     for batch in batches:
-        # 10-3: 시스 재질 라우팅 — 고압시스 공정에서 sheath_type에 따라 설비 후보 필터
-        candidate_equip = equipment_by_process.get(batch.process_name, [])
-        if batch.process_name in ("고압시스", "저압시스"):
-            candidate_equip = _filter_by_sheath_routing(batch, candidate_equip)
+        key = batch.batch_group or f"_single_{batch.batch_id}"
+        batch_groups.setdefault(key, []).append(batch)
 
-        # Find eligible equipment for this batch's process
-        eligible = _find_eligible_equipment(batch, candidate_equip)
+    for group_key, group_batches in batch_groups.items():
+        rep = group_batches[0]  # 대표 배치 (설비 선정용)
+
+        # 10-3: 시스 재질 라우팅
+        candidate_equip = equipment_by_process.get(rep.process_name, [])
+        if rep.process_name in ("고압시스", "저압시스"):
+            candidate_equip = _filter_by_sheath_routing(rep, candidate_equip)
+
+        eligible = _find_eligible_equipment(rep, candidate_equip)
 
         # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
-        # 시스 공정은 색상 기준 분류(A120=흑/청, A100=나머지)이므로 SQ 고정 미적용
-        sq = int(batch.sq_mm2 or 0)
-        sq_key = (batch.process_name, sq)
-        is_stranding = batch.process_name == "연선"
+        sq = int(rep.sq_mm2 or 0)
+        sq_key = (rep.process_name, sq)
+        is_stranding = rep.process_name == "연선"
         if is_stranding and sq >= 70 and sq_key in sq_to_equip:
             preferred_eq = sq_to_equip[sq_key]
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
             if pref_match:
                 eligible = pref_match
 
-        # ── 규칙 3: 소선경 그루핑 — 같은 소선경 SQ가 있는 설비 선호 ──────────
+        # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
         if is_stranding and sq_key not in sq_to_equip:
             wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
             if wire_d > 0:
-                # 같은 소선경의 다른 SQ가 이미 배정된 설비를 찾기
                 same_wd_equips = set()
                 for (proc, s), eq_code in sq_to_equip.items():
                     if proc == "연선" and _SQ_TO_WIRE_DIAMETER.get(s, -1) == wire_d:
@@ -229,176 +237,134 @@ def auto_schedule(
 
         if not eligible:
             result["warnings"].append(
-                f"배치 {batch.batch_id}: 공정 '{batch.process_name}'에 적합한 설비 없음"
+                f"배치그룹 {group_key}: 공정 '{rep.process_name}'에 적합한 설비 없음"
             )
             continue
 
-        # 4-5: T/P 공정이면 SpeedMaster에서 T/P 전용 속도 읽기
-        line_speed = float(batch.line_speed_mpm or 10)
-        if batch.process_name == "T/P" and eligible:
-            # 첫 번째 후보 설비 기준으로 속도 조회 (최종 설비 확정 전 추정)
-            tp_speed = _get_tp_line_speed(
-                eligible[0].equipment_code, batch.sq_mm2, speed_map
-            )
-            if tp_speed is not None:
-                line_speed = tp_speed
+        # ── 그룹 전체 duration 합산 ──────────────────────────────────────────
+        line_speed = float(rep.line_speed_mpm or 10)
+        group_duration = 0.0
+        for b in group_batches:
+            d = float(b.estimated_duration_min or 0)
+            if d <= 0:
+                total = float(b.total_length_m or 0) + float(b.extra_length_m or 0)
+                ls = float(b.line_speed_mpm or 0) or line_speed
+                d = total / ls if ls > 0 else 60
+            group_duration += d
 
-        # Calculate duration
-        duration_min = float(batch.estimated_duration_min or 0)
-        if duration_min <= 0:
-            # Fallback: total_length / line_speed
-            total = float(batch.total_length_m or 0) + float(batch.extra_length_m or 0)
-            duration_min = total / line_speed if line_speed > 0 else 60
-
-        setup_min = float(batch.setup_time_min or 0)
-
-        # 4-3: 드럼 권취 시간 — SpeedMaster의 setup_start_min 추가
+        setup_min = float(rep.setup_time_min or 0)
         drum_winding_min = _get_drum_winding_min(
-            eligible[0].equipment_code, batch.sq_mm2, speed_map
+            eligible[0].equipment_code, rep.sq_mm2, speed_map
         )
+        total_duration = group_duration + setup_min + drum_winding_min
 
-        total_duration = duration_min + setup_min + drum_winding_min
-
-        # Find the best equipment slot (minimize setup time, earliest available)
+        # ── 설비 선택 (최적 슬롯 탐색) ───────────────────────────────────────
         best_eq = None
         best_start = None
-        best_setup = setup_min
         best_total_duration = total_duration
 
         for eq in eligible:
             eq_code = eq.equipment_code
             slots = timeline.get(eq_code, [])
 
-            # 4-5: T/P 공정에서 최종 설비 확정 후 정확한 속도로 duration 재계산
             eq_total_duration = total_duration
-            if batch.process_name == "T/P":
-                tp_speed = _get_tp_line_speed(eq_code, batch.sq_mm2, speed_map)
-                if tp_speed is not None and tp_speed > 0:
-                    total_len = float(batch.total_length_m or 0) + float(
-                        batch.extra_length_m or 0
-                    )
-                    eq_duration = total_len / tp_speed
-                    eq_drum_winding = _get_drum_winding_min(
-                        eq_code, batch.sq_mm2, speed_map
-                    )
-                    eq_total_duration = eq_duration + setup_min + eq_drum_winding
 
-            # ── 4-1: 동일SQ 셋업 스킵 — 같은 SQ 연속이면 규격교체 불필요 ────
+            # 4-1: 동일SQ 셋업 스킵
             prev_batch = last_batch_on_equip.get(eq_code)
             actual_setup = setup_min
             if prev_batch is not None:
                 same_sq = (
                     prev_batch.sq_mm2 is not None
-                    and batch.sq_mm2 is not None
-                    and float(prev_batch.sq_mm2) == float(batch.sq_mm2)
+                    and rep.sq_mm2 is not None
+                    and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
                 )
                 if same_sq:
-                    actual_setup = 0.0  # 동일 SQ 연속 → 셋업 스킵
+                    actual_setup = 0.0
             eq_total_duration = eq_total_duration - setup_min + actual_setup
 
-            # ── 4-2: 색상교체 시간 — 시스 공정에서 색상 변경 시 120분 추가 ──
+            # 4-2: 색상교체 시간 — 그룹 간 변경 시
             color_change_min = 0.0
-            if prev_batch is not None and batch.process_name in (
+            if prev_batch is not None and rep.process_name in (
                 "저압시스",
                 "고압시스",
                 "HFCO시스",
             ):
                 prev_color = (prev_batch.sheath_color or "").strip()
-                curr_color = (batch.sheath_color or "").strip()
+                curr_color = (rep.sheath_color or "").strip()
                 if prev_color and curr_color and prev_color != curr_color:
-                    color_change_min = 120.0  # 색상교체 2시간
+                    color_change_min = 120.0
             eq_total_duration += color_change_min
 
-            # ── 4-4: 스플라이스 용접 시간 ────────────────────────────────────
-            extra_welding = 0.0
-            if prev_batch is not None:
-                same_sq = (
-                    prev_batch.sq_mm2 is not None
-                    and batch.sq_mm2 is not None
-                    and float(prev_batch.sq_mm2) == float(batch.sq_mm2)
-                )
-                diff_order = prev_batch.sales_order_id != batch.sales_order_id
-                if same_sq and diff_order:
-                    extra_welding = welding_min
-
-            eq_total_duration += extra_welding
-
-            # Determine earliest start: after predecessor or now
-            predecessor_key = (batch.sales_order_id, batch.sales_order_line)
-            predecessor_task_id = predecessor_map.get(predecessor_key)
-
+            # ── 선행공정(predecessor) — 그룹 내 모든 수주의 선행공정 중 가장 늦은 것 기준
             earliest = base_date
-            if predecessor_task_id:
-                pred_task = next(
-                    (t for t in tasks_created if t.task_id == predecessor_task_id), None
-                )
-                if pred_task:
-                    earliest = pred_task.end_datetime
-                    # Add inter-process wait time (e.g., 고압 건조대기 20hr)
-                    if batch.process_name in ("고압시스",) and pred_task:
-                        earliest += timedelta(hours=20)
+            for b in group_batches:
+                pred_key = (b.sales_order_id, b.sales_order_line)
+                pred_tid = predecessor_map.get(pred_key)
+                if pred_tid:
+                    pred_task = next(
+                        (t for t in tasks_created if t.task_id == pred_tid), None
+                    )
+                    if pred_task and pred_task.end_datetime > earliest:
+                        earliest = pred_task.end_datetime
+                        if rep.process_name in ("고압시스",):
+                            earliest += timedelta(hours=20)
 
-            # Find first available slot on this equipment
             slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
 
             if best_start is None or slot_start < best_start:
                 best_eq = eq
                 best_start = slot_start
                 best_total_duration = eq_total_duration
-                # Check if same SQ as previous task on this equipment → skip spec change
-                if slots:
-                    last_end = max(s[1] for s in slots)  # noqa: F841
-                    # Simplified: if we have a batch right before, check SQ match
-                    # For now, use full setup time
 
         if best_eq is None or best_start is None:
-            result["warnings"].append(f"배치 {batch.batch_id}: 가용 슬롯 없음")
+            result["warnings"].append(f"배치그룹 {group_key}: 가용 슬롯 없음")
             continue
 
-        # Calculate end time considering calendar
         end_dt = calculate_end_datetime(best_start, best_total_duration, db)
 
-        # Create schedule task
+        # ── 그룹당 1 schedule_task 생성 ──────────────────────────────────────
         task = ScheduleTask(
-            batch_id=batch.batch_id,
+            batch_id=rep.batch_id,  # 대표 배치 ID
             equipment_code=best_eq.equipment_code,
             start_datetime=best_start,
             end_datetime=end_dt,
-            setup_time_min=best_setup,
+            setup_time_min=setup_min,
             status="scheduled",
             run_label=run_label,
+            batch_group=group_key,
         )
         db.add(task)
-        db.flush()  # get task_id
+        db.flush()
 
-        # Update timeline
         timeline.setdefault(best_eq.equipment_code, []).append((best_start, end_dt))
 
-        # Update predecessor map
-        predecessor_key = (batch.sales_order_id, batch.sales_order_line)
-        predecessor_map[predecessor_key] = task.task_id
+        # 그룹 내 모든 배치의 predecessor + status 갱신
+        for b in group_batches:
+            pred_key = (b.sales_order_id, b.sales_order_line)
+            predecessor_map[pred_key] = task.task_id
+            b.equipment_code = best_eq.equipment_code
+            b.status = "scheduled"
 
-        # Update batch status
-        batch.equipment_code = best_eq.equipment_code
-        batch.status = "scheduled"
-
-        # 규칙 2: SQ→설비 매핑 기록 (연선만 — 시스는 색상 기준 분류)
-        if batch.process_name == "연선":
+        # 규칙 2: SQ→설비 매핑 기록
+        if rep.process_name == "연선":
             sq_to_equip[sq_key] = best_eq.equipment_code
 
-        # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신
-        last_batch_on_equip[best_eq.equipment_code] = batch
+        # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신 (그룹의 마지막 배치)
+        last_batch_on_equip[best_eq.equipment_code] = group_batches[-1]
 
         tasks_created.append(task)
 
-        # Check delivery date violation
-        if batch.due_date and end_dt.date() > batch.due_date:
+        # Check delivery date violation — 그룹 내 가장 빠른 납기 기준
+        earliest_due = min(
+            (b.due_date for b in group_batches if b.due_date), default=None
+        )
+        if earliest_due and end_dt.date() > earliest_due:
             violation = {
-                "batch_id": batch.batch_id,
+                "batch_id": rep.batch_id,
                 "task_id": task.task_id,
                 "type": "delivery",
                 "severity": "warning",
-                "detail": f"납기 {batch.due_date} 초과 → 완료 예정 {end_dt.date()}",
+                "detail": f"납기 {earliest_due} 초과 → 완료 예정 {end_dt.date()}",
             }
             result["violations"].append(violation)
 
@@ -407,7 +373,7 @@ def auto_schedule(
             db=db,
             run_label=run_label,
             stage="stage2",
-            batch_id=batch.batch_id,
+            batch_id=rep.batch_id,
             task_id=task.task_id,
             action_type="schedule_placed",
             constraints_applied=[

@@ -125,6 +125,8 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     """
     # 공정 정렬 우선순위 — CASE WHEN 대신 Python 후처리
     PROCESS_ORDER = {"연선": 0, "B100": 1, "A100": 2, "A120": 3}
+    # 시스색 정렬 — 원본 Excel 기준: 흑→갈→회→청→녹/황→흑/적
+    COLOR_ORDER = {"흑": 0, "갈": 1, "회": 2, "청": 3, "녹/황": 4, "흑/적": 5}
 
     batches = (
         db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
@@ -135,12 +137,12 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             detail=f"run_label '{run_label}'에 해당하는 배치가 없습니다.",
         )
 
-    # 공정 순서 → SQ 내림차순 → 시스색 정렬
+    # 공정 순서 → SQ 내림차순 → 색상 지정 순서 정렬
     batches.sort(
         key=lambda b: (
             PROCESS_ORDER.get(b.process_name, 99),
             -(float(b.sq_mm2 or 0)),
-            b.sheath_color or "",
+            COLOR_ORDER.get(b.sheath_color, 99),
         )
     )
 
@@ -164,6 +166,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
             "voltage": b.voltage,
             "equipment_code": b.equipment_code,
+            "batch_group": b.batch_group,
         }
         for b in batches
     ]

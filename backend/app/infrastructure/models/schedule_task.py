@@ -21,4 +21,5 @@ class ScheduleTask(Base):
         String(20), default="scheduled"
     )  # scheduled, in_progress, completed
     run_label = Column(String(50), index=True)
+    batch_group = Column(String(50), index=True)  # 배치 그룹 식별자 (간트 블록 1개)
     created_at = Column(DateTime, default=datetime.utcnow)

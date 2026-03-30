@@ -16,6 +16,7 @@ from app.infrastructure.models import (
     DecisionCriteria,
     ConstraintConfig,
 )
+from app.infrastructure.models.wip_inventory import WipInventory
 
 router = APIRouter(prefix="/master", tags=["마스터데이터"])
 
@@ -30,6 +31,7 @@ TABLE_WHITELIST = {
     "operation_calendar": OperationCalendar,
     "decision_criteria": DecisionCriteria,
     "constraint_config": ConstraintConfig,
+    "wip_inventory": WipInventory,
 }
 
 
