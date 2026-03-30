@@ -364,7 +364,15 @@ export default function SchedulingReviewPage() {
         <span className="text-[11px] text-gray-500">
           계획일{" "}
           <span style={{ color: "#111827", fontWeight: 500 }}>
-            {new Date().toISOString().slice(0, 10).replace(/-/g, ".")}
+            {(() => {
+              const stored =
+                typeof window !== "undefined"
+                  ? localStorage.getItem("plan_base_date")
+                  : null;
+              if (stored && stored.length === 8)
+                return `${stored.slice(0, 4)}.${stored.slice(4, 6)}.${stored.slice(6, 8)}`;
+              return new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+            })()}
           </span>
         </span>
       </div>
