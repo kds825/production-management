@@ -232,8 +232,8 @@ export default function SchedulingReviewPage() {
               { method: "DELETE" },
             );
             if (res.ok) {
-              setSelectedRun("");
-              loadRuns();
+              // store 초기화 + 페이지 새로고침
+              window.location.reload();
             }
           }}
           disabled={!selectedRun}
