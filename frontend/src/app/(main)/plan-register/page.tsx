@@ -27,6 +27,7 @@ interface WipFile {
   name: string;
   size: number;
   uploadedAt: Date;
+  file: File; // 실제 File 객체 — Stage 1 API에 전송용
 }
 
 // Stage 1 API response types
@@ -51,8 +52,13 @@ interface Stage1Result {
   warnings: string[];
 }
 
-function WipUploadSection() {
-  const [wipFile, setWipFile] = useState<WipFile | null>(null);
+function WipUploadSection({
+  wipFile,
+  setWipFile,
+}: {
+  wipFile: WipFile | null;
+  setWipFile: (f: WipFile | null) => void;
+}) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [showDeleteHover, setShowDeleteHover] = useState(false);
@@ -68,6 +74,7 @@ function WipUploadSection() {
       name: file.name,
       size: file.size,
       uploadedAt: new Date(),
+      file,
     });
   }, []);
 
@@ -263,7 +270,7 @@ function WipUploadSection() {
 }
 
 // ERP 업로드 + Stage 1 트리거 섹션
-function ErpUploadSection() {
+function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
   const [erpFile, setErpFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -328,7 +335,10 @@ function ErpUploadSection() {
 
     try {
       const formData = new FormData();
-      formData.append("file", erpFile);
+      formData.append("erp_file", erpFile);
+      if (wipFile?.file) {
+        formData.append("wip_file", wipFile.file);
+      }
 
       const res = await fetch(`${API}/pipeline/stage1`, {
         method: "POST",
@@ -684,6 +694,7 @@ function getKstToday(): string {
 
 export default function PlanRegisterPage() {
   const [baseDate, setBaseDate] = useState(getKstToday());
+  const [wipFile, setWipFile] = useState<WipFile | null>(null);
 
   return (
     <div
@@ -744,8 +755,8 @@ export default function PlanRegisterPage() {
           />
         </section>
 
-        <WipUploadSection />
-        <ErpUploadSection />
+        <WipUploadSection wipFile={wipFile} setWipFile={setWipFile} />
+        <ErpUploadSection wipFile={wipFile} />
       </div>
     </div>
   );
