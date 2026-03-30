@@ -3,7 +3,6 @@
 import { useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { FileUploadSection } from "@/features/plan-register/components/FileUploadSection";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
 const PRIMARY = "#C41230";
@@ -745,9 +744,6 @@ export default function PlanRegisterPage() {
           />
         </section>
 
-        <div className="mb-8">
-          <FileUploadSection />
-        </div>
         <WipUploadSection />
         <ErpUploadSection />
       </div>

@@ -2,7 +2,6 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { usePlanRegisterStore } from "../store/planRegisterStore";
-import { ALL_MOCK_BATCHES } from "../mock/mockBatchData";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
 const PRIMARY = "#C41230";
@@ -96,10 +95,9 @@ export function FileUploadSection() {
     if (!uploadedFile || isAnalyzing) return;
     setIsAnalyzing(true);
 
-    // 1.5초 가짜 분석 후 목업 데이터 주입
+    // Stage 1 API 결과 기반 — 분석은 ErpUploadSection에서 처리
     analyzeTimerRef.current = setTimeout(() => {
       analyzeTimerRef.current = null;
-      setBatches(ALL_MOCK_BATCHES);
       setIsAnalyzing(false);
       setIsAnalyzed(true);
     }, 1500);

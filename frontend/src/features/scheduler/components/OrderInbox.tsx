@@ -4,39 +4,6 @@ import { useEffect, useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { Order } from "../types";
-import { MOCK_BATCHES_BY_GROUP } from "@/features/plan-register/mock/mockBatchData";
-import type { ProductionBatch } from "@/features/scheduler/types";
-
-/** YYYYMMDD → YYYY-MM-DD 변환 */
-function formatDeliveryDate(yyyymmdd: string): string {
-  if (yyyymmdd.length !== 8) return yyyymmdd;
-  return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
-}
-
-/** ProductionBatch → Order 변환 */
-function batchToOrder(batch: ProductionBatch): Order {
-  return {
-    id: batch.id,
-    order_number: batch.id,
-    product: batch.product,
-    spec: batch.spec,
-    core_count: 0,
-    color: batch.color,
-    customer: batch.customer,
-    delivery_date: formatDeliveryDate(batch.delivery_date),
-    total_length_m: batch.total_length_m,
-    priority: "normal",
-    equipment_group: batch.equipment_group,
-  };
-}
-
-/** 각 설비 그룹에서 첫 3개씩 뽑아 mock 수주 목록 생성 (~12개) */
-const MOCK_UNSCHEDULED_ORDERS: Order[] = [
-  ...MOCK_BATCHES_BY_GROUP["연선"].slice(0, 3).map(batchToOrder),
-  ...MOCK_BATCHES_BY_GROUP["B100"].slice(0, 3).map(batchToOrder),
-  ...MOCK_BATCHES_BY_GROUP["A100"].slice(0, 3).map(batchToOrder),
-  ...MOCK_BATCHES_BY_GROUP["A120"].slice(0, 3).map(batchToOrder),
-];
 
 /** 장비 그룹 목록 — 순서 고정 */
 const EQUIPMENT_GROUPS = ["연선", "B100", "A100", "A120"] as const;

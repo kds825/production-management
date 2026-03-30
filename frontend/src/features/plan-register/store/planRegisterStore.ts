@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { ProductionBatch } from "@/features/scheduler/types";
 import type { UploadedFile, EquipmentGroup, VoltageType } from "../types";
-import { ALL_MOCK_BATCHES } from "../mock/mockBatchData";
 
 interface PlanRegisterState {
   uploadedFile: UploadedFile | null;
@@ -31,8 +30,8 @@ type PlanRegisterStore = PlanRegisterState & PlanRegisterActions;
 const initialState: PlanRegisterState = {
   uploadedFile: null,
   isAnalyzing: false,
-  isAnalyzed: true,
-  batches: ALL_MOCK_BATCHES,
+  isAnalyzed: false,
+  batches: [],
   confirmedBatches: [],
   voltageFilter: "저압",
   equipmentFilter: "연선",
@@ -89,7 +88,7 @@ export const usePlanRegisterStore = create<PlanRegisterStore>()(
     reset: () => {
       set(() => ({
         ...initialState,
-        batches: [...ALL_MOCK_BATCHES],
+        batches: [],
         confirmedBatches: [],
       }));
     },
