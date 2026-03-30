@@ -90,6 +90,7 @@ export function WipInventoryTable({
                   return (
                     <tr
                       key={item.id}
+                      data-wip-id={item.id}
                       onClick={() => {
                         if (hasMatch && onWipClick && item.matchedBatchId) {
                           onWipClick(item.matchedBatchId);

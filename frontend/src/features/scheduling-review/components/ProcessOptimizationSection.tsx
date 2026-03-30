@@ -65,20 +65,24 @@ export function ProcessOptimizationSection({
     setActiveWipId(null);
   }, []);
 
-  // 배치→WIP: "재고 사용" 클릭 시 WIP 테이블의 매칭 항목으로 스크롤
+  // 배치→WIP: "재고 사용" 클릭 시 WIP 테이블 해당 행 하이라이트
   const handleBatchWipClick = useCallback(
     (batchId: string) => {
-      // 해당 배치에 매칭된 WIP 찾기
       const wip = wipItems?.find((w) => w.matchedBatchId === batchId);
-      if (wip && wipTableRef.current) {
-        setActiveWipId(wip.id);
-        wipTableRef.current.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-        // 3초 후 해제
-        setTimeout(() => setActiveWipId(null), 3000);
-      }
+      if (!wip) return;
+      setActiveWipId(wip.id);
+
+      // WIP 테이블 내 해당 행으로 스크롤 (data-wip-id 속성 사용)
+      setTimeout(() => {
+        const row = wipTableRef.current?.querySelector(
+          `[data-wip-id="${wip.id}"]`,
+        );
+        if (row) {
+          row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }, 50);
+
+      setTimeout(() => setActiveWipId(null), 3000);
     },
     [wipItems],
   );
