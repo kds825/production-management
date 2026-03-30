@@ -396,9 +396,17 @@ def create_batches(
     for b in batches:
         proc = b.process_name
         sq_key = int(b.sq_mm2 or 0)
-        # 틀분할은 배치 내부 분할이므로 그룹에 포함하지 않음
-        # 원본 계획서: "150SQ--->2틀(연선5020)" = 1배치 그룹
         group_key = f"{proc}_{sq_key}SQ"
+
+        # 저압시스: 색상 기준 설비 분리 (원본 계획서 A100/A120 시트 구조)
+        # A120 = 흑/청, A100 = 갈/회/녹황 등 나머지
+        if proc == "저압시스":
+            color = (b.sheath_color or "").strip()
+            if color in ("흑", "청", "흑/적"):
+                group_key = f"A120_{sq_key}SQ"
+            else:
+                group_key = f"A100_{sq_key}SQ"
+
         if group_key not in group_counters:
             group_counters[group_key] = len(group_counters) + 1
         b.batch_group = group_key
