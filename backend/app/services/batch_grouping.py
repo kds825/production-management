@@ -213,67 +213,11 @@ def create_batches(
             item.stranding_type if item and item.stranding_type else "압축"
         )
 
-        # ── 틀단위 분할 계산 (2-3) ───────────────────────────────────────────
-        # drum_lot_master의 lot_stranding(연선 틀단위 m)을 기준으로 분할 틀 수를 계산.
-        # lot_stranding 정보가 없으면 분할하지 않고 단일 배치로 처리한다.
-        drum_lot = drum_lots.get(float(sq))
-        lot_stranding: float | None = (
-            float(drum_lot.lot_stranding)
-            if drum_lot and drum_lot.lot_stranding is not None
-            else None
-        )
-
-        # lot_items: (length_m, drums) 튜플 리스트
-        # 틀분할 + 파이프라인 분할 결과를 추적하여 배치별 drum_count를 정확히 설정
-        if lot_stranding and total_qty > lot_stranding:
-            full_lots = math.floor(total_qty / lot_stranding)
-            remainder = total_qty - full_lots * lot_stranding
-            lot_items: list[tuple[float, int]] = [
-                (lot_stranding, drum_count) for _ in range(full_lots)
-            ]
-            if remainder > 0:
-                lot_items.append((remainder, drum_count))
-        else:
-            lot_items = [(total_qty, drum_count)]
-
-        # ── 파이프라인 최적화 분할 (변수정의_v2 행42: 작업단위 분할) ────────
-        # 37연선 이상(150SQ+) 배치가 1교대(8hr=480분)를 넘으면
-        # 교대 단위로 드럼 분할 → 후공정이 교대 시작 시 즉시 투입 가능.
-        _SHIFT_MIN = 480.0  # 1교대 = 8시간
-        if sq >= 150 and drum_count > 1 and drum_length > 0:
-            # 연선 공정 선속으로 분할 판단 (processes[0]이 신선이면 선속 없음)
-            split_proc = "연선" if "연선" in processes else processes[0]
-            first_speed = _find_speed(speed_lookup, split_proc, order, sq)
-            first_mpm: float = (
-                float(first_speed.line_speed_mpm)
-                if first_speed and first_speed.line_speed_mpm
-                else 0
-            )
-            if first_mpm > 0:
-                split_items: list[tuple[float, int]] = []
-                for lot_len, lot_dc in lot_items:
-                    lot_time = lot_len / first_mpm
-                    if lot_time > _SHIFT_MIN:
-                        shift_length = _SHIFT_MIN * first_mpm
-                        drums_per_shift = max(1, int(shift_length / drum_length))
-                        # drum_length에 buffer가 미적용이므로 buffer 제거 후 역산
-                        drums_in_lot = max(
-                            1, round(lot_len / (drum_length * (1 + defect_buffer_pct)))
-                        )
-                        remaining = drums_in_lot
-                        while remaining > 0:
-                            take = min(drums_per_shift, remaining)
-                            split_items.append(
-                                (
-                                    take * drum_length * (1 + defect_buffer_pct),
-                                    take,
-                                )
-                            )
-                            remaining -= take
-                    else:
-                        split_items.append((lot_len, lot_dc))
-                if len(split_items) > len(lot_items):
-                    lot_items = split_items
+        # ── 틀단위 정보 계산 (2-3) — 행 분할 없이 배치 1건 유지 ──────────────
+        # 원본 계획서는 ERP 1행 = 배치 시트 1행 (분할 없음).
+        # 틀 수는 배치 헤더에만 표시하고, duration 계산에만 반영한다.
+        # 분할은 batch_group 레벨에서 schedule_optimizer가 처리.
+        lot_items: list[tuple[float, int]] = [(total_qty, drum_count)]
 
         # WIP 매칭된 수주 → 배치에 wip_matched_id 전파 + 공정 스킵
         order_line_key = f"{order.order_id}:{order.order_line}"
