@@ -29,11 +29,11 @@ interface ApiBatch {
   batch_group: string | null;
 }
 
-/** process_name → equipment_group 매핑
- * DB process_name: 연선, 신선, 연합, 고압절연, 저압절연, 고압시스, 저압시스
- * → 3개 그룹으로 분류하여 scheduling-review 섹션에 매핑 */
+/** process_name + batch_group → equipment_group 매핑
+ * 저압시스는 batch_group 접두사(A100/A120)로 설비 구분 */
 function toEquipmentGroup(
   processName: string,
+  batchGroup?: string | null,
 ): "연선" | "B100" | "A100" | "A120" {
   if (
     processName === "연선" ||
@@ -42,8 +42,11 @@ function toEquipmentGroup(
   )
     return "연선";
   if (processName.includes("절연")) return "B100";
-  if (processName.includes("시스")) return "A120";
-  // 장비 그룹 코드 직접 매핑 (레거시 호환)
+  if (processName.includes("시스")) {
+    // batch_group 접두사로 A100/A120 구분
+    if (batchGroup?.startsWith("A100")) return "A100";
+    return "A120";
+  }
   if (processName === "B100") return "B100";
   if (processName === "A100") return "A100";
   if (processName === "A120") return "A120";
@@ -65,9 +68,10 @@ function toProcessGroup(processName: string): ProcessGroup {
 
 /** API 배치 → 프론트엔드 SchedulingBatch 변환 */
 function toBatch(b: ApiBatch): SchedulingBatch {
-  const equipmentGroup = toEquipmentGroup(b.process_name);
-  const voltageType =
-    b.voltage === "고압" ? ("고압" as const) : ("저압" as const);
+  const equipmentGroup = toEquipmentGroup(b.process_name, b.batch_group);
+  const isHighVoltage =
+    b.voltage != null && !b.voltage.startsWith("0.6") && b.voltage !== "";
+  const voltageType = isHighVoltage ? ("고압" as const) : ("저압" as const);
   return {
     id: `batch-${b.batch_id}`,
     product: b.product_group || "",
@@ -172,10 +176,10 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
 
         // 공정별 분류
         const yeonseo = batches.filter((b) => b.equipment_group === "연선");
-        const insulation = batches.filter(
-          (b) => b.equipment_group === "B100" || b.equipment_group === "A100",
+        const insulation = batches.filter((b) => b.equipment_group === "B100");
+        const sheat = batches.filter(
+          (b) => b.equipment_group === "A100" || b.equipment_group === "A120",
         );
-        const sheat = batches.filter((b) => b.equipment_group === "A120");
 
         set((state) => {
           state.allBatches = batches;

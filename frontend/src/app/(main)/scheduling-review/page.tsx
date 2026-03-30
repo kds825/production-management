@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import { useSchedulingReviewStore } from "@/features/scheduling-review/store/schedulingReviewStore";
+import type { SchedulingBatch } from "@/features/scheduling-review/types";
 import { assignBatchNumbers } from "@/shared/utils/batchGrouping";
 import { ProcessOptimizationSection } from "@/features/scheduling-review/components/ProcessOptimizationSection";
 import { BatchCalculateButton } from "@/features/scheduling-review/components/BatchCalculateButton";
@@ -28,13 +29,44 @@ const PROCESS_TABS = [
   "연합",
   "CV절연",
   "A150시스",
+  "고압연선",
 ] as const;
 type ProcessTab = (typeof PROCESS_TABS)[number];
+
+/**
+ * 배치 → 시트명 결정 (백엔드 excel_exporter._resolve_sheet_name과 동일 로직)
+ * 저압시스는 색상으로 A100/A120 분기, 연선은 전압으로 저압/고압 분기
+ */
+function resolveSheetName(b: SchedulingBatch): ProcessTab {
+  const bg = b.batch_group || "";
+
+  // 연선: 전압으로 고압/저압 분기
+  if (bg.startsWith("연선_")) {
+    return b.voltage_type === "고압" ? "고압연선" : "연선";
+  }
+  if (bg.startsWith("저압절연_")) return "B100";
+  if (bg.startsWith("A100_")) return "A100";
+  if (bg.startsWith("A120_")) return "A120";
+  if (bg.startsWith("연합_")) return "연합";
+  if (bg.startsWith("고압절연_")) return "CV절연";
+  if (bg.startsWith("고압시스_")) return "A150시스";
+
+  return "연선"; // fallback
+}
+
+/** 탭별 배치 필터 — Excel 시트와 동일 분류 */
+function filterBatchesByTab(
+  allBatches: SchedulingBatch[],
+  tab: ProcessTab,
+): SchedulingBatch[] {
+  return allBatches.filter((b) => resolveSheetName(b) === tab);
+}
 
 const PRIMARY = "#C41230";
 
 export default function SchedulingReviewPage() {
   const {
+    allBatches,
     yeonseoBatches,
     insulationBatches,
     sheatBatches,
@@ -327,84 +359,40 @@ export default function SchedulingReviewPage() {
 
       {/* 본문 */}
       <div className="flex-1 overflow-auto px-6 py-6 flex flex-col gap-0">
-        {/* 공정 탭 필터 메시지 — 연선/절연/시스 이외 탭 선택 시 안내 */}
-        {activeProcessTab !== "연선" &&
-          activeProcessTab !== "B100" &&
-          activeProcessTab !== "A100" &&
-          activeProcessTab !== "A120" && (
-            <div
-              className="mb-4 px-4 py-3 rounded-lg text-[11px] text-gray-500 border border-gray-100"
-              style={{ backgroundColor: "#F9FAFB" }}
-            >
-              <span className="font-medium" style={{ color: "#4A2C2A" }}>
-                {activeProcessTab}
-              </span>{" "}
-              공정 데이터는 런 실행 결과에서 확인하세요. 아래는 전체 배치
-              현황입니다.
-            </div>
-          )}
-
-        {/* Section 1: 연선 생산 최적화 — 연선 탭 또는 전체 표시 */}
-        {(activeProcessTab === "연선" ||
-          activeProcessTab === "B100" ||
-          activeProcessTab === "A100" ||
-          activeProcessTab === "A120") && (
-          <ProcessOptimizationSection
-            sectionNumber={1}
-            title="연선 생산 최적화"
-            processGroup="연선"
-            batches={yeonseoBatches}
-            wipItems={yeonaeoWip}
-            wipTitle="연선 재공(WIP) 재고"
-          />
-        )}
-
-        {/* Section 2: 절연 생산 최적화 — 절연 계열 탭 또는 전체 표시 */}
-        {(activeProcessTab === "연합" || activeProcessTab === "CV절연") && (
-          <ProcessOptimizationSection
-            sectionNumber={2}
-            title="절연 생산 최적화"
-            processGroup="절연"
-            batches={insulationBatches}
-            wipItems={insulationWip}
-            wipTitle="절연 재공(WIP) 재고"
-          />
-        )}
-
-        {/* 비연선/비절연 탭: 전체 섹션 표시 */}
-        {activeProcessTab === "A150시스" && (
-          <>
-            <ProcessOptimizationSection
-              sectionNumber={2}
-              title="절연 생산 최적화"
-              processGroup="절연"
-              batches={insulationBatches}
-              wipItems={insulationWip}
-              wipTitle="절연 재공(WIP) 재고"
-            />
-            <ProcessOptimizationSection
-              sectionNumber={3}
-              title="시스 최적화"
-              processGroup="시스"
-              batches={sheatBatches}
-            />
-          </>
-        )}
-
-        {/* Section 3: 시스 최적화 — 연선/절연 탭에서도 표시 */}
-        {(activeProcessTab === "연선" ||
-          activeProcessTab === "B100" ||
-          activeProcessTab === "A100" ||
-          activeProcessTab === "A120" ||
-          activeProcessTab === "연합" ||
-          activeProcessTab === "CV절연") && (
-          <ProcessOptimizationSection
-            sectionNumber={3}
-            title="시스 최적화"
-            processGroup="시스"
-            batches={sheatBatches}
-          />
-        )}
+        {/* 모든 탭 — filterBatchesByTab으로 Excel 시트와 동일 분류 */}
+        <ProcessOptimizationSection
+          sectionNumber={PROCESS_TABS.indexOf(activeProcessTab) + 1}
+          title={`${activeProcessTab} 생산 최적화`}
+          processGroup={
+            activeProcessTab === "연선" ||
+            activeProcessTab === "고압연선" ||
+            activeProcessTab === "연합"
+              ? "연선"
+              : activeProcessTab === "B100" || activeProcessTab === "CV절연"
+                ? "절연"
+                : "시스"
+          }
+          batches={
+            filterBatchesByTab(
+              allBatches,
+              activeProcessTab,
+            ) as SchedulingBatch[]
+          }
+          wipItems={
+            activeProcessTab === "연선"
+              ? yeonaeoWip
+              : activeProcessTab === "B100"
+                ? insulationWip
+                : undefined
+          }
+          wipTitle={
+            activeProcessTab === "연선"
+              ? "연선 재공(WIP) 재고"
+              : activeProcessTab === "B100"
+                ? "절연 재공(WIP) 재고"
+                : undefined
+          }
+        />
 
         {/* 배치 계산 버튼 */}
         <BatchCalculateButton

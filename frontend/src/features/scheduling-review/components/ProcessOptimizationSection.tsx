@@ -29,14 +29,16 @@ export function ProcessOptimizationSection({
   );
   const [activeWipId, setActiveWipId] = useState<string | null>(null);
   const batchTableRef = useRef<HTMLDivElement>(null);
+  const wipTableRef = useRef<HTMLDivElement>(null);
+  const lastClickedWipRef = useRef<string | null>(null);
 
   const handleWipClick = useCallback(
     (matchedBatchId: string) => {
       setHighlightedBatchId(matchedBatchId);
 
-      // 매칭된 WIP의 id 찾기
       const wip = wipItems?.find((w) => w.matchedBatchId === matchedBatchId);
       setActiveWipId(wip?.id ?? null);
+      lastClickedWipRef.current = wip?.id ?? null;
 
       // 배치 테이블에서 해당 행으로 스크롤
       setTimeout(() => {
@@ -47,15 +49,21 @@ export function ProcessOptimizationSection({
           row.scrollIntoView({ behavior: "smooth", block: "center" });
         }
       }, 50);
-
-      // 3초 후 하이라이트 해제
-      setTimeout(() => {
-        setHighlightedBatchId(null);
-        setActiveWipId(null);
-      }, 3000);
     },
     [wipItems],
   );
+
+  const handleBackToWip = useCallback(() => {
+    // WIP 테이블로 스크롤 복귀
+    if (wipTableRef.current) {
+      wipTableRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+    setHighlightedBatchId(null);
+    setActiveWipId(null);
+  }, []);
 
   return (
     <section className="mb-6">
@@ -77,7 +85,7 @@ export function ProcessOptimizationSection({
         </div>
 
         {hasWip && (
-          <div style={{ flex: "0 0 288px", minWidth: 0 }}>
+          <div ref={wipTableRef} style={{ flex: "0 0 288px", minWidth: 0 }}>
             <WipInventoryTable
               title={wipTitle}
               items={wipItems}
@@ -87,6 +95,23 @@ export function ProcessOptimizationSection({
           </div>
         )}
       </div>
+
+      {/* 배치 하이라이트 중 → WIP로 돌아가기 버튼 */}
+      {highlightedBatchId && (
+        <div className="mt-2 flex justify-end">
+          <button
+            onClick={handleBackToWip}
+            className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+            style={{
+              backgroundColor: "#FEF2F2",
+              color: "#C41230",
+              border: "1px solid #FECACA",
+            }}
+          >
+            ← WIP 재고로 돌아가기
+          </button>
+        </div>
+      )}
     </section>
   );
 }

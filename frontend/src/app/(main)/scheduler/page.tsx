@@ -1264,6 +1264,9 @@ export default function SchedulerPage() {
           onClose={() => setShowWipModal(false)}
         />
       )}
+
+      {/* 배치 분할 모달 */}
+      <BatchSplitModal />
     </div>
   );
 }

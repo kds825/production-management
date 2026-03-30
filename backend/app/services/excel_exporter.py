@@ -8,7 +8,6 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
-from app.infrastructure.models.sales_order import SalesOrder
 
 
 # Visible columns rendered in the sheet
@@ -26,18 +25,6 @@ VISIBLE_COLS = [
 # Hidden columns appended after visible ones (preserved for downstream use)
 HIDDEN_COLS = ["수주번호", "batch_id", "단가", "CU/AL량", "상태", "재공매칭"]
 
-# Columns for 진행/대기 sheets (sales order raw view)
-STATUS_SHEET_COLS = [
-    "품종",
-    "규격",
-    "색상",
-    "거래처",
-    "납기",
-    "조장",
-    "개수",
-    "수량",
-]
-
 # Preferred sheet creation order
 _SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시스"]
 
@@ -45,7 +32,7 @@ _SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시
 
 _HEADER_FONT = Font(bold=True, size=10)
 _HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
-_SUBTOTAL_FONT_LABEL = Font(bold=True, color="4472C4", size=10)
+_SUBTOTAL_FONT_LABEL = Font(bold=True, color="00B050", size=10)  # 녹색 텍스트
 _SUBTOTAL_FONT_NUM = Font(bold=True, size=10)
 _WIP_FILL = PatternFill("solid", fgColor="C6EFCE")  # green — WIP 매칭됨
 _THIN_BORDER = Border(
@@ -59,10 +46,6 @@ _CENTER = Alignment(horizontal="center", vertical="center")
 # Column widths (index-aligned to VISIBLE_COLS + HIDDEN_COLS)
 _COL_WIDTHS = [15, 22, 8, 18, 12, 10, 8, 12, 25, 14, 10, 10, 10, 8, 10]
 
-# Column widths for 진행/대기 sheets (aligned to STATUS_SHEET_COLS)
-_STATUS_COL_WIDTHS = [15, 22, 8, 18, 12, 10, 8, 12]
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -70,9 +53,7 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     """production_batch 데이터를 공정별 시트로 구성한 Excel 파일 반환.
 
     시트 구성:
-      1. 진행  — 수주 상태가 "진행"인 sales_order 원본
-      2. 대기  — 수주 상태가 "대기"인 sales_order 원본
-      3~N. 공정별 배치 시트 (연선, B100, A100, A120, 연합, CV절연, A150시스 …)
+      공정별 배치 시트 (연선, B100, A100, A120, 연합, CV절연, A150시스 …)
 
     Args:
         run_label: 계획 실행 식별자 (pipeline에서 생성한 타임스탬프 문자열)
@@ -116,22 +97,8 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
         wip_stage_lookup = {w.wip_id: w.process_stage or "" for w in wips}
 
-    # 진행/대기 수주 데이터 조회
-    sales_orders = (
-        db.query(SalesOrder)
-        .filter(SalesOrder.run_label == run_label)
-        .order_by(SalesOrder.due_date, SalesOrder.order_id)
-        .all()
-    )
-
     wb = Workbook()
     wb.remove(wb.active)  # 기본 Sheet1 제거
-
-    # ── 앞쪽에 진행/대기 시트 추가 ───────────────────────────────────────────
-    for status_label in ("진행", "대기"):
-        filtered = [so for so in sales_orders if so.order_status == status_label]
-        ws = wb.create_sheet(title=status_label)
-        _write_status_sheet(ws, filtered)
 
     # ── process_name 기준으로 배치를 시트별 버킷에 분류 ─────────────────────
     # 모든 배치를 해당 시트에 표시 — WIP 매칭 항목도 표시하되 비고에 "재고 사용" 알람.
@@ -246,41 +213,16 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
             return proc
 
 
-def _write_status_sheet(ws, orders: list) -> None:
-    """진행/대기 시트: ERP 수주 원본 데이터를 그대로 출력한다."""
-    _write_header(ws, STATUS_SHEET_COLS)
-    _apply_col_widths_list(ws, _STATUS_COL_WIDTHS)
-
-    ws.freeze_panes = "A2"
-    last_letter = _col_letter(len(STATUS_SHEET_COLS))
-    ws.auto_filter.ref = f"A1:{last_letter}1"
-
-    for row_num, so in enumerate(orders, start=2):
-        due_str = (
-            so.due_date.strftime("%Y%m%d")
-            if isinstance(so.due_date, date)
-            else str(so.due_date or "")
-        )
-        color_val = so.sheath_color or so.core_colors or ""
-        values = [
-            so.product_group or "",
-            so.spec_raw or "",
-            color_val,
-            so.customer_name or "",
-            due_str,
-            so.drum_length_m,
-            so.drum_count,
-            so.ordered_qty_m,
-        ]
-        for col_idx, val in enumerate(values, 1):
-            cell = ws.cell(row=row_num, column=col_idx, value=val)
-            cell.border = _THIN_BORDER
-
-
 def _write_sheet(
     ws, batches: list[ProductionBatch], wip_stage_lookup: dict[int, str]
 ) -> None:
-    """단일 시트에 헤더 → 데이터 행(SQ 그룹 소계 포함) → 서식 적용."""
+    """단일 시트에 헤더 → 데이터 행(batch_group 소계 포함) → 서식 적용.
+
+    batch_group 기준으로 배치를 그룹핑하여 순서대로 출력하고,
+    각 그룹의 마지막 행 다음에 소계행을 삽입한다.
+    """
+    from collections import OrderedDict
+
     all_cols = VISIBLE_COLS + HIDDEN_COLS
     total_cols = len(all_cols)
 
@@ -288,43 +230,43 @@ def _write_sheet(
     _apply_col_widths(ws, total_cols)
     _hide_trailing_cols(ws, len(VISIBLE_COLS) + 1, total_cols)
 
-    row_num = 2
-    current_sq = None
-    sq_total_m: float = 0.0
-    sq_batch_count: int = 0
-
+    # batch_group 기준 그룹핑 — 원본 정렬 순서를 유지하기 위해 OrderedDict 사용
+    groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
     for batch in batches:
-        sq = float(batch.sq_mm2) if batch.sq_mm2 is not None else 0.0
+        bg = batch.batch_group or f"_unknown_{int(batch.sq_mm2 or 0)}SQ"
+        groups.setdefault(bg, []).append(batch)
 
-        # SQ 경계 — 이전 그룹 소계 행 삽입
-        if current_sq is not None and sq != current_sq:
-            row_num = _write_subtotal(
-                ws, row_num, current_sq, sq_total_m, sq_batch_count, total_cols
+    row_num = 2
+    for batch_group_key, group_batches in groups.items():
+        group_total_m: float = 0.0
+        group_count: int = 0
+
+        for batch in group_batches:
+            # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
+            # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
+            color_label = batch.sheath_color or batch.core_colors or ""
+            length_m = float(batch.total_length_m or 0)
+            group_total_m += length_m
+            group_count += 1
+            row_num = _write_data_row(
+                ws,
+                row_num,
+                batch,
+                all_cols,
+                color_label,
+                length_m,
+                wip_stage_lookup,
             )
-            sq_total_m = 0.0
-            sq_batch_count = 0
 
-        current_sq = sq
-
-        # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
-        # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
-        color_label = batch.sheath_color or batch.core_colors or ""
-        length_m = float(batch.total_length_m or 0)
-        sq_total_m += length_m
-        sq_batch_count += 1
-        row_num = _write_data_row(
-            ws,
-            row_num,
-            batch,
-            all_cols,
-            color_label,
-            length_m,
-            wip_stage_lookup,
+        # batch_group에서 SQ 추출하여 소계 레이블 생성
+        sq = (
+            float(group_batches[0].sq_mm2)
+            if group_batches[0].sq_mm2 is not None
+            else 0.0
         )
-
-    # 마지막 그룹 소계
-    if current_sq is not None:
-        _write_subtotal(ws, row_num, current_sq, sq_total_m, sq_batch_count, total_cols)
+        row_num = _write_subtotal(
+            ws, row_num, sq, group_total_m, group_count, total_cols
+        )
 
     # 헤더 고정 + 자동 필터 (가시 열 범위만)
     ws.freeze_panes = "A2"
@@ -333,45 +275,6 @@ def _write_sheet(
 
 
 # ── Row-level helpers ─────────────────────────────────────────────────────────
-
-
-def _expand_status_colors(so) -> list[tuple[str, str, float]]:
-    """수주를 (색상, 규격, 수량) 목록으로 변환. 다심은 심선색상별 1C 행으로 펼침.
-
-    원본 계획서 진행/대기 시트 구조 재현:
-      4C x 35SQ (갈,흑,회,녹/황) 7000m → 4행의 1C x 35SQ 각 색상 7000m
-      1C x 300SQ 갈 1200m → 그대로 1행
-    """
-    import re
-
-    core_count = int(so.core_count or 1)
-    spec = so.spec_raw or ""
-    total_m = float(so.ordered_qty_m or 0)
-
-    if core_count <= 1:
-        color = so.sheath_color or so.core_colors or ""
-        return [(color, spec, total_m)]
-
-    # 다심: 심선색상 파싱
-    raw_colors = so.core_colors or ""
-    if "/" in raw_colors:
-        colors = [c.strip() for c in raw_colors.split("/") if c.strip()]
-    elif "," in raw_colors:
-        colors = [c.strip() for c in raw_colors.split(",") if c.strip()]
-    else:
-        # 파싱 불가 → sheath_color로 단일 행
-        color = so.sheath_color or raw_colors or ""
-        return [(color, spec, total_m)]
-
-    if not colors:
-        color = so.sheath_color or ""
-        return [(color, spec, total_m)]
-
-    # 규격을 1C 형태로 변환: "4C x 35SQ" → "1C x 35SQ"
-    spec_1c = re.sub(r"^\d+\s*[Cc]", "1C", spec)
-
-    # 각 색상별 동일 수량(원본 방식 — 드럼 단위이므로 분배가 아닌 동일값)
-    return [(color, spec_1c, total_m) for color in colors]
 
 
 def _expand_color_rows(batch: ProductionBatch) -> list[tuple[str, float]]:
@@ -557,12 +460,6 @@ def _apply_col_widths(ws, total_cols: int) -> None:
         letter = _col_letter(i)
         width = _COL_WIDTHS[i - 1] if i - 1 < len(_COL_WIDTHS) else 12
         ws.column_dimensions[letter].width = width
-
-
-def _apply_col_widths_list(ws, widths: list[int]) -> None:
-    """명시적 너비 리스트로 열 너비 적용."""
-    for i, width in enumerate(widths, 1):
-        ws.column_dimensions[_col_letter(i)].width = width
 
 
 def _hide_trailing_cols(ws, start_col: int, end_col: int) -> None:
