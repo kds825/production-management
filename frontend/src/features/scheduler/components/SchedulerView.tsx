@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect, useRef } from "react";
+import { useMemo, useCallback, useState, useEffect, useRef, memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import { useScheduleStore } from "../store/scheduleStore";
@@ -52,10 +52,11 @@ interface GanttRowProps {
  * 설비별 Gantt 행. useDroppable로 드롭 영역을 설정한다.
  * 빈 영역 좌클릭 드래그로 시간 범위를 선택하고, 우클릭으로 작업 추가 가능.
  */
-function GanttRow({
+const GanttRow = memo(function GanttRow({
   equipment,
   tasks,
   rangeStart,
+  rangeEnd,
   dayWidth,
   sharedSelection,
   onSelectionStart,
@@ -81,11 +82,21 @@ function GanttRow({
   const openContextMenu = useScheduleStore((s) => s.openContextMenu);
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
 
-  // 이 설비에 할당된 작업만 필터링
-  const rowTasks = useMemo(
-    () => tasks.filter((t) => t.equipment_id === equipment.id),
-    [tasks, equipment.id],
-  );
+  // 이 설비에 할당된 작업만 필터링 + 뷰포트 컬링 (rangeStart~rangeEnd 밖 작업 제외)
+  const rowTasks = useMemo(() => {
+    return tasks.filter((t) => {
+      if (t.equipment_id !== equipment.id) return false;
+      // 뷰포트 컬링: 작업의 시간 범위가 현재 타임라인 범위와 겹치는지 확인
+      const tStart =
+        t.start instanceof Date
+          ? t.start.getTime()
+          : new Date(t.start).getTime();
+      const tEnd =
+        t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
+      // 작업이 뷰포트 밖에 있으면 렌더링하지 않음
+      return tEnd >= rangeStart && tStart <= rangeEnd;
+    });
+  }, [tasks, equipment.id, rangeStart, rangeEnd]);
 
   // 이 행에 대한 선택 상태만 추출
   const selection =
@@ -319,7 +330,7 @@ function GanttRow({
       </div>
     </div>
   );
-}
+});
 
 // ----- 날짜 헤더 -----
 

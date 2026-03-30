@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import type { ScheduleTask } from "../types";
 import { useScheduleStore } from "../store/scheduleStore";
@@ -24,7 +24,7 @@ function snapToHour(ts: number): number {
   return Math.round(ts / MS_PER_HOUR) * MS_PER_HOUR;
 }
 
-export function GanttTaskBlock({
+export const GanttTaskBlock = memo(function GanttTaskBlock({
   task,
   rangeStart,
   dayWidth,
@@ -374,4 +374,4 @@ export function GanttTaskBlock({
       </div>
     </div>
   );
-}
+});

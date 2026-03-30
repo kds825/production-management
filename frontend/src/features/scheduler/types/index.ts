@@ -28,6 +28,8 @@ export interface ScheduleTask {
   predecessors: string[];
   notes: string;
   changeover_min: number;
+  /** 거래처명 — production_batch.customer_name에서 가져옴 */
+  customer?: string;
 }
 
 export interface ConstraintViolation {

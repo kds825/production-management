@@ -76,6 +76,7 @@ class ScheduleTaskResponse(BaseModel):
     notes: str
     changeover_min: int
     duration_hours: float  # 계산 프로퍼티를 직렬화
+    customer: Optional[str] = None  # 거래처명 — production_batch.customer_name
 
 
 class ScheduleTaskCreate(BaseModel):

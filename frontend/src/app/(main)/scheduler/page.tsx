@@ -26,6 +26,7 @@ import { ContextMenu } from "@/features/scheduler/components/ContextMenu";
 import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
+import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
@@ -66,6 +67,20 @@ export default function SchedulerPage() {
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const range = useScheduleStore((s) => s.range);
   const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
+
+  // ── SM재고 실적 모달 상태 ──
+  const [showWipModal, setShowWipModal] = useState(false);
+  const [wipRunLabel, setWipRunLabel] = useState<string | null>(null);
+
+  // 최신 runLabel 조회 (모달 열기 시 사용)
+  useEffect(() => {
+    fetch(`${API_BASE}/pipeline/runs`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((runs: Array<{ run_label: string }>) => {
+        if (runs.length > 0) setWipRunLabel(runs[0].run_label);
+      })
+      .catch(() => {});
+  }, []);
 
   // ── 자동배열 상태 ──
   const [autoScheduleLoading, setAutoScheduleLoading] = useState(false);
@@ -473,6 +488,28 @@ export default function SchedulerPage() {
             자동배열
           </button>
         </div>
+        {/* SM재고 실적 버튼 — 편집모드일 때만 표시 */}
+        {isEditMode && (
+          <div className="px-3 py-2 shrink-0 border-l border-gray-200">
+            <button
+              onClick={() => setShowWipModal(true)}
+              disabled={!wipRunLabel}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-50"
+              style={{ backgroundColor: "#C41230" }}
+              title="SM재고 실적 업데이트"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d="M2 3h12v2H2V3zm0 4h12v2H2V7zm0 4h8v2H2v-2z" />
+              </svg>
+              SM재고 실적
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 자동배열 결과 알림 */}
@@ -683,93 +720,331 @@ export default function SchedulerPage() {
           document.body,
         )}
 
-      {/* 감사 트레일 패널 — 태스크 블록 클릭 시 하단에 표시 */}
-      {auditPanel.open && (
-        <div
-          className="shrink-0 border-t border-gray-200 bg-white"
-          style={{ maxHeight: 220, overflowY: "auto" }}
-        >
-          {/* 패널 헤더 */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
-            <span className="text-[11px] font-semibold text-gray-700">
-              AI 스케줄링 근거
-              {auditPanel.batchId && (
-                <span className="ml-2 text-gray-400 font-normal">
-                  — {auditPanel.batchId}
-                </span>
-              )}
-            </span>
-            <button
-              onClick={() => {
-                setAuditPanel((prev) => ({ ...prev, open: false }));
-                selectTask(null);
-              }}
-              className="text-gray-400 hover:text-gray-600 text-xs leading-none"
-            >
-              ✕
-            </button>
-          </div>
+      {/* 수주 상세 + 감사 트레일 패널 — 태스크 블록 클릭 시 하단에 표시 */}
+      {auditPanel.open &&
+        (() => {
+          // 선택된 태스크 객체 조회
+          const selectedTask = selectedTaskId
+            ? tasks.find((t) => t.id === selectedTaskId)
+            : null;
+          const selectedEquipment = selectedTask
+            ? equipment.find((e) => e.id === selectedTask.equipment_id)
+            : null;
 
-          {/* 패널 본문 */}
-          <div className="px-4 py-3">
-            {auditPanel.loading && (
-              <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                <span
-                  className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-                AI 설명 로드 중...
+          return (
+            <div
+              className="shrink-0 border-t bg-white"
+              style={{
+                maxHeight: 240,
+                overflowY: "auto",
+                borderColor: "#E5E7EB",
+              }}
+            >
+              {/* 패널 헤더 */}
+              <div
+                className="flex items-center justify-between px-4 py-2 border-b"
+                style={{ backgroundColor: "#FDF2F2", borderColor: "#F3D5D5" }}
+              >
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-1 h-4 rounded-sm"
+                    style={{ backgroundColor: "#C41230" }}
+                  />
+                  <span
+                    className="text-[11px] font-semibold"
+                    style={{ color: "#4A2C2A" }}
+                  >
+                    수주 상세 정보
+                  </span>
+                  {selectedTask?.order_id && (
+                    <span
+                      className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: "#F3E8E8",
+                        color: "#C41230",
+                      }}
+                    >
+                      {selectedTask.order_id}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setAuditPanel((prev) => ({ ...prev, open: false }));
+                    selectTask(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
+                >
+                  ✕
+                </button>
               </div>
-            )}
-            {auditPanel.error && !auditPanel.loading && (
-              <p className="text-[11px] text-red-500">{auditPanel.error}</p>
-            )}
-            {auditPanel.data && !auditPanel.loading && (
-              <div className="flex flex-col gap-2">
-                {(auditPanel.data.explanation || auditPanel.data.reasoning) && (
-                  <p className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap">
-                    {auditPanel.data.explanation ?? auditPanel.data.reasoning}
+
+              {/* 수주 상세 정보 카드 */}
+              {selectedTask && (
+                <div
+                  className="px-4 py-3 border-b"
+                  style={{ borderColor: "#F3F4F6" }}
+                >
+                  <div className="grid grid-cols-6 gap-x-6 gap-y-2">
+                    {/* 수주번호 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        수주번호
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{ color: "#1F2937" }}
+                      >
+                        {selectedTask.order_id || "-"}
+                      </span>
+                    </div>
+
+                    {/* 거래처 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        거래처
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{ color: "#1F2937" }}
+                      >
+                        {selectedTask.customer || "-"}
+                      </span>
+                    </div>
+
+                    {/* 규격 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        규격
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{ color: "#1F2937" }}
+                      >
+                        {selectedTask.spec || "-"}
+                      </span>
+                    </div>
+
+                    {/* 길이 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        길이
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{ color: "#1F2937" }}
+                      >
+                        {selectedTask.volume_m
+                          ? `${selectedTask.volume_m.toLocaleString()}m`
+                          : "-"}
+                      </span>
+                    </div>
+
+                    {/* 납기 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        납기
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{
+                          color: selectedTask.delivery_date
+                            ? new Date(selectedTask.delivery_date).getTime() <
+                              Date.now()
+                              ? "#DC2626"
+                              : "#1F2937"
+                            : "#9CA3AF",
+                        }}
+                      >
+                        {selectedTask.delivery_date
+                          ? new Date(
+                              selectedTask.delivery_date,
+                            ).toLocaleDateString("ko-KR")
+                          : "-"}
+                      </span>
+                    </div>
+
+                    {/* 배정 설비 */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        배정 설비
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold"
+                        style={{ color: "#1F2937" }}
+                      >
+                        {selectedEquipment?.name ||
+                          selectedTask.equipment_id ||
+                          "-"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 부가 정보 행 — 제품, 색상, 우선순위, 작업시간 */}
+                  <div className="grid grid-cols-6 gap-x-6 gap-y-2 mt-2 pt-2 border-t border-gray-100">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        제품군
+                      </span>
+                      <span className="text-[11px] text-gray-600">
+                        {selectedTask.product || "-"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        색상
+                      </span>
+                      <span className="text-[11px] text-gray-600">
+                        {selectedTask.color || "-"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        우선순위
+                      </span>
+                      <span
+                        className="text-[11px] font-medium"
+                        style={{
+                          color:
+                            selectedTask.priority === "critical"
+                              ? "#DC2626"
+                              : selectedTask.priority === "urgent"
+                                ? "#D97706"
+                                : "#6B7280",
+                        }}
+                      >
+                        {selectedTask.priority === "critical"
+                          ? "긴급"
+                          : selectedTask.priority === "urgent"
+                            ? "우선"
+                            : "일반"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        작업 시작
+                      </span>
+                      <span className="text-[11px] text-gray-600">
+                        {new Date(selectedTask.start).toLocaleString("ko-KR", {
+                          month: "numeric",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        작업 종료
+                      </span>
+                      <span className="text-[11px] text-gray-600">
+                        {new Date(selectedTask.end).toLocaleString("ko-KR", {
+                          month: "numeric",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                        선속
+                      </span>
+                      <span className="text-[11px] text-gray-600">
+                        {selectedTask.line_speed_m_per_min
+                          ? `${selectedTask.line_speed_m_per_min}m/min`
+                          : "-"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* AI 스케줄링 근거 */}
+              <div className="px-4 py-2">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 16 16"
+                    fill="#9CA3AF"
+                  >
+                    <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a1 1 0 110 2 1 1 0 010-2zm-1 4h2v5H7V7z" />
+                  </svg>
+                  <span className="text-[10px] font-medium text-gray-400">
+                    AI 스케줄링 근거
+                  </span>
+                </div>
+                {auditPanel.loading && (
+                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                    <span
+                      className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                    AI 설명 로드 중...
+                  </div>
+                )}
+                {auditPanel.error && !auditPanel.loading && (
+                  <p className="text-[11px] text-gray-400 italic">
+                    {auditPanel.error}
                   </p>
                 )}
-                {auditPanel.data.scheduled_at && (
-                  <p className="text-[10px] text-gray-400">
-                    배정 시각:{" "}
-                    {new Date(auditPanel.data.scheduled_at).toLocaleString(
-                      "ko-KR",
+                {auditPanel.data && !auditPanel.loading && (
+                  <div className="flex flex-col gap-1">
+                    {(auditPanel.data.explanation ||
+                      auditPanel.data.reasoning) && (
+                      <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap">
+                        {auditPanel.data.explanation ??
+                          auditPanel.data.reasoning}
+                      </p>
                     )}
-                  </p>
+                    {auditPanel.data.scheduled_at && (
+                      <p className="text-[10px] text-gray-400">
+                        배정 시각:{" "}
+                        {new Date(auditPanel.data.scheduled_at).toLocaleString(
+                          "ko-KR",
+                        )}
+                      </p>
+                    )}
+                    {auditPanel.data.changed_by && (
+                      <p className="text-[10px] text-gray-400">
+                        변경자: {auditPanel.data.changed_by}
+                      </p>
+                    )}
+                    {Object.entries(auditPanel.data)
+                      .filter(
+                        ([k]) =>
+                          ![
+                            "batch_id",
+                            "explanation",
+                            "reasoning",
+                            "scheduled_at",
+                            "changed_by",
+                          ].includes(k),
+                      )
+                      .map(([k, v]) => (
+                        <p key={k} className="text-[10px] text-gray-500">
+                          <span className="font-medium">{k}</span>: {String(v)}
+                        </p>
+                      ))}
+                  </div>
                 )}
-                {auditPanel.data.changed_by && (
-                  <p className="text-[10px] text-gray-400">
-                    변경자: {auditPanel.data.changed_by}
-                  </p>
-                )}
-                {/* 나머지 필드를 key-value로 표시 */}
-                {Object.entries(auditPanel.data)
-                  .filter(
-                    ([k]) =>
-                      ![
-                        "batch_id",
-                        "explanation",
-                        "reasoning",
-                        "scheduled_at",
-                        "changed_by",
-                      ].includes(k),
-                  )
-                  .map(([k, v]) => (
-                    <p key={k} className="text-[10px] text-gray-500">
-                      <span className="font-medium">{k}</span>: {String(v)}
-                    </p>
-                  ))}
               </div>
-            )}
-          </div>
-        </div>
-      )}
+            </div>
+          );
+        })()}
 
       {/* 전역 오버레이 UI */}
       <ContextMenu />
       <TaskFormModal />
+
+      {/* SM재고 실적 모달 */}
+      {showWipModal && wipRunLabel && (
+        <WipUpdateModal
+          runLabel={wipRunLabel}
+          onClose={() => setShowWipModal(false)}
+        />
+      )}
     </div>
   );
 }

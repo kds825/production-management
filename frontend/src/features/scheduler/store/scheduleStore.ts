@@ -187,7 +187,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     lineSpeedData: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "day",
-    range: getDefaultRange(3), // day 줌: ±3일 = 7일 뷰
+    range: getDefaultRange(7), // day 줌: ±7일 = 2주 뷰
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
@@ -572,6 +572,27 @@ export const useScheduleStore = create<ScheduleStore>()(
         state.tasks.push(...newTasks);
         state.unscheduledOrders.push(...failedOrders);
         state.isEditMode = true;
+
+        // 동기화 후 range를 tasks 시간 범위의 앞 2주로 자동 설정
+        // 890건 전량 렌더링 시 빈 화면 방지
+        if (newTasks.length > 0) {
+          const allTasks = state.tasks;
+          let minStart = Infinity;
+          for (const t of allTasks) {
+            const ts =
+              t.start instanceof Date
+                ? t.start.getTime()
+                : new Date(t.start).getTime();
+            if (ts < minStart) minStart = ts;
+          }
+          if (minStart < Infinity) {
+            const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+            state.range = {
+              start: minStart,
+              end: minStart + TWO_WEEKS_MS,
+            };
+          }
+        }
       });
     },
   })),
