@@ -583,19 +583,23 @@ function useFilteredEquipment(
   filterValue: string[],
 ): Equipment[] {
   return useMemo(() => {
-    if (filterType === "all") return equipment;
+    // 신선 설비는 배치 미생성이므로 간트에서 숨김
+    const withoutDrawing = equipment.filter((eq) => eq.process_type !== "신선");
+    if (filterType === "all") return withoutDrawing;
 
     if (filterType === "voltage") {
-      if (filterValue.length === 0) return equipment;
-      return equipment.filter((eq) => filterValue.includes(eq.id));
+      if (filterValue.length === 0) return withoutDrawing;
+      return withoutDrawing.filter((eq) => filterValue.includes(eq.id));
     }
 
     if (filterType === "process") {
-      if (filterValue.length === 0) return equipment;
-      return equipment.filter((eq) => filterValue.includes(eq.process_type));
+      if (filterValue.length === 0) return withoutDrawing;
+      return withoutDrawing.filter((eq) =>
+        filterValue.includes(eq.process_type),
+      );
     }
 
-    return equipment;
+    return withoutDrawing;
   }, [equipment, filterType, filterValue]);
 }
 

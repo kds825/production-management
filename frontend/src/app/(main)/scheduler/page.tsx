@@ -151,8 +151,10 @@ export default function SchedulerPage() {
       });
       if (res.ok) {
         setAutoScheduleResult(
-          `자동배열 완료 (런: ${runLabel}). 페이지를 새로고침하면 결과가 반영됩니다.`,
+          `자동배열 완료 (런: ${runLabel}). 새로고침 중...`,
         );
+        // 1초 후 자동 새로고침
+        setTimeout(() => window.location.reload(), 1000);
       } else {
         const text = await res.text();
         setAutoScheduleResult(`오류: ${res.status} — ${text.slice(0, 120)}`);
