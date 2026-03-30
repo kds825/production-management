@@ -22,6 +22,7 @@ interface ApiBatch {
   sales_order_id: string;
   wip_matched_id: number | null;
   status: string;
+  order_status: string | null;
   remarks: string | null;
   spec_raw: string;
   voltage: string | null;
@@ -85,9 +86,21 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     equipment_group: equipmentGroup,
     voltage_type: voltageType,
     notes: b.wip_matched_id ? "재고 사용" : (b.remarks ?? ""),
-    classification_reason: "",
+    classification_reason: (() => {
+      const reasons: string[] = [];
+      const sq = Math.round(b.sq_mm2);
+      reasons.push(`${sq}SQ 동일규격 묶음`);
+      if (b.wip_matched_id) reasons.push("재공재고 사용");
+      if (b.process_name.includes("시스")) {
+        const isA120 = ["흑", "청", "흑/적"].includes(b.sheath_color);
+        reasons.push(isA120 ? "흑/청 → A120 배정" : "갈/회 → A100 배정");
+      }
+      if (isHighVoltage) reasons.push("고압 URD");
+      return reasons.join(" | ");
+    })(),
     processGroup: toProcessGroup(b.process_name),
-    processStatus: "진행",
+    processStatus:
+      b.order_status === "진행" ? ("진행" as const) : ("대기" as const),
     convertedQty: calcConvertedQty(b.spec_raw, b.total_length_m),
     batch_group: b.batch_group || undefined,
   };
@@ -126,6 +139,12 @@ interface SchedulingReviewActions {
   loadFromPlanRegister: () => void;
   /** API에서 배치 로드 (run_label 지정) */
   loadBatchesFromApi: (runLabel: string) => Promise<void>;
+  /** 배치 인라인 편집 — PATCH /api/pipeline/batch/{batch_id} */
+  updateBatch: (
+    batchId: number,
+    field: string,
+    value: string | number,
+  ) => Promise<boolean>;
   calculateBatches: () => Promise<void>;
   setActiveTab: (tab: ProcessGroup) => void;
   reset: () => void;
@@ -213,6 +232,55 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.loadError =
             err instanceof Error ? err.message : "배치 로드 실패";
         });
+      }
+    },
+
+    updateBatch: async (
+      batchId: number,
+      field: string,
+      value: string | number,
+    ) => {
+      // API 필드명 매핑 — 프론트 col.key → 백엔드 필드
+      const fieldMap: Record<string, string> = {
+        color: "sheath_color",
+        unit_count: "drum_count",
+        length_per_unit_m: "drum_length_m",
+        notes: "remarks",
+      };
+      const apiField = fieldMap[field] ?? field;
+
+      try {
+        const res = await fetch(`${API_BASE}/pipeline/batch/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [apiField]: value }),
+        });
+        if (!res.ok) return false;
+
+        // 로컬 상태 업데이트 — 모든 배치 배열을 순회하여 해당 배치 갱신
+        const frontField = field as keyof SchedulingBatch;
+        set((state) => {
+          const updateInList = (list: SchedulingBatch[]) => {
+            const idx = list.findIndex((b) => b.id === `batch-${batchId}`);
+            if (idx === -1) return;
+            // 편집 가능 필드 직접 반영
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (list[idx] as any)[frontField] = value;
+            // drum_count 또는 drum_length_m 변경 시 total_length_m 재계산
+            if (field === "unit_count" || field === "length_per_unit_m") {
+              list[idx].total_length_m =
+                (list[idx].length_per_unit_m || 0) *
+                (list[idx].unit_count || 1);
+            }
+          };
+          updateInList(state.allBatches);
+          updateInList(state.yeonseoBatches);
+          updateInList(state.insulationBatches);
+          updateInList(state.sheatBatches);
+        });
+        return true;
+      } catch {
+        return false;
       }
     },
 

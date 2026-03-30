@@ -139,9 +139,20 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     # 시스색 정렬 — 원본 Excel 기준: 흑→갈→회→청→녹/황→흑/적
     COLOR_ORDER = {"흑": 0, "갈": 1, "회": 2, "청": 3, "녹/황": 4, "흑/적": 5}
 
-    batches = (
-        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
+    from app.infrastructure.models.sales_order import SalesOrder
+
+    # production_batch + sales_order JOIN으로 order_status(진행/대기) 가져오기
+    rows = (
+        db.query(ProductionBatch, SalesOrder.order_status)
+        .outerjoin(
+            SalesOrder,
+            (ProductionBatch.sales_order_id == SalesOrder.order_id)
+            & (ProductionBatch.sales_order_line == SalesOrder.order_line),
+        )
+        .filter(ProductionBatch.run_label == run_label)
+        .all()
     )
+    batches = [(b, os or "대기") for b, os in rows]
     if not batches:
         raise HTTPException(
             status_code=404,
@@ -150,10 +161,10 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
 
     # 공정 순서 → SQ 내림차순 → 색상 지정 순서 정렬
     batches.sort(
-        key=lambda b: (
-            PROCESS_ORDER.get(b.process_name, 99),
-            -(float(b.sq_mm2 or 0)),
-            COLOR_ORDER.get(b.sheath_color, 99),
+        key=lambda item: (
+            PROCESS_ORDER.get(item[0].process_name, 99),
+            -(float(item[0].sq_mm2 or 0)),
+            COLOR_ORDER.get(item[0].sheath_color, 99),
         )
     )
 
@@ -173,13 +184,14 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "sales_order_id": b.sales_order_id,
             "wip_matched_id": b.wip_matched_id,
             "status": b.status,
+            "order_status": order_status,
             "remarks": b.remarks,
             "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
             "voltage": b.voltage,
             "equipment_code": b.equipment_code,
             "batch_group": b.batch_group,
         }
-        for b in batches
+        for b, order_status in batches
     ]
 
 
@@ -374,6 +386,38 @@ def split_batch_group(
         "new_group": new_group,
         "moved_batches": updated,
     }
+
+
+@router.patch("/batch/{batch_id}", summary="배치 수정")
+def update_batch(batch_id: int, body: dict, db: Session = Depends(get_db)):
+    """배치의 편집 가능 필드를 수정한다.
+
+    허용 필드: sheath_color, drum_count, drum_length_m, remarks, total_length_m
+    drum_count 또는 drum_length_m 변경 시 total_length_m을 자동 재계산한다.
+    """
+    batch = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_id == batch_id).first()
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"배치 {batch_id} 없음")
+
+    allowed = {
+        "sheath_color",
+        "drum_count",
+        "drum_length_m",
+        "remarks",
+        "total_length_m",
+    }
+    for key, val in body.items():
+        if key in allowed:
+            setattr(batch, key, val)
+
+    # total_length_m 재계산 — drum_count 또는 drum_length_m이 변경된 경우
+    if "drum_count" in body or "drum_length_m" in body:
+        batch.total_length_m = float(batch.drum_length_m or 0) * (batch.drum_count or 1)
+
+    db.commit()
+    return {"batch_id": batch_id, "updated": list(body.keys())}
 
 
 @router.get("/runs", summary="계획 실행 이력 목록")
