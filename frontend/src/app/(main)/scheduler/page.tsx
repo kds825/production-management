@@ -178,7 +178,9 @@ export default function SchedulerPage() {
       loading: true,
       error: null,
     }));
-    fetch(`${API_BASE}/audit/explain/${encodeURIComponent(taskId)}`)
+    // taskId = "TASK-18102" → batch_id = 숫자만 추출
+    const numericId = taskId.replace(/\D/g, "");
+    fetch(`${API_BASE}/audit/explain/${numericId}`)
       .then(async (res) => {
         if (res.ok) {
           const data: AuditExplanation = await res.json();
