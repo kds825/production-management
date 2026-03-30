@@ -1,8 +1,8 @@
 # KBI 생산계획 스케줄러
 
-KBI 코스모링크 전선 공장의 생산계획을 시각화하고 관리하는 웹 도구입니다.
+KBI 코스모링크 전선 공장의 생산계획을 자동화하는 웹 도구입니다.
 
-설비(Y축) x 날짜(X축) 간트 차트에서 드래그&드롭으로 작업을 배정하고, 제약조건(설비 적합성, 시간 겹침, 납기)을 실시간으로 검증합니다.
+ERP 수주 데이터 + 재공실사 데이터를 업로드하면 공정별 Excel 계획서를 생성하고, 설비별 간트 차트에 자동 배치합니다.
 
 ---
 
@@ -14,111 +14,61 @@ KBI 코스모링크 전선 공장의 생산계획을 시각화하고 관리하�
 | 스케줄러 | @dnd-kit/core (커스텀 CSS Grid Gantt)          |
 | 상태관리 | Zustand + Immer                                |
 | Backend  | FastAPI (Python 3.11+)                         |
-| DB       | In-memory (PoC)                                |
+| DB       | SQLite (SQLAlchemy ORM)                        |
+| Excel    | openpyxl (생성) + xlrd (ERP 파싱)              |
+
+---
+
+## 파이프라인 흐름
+
+```
+[plan-register 페이지]
+  1. 기준일자 선택 (default: KST 당일)
+  2. 재공실사 파일 업로드 (.xlsx, 템플릿 다운로드 가능)
+  3. ERP 수주 파일 업로드 (.xls)
+       ↓
+[Stage 1 — POST /api/pipeline/stage1]
+  ERP 파싱 → 진행/대기 중복 제거 → WIP 파싱 → WIP 매칭 → 배치 생성
+       ↓
+[Excel 다운로드 — GET /api/pipeline/stage1/{run}/export]
+  공정별 시트 (연선, B100, A100, A120, 고압연선, CV절연, A150시스)
+       ↓
+[Stage 2 — POST /api/pipeline/stage2]
+  자동 스케줄링 (base_date 기준) → 간트 차트 배치
+       ↓
+[scheduler 페이지]
+  설비(Y축) x 날짜(X축) 간트 차트 → 드래그&드롭 수정
+```
 
 ---
 
 ## 사전 준비
 
-- **Node.js** 20 이상
-- **Python** 3.11 이상
-- **npm** 10 이상
-- **Git**
+- **Node.js** 20+, **Python** 3.11+, **npm** 10+
 
 ---
 
-## 설치 및 실행 (macOS / Linux)
+## 설치 및 실행
 
-### 1. 저장소 클론
-
-```bash
-git clone https://github.com/busyway1/KBI-Production-Management.git
-cd KBI-Production-Management
-```
-
-### 2. Backend 설치 및 실행
+### Backend
 
 ```bash
 cd backend
-
-# 가상환경 생성 및 활성화
-python3 -m venv venv
-source venv/bin/activate
-
-# 의존성 설치
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 서버 실행 (포트 8000)
-uvicorn app.main:app --reload --port 8000
-```
-
-서버가 정상 기동되면:
-
-- Swagger UI: http://localhost:8000/docs
-- Health check: http://localhost:8000/api/health
-
-### 3. Frontend 설치 및 실행
-
-새 터미널을 열고:
-
-```bash
-cd frontend
-
-# 의존성 설치
-npm install
-
-# 개발 서버 실행 (포트 3000)
-npm run dev
-```
-
-브라우저에서 http://localhost:3000 접속.
-
----
-
-## 설치 및 실행 (Windows)
-
-### 1. 저장소 클론
-
-```powershell
-git clone https://github.com/busyway1/KBI-Production-Management.git
-cd KBI-Production-Management
-```
-
-### 2. Backend 설치 및 실행
-
-```powershell
-cd backend
-
-# 가상환경 생성
-python -m venv venv
-
-# 가상환경 활성화 (PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# 만약 실행 정책 오류가 나면:
-# Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# cmd를 사용하는 경우:
-# venv\Scripts\activate.bat
-
-# 의존성 설치
-pip install -r requirements.txt
+# DB 초기화 + 시드 데이터
+python seed_db.py
 
 # 서버 실행
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Frontend 설치 및 실행
+### Frontend
 
-새 터미널(PowerShell 또는 cmd)을 열고:
-
-```powershell
+```bash
 cd frontend
-
-# 의존성 설치
 npm install
-
-# 개발 서버 실행
 npm run dev
 ```
 
@@ -130,104 +80,149 @@ npm run dev
 
 ```
 KBI-Production-Management/
-├── backend/                    # FastAPI 백엔드
+├── backend/
 │   ├── app/
-│   │   ├── domain/             # 엔티티, 제약조건 규칙
-│   │   ├── application/        # 유스케이스
-│   │   ├── infrastructure/     # 데이터 저장소
-│   │   └── presentation/       # API 라우트, 스키마
-│   ├── tests/                  # pytest 테스트
-│   ├── seed_data.py            # KBI 설비/수주/선속 시드 데이터
+│   │   ├── infrastructure/      # DB 모델, 세션
+│   │   │   ├── models/          # SQLAlchemy 모델
+│   │   │   └── database.py
+│   │   ├── presentation/        # API 라우트, 스키마
+│   │   │   └── routes/
+│   │   │       ├── plan_pipeline.py   # Stage 1/2 파이프라인
+│   │   │       ├── schedules.py       # 간트 태스크 CRUD
+│   │   │       └── equipment.py       # 설비 마스터
+│   │   └── services/            # 비즈니스 로직
+│   │       ├── erp_parser.py          # ERP .xls 파싱
+│   │       ├── wip_parser.py          # 재공실사 .xlsx 파싱
+│   │       ├── wip_matching.py        # WIP ↔ 수주 매칭
+│   │       ├── wip_template.py        # 재공실사 템플릿 생성
+│   │       ├── batch_grouping.py      # 수주 → 공정별 배치 변환
+│   │       ├── excel_exporter.py      # 공정별 Excel 계획서 생성
+│   │       ├── schedule_optimizer.py  # 자동 스케줄링 (간트 배치)
+│   │       └── calendar_engine.py     # 주말/공휴일 제외 시간 계산
+│   ├── seed_db.py               # 마스터 데이터 시드
 │   └── requirements.txt
 │
-├── frontend/                   # Next.js 프론트엔드
-│   └── src/
-│       ├── app/                # 라우트 페이지
-│       ├── features/
-│       │   ├── scheduler/      # 간트 스케줄러
-│       │   ├── plan-register/  # 생산계획 등록
-│       │   └── scheduling-review/ # 스케줄링 검토
-│       └── shared/             # 공통 컴포넌트
+├── frontend/src/
+│   ├── app/(main)/
+│   │   ├── plan-register/       # 생산계획 등록 (파일 업로드)
+│   │   ├── scheduler/           # 간트 스케줄러
+│   │   └── scheduling-review/   # 스케줄링 검토
+│   └── features/
+│       └── scheduler/components/
+│           ├── SchedulerView.tsx     # 간트 메인 뷰
+│           ├── GanttTaskBlock.tsx    # 작업 블록 (D&D)
+│           └── EquipmentSidebar.tsx  # 설비 사이드바
 │
-├── Documents/                  # 참고 문서 (제안서, 흐름도 등)
-├── Preparation/                # PoC 사전 준비 문서
-└── README.md
+└── Documents/                   # 참고 문서
 ```
 
 ---
 
-## 주요 기능
+## 핵심 구현 사항
 
-### 간트 스케줄러 (`/scheduler`)
+### 공정 프로세스
 
-- 16대 설비 x 날짜 간트 차트
-- 미배정 수주를 드래그하여 설비에 배정
-- 작업 블록 드래그 이동 / 리사이즈
-- 겹침 방지 (cascade push: 같은 설비에서 블록이 겹치면 뒤 블록이 자동으로 밀림)
-- 제약조건 실시간 검증 (설비 적합성, 납기 초과)
-- 수정하기/저장하기 모드 (버전 관리)
-- 공정별 / 고압-저압별 필터
-- 줌 컨트롤 (주/일/시간)
-- 우클릭 컨텍스트 메뉴 (작업 추가/수정/삭제)
+```
+저압 1C:   신선 → 연선 → 1중절연(B100) → 시스(A100/A120)
+저압 2-4C: 신선 → 연선 → 1중절연(B100) → 연합 → 시스
+고압:      신선 → 연선 → 3중절연(CV) → [T/P → 연합 →] 시스
+TFR-GV:   신선 → 연선 → 시스 (절연 없음, SQ<=25은 연선 생략)
+61연선:   7연선코어(T6B0) → 61연선완성(54BO) — 300SQ+ 2단계 처리
+```
 
-### 생산계획 등록 (`/plan-register`)
+### 제약조건 (constraint_config)
 
-- 수주 데이터 업로드 및 배치 그룹핑
-- 재공 수량 관리
+| ID   | 제약조건                         | 구현 상태                  |
+| ---- | -------------------------------- | -------------------------- |
+| 2-2  | 외주 자동분류 (SQ<=10, 고내화)   | 구현                       |
+| 2-3  | 틀단위 분할 (lot_stranding 기준) | 구현                       |
+| 2-4  | 61연선 분리 (300SQ+ 2단계)       | 구현                       |
+| 3-1  | 여척 계산 (7m + 시료 10m)        | 구현                       |
+| 3-4  | 잔량 흑색 소진                   | 구현 (is_enabled로 on/off) |
+| 4-1  | 동일SQ 셋업 스킵                 | 구현                       |
+| 4-2  | 색상교체 시간 (+120분)           | 구현                       |
+| 4-4  | 스플라이스 용접 시간             | 구현                       |
+| 5-2  | 연선방식 격리                    | 구현 (정렬 키)             |
+| 5-3  | 다심 우선 완성                   | 구현 (정렬 키)             |
+| 7-1  | 불량 재작업 버퍼 (5%)            | 구현                       |
+| 10-4 | 전압별 드럼 분류                 | 구현 (정렬 키)             |
 
-### 스케줄링 검토 (`/scheduling-review`)
+### 연선 스케줄 규칙
 
-- 배치별 소요시간 계산
-- AI 인사이트 카드
-- 공정 최적화 제안
+1. **SQ 범위 분류**: T6B0=16~50SQ (7연선), 54BO=70~800SQ (19/37/61연선)
+2. **같은 SQ → 같은 설비** (19연선 이상, 연선 공정만)
+3. **소선경 그루핑**: 같은 소선경 SQ를 같은 설비에 연속 배치
+4. **색상교체 최소화**: 시스 공정에서 색상 변경 시 120분 추가
+
+### WIP 매칭
+
+- Excel 계획서: 모든 시트에 표시 + "절연재고 사용" / "연선재고 사용" 비고
+- 간트 차트: WIP 매칭 공정 배치는 스케줄 미반영 (wip_complete)
+  - 절연재고 → 신선/연선/절연 스킵
+  - 연선재고 → 신선/연선 스킵
+
+### 시스 설비 분류
+
+- A120: 흑/청 색상
+- A100: 나머지 색상 (갈, 회, 녹/황 등)
 
 ---
 
 ## API 엔드포인트
 
-| Method | Path                        | 설명              |
-| ------ | --------------------------- | ----------------- |
-| GET    | `/api/health`               | 서버 상태 확인    |
-| GET    | `/api/equipment`            | 설비 목록 (16대)  |
-| GET    | `/api/orders`               | 수주 목록         |
-| GET    | `/api/schedules/tasks`      | 스케줄 작업 목록  |
-| POST   | `/api/schedules/tasks`      | 작업 추가         |
-| PUT    | `/api/schedules/tasks/{id}` | 작업 수정         |
-| DELETE | `/api/schedules/tasks/{id}` | 작업 삭제         |
-| POST   | `/api/constraints/validate` | 제약조건 검증     |
-| GET    | `/api/process-routes`       | 공정 경로 (6가지) |
-| GET    | `/api/line-speeds`          | 규격별 선속       |
-| POST   | `/api/schedules/versions`   | 버전 저장         |
-| GET    | `/api/schedules/versions`   | 버전 목록         |
+| Method | Path                                | 설명                       |
+| ------ | ----------------------------------- | -------------------------- |
+| POST   | `/api/pipeline/stage1`              | ERP+WIP 업로드 → 배치 생성 |
+| GET    | `/api/pipeline/stage1/{run}/export` | Excel 계획서 다운로드      |
+| POST   | `/api/pipeline/stage2`              | 자동 스케줄링              |
+| GET    | `/api/pipeline/wip-template`        | 재공실사 템플릿 다운로드   |
+| GET    | `/api/pipeline/runs`                | 계획 실행 이력             |
+| GET    | `/api/schedules/tasks`              | 간트 태스크 목록           |
+| POST   | `/api/schedules/tasks`              | 태스크 추가                |
+| PUT    | `/api/schedules/tasks/{id}`         | 태스크 수정                |
+| DELETE | `/api/schedules/tasks/{id}`         | 태스크 삭제                |
+| GET    | `/api/equipment`                    | 설비 목록                  |
 
----
+### Stage 1 파라미터
 
-## 테스트
-
-### Backend
-
-```bash
-cd backend
-source venv/bin/activate   # Windows: .\venv\Scripts\Activate.ps1
-python -m pytest tests/ -v
+```
+POST /api/pipeline/stage1  (multipart/form-data)
+  erp_file: .xls (필수)
+  wip_file: .xlsx (선택, 재공실사 템플릿)
+  date_from: YYYYMMDD (선택, 납기 시작일)
+  date_to: YYYYMMDD (선택, 납기 종료일)
 ```
 
-### Frontend
+### Stage 2 파라미터
 
-```bash
-cd frontend
-npx tsc --noEmit       # 타입 체크
-npm run build          # 프로덕션 빌드
+```
+POST /api/pipeline/stage2  (JSON)
+  run_label: string (필수)
+  base_date: YYYYMMDD (선택, 스케줄 시작일 default=KST 당일)
 ```
 
 ---
 
-## 환경 변수 (선택)
+## 원본 계획서 비교 결과
 
-| 변수                  | 기본값                         | 설명                  |
-| --------------------- | ------------------------------ | --------------------- |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000`        | 백엔드 API 주소       |
-| `DATABASE_URL`        | `sqlite:///./kbi_scheduler.db` | DB 연결 (PoC: SQLite) |
+3.25계획.xls (수기 계획서) 대비 자동 생성 결과:
+
+| 시트 | 원본 | 자동 | 차이 | 비고                                             |
+| ---- | ---- | ---- | ---- | ------------------------------------------------ |
+| 연선 | 101  | 103  | +2   | WIP 표기 정책(+3), 150SQ(-1 수동분할)            |
+| B100 | 83   | 99   | +16  | WIP 표기(+13 의도), 나머지 데이터 차이           |
+| A100 | 62   | 65   | +3   | WIP 표기 정책                                    |
+| A120 | 40   | 40   | 0    | 완전 일치                                        |
+| 간트 | 수기 | 자동 | -    | 설비/SQ/공정순서 일치, 배정 순서는 알고리즘 차이 |
+
+---
+
+## 환경 변수
+
+| 변수                  | 기본값                         | 설명            |
+| --------------------- | ------------------------------ | --------------- |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000`        | 백엔드 API 주소 |
+| `DATABASE_URL`        | `sqlite:///./kbi_scheduler.db` | DB 연결         |
 
 ---
 

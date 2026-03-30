@@ -199,18 +199,19 @@ def auto_schedule(
         # Find eligible equipment for this batch's process
         eligible = _find_eligible_equipment(batch, candidate_equip)
 
-        # ── 규칙 2: 같은 SQ → 같은 설비 (19연선 이상, 70SQ+) ────────────────
+        # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
+        # 시스 공정은 색상 기준 분류(A120=흑/청, A100=나머지)이므로 SQ 고정 미적용
         sq = int(batch.sq_mm2 or 0)
         sq_key = (batch.process_name, sq)
-        if sq >= 70 and sq_key in sq_to_equip:
+        is_stranding = batch.process_name == "연선"
+        if is_stranding and sq >= 70 and sq_key in sq_to_equip:
             preferred_eq = sq_to_equip[sq_key]
-            # 선호 설비가 eligible에 있으면 그것만 사용
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
             if pref_match:
                 eligible = pref_match
 
         # ── 규칙 3: 소선경 그루핑 — 같은 소선경 SQ가 있는 설비 선호 ──────────
-        if batch.process_name == "연선" and sq_key not in sq_to_equip:
+        if is_stranding and sq_key not in sq_to_equip:
             wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
             if wire_d > 0:
                 # 같은 소선경의 다른 SQ가 이미 배정된 설비를 찾기
@@ -380,8 +381,9 @@ def auto_schedule(
         batch.equipment_code = best_eq.equipment_code
         batch.status = "scheduled"
 
-        # 규칙 2: SQ→설비 매핑 기록 (다음 같은 SQ 배치도 같은 설비에 배정)
-        sq_to_equip[sq_key] = best_eq.equipment_code
+        # 규칙 2: SQ→설비 매핑 기록 (연선만 — 시스는 색상 기준 분류)
+        if batch.process_name == "연선":
+            sq_to_equip[sq_key] = best_eq.equipment_code
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신
         last_batch_on_equip[best_eq.equipment_code] = batch
