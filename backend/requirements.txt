@@ -6,6 +6,7 @@ alembic==1.13.1
 pydantic==2.10.0
 pydantic-settings==2.7.0
 httpx==0.28.0
+openai>=1.30.0
 xlrd==1.2.0
 openpyxl==3.1.5
 tzdata>=2024.1
