@@ -32,6 +32,7 @@ const PROCESS_TABS = [
   "CV절연",
   "A150시스",
   "고압연선",
+  "외주",
 ] as const;
 type ProcessTab = (typeof PROCESS_TABS)[number];
 
@@ -97,6 +98,7 @@ export default function SchedulingReviewPage() {
   const [activeProcessTab, setActiveProcessTab] = useState<ProcessTab>("연선");
   const [excelLoading, setExcelLoading] = useState(false);
   const outsourceRef = useRef<HTMLDivElement>(null);
+  const batchTabRef = useRef<HTMLDivElement>(null);
 
   // 런 목록 로드
   const loadRuns = useCallback(async () => {
@@ -333,9 +335,16 @@ export default function SchedulingReviewPage() {
             <>
               <div className="h-4 w-px bg-gray-200" />
               <button
-                onClick={() =>
-                  outsourceRef.current?.scrollIntoView({ behavior: "smooth" })
-                }
+                onClick={() => {
+                  setActiveProcessTab("외주");
+                  setTimeout(
+                    () =>
+                      batchTabRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                      }),
+                    100,
+                  );
+                }}
                 className="text-[11px] font-medium px-2 py-0.5 rounded cursor-pointer transition-colors hover:bg-blue-100"
                 style={{
                   backgroundColor: "#EFF6FF",
@@ -407,6 +416,7 @@ export default function SchedulingReviewPage() {
 
       {/* 공정별 탭 */}
       <div
+        ref={batchTabRef}
         className="sticky bg-white border-b border-gray-200 px-6 flex items-center gap-0 shrink-0 overflow-x-auto"
         style={{ top: "calc(3.5rem + 44px)", zIndex: 39 }}
       >
@@ -428,83 +438,86 @@ export default function SchedulingReviewPage() {
 
       {/* 본문 */}
       <div className="flex-1 overflow-auto px-6 py-6 flex flex-col gap-0">
-        {/* 모든 탭 — filterBatchesByTab으로 Excel 시트와 동일 분류 */}
-        <ProcessOptimizationSection
-          sectionNumber={PROCESS_TABS.indexOf(activeProcessTab) + 1}
-          title={`${activeProcessTab} 생산 최적화`}
-          processGroup={
-            activeProcessTab === "연선" ||
-            activeProcessTab === "고압연선" ||
-            activeProcessTab === "연합"
-              ? "연선"
-              : activeProcessTab === "B100" || activeProcessTab === "CV절연"
-                ? "절연"
-                : "시스"
-          }
-          batches={
-            filterBatchesByTab(
-              allBatches,
-              activeProcessTab,
-            ) as SchedulingBatch[]
-          }
-          wipItems={
-            activeProcessTab === "연선"
-              ? yeonaeoWip
-              : activeProcessTab === "B100"
-                ? insulationWip
-                : undefined
-          }
-          wipTitle={
-            activeProcessTab === "연선"
-              ? "연선 재공(WIP) 재고"
-              : activeProcessTab === "B100"
-                ? "절연 재공(WIP) 재고"
-                : undefined
-          }
-        />
-
-        {/* 배치 계산 버튼 */}
-        <BatchCalculateButton
-          isCalculating={isCalculating}
-          isCalculated={isCalculated}
-          calcError={calcError}
-          aiAnalysisStatus={aiAnalysisStatus}
-          onCalculate={calculateBatches}
-          disabled={totalBatches === 0}
-        />
-
-        {/* AI 분석 카드 — 로드 후 항상 표시 (대기/결과/미감지 상태 포함) */}
-        {isLoaded && (
-          <div className="mb-6">
-            <AiInsightCard summary={aiSummary} />
-          </div>
-        )}
-
-        {/* Section 4: 계산 완료 후에만 표시 */}
-        {isCalculated && (
-          <div className="mb-6">
-            <h3
-              className="text-sm font-semibold mb-3"
-              style={{ color: "#111827" }}
-            >
-              4. 생산 스케줄링 검토
-            </h3>
-            <SchedulingResultTable
-              yeonseoBatches={yeonseoBatches}
-              insulationBatches={insulationBatches}
-              sheatBatches={sheatBatches}
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-            />
-          </div>
-        )}
-
-        {/* 외주 생산 섹션 — 외주 분류 수주가 있을 때만 표시 */}
-        {outsourcedOrders.length > 0 && (
+        {/* 외주 탭 선택 시 외주 테이블 표시 */}
+        {activeProcessTab === "외주" ? (
           <div ref={outsourceRef} className="mb-6">
             <OutsourceTable orders={outsourcedOrders} />
           </div>
+        ) : (
+          <>
+            {/* 모든 탭 — filterBatchesByTab으로 Excel 시트와 동일 분류 */}
+            <ProcessOptimizationSection
+              sectionNumber={PROCESS_TABS.indexOf(activeProcessTab) + 1}
+              title={`${activeProcessTab} 생산 최적화`}
+              processGroup={
+                activeProcessTab === "연선" ||
+                activeProcessTab === "고압연선" ||
+                activeProcessTab === "연합"
+                  ? "연선"
+                  : activeProcessTab === "B100" || activeProcessTab === "CV절연"
+                    ? "절연"
+                    : "시스"
+              }
+              batches={
+                filterBatchesByTab(
+                  allBatches,
+                  activeProcessTab,
+                ) as SchedulingBatch[]
+              }
+              wipItems={
+                activeProcessTab === "연선"
+                  ? yeonaeoWip
+                  : activeProcessTab === "B100"
+                    ? insulationWip
+                    : undefined
+              }
+              wipTitle={
+                activeProcessTab === "연선"
+                  ? "연선 재공(WIP) 재고"
+                  : activeProcessTab === "B100"
+                    ? "절연 재공(WIP) 재고"
+                    : undefined
+              }
+            />
+
+            {/* 배치 계산 버튼 */}
+            <BatchCalculateButton
+              isCalculating={isCalculating}
+              isCalculated={isCalculated}
+              calcError={calcError}
+              aiAnalysisStatus={aiAnalysisStatus}
+              onCalculate={calculateBatches}
+              disabled={totalBatches === 0}
+            />
+
+            {/* AI 분석 카드 — 로드 후 항상 표시 (대기/결과/미감지 상태 포함) */}
+            {isLoaded && (
+              <div className="mb-6">
+                <AiInsightCard summary={aiSummary} />
+              </div>
+            )}
+
+            {/* Section 4: 계산 완료 후에만 표시 */}
+            {isCalculated && (
+              <div className="mb-6">
+                <h3
+                  className="text-sm font-semibold mb-3"
+                  style={{ color: "#111827" }}
+                >
+                  4. 생산 스케줄링 검토
+                </h3>
+                <SchedulingResultTable
+                  yeonseoBatches={yeonseoBatches}
+                  insulationBatches={insulationBatches}
+                  sheatBatches={sheatBatches}
+                  activeTab={activeTab}
+                  onTabChange={setActiveTab}
+                />
+              </div>
+            )}
+          </>
         )}
+        {/* 외주 탭이 아닌 경우에도 하단에 외주 참조 가능 */}
       </div>
     </div>
   );

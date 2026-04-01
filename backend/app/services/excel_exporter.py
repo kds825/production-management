@@ -33,7 +33,7 @@ VISIBLE_COLS = [
 HIDDEN_COLS = ["수주번호", "batch_id", "단가", "CU/AL량", "상태", "재공매칭"]
 
 # Preferred sheet creation order
-_SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시스"]
+_SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시스", "외주"]
 
 # ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -111,6 +111,36 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     for batch in batches:
         sname = _resolve_sheet_name(batch)
         sheet_data.setdefault(sname, []).append(batch)
+
+    # ── 외주 수주 시트 추가 ─────────────────────────────────────────────────
+    from app.infrastructure.models.sales_order import SalesOrder
+
+    outsourced = (
+        db.query(SalesOrder)
+        .filter(SalesOrder.run_label == run_label, SalesOrder.is_outsourced == True)  # noqa: E712
+        .order_by(SalesOrder.order_id)
+        .all()
+    )
+    if outsourced:
+        # 외주 수주를 pseudo-batch 형태로 변환 (시트 작성 호환용)
+        outsource_batches = []
+        for o in outsourced:
+            pseudo = ProductionBatch(
+                product_group=o.product_group,
+                sq_mm2=o.cross_section,
+                sheath_color=o.sheath_color or "",
+                customer_name=o.customer_name,
+                due_date=o.due_date,
+                drum_length_m=o.drum_length_m,
+                drum_count=o.drum_count,
+                total_length_m=o.actual_length_m
+                or ((o.drum_length_m or 0) * (o.drum_count or 1)),
+                core_count=o.core_count or 1,
+                remarks="외주생산",
+                batch_group=f"외주_{int(o.cross_section or 0)}SQ",
+            )
+            outsource_batches.append(pseudo)
+        sheet_data["외주"] = outsource_batches
 
     # 정해진 순서대로 시트 생성; 순서 목록에 없는 공정은 말미에 추가
     known = set(_SHEET_ORDER)
