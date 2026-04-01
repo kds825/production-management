@@ -230,6 +230,44 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
+@router.get("/stage1/{run_label}/outsourced", summary="외주 분류 수주 목록")
+def list_outsourced_orders(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
+    """지정한 run_label에서 외주로 분류된 수주(is_outsourced=True) 목록을 반환한다.
+
+    외주 품목은 production_batch에 포함되지 않으므로 sales_order에서 직접 조회한다.
+    """
+    from app.infrastructure.models.sales_order import SalesOrder
+
+    orders = (
+        db.query(SalesOrder)
+        .filter(
+            SalesOrder.run_label == run_label,
+            SalesOrder.is_outsourced == True,  # noqa: E712
+        )
+        .order_by(SalesOrder.due_date, SalesOrder.order_id)
+        .all()
+    )
+
+    return [
+        {
+            "order_id": o.order_id,
+            "order_line": o.order_line,
+            "product_group": o.product_group or "",
+            "spec_raw": o.spec_raw or "",
+            "sheath_color": o.sheath_color or "",
+            "customer_name": o.customer_name or "",
+            "due_date": str(o.due_date or ""),
+            "total_length_m": float(o.ordered_qty_m or 0),
+            "drum_length_m": float(o.drum_length_m or 0),
+            "drum_count": o.drum_count or 0,
+            "voltage": o.voltage or "",
+            "order_status": o.order_status or "대기",
+            "reason": "ERP 외주계획 지정",
+        }
+        for o in orders
+    ]
+
+
 @router.get("/stage1/{run_label}/ai-summary", summary="AI 배치 분석 요약")
 def get_ai_summary(run_label: str, db: Session = Depends(get_db)):
     """run_label 전체 배치를 LLM으로 분석하여 핵심 인사이트를 반환한다.

@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
-import type { SchedulingBatch, WipItem, AiInsight, AiSummary } from "../types";
+import type {
+  SchedulingBatch,
+  WipItem,
+  AiInsight,
+  AiSummary,
+  OutsourcedOrder,
+} from "../types";
 import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
 const API_BASE =
@@ -138,6 +144,9 @@ interface SchedulingReviewState {
   // 전체 배치 (공정 탭별 필터 전)
   allBatches: SchedulingBatch[];
 
+  // 외주 분류 수주
+  outsourcedOrders: OutsourcedOrder[];
+
   // WIP 데이터
   yeonaeoWip: WipItem[];
   insulationWip: WipItem[];
@@ -172,6 +181,8 @@ interface SchedulingReviewActions {
   loadFromPlanRegister: () => void;
   /** API에서 배치 로드 (run_label 지정) — 로드 후 자동으로 AI 상태 폴링 시작 */
   loadBatchesFromApi: (runLabel: string) => Promise<void>;
+  /** 외주 분류 수주 목록 로드 */
+  loadOutsourcedOrders: (runLabel: string) => Promise<void>;
   /** 배치 인라인 편집 — PATCH /api/pipeline/batch/{batch_id} */
   updateBatch: (
     batchId: number,
@@ -197,6 +208,7 @@ const initialState: SchedulingReviewState = {
   insulationBatches: [],
   sheatBatches: [],
   allBatches: [],
+  outsourcedOrders: [],
   yeonaeoWip: [],
   insulationWip: [],
   isLoading: false,
@@ -282,6 +294,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           );
         });
 
+        // 외주 분류 수주 병렬 로드
+        get().loadOutsourcedOrders(runLabel);
+
         // 배치 로드 완료 후 AI 분석 상태 자동 폴링 시작
         // Stage 2에서 이미 백그라운드로 AI 분석이 시작되었을 수 있음
         get().pollAiStatus();
@@ -291,6 +306,22 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.loadError =
             err instanceof Error ? err.message : "배치 로드 실패";
         });
+      }
+    },
+
+    loadOutsourcedOrders: async (runLabel: string) => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/stage1/${encodeURIComponent(runLabel)}/outsourced`,
+        );
+        if (res.ok) {
+          const data: OutsourcedOrder[] = await res.json();
+          set((state) => {
+            state.outsourcedOrders = data;
+          });
+        }
+      } catch {
+        // 외주 목록 로드 실패는 핵심 기능이 아니므로 무시
       }
     },
 
@@ -536,6 +567,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         insulationBatches: [],
         sheatBatches: [],
         allBatches: [],
+        outsourcedOrders: [],
         yeonaeoWip: [],
         insulationWip: [],
         aiInsights: [],

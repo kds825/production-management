@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import { useSchedulingReviewStore } from "@/features/scheduling-review/store/schedulingReviewStore";
 import type { SchedulingBatch } from "@/features/scheduling-review/types";
@@ -9,6 +9,7 @@ import { ProcessOptimizationSection } from "@/features/scheduling-review/compone
 import { BatchCalculateButton } from "@/features/scheduling-review/components/BatchCalculateButton";
 import { SchedulingResultTable } from "@/features/scheduling-review/components/SchedulingResultTable";
 import { AiInsightCard } from "@/features/scheduling-review/components/AiInsightCard";
+import { OutsourceTable } from "@/features/scheduling-review/components/OutsourceTable";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -71,6 +72,7 @@ export default function SchedulingReviewPage() {
     yeonseoBatches,
     insulationBatches,
     sheatBatches,
+    outsourcedOrders,
     yeonaeoWip,
     insulationWip,
     isCalculating,
@@ -94,6 +96,7 @@ export default function SchedulingReviewPage() {
   const [runsLoading, setRunsLoading] = useState(false);
   const [activeProcessTab, setActiveProcessTab] = useState<ProcessTab>("연선");
   const [excelLoading, setExcelLoading] = useState(false);
+  const outsourceRef = useRef<HTMLDivElement>(null);
 
   // 런 목록 로드
   const loadRuns = useCallback(async () => {
@@ -324,13 +327,16 @@ export default function SchedulingReviewPage() {
           배치 ({selectedRunInfo?.batch_count ?? totalBatches}수주)
         </span>
 
-        {/* 외주 분류 건수 */}
+        {/* 외주 분류 건수 — 클릭 시 외주 섹션으로 스크롤 */}
         {selectedRunInfo?.outsource_count !== undefined &&
           selectedRunInfo.outsource_count > 0 && (
             <>
               <div className="h-4 w-px bg-gray-200" />
-              <span
-                className="text-[11px] font-medium px-2 py-0.5 rounded"
+              <button
+                onClick={() =>
+                  outsourceRef.current?.scrollIntoView({ behavior: "smooth" })
+                }
+                className="text-[11px] font-medium px-2 py-0.5 rounded cursor-pointer transition-colors hover:bg-blue-100"
                 style={{
                   backgroundColor: "#EFF6FF",
                   color: "#2563EB",
@@ -338,7 +344,7 @@ export default function SchedulingReviewPage() {
                 }}
               >
                 외주 분류 {selectedRunInfo.outsource_count}건
-              </span>
+              </button>
             </>
           )}
 
@@ -490,6 +496,13 @@ export default function SchedulingReviewPage() {
               activeTab={activeTab}
               onTabChange={setActiveTab}
             />
+          </div>
+        )}
+
+        {/* 외주 생산 섹션 — 외주 분류 수주가 있을 때만 표시 */}
+        {outsourcedOrders.length > 0 && (
+          <div ref={outsourceRef} className="mb-6">
+            <OutsourceTable orders={outsourcedOrders} />
           </div>
         )}
       </div>
