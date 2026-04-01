@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, useEffect } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   DndContext,
@@ -183,22 +183,38 @@ export default function SchedulerPage() {
     }
   }, [setRunLabel]);
 
-  // 태스크 블록 클릭 → 감사 패널 열기
+  // AI explain 캐시 — 같은 batch_id 재클릭 시 LLM 재호출 방지
+  const explainCache = useRef<Record<string, AuditExplanation>>({});
+
+  // 태스크 블록 클릭 → 감사 패널 열기 (캐시 우선)
   const handleTaskClick = useCallback((taskId: string) => {
-    setAuditPanel((prev) => ({
-      ...prev,
+    const numericId = taskId.replace(/\D/g, "");
+
+    // 캐시 히트: LLM 호출 없이 즉시 표시
+    if (explainCache.current[numericId]) {
+      setAuditPanel({
+        open: true,
+        batchId: taskId,
+        data: explainCache.current[numericId],
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    setAuditPanel({
       open: true,
       batchId: taskId,
       data: null,
       loading: true,
       error: null,
-    }));
-    // taskId = "TASK-18102" → batch_id = 숫자만 추출
-    const numericId = taskId.replace(/\D/g, "");
+    });
     fetch(`${API_BASE}/audit/explain/${numericId}`)
       .then(async (res) => {
         if (res.ok) {
           const data: AuditExplanation = await res.json();
+          // 캐시에 저장
+          explainCache.current[numericId] = data;
           setAuditPanel((prev) => ({
             ...prev,
             loading: false,
@@ -530,6 +546,9 @@ export default function SchedulerPage() {
         const newEnd = new Date(newStartTs + durationMs);
 
         moveTask(task.id, targetEquipmentId, newStart, newEnd);
+
+        // 블록 변경 → AI explain 캐시 무효화 (영향받는 배치 재분석 필요)
+        explainCache.current = {};
 
         // 선행 공정 이동 경고: 연선→절연→시스 체인에서 후행 공정이 있으면 경고 표시
         const bg = (task.batch_group || "").toLowerCase();
@@ -1382,7 +1401,10 @@ export default function SchedulerPage() {
                 process:
                   movedEquip?.process_type ?? movedTaskData?.batch_group ?? "",
               }}
-              onApply={() => applyCascade(cascadePreview)}
+              onApply={() => {
+                applyCascade(cascadePreview);
+                explainCache.current = {}; // cascade 적용 → 캐시 무효화
+              }}
               onCancel={cancelCascade}
             />
           );
