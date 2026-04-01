@@ -360,6 +360,9 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
         merged_risk = rule_risk_count
         source = "rule-based"
 
+    # LLM 마크다운 볼드(**) 제거 — UI에 직접 표시되므로
+    merged_highlights = [h.replace("**", "") for h in merged_highlights]
+
     return {
         "totalBatches": total_batches,
         "totalGroups": total_groups,

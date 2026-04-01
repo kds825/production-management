@@ -1,5 +1,7 @@
 """Stage 1 파이프라인 API — ERP 업로드 → 작업지시서 생성 → Excel 다운로드"""
 
+import logging
+import threading
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -7,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database import get_db
+from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.services.batch_grouping import create_batches
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
@@ -16,7 +18,39 @@ from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
 from app.services.wip_matching import match_wip
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/pipeline", tags=["파이프라인"])
+
+
+# ---------------------------------------------------------------------------
+# AI 분석 결과 인메모리 캐시 — PoC 단계용 단순 dict
+# key: run_label, value: {"status": "pending"|"done"|"error", "summary": {...}}
+# ---------------------------------------------------------------------------
+_ai_cache: dict[str, dict] = {}
+_ai_cache_lock = threading.Lock()
+
+
+def _run_ai_background(run_label: str) -> None:
+    """백그라운드 스레드에서 AI 배치 요약을 생성하여 캐시에 저장한다.
+
+    FastAPI BackgroundTasks는 응답 전송 후 실행되므로, request-scoped DB 세션이
+    이미 닫혀 있다. 따라서 SessionLocal()로 독립 세션을 생성한다.
+    """
+    db = SessionLocal()
+    try:
+        from app.services.llm_explainer import generate_batch_summary_sync
+
+        result = generate_batch_summary_sync(run_label, db)
+        with _ai_cache_lock:
+            _ai_cache[run_label] = {"status": "done", "summary": result}
+        logger.info("[AI Background] run_label=%s 분석 완료", run_label)
+    except Exception as exc:
+        with _ai_cache_lock:
+            _ai_cache[run_label] = {"status": "error", "error": str(exc)}
+        logger.warning("[AI Background] run_label=%s 분석 실패: %s", run_label, exc)
+    finally:
+        db.close()
 
 
 @router.post("/stage1", summary="ERP 업로드 → 작업지시서 생성")
@@ -269,12 +303,48 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
     violations = validate_all(run_label, db)
     db.commit()
 
+    # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음
+    with _ai_cache_lock:
+        _ai_cache[run_label] = {"status": "pending"}
+    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
+    thread.start()
+
     return {
         "run_label": run_label,
         "schedule": schedule_result,
         "violations": violations,
         "total_violations": len(violations),
     }
+
+
+@router.get("/stage2/{run_label}/ai-status", summary="AI 분석 진행 상태 조회")
+def get_ai_status(run_label: str):
+    """Stage 2 실행 후 비동기 AI 분석의 진행 상태를 반환한다.
+
+    Returns:
+        status: "pending" | "done" | "error"
+        summary: AI 분석 결과 (status=done일 때만)
+        error: 오류 메시지 (status=error일 때만)
+    """
+    with _ai_cache_lock:
+        cached = _ai_cache.get(run_label)
+    if not cached:
+        return {"status": "pending"}
+    return cached
+
+
+@router.post("/stage2/{run_label}/trigger-reanalysis", summary="AI 재분석 트리거")
+def trigger_reanalysis(run_label: str):
+    """블록 변경(이동/분할/연장/재배치) 후 AI 분석을 재실행한다.
+
+    캐시를 pending으로 초기화하고 백그라운드 스레드에서 AI 분석을 다시 실행한다.
+    즉시 반환하여 프론트엔드를 블로킹하지 않는다.
+    """
+    with _ai_cache_lock:
+        _ai_cache[run_label] = {"status": "pending"}
+    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
+    thread.start()
+    return {"status": "pending", "message": f"AI 재분석 시작: {run_label}"}
 
 
 @router.get("/wip-template", summary="재공실사 Excel 템플릿 다운로드")

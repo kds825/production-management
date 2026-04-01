@@ -158,7 +158,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
                   backgroundColor: "#C41230",
                 }}
               />
-              {highlight}
+              {highlight.replace(/\*\*/g, "")}
             </li>
           ))}
         </ul>

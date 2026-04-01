@@ -90,20 +90,24 @@ export default function SchedulerPage() {
   const cascadeOriginalTask = useScheduleStore((s) => s.cascadeOriginalTask);
   const applyCascade = useScheduleStore((s) => s.applyCascade);
   const cancelCascade = useScheduleStore((s) => s.cancelCascade);
+  const setRunLabel = useScheduleStore((s) => s.setRunLabel);
 
   // ── SM재고 실적 모달 상태 ──
   const [showWipModal, setShowWipModal] = useState(false);
   const [wipRunLabel, setWipRunLabel] = useState<string | null>(null);
 
-  // 최신 runLabel 조회 (모달 열기 시 사용)
+  // 최신 runLabel 조회 (모달 열기 시 사용) + scheduleStore에도 저장 (AI 재분석 트리거용)
   useEffect(() => {
     fetch(`${API_BASE}/pipeline/runs`)
       .then((r) => (r.ok ? r.json() : []))
       .then((runs: Array<{ run_label: string }>) => {
-        if (runs.length > 0) setWipRunLabel(runs[0].run_label);
+        if (runs.length > 0) {
+          setWipRunLabel(runs[0].run_label);
+          setRunLabel(runs[0].run_label);
+        }
       })
       .catch(() => {});
-  }, []);
+  }, [setRunLabel]);
 
   // ── 선행 공정 이동 경고 토스트 ──
   const [predecessorToast, setPredecessorToast] = useState<string | null>(null);
@@ -147,6 +151,8 @@ export default function SchedulerPage() {
         );
         return;
       }
+      // scheduleStore에 runLabel 저장 (AI 재분석 트리거용)
+      setRunLabel(runLabel);
       const res = await fetch(`${API_BASE}/pipeline/stage2`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -175,7 +181,7 @@ export default function SchedulerPage() {
     } finally {
       setAutoScheduleLoading(false);
     }
-  }, []);
+  }, [setRunLabel]);
 
   // 태스크 블록 클릭 → 감사 패널 열기
   const handleTaskClick = useCallback((taskId: string) => {

@@ -77,6 +77,7 @@ export default function SchedulingReviewPage() {
     isCalculated,
     isLoaded,
     calcError,
+    aiAnalysisStatus,
     aiInsights,
     aiSummary,
     activeTab,
@@ -461,6 +462,7 @@ export default function SchedulingReviewPage() {
           isCalculating={isCalculating}
           isCalculated={isCalculated}
           calcError={calcError}
+          aiAnalysisStatus={aiAnalysisStatus}
           onCalculate={calculateBatches}
           disabled={totalBatches === 0}
         />

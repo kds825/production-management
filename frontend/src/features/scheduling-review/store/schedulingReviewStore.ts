@@ -126,6 +126,9 @@ function buildLocalAiSummary(
   };
 }
 
+/** AI 분석 비동기 상태 — Stage 2 실행 후 백그라운드로 진행됨 */
+type AiAnalysisStatus = "idle" | "pending" | "done" | "error";
+
 interface SchedulingReviewState {
   // 공정별 배치 데이터
   yeonseoBatches: SchedulingBatch[];
@@ -146,10 +149,13 @@ interface SchedulingReviewState {
   // 데이터 로드 여부 (API에서 배치를 가져왔는지)
   isLoaded: boolean;
 
-  // 계산 상태
+  // 계산 상태 — AI 분석 자동 폴링으로 관리 (레거시 호환 유지)
   isCalculating: boolean;
   isCalculated: boolean;
   calcError: string | null;
+
+  // AI 분석 비동기 상태 — Stage 2에서 백그라운드로 시작됨
+  aiAnalysisStatus: AiAnalysisStatus;
 
   // AI 분석 결과
   aiInsights: AiInsight[];
@@ -164,7 +170,7 @@ interface SchedulingReviewState {
 
 interface SchedulingReviewActions {
   loadFromPlanRegister: () => void;
-  /** API에서 배치 로드 (run_label 지정) */
+  /** API에서 배치 로드 (run_label 지정) — 로드 후 자동으로 AI 상태 폴링 시작 */
   loadBatchesFromApi: (runLabel: string) => Promise<void>;
   /** 배치 인라인 편집 — PATCH /api/pipeline/batch/{batch_id} */
   updateBatch: (
@@ -172,7 +178,14 @@ interface SchedulingReviewActions {
     field: string,
     value: string | number,
   ) => Promise<boolean>;
+  /** AI 분석 상태를 폴링하여 완료 시 결과를 반영한다 */
+  pollAiStatus: () => Promise<void>;
+  /** AI 재분석 트리거 — 블록 변경 후 수동 호출 또는 scheduleStore에서 호출 */
+  triggerReanalysis: () => Promise<void>;
+  /** 레거시: 수동 AI 분석 실행 (재분석 트리거 래퍼) */
   calculateBatches: () => Promise<void>;
+  /** 내부: 비동기 엔드포인트 미지원 시 기존 동기 AI summary API로 폴백 */
+  _fetchAiSummaryFallback: () => Promise<void>;
   setActiveTab: (tab: ProcessGroup) => void;
   reset: () => void;
 }
@@ -192,11 +205,17 @@ const initialState: SchedulingReviewState = {
   isCalculating: false,
   isCalculated: false,
   calcError: null,
+  aiAnalysisStatus: "idle",
   aiInsights: [],
   aiSummary: null,
   activeTab: "연선",
   runLabel: null,
 };
+
+/** 폴링 간격 (ms) — AI 분석 완료를 기다리는 주기 */
+const AI_POLL_INTERVAL_MS = 2000;
+/** 폴링 최대 시도 횟수 — 무한 루프 방지 */
+const AI_POLL_MAX_ATTEMPTS = 60;
 
 export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
   immer((set, get) => ({
@@ -238,10 +257,10 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.isLoading = false;
           state.isLoaded = true;
           state.runLabel = runLabel;
-          // 데이터 로드만 완료 — 계산은 별도 버튼으로 실행
           state.isCalculated = false;
           state.calcError = null;
           state.aiSummary = null;
+          state.aiAnalysisStatus = "idle";
 
           // WIP 매칭된 항목을 WIP 리스트로 표시
           const wipItems: WipItem[] = batches
@@ -262,6 +281,10 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             (w) => w.processGroup !== "연선",
           );
         });
+
+        // 배치 로드 완료 후 AI 분석 상태 자동 폴링 시작
+        // Stage 2에서 이미 백그라운드로 AI 분석이 시작되었을 수 있음
+        get().pollAiStatus();
       } catch (err) {
         set((state) => {
           state.isLoading = false;
@@ -326,20 +349,16 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
       }
     },
 
-    calculateBatches: async () => {
-      set((state) => {
-        state.isCalculating = true;
-        state.calcError = null;
-      });
-
+    pollAiStatus: async () => {
       const { runLabel, allBatches } = get();
 
-      // runLabel이 없으면 로컬 계산 fallback
+      // runLabel이 없으면 로컬 fallback으로 즉시 완료 처리
       if (!runLabel) {
         const fallbackHighlight = `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`;
         set((state) => {
           state.isCalculating = false;
           state.isCalculated = true;
+          state.aiAnalysisStatus = "done";
           state.aiInsights = [];
           state.aiSummary = buildLocalAiSummary(allBatches, {
             highlights: [fallbackHighlight],
@@ -348,6 +367,111 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         });
         return;
       }
+
+      set((state) => {
+        state.isCalculating = true;
+        state.calcError = null;
+        state.aiAnalysisStatus = "pending";
+      });
+
+      // 폴링 루프 — AI 분석이 완료되거나 에러가 발생할 때까지 반복
+      for (let attempt = 0; attempt < AI_POLL_MAX_ATTEMPTS; attempt++) {
+        try {
+          const res = await fetch(
+            `${API_BASE}/pipeline/stage2/${encodeURIComponent(runLabel)}/ai-status`,
+          );
+          if (!res.ok) {
+            // 엔드포인트 자체가 없는 경우 — 기존 동기 API로 폴백
+            await get()._fetchAiSummaryFallback();
+            return;
+          }
+
+          const data = await res.json();
+
+          if (data.status === "done") {
+            const summary = data.summary;
+            set((state) => {
+              state.isCalculating = false;
+              state.isCalculated = true;
+              state.aiAnalysisStatus = "done";
+              state.aiInsights = summary?.insights || [];
+              state.aiSummary = {
+                totalBatches: summary?.totalBatches ?? 0,
+                totalGroups: summary?.totalGroups ?? 0,
+                totalProductionM: summary?.totalProductionM ?? 0,
+                riskCount: summary?.riskCount ?? 0,
+                highlights: summary?.highlights ?? [],
+                source: summary?.source || "llm",
+              };
+            });
+            return;
+          }
+
+          if (data.status === "error") {
+            set((state) => {
+              state.isCalculating = false;
+              state.aiAnalysisStatus = "error";
+              state.calcError = data.error || "AI 분석 중 오류 발생";
+            });
+            return;
+          }
+
+          // status === "pending" — 대기 후 재시도
+          await new Promise((resolve) =>
+            setTimeout(resolve, AI_POLL_INTERVAL_MS),
+          );
+        } catch {
+          // 네트워크 오류 — 기존 동기 API로 폴백
+          await get()._fetchAiSummaryFallback();
+          return;
+        }
+      }
+
+      // 최대 시도 횟수 초과 — 타임아웃
+      set((state) => {
+        state.isCalculating = false;
+        state.aiAnalysisStatus = "error";
+        state.calcError = "AI 분석 시간 초과";
+      });
+    },
+
+    triggerReanalysis: async () => {
+      const { runLabel } = get();
+      if (!runLabel) return;
+
+      set((state) => {
+        state.isCalculating = true;
+        state.isCalculated = false;
+        state.calcError = null;
+        state.aiAnalysisStatus = "pending";
+        state.aiSummary = null;
+      });
+
+      try {
+        await fetch(
+          `${API_BASE}/pipeline/stage2/${encodeURIComponent(runLabel)}/trigger-reanalysis`,
+          { method: "POST" },
+        );
+      } catch {
+        // 트리거 실패해도 폴링은 시도 — 이미 백그라운드에서 실행 중일 수 있음
+      }
+
+      // 폴링으로 결과 대기
+      await get().pollAiStatus();
+    },
+
+    /** 레거시: 수동 AI 분석 — 재분석 트리거로 위임 */
+    calculateBatches: async () => {
+      const { aiAnalysisStatus } = get();
+      // 이미 분석 중이면 중복 실행 방지
+      if (aiAnalysisStatus === "pending") return;
+      await get().triggerReanalysis();
+    },
+
+    /** 기존 동기 AI summary API로 직접 요약을 가져온다 (비동기 엔드포인트 미지원 시 폴백) */
+    _fetchAiSummaryFallback: async () => {
+      const { runLabel, allBatches } = get();
+      if (!runLabel) return;
 
       try {
         const res = await fetch(
@@ -358,6 +482,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           set((state) => {
             state.isCalculating = false;
             state.isCalculated = true;
+            state.aiAnalysisStatus = "done";
             state.aiInsights = data.insights || [];
             state.aiSummary = {
               totalBatches: data.totalBatches,
@@ -369,21 +494,31 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             };
           });
         } else {
-          // API 실패 시 에러 상태 설정 — isCalculated는 false 유지
-          const statusText = `AI 분석 API 실패 (HTTP ${res.status})`;
+          // 동기 API도 실패 — 로컬 fallback
           set((state) => {
             state.isCalculating = false;
-            state.calcError = statusText;
+            state.isCalculated = true;
+            state.aiAnalysisStatus = "done";
             state.aiInsights = [];
+            state.aiSummary = buildLocalAiSummary(allBatches, {
+              highlights: [
+                `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
+              ],
+              source: "fallback",
+            });
           });
         }
-      } catch (err) {
-        // 네트워크 오류 시 에러 상태 설정
-        const message = err instanceof Error ? err.message : "네트워크 오류";
+      } catch {
+        // 네트워크 완전 실패 — 로컬 fallback
         set((state) => {
           state.isCalculating = false;
-          state.calcError = `계산 실패: ${message}`;
+          state.isCalculated = true;
+          state.aiAnalysisStatus = "done";
           state.aiInsights = [];
+          state.aiSummary = buildLocalAiSummary(allBatches, {
+            highlights: [`총 ${allBatches.length}개 배치 (AI 분석 연결 실패)`],
+            source: "fallback",
+          });
         });
       }
     },

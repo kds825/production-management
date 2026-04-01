@@ -221,13 +221,78 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const setupMin = task.setup_time_min ?? task.changeover_min ?? 0;
   const colorChangeMin = task.color_change_min ?? 0;
   const totalChangeoverMin = setupMin + colorChangeMin;
-  // 작업일수로부터 부동시간 추정 (월-목 2h/day, 금 10h/day)
-  const workDays = Math.max(1, Math.ceil((endTs - startTs) / MS_PER_DAY));
-  const idleHrsEstimate = workDays * 2; // 평균 근사
-  const actualWorkHrs = Math.max(
-    0,
-    parseFloat(totalDurationHrs) - idleHrsEstimate - totalChangeoverMin / 60,
-  );
+
+  // 주말/부동시간 정밀 계산 — 날짜별로 순회
+  // 가동시간: 월~목 08:00~다음날06:00(22h), 금 08:00~22:00(14h), 토일 0h
+  const timeBreakdown = (() => {
+    let weekendHrs = 0;
+    let dailyIdleHrs = 0;
+    let overnightHrs = 0; // 야간(06~08시) + 금 22시~토 00시
+    let workingDays = 0;
+    const details: string[] = [];
+    const cur = new Date(startTs);
+    cur.setHours(0, 0, 0, 0);
+
+    while (cur.getTime() < endTs) {
+      const day = cur.getDay(); // 0=Sun, 6=Sat
+
+      if (day === 0 || day === 6) {
+        weekendHrs += 24;
+        details.push(
+          `${cur.getMonth() + 1}/${cur.getDate()}(${day === 6 ? "토" : "일"}) 휴무`,
+        );
+      } else {
+        workingDays++;
+        if (day === 5) {
+          // 금요일: 가동 14h (08~22시), 부동 10h
+          dailyIdleHrs += 10;
+        } else {
+          // 월~목: 가동 22h (08~06시), 부동 2h (06~08시)
+          dailyIdleHrs += 2;
+        }
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    // 월요일 08시 시작 고려: 블록이 주말을 포함하면
+    // 토 00:00 ~ 월 08:00 = 56h (토24+일24+월아침8h)
+    // 이미 토/일 48h 계산됨 → 월 00~08시 8h 추가
+    const startDate = new Date(startTs);
+    const endDate = new Date(endTs);
+    if (
+      startDate.getDay() !== endDate.getDay() ||
+      endTs - startTs > MS_PER_DAY
+    ) {
+      // 다일 블록: 각 평일 아침 08시까지 유휴 (이미 부동시간에 포함)
+      // 주말 후 월요일 00~08시 갭은 weekendHrs에 미포함 → 추가
+      const c2 = new Date(startTs);
+      c2.setHours(0, 0, 0, 0);
+      while (c2.getTime() < endTs) {
+        const d = c2.getDay();
+        // 월요일이고 직전이 일요일(주말)이면 00~08시 8h 추가
+        if (d === 1 && c2.getTime() > startTs) {
+          overnightHrs += 8;
+          details.push(
+            `${c2.getMonth() + 1}/${c2.getDate()}(월) 08시 업무시작`,
+          );
+        }
+        c2.setDate(c2.getDate() + 1);
+      }
+    }
+
+    const totalIdleHrs = weekendHrs + dailyIdleHrs + overnightHrs;
+    const actualWork = Math.max(
+      0,
+      parseFloat(totalDurationHrs) - totalIdleHrs - totalChangeoverMin / 60,
+    );
+    return {
+      weekendHrs: weekendHrs + overnightHrs,
+      dailyIdleHrs,
+      totalIdleHrs,
+      workingDays,
+      actualWork,
+      details,
+    };
+  })();
 
   const handleBlockClick = useCallback(
     (e: React.MouseEvent) => {
@@ -467,11 +532,35 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               작업 시간 구성
             </div>
-            <div>실제 작업: {actualWorkHrs.toFixed(1)}h</div>
+            <div>실제 작업: {timeBreakdown.actualWork.toFixed(1)}h</div>
             {setupMin > 0 && <div>규격 교체: {setupMin}분</div>}
             {colorChangeMin > 0 && <div>색상 교체: {colorChangeMin}분</div>}
-            <div>
-              부동시간: ~{idleHrsEstimate}h ({workDays}일)
+            <div
+              style={{
+                borderTop: "1px solid #374151",
+                marginTop: 4,
+                paddingTop: 4,
+                fontSize: 10,
+                color: "#9CA3AF",
+              }}
+            >
+              <div style={{ fontWeight: 600, color: "#F9FAFB" }}>
+                유휴시간 상세 ({timeBreakdown.totalIdleHrs}h)
+              </div>
+              {timeBreakdown.weekendHrs > 0 && (
+                <div>주말 휴무: {timeBreakdown.weekendHrs}h (토~월 08시)</div>
+              )}
+              <div>
+                일일 부동: {timeBreakdown.dailyIdleHrs}h (월~목 2h, 금 10h ×{" "}
+                {timeBreakdown.workingDays}일)
+              </div>
+              {timeBreakdown.details.length > 0 && (
+                <div style={{ marginTop: 2 }}>
+                  {timeBreakdown.details.slice(0, 4).join(", ")}
+                  {timeBreakdown.details.length > 4 &&
+                    ` 외 ${timeBreakdown.details.length - 4}일`}
+                </div>
+              )}
             </div>
             <div
               style={{

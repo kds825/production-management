@@ -169,6 +169,9 @@ interface ScheduleState {
   cascadePreview: CascadePreview | null;
   conflictModalOpen: boolean;
   cascadeOriginalTask: { id: string; start: Date; end: Date } | null;
+
+  // 현재 run_label — AI 재분석 트리거에 사용
+  runLabel: string | null;
 }
 
 interface ScheduleActions {
@@ -238,9 +241,26 @@ interface ScheduleActions {
   ) => Promise<CascadePreview | null>;
   applyCascade: (preview: CascadePreview) => Promise<void>;
   cancelCascade: () => void;
+
+  // run_label 설정 — 스케줄러 페이지 초기화 시 호출
+  setRunLabel: (runLabel: string | null) => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
+
+/**
+ * 블록 변경 시 AI 재분석을 비동기로 트리거한다 (fire-and-forget).
+ * 응답을 기다리지 않으므로 간트 UX에 영향 없음.
+ */
+function fireReanalysis(runLabel: string | null): void {
+  if (!runLabel) return;
+  fetch(
+    `${API_BASE}/pipeline/stage2/${encodeURIComponent(runLabel)}/trigger-reanalysis`,
+    { method: "POST" },
+  ).catch(() => {
+    // 백엔드 미연결 시 무시 — PoC 단계에서 graceful 처리
+  });
+}
 
 export const useScheduleStore = create<ScheduleStore>()(
   immer((set, get) => ({
@@ -264,6 +284,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     cascadePreview: null,
     conflictModalOpen: false,
     cascadeOriginalTask: null,
+    runLabel: null,
 
     // 설비 목록 설정
     setEquipment: (equipment) => {
@@ -293,13 +314,14 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
-    // 개별 작업 업데이트
+    // 개별 작업 업데이트 — 변경 후 AI 재분석 트리거
     updateTask: (taskId, updates) => {
       set((state) => {
         const taskIdx = state.tasks.findIndex((t) => t.id === taskId);
         if (taskIdx === -1) return;
         Object.assign(state.tasks[taskIdx], updates);
       });
+      fireReanalysis(get().runLabel);
     },
 
     // 작업 이동 (드래그 앤 드롭) — 겹침 방지 + cascade push + 후공정 연동
@@ -380,6 +402,9 @@ export const useScheduleStore = create<ScheduleStore>()(
             }
           });
       }
+
+      // 블록 이동 후 AI 재분석 트리거 (fire-and-forget)
+      fireReanalysis(get().runLabel);
     },
 
     setViolations: (violations) => {
@@ -645,6 +670,8 @@ export const useScheduleStore = create<ScheduleStore>()(
             state.conflictModalOpen = false;
             state.cascadeOriginalTask = null;
           });
+          // cascade 적용 후 AI 재분석 트리거
+          fireReanalysis(get().runLabel);
         } else {
           console.warn("[applyCascade] bulk-update 실패:", res.status);
         }
@@ -810,6 +837,13 @@ export const useScheduleStore = create<ScheduleStore>()(
             };
           }
         }
+      });
+    },
+
+    // run_label 설정 — 스케줄러 페이지 로드 시 최신 런 라벨을 저장
+    setRunLabel: (runLabel) => {
+      set((state) => {
+        state.runLabel = runLabel;
       });
     },
   })),
