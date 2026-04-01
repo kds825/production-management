@@ -28,6 +28,7 @@ import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
+import { ConflictResolutionModal } from "@/features/scheduler/components/ConflictResolutionModal";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
@@ -84,6 +85,11 @@ export default function SchedulerPage() {
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const range = useScheduleStore((s) => s.range);
   const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
+  const cascadePreview = useScheduleStore((s) => s.cascadePreview);
+  const conflictModalOpen = useScheduleStore((s) => s.conflictModalOpen);
+  const cascadeOriginalTask = useScheduleStore((s) => s.cascadeOriginalTask);
+  const applyCascade = useScheduleStore((s) => s.applyCascade);
+  const cancelCascade = useScheduleStore((s) => s.cancelCascade);
 
   // ── SM재고 실적 모달 상태 ──
   const [showWipModal, setShowWipModal] = useState(false);
@@ -1351,6 +1357,30 @@ export default function SchedulerPage() {
 
       {/* 배치 분할 모달 */}
       <BatchSplitModal />
+
+      {/* Cross-process cascade 충돌 해소 모달 */}
+      {conflictModalOpen &&
+        cascadePreview &&
+        (() => {
+          const movedTaskId = cascadeOriginalTask?.id ?? "";
+          const movedTaskData = tasks.find((t) => t.id === movedTaskId);
+          const movedEquip = movedTaskData
+            ? equipment.find((e) => e.id === movedTaskData.equipment_id)
+            : null;
+          return (
+            <ConflictResolutionModal
+              preview={cascadePreview}
+              movedTask={{
+                id: movedTaskId,
+                spec: movedTaskData?.spec ?? "",
+                process:
+                  movedEquip?.process_type ?? movedTaskData?.batch_group ?? "",
+              }}
+              onApply={() => applyCascade(cascadePreview)}
+              onCancel={cancelCascade}
+            />
+          );
+        })()}
     </div>
   );
 }

@@ -120,6 +120,32 @@ export interface ScheduleVersion {
 }
 
 /** 생산 배치 (생산계획등록에서 확정된 배치 항목) */
+/** Cross-process cascade preview: 선행 공정 이동 시 후행 공정에 미치는 영향 */
+export interface CascadeAffectedTask {
+  task_id: string;
+  old_start: string;
+  old_end: string;
+  new_start: string;
+  new_end: string;
+  process: string;
+  equipment: string;
+  reason: string;
+}
+
+export interface CascadeConflict {
+  task_id: string;
+  conflict_with: string;
+  equipment: string;
+  overlap_min: number;
+  resolution: string;
+}
+
+export interface CascadePreview {
+  affected_tasks: CascadeAffectedTask[];
+  conflicts: CascadeConflict[];
+  can_auto_resolve: boolean;
+}
+
 export interface ProductionBatch {
   id: string;
   product: string;

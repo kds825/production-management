@@ -1,7 +1,8 @@
 import copy
 import re
 import uuid
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -567,3 +568,273 @@ def get_version(version_id: str) -> VersionDetailResponse:
         created_at=version["created_at"],
         tasks=version["tasks"],
     )
+
+
+# ---------------------------------------------------------------------------
+# 공정 간 선행/후행 관계 — cascade preview 에서 사용
+# schedule_optimizer._PREDECESSOR_PROCESS 와 동일한 매핑을 로컬에 정의하여
+# 순환 import 를 방지하고 후행(successor) 역매핑도 함께 구성한다.
+# ---------------------------------------------------------------------------
+
+_PREDECESSOR_PROCESS: dict[str, str] = {
+    "저압절연": "연선",
+    "고압절연": "연선",
+    "저압시스": "저압절연",
+    "고압시스": "고압절연",
+    "연합": "연선",
+}
+
+# 역매핑: 선행 → [후행, ...] (예: "연선" → ["저압절연", "고압절연", "연합"])
+_SUCCESSOR_PROCESSES: dict[str, list[str]] = {}
+for _succ, _pred in _PREDECESSOR_PROCESS.items():
+    _SUCCESSOR_PROCESSES.setdefault(_pred, []).append(_succ)
+
+
+def _collect_all_successors(process_name: str) -> set[str]:
+    """BFS 로 process_name 의 모든 전이적(transitive) 후행 공정을 수집한다.
+
+    예: "연선" → {"저압절연", "고압절연", "연합", "저압시스", "고압시스"}
+    """
+    visited: set[str] = set()
+    queue: deque[str] = deque()
+    queue.append(process_name)
+    while queue:
+        current = queue.popleft()
+        for succ in _SUCCESSOR_PROCESSES.get(current, []):
+            if succ not in visited:
+                visited.add(succ)
+                queue.append(succ)
+    return visited
+
+
+# ---------------------------------------------------------------------------
+# Cascade Preview — Pydantic 스키마
+# ---------------------------------------------------------------------------
+
+
+class CascadePreviewRequest(BaseModel):
+    task_id: str
+    new_start: datetime
+    new_end: datetime
+
+
+class AffectedTask(BaseModel):
+    task_id: str
+    old_start: datetime
+    old_end: datetime
+    new_start: datetime
+    new_end: datetime
+    process: str
+    equipment: str
+    reason: str
+
+
+class CascadeConflict(BaseModel):
+    task_id: str
+    conflict_with: str
+    equipment: str
+    overlap_min: int
+    resolution: str  # "push_forward"
+
+
+class CascadePreviewResponse(BaseModel):
+    affected_tasks: list[AffectedTask]
+    conflicts: list[CascadeConflict]
+    can_auto_resolve: bool
+
+
+# ---------------------------------------------------------------------------
+# Bulk Update — Pydantic 스키마
+# ---------------------------------------------------------------------------
+
+
+class BulkTaskUpdate(BaseModel):
+    task_id: str
+    new_start: datetime
+    new_end: datetime
+
+
+class BulkUpdateRequest(BaseModel):
+    updates: list[BulkTaskUpdate]
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/schedules/cascade-preview
+# ---------------------------------------------------------------------------
+
+
+def _parse_task_id(raw_id: str) -> int:
+    """'TASK-123' → 123. 숫자만 들어온 경우도 허용."""
+    prefix = "TASK-"
+    suffix = raw_id[len(prefix) :] if raw_id.startswith(prefix) else raw_id
+    if not suffix.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail=f"task_id 형식이 올바르지 않습니다: '{raw_id}'",
+        )
+    return int(suffix)
+
+
+@router.post("/cascade-preview", response_model=CascadePreviewResponse)
+def cascade_preview(
+    body: CascadePreviewRequest,
+    db: Session = Depends(get_db),
+) -> CascadePreviewResponse:
+    """이동된 태스크의 후행 공정에 대한 연쇄(cascade) 변경 미리보기.
+
+    같은 수주(sales_order_id)에 속하는 모든 전이적 후행 공정 태스크를 찾고,
+    이동 delta 만큼 시간을 밀어낸 뒤 같은 설비의 다른 태스크와 겹침(충돌)을 감지한다.
+    """
+    numeric_id = _parse_task_id(body.task_id)
+
+    # 1. 이동 대상 태스크 + 배치 조회
+    row = (
+        db.query(ScheduleTaskModel, ProductionBatchModel)
+        .join(
+            ProductionBatchModel,
+            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
+        )
+        .filter(ScheduleTaskModel.task_id == numeric_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"작업 '{body.task_id}'를 찾을 수 없습니다.",
+        )
+    moved_task, moved_batch = row
+
+    # 2. delta 계산
+    delta: timedelta = body.new_start - moved_task.start_datetime
+
+    # 3. 전이적 후행 공정 목록
+    successor_processes = _collect_all_successors(moved_batch.process_name)
+    if not successor_processes:
+        return CascadePreviewResponse(
+            affected_tasks=[],
+            conflicts=[],
+            can_auto_resolve=True,
+        )
+
+    # 4. 같은 수주의 후행 공정 태스크 조회
+    successor_rows = (
+        db.query(ScheduleTaskModel, ProductionBatchModel)
+        .join(
+            ProductionBatchModel,
+            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
+        )
+        .filter(
+            ProductionBatchModel.sales_order_id == moved_batch.sales_order_id,
+            ProductionBatchModel.process_name.in_(successor_processes),
+        )
+        .all()
+    )
+
+    affected_tasks: list[AffectedTask] = []
+    affected_ids: set[int] = set()  # 충돌 검사 시 제외용
+
+    for stask, sbatch in successor_rows:
+        new_start = stask.start_datetime + delta
+        new_end = stask.end_datetime + delta
+        affected_tasks.append(
+            AffectedTask(
+                task_id=f"TASK-{stask.task_id}",
+                old_start=stask.start_datetime,
+                old_end=stask.end_datetime,
+                new_start=new_start,
+                new_end=new_end,
+                process=sbatch.process_name,
+                equipment=stask.equipment_code,
+                reason=f"선행공정 '{moved_batch.process_name}' 이동에 의한 cascade",
+            )
+        )
+        affected_ids.add(stask.task_id)
+
+    # 5. 충돌(overlap) 감지 — 각 affected task 의 새 시간대가 같은 설비의
+    #    다른 태스크(이동 대상·영향 대상 제외)와 겹치는지 확인
+    conflicts: list[CascadeConflict] = []
+
+    # 설비별 기존 태스크를 사전 조회하여 N+1 방지
+    equipment_codes = {at.equipment for at in affected_tasks}
+    if equipment_codes:
+        other_tasks = (
+            db.query(ScheduleTaskModel)
+            .filter(
+                ScheduleTaskModel.equipment_code.in_(equipment_codes),
+                ScheduleTaskModel.task_id != numeric_id,
+                ~ScheduleTaskModel.task_id.in_(affected_ids) if affected_ids else True,
+            )
+            .order_by(ScheduleTaskModel.start_datetime)
+            .all()
+        )
+    else:
+        other_tasks = []
+
+    # 설비별 인덱스 구축
+    others_by_equip: dict[str, list[ScheduleTaskModel]] = {}
+    for ot in other_tasks:
+        others_by_equip.setdefault(ot.equipment_code, []).append(ot)
+
+    for at in affected_tasks:
+        for ot in others_by_equip.get(at.equipment, []):
+            # 겹침 판정: A_start < B_end AND A_end > B_start
+            if at.new_start < ot.end_datetime and at.new_end > ot.start_datetime:
+                overlap_seconds = (
+                    min(at.new_end, ot.end_datetime)
+                    - max(at.new_start, ot.start_datetime)
+                ).total_seconds()
+                overlap_min = max(1, int(overlap_seconds / 60))
+                conflicts.append(
+                    CascadeConflict(
+                        task_id=at.task_id,
+                        conflict_with=f"TASK-{ot.task_id}",
+                        equipment=at.equipment,
+                        overlap_min=overlap_min,
+                        resolution="push_forward",
+                    )
+                )
+
+    # 모든 충돌이 push_forward 로 해소 가능하면 auto-resolve 허용
+    can_auto_resolve = all(c.resolution == "push_forward" for c in conflicts)
+
+    return CascadePreviewResponse(
+        affected_tasks=affected_tasks,
+        conflicts=conflicts,
+        can_auto_resolve=can_auto_resolve,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: PATCH /api/schedules/tasks/bulk-update
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/tasks/bulk-update")
+def bulk_update_tasks(
+    body: BulkUpdateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    """여러 태스크의 시작/종료 시간을 단일 트랜잭션으로 일괄 갱신한다.
+
+    cascade-preview 결과를 프론트엔드에서 확정한 뒤 한 번에 반영할 때 사용한다.
+    """
+    if not body.updates:
+        return {"updated": 0}
+
+    for upd in body.updates:
+        numeric_id = _parse_task_id(upd.task_id)
+        task = (
+            db.query(ScheduleTaskModel)
+            .filter(ScheduleTaskModel.task_id == numeric_id)
+            .first()
+        )
+        if task is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"작업 '{upd.task_id}'를 찾을 수 없습니다.",
+            )
+        task.start_datetime = upd.new_start
+        task.end_datetime = upd.new_end
+
+    db.commit()
+    return {"updated": len(body.updates)}

@@ -32,12 +32,33 @@ import type {
   ScheduleVersion,
   LineSpeedEntry,
   ProductionBatch,
+  CascadePreview,
 } from "../types";
 import {
   getLineSpeed,
   calculateTaskEnd,
   getDefaultRange,
 } from "../utils/ganttUtils";
+
+const API_BASE = "http://localhost:8000/api";
+
+/**
+ * 선행 공정 여부 판단: process_step이 낮은 작업은 후행 공정이 존재할 수 있다.
+ * process_step 값이 있고, 같은 order_id로 더 높은 step이 존재하면 선행 공정이다.
+ */
+function isPredecessorProcess(
+  task: ScheduleTask,
+  allTasks: ScheduleTask[],
+): boolean {
+  if (task.process_step == null || !task.order_id) return false;
+  return allTasks.some(
+    (t) =>
+      t.id !== task.id &&
+      t.order_id === task.order_id &&
+      t.process_step != null &&
+      t.process_step > task.process_step!,
+  );
+}
 
 /** timestamp 추출 헬퍼 */
 function toMs(d: Date | string | number): number {
@@ -143,6 +164,11 @@ interface ScheduleState {
     batchGroup: string;
     taskId: string;
   };
+
+  // Cross-process cascade preview 상태
+  cascadePreview: CascadePreview | null;
+  conflictModalOpen: boolean;
+  cascadeOriginalTask: { id: string; start: Date; end: Date } | null;
 }
 
 interface ScheduleActions {
@@ -203,6 +229,15 @@ interface ScheduleActions {
   // 배치 분할 모달
   openSplitModal: (batchGroup: string, taskId: string) => void;
   closeSplitModal: () => void;
+
+  // Cross-process cascade
+  previewCascade: (
+    taskId: string,
+    newStart: Date,
+    newEnd: Date,
+  ) => Promise<CascadePreview | null>;
+  applyCascade: (preview: CascadePreview) => Promise<void>;
+  cancelCascade: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -226,6 +261,9 @@ export const useScheduleStore = create<ScheduleStore>()(
     contextMenu: null,
     taskFormModal: { isOpen: false, mode: "create" },
     splitModal: { isOpen: false, batchGroup: "", taskId: "" },
+    cascadePreview: null,
+    conflictModalOpen: false,
+    cascadeOriginalTask: null,
 
     // 설비 목록 설정
     setEquipment: (equipment) => {
@@ -265,7 +303,28 @@ export const useScheduleStore = create<ScheduleStore>()(
     },
 
     // 작업 이동 (드래그 앤 드롭) — 겹침 방지 + cascade push + 후공정 연동
+    // 선행 공정인 경우 cross-equipment cascade preview를 비동기로 트리거한다.
     moveTask: (taskId, newEquipmentId, start, end) => {
+      // 이동 전 원본 위치를 저장 (cascade 취소 시 복원용)
+      const taskBefore = get().tasks.find((t) => t.id === taskId);
+      if (taskBefore) {
+        const origStart =
+          taskBefore.start instanceof Date
+            ? taskBefore.start
+            : new Date(taskBefore.start);
+        const origEnd =
+          taskBefore.end instanceof Date
+            ? taskBefore.end
+            : new Date(taskBefore.end);
+        set((state) => {
+          state.cascadeOriginalTask = {
+            id: taskId,
+            start: origStart,
+            end: origEnd,
+          };
+        });
+      }
+
       set((state) => {
         const taskIdx = state.tasks.findIndex((t) => t.id === taskId);
         if (taskIdx === -1) return;
@@ -301,6 +360,26 @@ export const useScheduleStore = create<ScheduleStore>()(
           }
         }
       });
+
+      // 선행 공정이면 cross-equipment cascade preview를 비동기로 트리거
+      const updatedTask = get().tasks.find((t) => t.id === taskId);
+      if (updatedTask && isPredecessorProcess(updatedTask, get().tasks)) {
+        // 비동기 cascade preview — 결과에 따라 자동 적용 또는 모달 표시
+        get()
+          .previewCascade(taskId, start, end)
+          .then((preview) => {
+            if (!preview) return;
+            if (preview.can_auto_resolve && preview.conflicts.length === 0) {
+              // 충돌 없이 자동 해소 가능 → 즉시 적용
+              get().applyCascade(preview);
+            } else {
+              // 충돌 있거나 자동 해소 불가 → 모달 표시
+              set((state) => {
+                state.conflictModalOpen = true;
+              });
+            }
+          });
+      }
     },
 
     setViolations: (violations) => {
@@ -505,6 +584,98 @@ export const useScheduleStore = create<ScheduleStore>()(
       set((state) => {
         state.splitModal = { isOpen: false, batchGroup: "", taskId: "" };
       });
+    },
+
+    // Cross-process cascade preview — 선행 공정 이동 시 후행 공정 영향 미리보기
+    previewCascade: async (taskId, newStart, newEnd) => {
+      try {
+        const res = await fetch(`${API_BASE}/schedules/cascade-preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_id: taskId,
+            new_start: newStart.toISOString(),
+            new_end: newEnd.toISOString(),
+          }),
+        });
+        if (!res.ok) {
+          console.warn("[previewCascade] API 오류:", res.status);
+          return null;
+        }
+        const preview: CascadePreview = await res.json();
+        set((state) => {
+          state.cascadePreview = preview;
+        });
+        return preview;
+      } catch {
+        // 백엔드 미연결 시 null 반환 — PoC 단계에서 graceful fallback
+        console.warn("[previewCascade] 백엔드 연결 실패");
+        return null;
+      }
+    },
+
+    // Cascade 전체 적용 — bulk update로 후행 공정 일괄 이동
+    applyCascade: async (preview) => {
+      try {
+        const updates = preview.affected_tasks.map((t) => ({
+          task_id: t.task_id,
+          new_start: t.new_start,
+          new_end: t.new_end,
+        }));
+
+        const res = await fetch(`${API_BASE}/schedules/tasks/bulk-update`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates }),
+        });
+
+        if (res.ok) {
+          // 로컬 상태도 즉시 반영하여 간트 차트 갱신
+          set((state) => {
+            for (const affected of preview.affected_tasks) {
+              const taskIdx = state.tasks.findIndex(
+                (t) => t.id === affected.task_id,
+              );
+              if (taskIdx !== -1) {
+                state.tasks[taskIdx].start = new Date(affected.new_start);
+                state.tasks[taskIdx].end = new Date(affected.new_end);
+              }
+            }
+            state.cascadePreview = null;
+            state.conflictModalOpen = false;
+            state.cascadeOriginalTask = null;
+          });
+        } else {
+          console.warn("[applyCascade] bulk-update 실패:", res.status);
+        }
+      } catch {
+        console.warn("[applyCascade] 백엔드 연결 실패");
+      }
+    },
+
+    // Cascade 취소 — 이동된 작업을 원래 위치로 복원
+    cancelCascade: () => {
+      const { cascadeOriginalTask } = get();
+      if (cascadeOriginalTask) {
+        set((state) => {
+          const taskIdx = state.tasks.findIndex(
+            (t) => t.id === cascadeOriginalTask.id,
+          );
+          if (taskIdx !== -1) {
+            state.tasks[taskIdx].start = cascadeOriginalTask.start;
+            state.tasks[taskIdx].end = cascadeOriginalTask.end;
+          }
+          state.cascadePreview = null;
+          state.conflictModalOpen = false;
+          state.cascadeOriginalTask = null;
+        });
+      } else {
+        set((state) => {
+          state.cascadePreview = null;
+          state.conflictModalOpen = false;
+          state.cascadeOriginalTask = null;
+        });
+      }
     },
 
     // 생산계획등록 배치를 간트 차트에 자동 배치
