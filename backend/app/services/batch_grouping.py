@@ -385,6 +385,7 @@ def create_batches(
         multi_core_penalty = 0 if (b.core_count or 1) > 1 else 1
         return (
             _process_order(b.process_name),  # 공정 순서
+            b.batch_seq or 0,  # batch_seq: 61연선 코어(0)가 메인(1)보다 먼저
             -(b.sq_mm2 or 0),  # SQ 내림차순 (최우선)
             b.voltage or "",  # 전압별 드럼 분류 (10-4)
             b.stranding_type or "",  # 연선방식 구분 (5-2)

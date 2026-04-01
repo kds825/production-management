@@ -102,6 +102,7 @@ def auto_schedule(
     batches.sort(
         key=lambda b: (
             PROCESS_ORDER.get(b.process_name, 50),
+            b.batch_seq or 0,  # 61연선 코어(seq=0)가 메인(seq=1)보다 먼저
             -(float(b.sq_mm2 or 0)),
             b.due_date or date.max,
             b.customer_priority or 99,
@@ -265,6 +266,10 @@ def auto_schedule(
             result["warnings"].append(
                 f"배치그룹 {group_key}: 공정 '{rep.process_name}'에 적합한 설비 없음"
             )
+            # 미스케줄된 공정을 process_end_by_sq에 max 시간으로 등록 →
+            # 후행 공정이 이 공정 없이 시작하는 것을 방지
+            sq_int = int(rep.sq_mm2 or 0)
+            process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
 
         # ── 그룹 전체 duration 합산 ──────────────────────────────────────────
