@@ -31,11 +31,12 @@ def get_available_hours(
     if weekday >= 5:
         return 0.0
 
-    # Friday: 16hr - 2hr deduction = 14hr
+    # Friday: 작업윈도우 08:00~자정(16hr) - 부동 10hr = 6hr 유효
+    # (참고: 16hr에서 10hr 부동 차감. 현장 기준 금요일 14시 이후 대부분 정리)
     if weekday == 4:
-        return 14.0
+        return 6.0
 
-    # Mon~Thu, Sat, Sun: 24hr - 2hr deduction = 22hr
+    # Mon~Thu: 작업윈도우 08:00~다음날08:00(24hr) - 부동 2hr = 22hr
     base_hours = 22.0
 
     # Safety education: last 2 Mondays of month
@@ -123,7 +124,8 @@ def calculate_end_datetime(
         if available_min > deduction_min:
             effective_min = available_min - deduction_min
         else:
-            effective_min = available_min * 0.9  # approximate for partial
+            # 남은 가용시간이 부동시간보다 짧음 → 이 날 잔여는 부동시간으로 간주
+            effective_min = 0.0
 
         if remaining <= effective_min:
             # Task finishes today
