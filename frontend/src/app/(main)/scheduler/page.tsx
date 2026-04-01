@@ -269,6 +269,31 @@ export default function SchedulerPage() {
     }
     return null;
   }, [activeDrag, equipment]);
+
+  // 드래그 중인 아이템의 SQ (mm²) 추출 — spec 문자열에서 "400SQ" → 400 파싱
+  const activeDragSq = useMemo<number | null>(() => {
+    if (!activeDrag) return null;
+    const spec =
+      activeDrag.type === "order"
+        ? activeDrag.order?.spec
+        : activeDrag.task?.spec;
+    if (!spec) return null;
+    const match = spec.match(/(\d+)\s*SQ/i);
+    return match ? parseInt(match[1], 10) : null;
+  }, [activeDrag]);
+
+  // 드래그 중인 아이템의 도체 재질 (CU | AL) 추출
+  const activeDragMaterial = useMemo<string | null>(() => {
+    if (!activeDrag) return null;
+    // task에 material 필드가 있으면 우선 사용
+    if (activeDrag.type === "task" && activeDrag.task?.material) {
+      return activeDrag.task.material;
+    }
+    // order의 경우 product_group 등으로 추론 (rawData 존재 시)
+    // 현재 Order 타입에 material이 없으므로 null 반환 — 배치 기반 task만 재질 검증
+    return null;
+  }, [activeDrag]);
+
   const [panelAnimating, setPanelAnimating] = useState(false);
   const [showEditWarning, setShowEditWarning] = useState(false);
 
@@ -711,7 +736,11 @@ export default function SchedulerPage() {
             className="flex-1 overflow-hidden flex flex-col p-3 gap-2"
             style={{ minHeight: 300 }}
           >
-            <SchedulerView activeDragGroup={activeDragGroup} />
+            <SchedulerView
+              activeDragGroup={activeDragGroup}
+              activeDragSq={activeDragSq}
+              activeDragMaterial={activeDragMaterial}
+            />
             <ConstraintAlert />
           </div>
 

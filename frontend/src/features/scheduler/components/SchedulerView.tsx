@@ -46,6 +46,10 @@ interface GanttRowProps {
   onSelectionEnd: () => void;
   /** 드래그 중인 아이템의 장비 그룹 (drag constraint용) */
   activeDragGroup?: string | null;
+  /** 드래그 중인 아이템의 SQ (mm²) */
+  activeDragSq?: number | null;
+  /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
+  activeDragMaterial?: string | null;
 }
 
 /**
@@ -63,10 +67,17 @@ const GanttRow = memo(function GanttRow({
   onSelectionMove,
   onSelectionEnd,
   activeDragGroup,
+  activeDragSq,
+  activeDragMaterial,
 }: GanttRowProps) {
-  // 이 행이 드래그 그룹과 호환되는지 판단
+  // 이 행이 드래그 그룹과 호환되는지 판단 (SQ 범위 + 재질 제한 포함)
   const isIncompatible = activeDragGroup
-    ? !equipmentMatchesGroup(equipment, activeDragGroup)
+    ? !equipmentMatchesGroup(
+        equipment,
+        activeDragGroup,
+        activeDragSq ?? undefined,
+        activeDragMaterial ?? undefined,
+      )
     : false;
 
   const { isOver, setNodeRef } = useDroppable({
@@ -633,27 +644,63 @@ function useFilteredEquipment(
 /**
  * 장비가 주어진 드래그 그룹과 호환되는지 판단한다.
  * equipment_group: "연선" | "B100" | "A100" | "A120"
+ *
+ * taskSq / taskMaterial이 주어지면 설비의 SQ 범위 및 재질 제한도 검증한다.
  */
 export function equipmentMatchesGroup(
   equipment: Equipment,
   group: string,
+  taskSq?: number,
+  taskMaterial?: string,
 ): boolean {
   const processType = equipment.process_type.toLowerCase();
   const name = equipment.name.toUpperCase();
 
+  // 기존 그룹 매칭 로직
+  let groupMatch: boolean;
   switch (group) {
     case "연선":
       // 연선기(stranding) 또는 신선기(drawing)
-      return processType === "stranding" || processType === "drawing";
+      groupMatch = processType === "stranding" || processType === "drawing";
+      break;
     case "B100":
-      return name.includes("B100");
+      groupMatch = name.includes("B100");
+      break;
     case "A100":
-      return name.includes("A100");
+      groupMatch = name.includes("A100");
+      break;
     case "A120":
-      return name.includes("A120") || name.includes("A150");
+      groupMatch = name.includes("A120") || name.includes("A150");
+      break;
     default:
-      return true;
+      groupMatch = true;
   }
+  if (!groupMatch) return false;
+
+  // SQ 범위 검증 — 설비에 range_min/range_max가 설정된 경우만 체크
+  if (
+    taskSq !== undefined &&
+    taskSq > 0 &&
+    equipment.range_min != null &&
+    equipment.range_max != null
+  ) {
+    if (taskSq < equipment.range_min || taskSq > equipment.range_max) {
+      return false;
+    }
+  }
+
+  // 재질 검증 — 설비에 material_limit이 설정되고 "ALL"이 아닌 경우만 체크
+  if (
+    taskMaterial &&
+    equipment.material_limit &&
+    equipment.material_limit !== "ALL"
+  ) {
+    if (equipment.material_limit !== taskMaterial) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ----- 메인 SchedulerView -----
@@ -661,9 +708,17 @@ export function equipmentMatchesGroup(
 interface SchedulerViewProps {
   /** 드래그 중인 아이템의 장비 그룹 */
   activeDragGroup?: string | null;
+  /** 드래그 중인 아이템의 SQ (mm²) */
+  activeDragSq?: number | null;
+  /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
+  activeDragMaterial?: string | null;
 }
 
-export function SchedulerView({ activeDragGroup }: SchedulerViewProps = {}) {
+export function SchedulerView({
+  activeDragGroup,
+  activeDragSq,
+  activeDragMaterial,
+}: SchedulerViewProps = {}) {
   const equipment = useScheduleStore((s) => s.equipment);
   const tasks = useScheduleStore((s) => s.tasks);
   const viewFilter = useScheduleStore((s) => s.viewFilter);
@@ -807,6 +862,8 @@ export function SchedulerView({ activeDragGroup }: SchedulerViewProps = {}) {
                 onSelectionMove={handleSelectionMove}
                 onSelectionEnd={handleSelectionEnd}
                 activeDragGroup={activeDragGroup}
+                activeDragSq={activeDragSq}
+                activeDragMaterial={activeDragMaterial}
               />
             ))}
 

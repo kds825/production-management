@@ -23,6 +23,9 @@ class EquipmentResponse(BaseModel):
     capabilities: list[str]
     capacity_tons_per_month: float
     max_diameter_mm: Optional[float] = None
+    range_min: Optional[float] = None  # 최소 SQ (mm²)
+    range_max: Optional[float] = None  # 최대 SQ (mm²)
+    material_limit: Optional[str] = None  # CU, AL, ALL
     status: str
 
 
@@ -80,6 +83,7 @@ class ScheduleTaskResponse(BaseModel):
     duration_hours: float  # 계산 프로퍼티를 직렬화
     customer: Optional[str] = None  # 거래처명 — production_batch.customer_name
     batch_group: Optional[str] = None  # 배치 그룹 식별자 — 간트 블록 1개 단위
+    material: Optional[str] = None  # 도체 재질 — CU, AL
 
 
 class ScheduleTaskCreate(BaseModel):

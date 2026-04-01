@@ -4,6 +4,9 @@ export interface Equipment {
   process_type: string;
   capabilities: string[];
   capacity_tons_per_month: number;
+  range_min?: number; // 최소 SQ (mm²)
+  range_max?: number; // 최대 SQ (mm²)
+  material_limit?: string; // "CU" | "AL" | "ALL"
   status: string;
 }
 
@@ -36,6 +39,8 @@ export interface ScheduleTask {
   customer?: string;
   /** 배치 그룹 식별자 — 같은 간트 블록에 묶인 수주 그룹 */
   batch_group?: string;
+  /** 도체 재질 — CU, AL */
+  material?: string;
 }
 
 export interface ConstraintViolation {

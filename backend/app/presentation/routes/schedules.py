@@ -1,4 +1,5 @@
 import copy
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
 from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
+from app.infrastructure.models.equipment_master import (
+    EquipmentMaster as EquipmentMasterModel,
+)
 from app.infrastructure.models.production_batch import (
     ProductionBatch as ProductionBatchModel,
 )
@@ -158,6 +162,7 @@ def _db_task_to_response(
         duration_hours=duration_hours,
         customer=batch.customer_name or "",
         batch_group=task.batch_group or "",
+        material=batch.conductor_material or None,
     )
 
 
@@ -306,9 +311,121 @@ def create_task(body: ScheduleTaskCreate) -> ScheduleTaskResponse:
 
 
 @router.put("/tasks/{task_id}", response_model=ScheduleTaskResponse)
-def update_task(task_id: str, body: ScheduleTaskUpdate) -> ScheduleTaskResponse:
-    """스케줄 작업 수정 (부분 업데이트 — D&D용, 인메모리 store 사용)"""
-    # 존재 여부 확인
+def update_task(
+    task_id: str,
+    body: ScheduleTaskUpdate,
+    db: Session = Depends(get_db),
+) -> ScheduleTaskResponse:
+    """스케줄 작업 수정 (부분 업데이트 — D&D용).
+
+    DB-based 태스크(Stage 2)와 인메모리 태스크(수동 배치) 두 경로를 지원한다.
+    설비 변경 시 SQ 범위 및 재질 적합성을 검증하여 부적합 배정을 사전 차단한다.
+    """
+    # ------------------------------------------------------------------
+    # 1) DB-based path: task_id가 "TASK-<숫자>" 형태이면 DB에서 조회
+    # ------------------------------------------------------------------
+    db_numeric_id: int | None = None
+    prefix = "TASK-"
+    if task_id.startswith(prefix):
+        suffix = task_id[len(prefix) :]
+        if suffix.isdigit():
+            db_numeric_id = int(suffix)
+
+    if db_numeric_id is not None:
+        task = (
+            db.query(ScheduleTaskModel)
+            .filter(ScheduleTaskModel.task_id == db_numeric_id)
+            .first()
+        )
+        if task is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"작업 '{task_id}'를 찾을 수 없습니다.",
+            )
+
+        # 설비 변경 시 유효성 검증
+        if body.equipment_id is not None:
+            target_equip = (
+                db.query(EquipmentMasterModel)
+                .filter(EquipmentMasterModel.equipment_code == body.equipment_id)
+                .first()
+            )
+            if not target_equip:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"설비 '{body.equipment_id}'를 찾을 수 없습니다.",
+                )
+
+            # 배치 정보 조회 — SQ/재질 검증에 필요
+            batch = (
+                db.query(ProductionBatchModel)
+                .filter(ProductionBatchModel.batch_id == task.batch_id)
+                .first()
+            )
+
+            # SQ 범위 검증
+            if (
+                batch
+                and target_equip.range_min is not None
+                and target_equip.range_max is not None
+            ):
+                sq = float(batch.sq_mm2 or 0)
+                if sq < float(target_equip.range_min) or sq > float(
+                    target_equip.range_max
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"규격 {int(sq)}SQ가 설비 "
+                            f"{target_equip.equipment_name} "
+                            f"범위({int(target_equip.range_min)}"
+                            f"~{int(target_equip.range_max)})를 "
+                            f"초과합니다"
+                        ),
+                    )
+
+            # 재질 검증
+            if (
+                batch
+                and target_equip.material_limit
+                and target_equip.material_limit != "ALL"
+            ):
+                if (
+                    batch.conductor_material
+                    and batch.conductor_material != target_equip.material_limit
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"재질 {batch.conductor_material}은 설비 "
+                            f"{target_equip.equipment_name}"
+                            f"({target_equip.material_limit} 전용)에서 "
+                            f"생산 불가합니다"
+                        ),
+                    )
+
+            task.equipment_code = body.equipment_id
+
+        # 나머지 필드 업데이트
+        if body.start is not None:
+            task.start_datetime = body.start
+        if body.end is not None:
+            task.end_datetime = body.end
+        if body.status is not None:
+            task.status = body.status.value
+        db.commit()
+        db.refresh(task)
+
+        batch_for_resp = (
+            db.query(ProductionBatchModel)
+            .filter(ProductionBatchModel.batch_id == task.batch_id)
+            .first()
+        )
+        return _db_task_to_response(task, batch_for_resp)
+
+    # ------------------------------------------------------------------
+    # 2) 인메모리 path: 수동 배치(D&D) 태스크
+    # ------------------------------------------------------------------
     existing = store.get_task(task_id)
     if existing is None:
         raise HTTPException(
@@ -316,13 +433,66 @@ def update_task(task_id: str, body: ScheduleTaskUpdate) -> ScheduleTaskResponse:
             detail=f"작업 '{task_id}'를 찾을 수 없습니다.",
         )
 
-    # 설비 변경 시 유효성 확인
+    # 설비 변경 시 유효성 검증
     if body.equipment_id is not None:
         if store.get_equipment(body.equipment_id) is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"설비 '{body.equipment_id}'를 찾을 수 없습니다.",
             )
+
+        # DB에서 설비 마스터 조회하여 SQ/재질 검증 수행
+        target_equip = (
+            db.query(EquipmentMasterModel)
+            .filter(EquipmentMasterModel.equipment_code == body.equipment_id)
+            .first()
+        )
+        if target_equip:
+            # 인메모리 태스크의 spec에서 SQ 값 파싱 ("1C x 120SQ" → 120)
+            sq_match = re.search(r"(\d+)SQ", existing.spec or "")
+            sq_val = float(sq_match.group(1)) if sq_match else None
+
+            # SQ 범위 검증
+            if (
+                sq_val is not None
+                and target_equip.range_min is not None
+                and target_equip.range_max is not None
+            ):
+                if sq_val < float(target_equip.range_min) or sq_val > float(
+                    target_equip.range_max
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"규격 {int(sq_val)}SQ가 설비 "
+                            f"{target_equip.equipment_name} "
+                            f"범위({int(target_equip.range_min)}"
+                            f"~{int(target_equip.range_max)})를 "
+                            f"초과합니다"
+                        ),
+                    )
+
+            # 재질 검증 — 인메모리 태스크는 order_id로 배치 역추적
+            if target_equip.material_limit and target_equip.material_limit != "ALL":
+                batch = (
+                    db.query(ProductionBatchModel)
+                    .filter(ProductionBatchModel.sales_order_id == existing.order_id)
+                    .first()
+                )
+                if (
+                    batch
+                    and batch.conductor_material
+                    and batch.conductor_material != target_equip.material_limit
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"재질 {batch.conductor_material}은 설비 "
+                            f"{target_equip.equipment_name}"
+                            f"({target_equip.material_limit} 전용)에서 "
+                            f"생산 불가합니다"
+                        ),
+                    )
 
     updates = body.model_dump(exclude_none=True)
     updated = store.update_task(task_id, updates)

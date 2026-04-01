@@ -60,6 +60,9 @@ def _db_equipment_to_response(eq: EquipmentMaster) -> EquipmentResponse:
         capabilities=capabilities,
         capacity_tons_per_month=100.0,  # 현재 DB에 capacity 컬럼 없음 — 기본값 사용
         max_diameter_mm=None,
+        range_min=rmin,
+        range_max=rmax,
+        material_limit=eq.material_limit or None,
         status="available",
     )
 
