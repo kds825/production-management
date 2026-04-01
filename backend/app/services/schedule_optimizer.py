@@ -326,7 +326,7 @@ def auto_schedule(
                     # SpeedMaster에서 해당 설비의 색상교체 시간 조회
                     sm_color = (
                         db.query(SpeedMaster.setup_color_min)
-                        .filter(SpeedMaster.equipment_code == best_eq.equipment_code)
+                        .filter(SpeedMaster.equipment_code == eq.equipment_code)
                         .first()
                     )
                     color_change_min = (
