@@ -365,23 +365,26 @@ def _check_material_separation(tasks, batches, equipment, config) -> list[dict]:
 def _check_defect_buffer(tasks, batches, equipment, config) -> list[dict]:
     """
     7-1: 불량 재작업 버퍼 검증.
-    extra_length_m이 total_length_m의 buffer_pct% 이상인지 확인.
-    params_json: {"buffer_pct": 5}  → 기본 5%
+    batch_grouping에서 total_length_m = ordered_qty * 1.05로 5% 버퍼가
+    이미 포함되어 있으므로, total_length_m / (drum_length_m * drum_count) >= 1.05 인지 확인.
+    params_json: {"defect_buffer_pct": 0.05}  → 기본 5%
     """
     violations = []
     params = config.params_json or {}
-    buffer_pct = float(params.get("buffer_pct", 5)) / 100.0
+    buffer_pct = float(params.get("defect_buffer_pct", 0.05))
 
     for t in tasks:
         batch = batches.get(t.batch_id)
         if not batch:
             continue
         total = float(batch.total_length_m or 0)
-        extra = float(batch.extra_length_m or 0)
-        if total <= 0:
+        drum_len = float(batch.drum_length_m or 0)
+        drum_cnt = int(batch.drum_count or 1)
+        if total <= 0 or drum_len <= 0:
             continue
-        required_extra = total * buffer_pct
-        if extra < required_extra:
+        ordered_qty = drum_len * drum_cnt
+        expected_min = ordered_qty * (1 + buffer_pct)
+        if total < expected_min * 0.99:  # 1% 허용오차
             violations.append(
                 {
                     "constraint_id": "7-1",
@@ -389,8 +392,8 @@ def _check_defect_buffer(tasks, batches, equipment, config) -> list[dict]:
                     "batch_id": t.batch_id,
                     "severity": "warning",
                     "detail": (
-                        f"불량 버퍼 부족: extra_length={extra:.0f}m"
-                        f" < 필요 {required_extra:.0f}m ({buffer_pct * 100:.0f}% of {total:.0f}m)"
+                        f"불량 버퍼 부족: total={total:.0f}m"
+                        f" < 필요 {expected_min:.0f}m (주문 {ordered_qty:.0f}m × {(1 + buffer_pct):.2f})"
                     ),
                 }
             )

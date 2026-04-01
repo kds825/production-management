@@ -106,6 +106,16 @@ def _routings():
             process_6=None,
         ),
         ProcessRouting(
+            routing_code="RT-BARE",
+            routing_name="연동선/나동선(연선만)",
+            process_1="신선",
+            process_2="연선",
+            process_3=None,
+            process_4=None,
+            process_5=None,
+            process_6=None,
+        ),
+        ProcessRouting(
             routing_code="RT-003",
             routing_name="HFCO 단심",
             process_1="신선",

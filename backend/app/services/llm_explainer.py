@@ -385,7 +385,7 @@ def _build_context(batch, equipment, logs) -> str:
     parts.append(f"- 납기일: {batch.due_date}")
     parts.append(f"- 공정: {batch.process_name}")
     parts.append(
-        f"- 총 길이: {batch.total_length_m}m (여척 {batch.extra_length_m}m 포함)"
+        f"- 총 길이: {batch.total_length_m}m (5% 불량 버퍼 포함) + 색상교체 여척 {batch.extra_length_m}m"
     )
     parts.append(f"- 선속: {batch.line_speed_mpm} m/min")
     parts.append(f"- 예상 소요: {batch.estimated_duration_min}분")

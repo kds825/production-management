@@ -520,6 +520,8 @@ def _infer_routing(order: SalesOrder) -> str:
         return "RT-TFR"
     if "HFCO" in pg:
         return "RT-004" if core_count > 1 else "RT-003"
+    if "연동선" in pg or "나동선" in pg:
+        return "RT-BARE"  # 연동선/나동선: 연선만 (절연/시스 불필요)
     # 기본값: 저압 CV
     return "RT-002" if core_count > 1 else "RT-001"
 
