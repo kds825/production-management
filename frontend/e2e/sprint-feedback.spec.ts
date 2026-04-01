@@ -178,19 +178,18 @@ test.describe("6-7. 간트 동작 + 외주 라벨", () => {
 test.describe("8. 의존성 + README", () => {
   test("frontend .env.example 존재", async () => {
     const fs = await import("fs");
-    const exists = fs.existsSync(
-      "/Users/jaewookim/Desktop/Project/KBI_PoC/frontend/.env.example",
-    );
+    const path = await import("path");
+    const root = path.resolve(__dirname, "..");
+    const exists = fs.existsSync(path.join(root, ".env.example"));
     expect(exists).toBeTruthy();
   });
 
   test("dnd-timeline이 package.json에 없음", async () => {
     const fs = await import("fs");
+    const path = await import("path");
+    const root = path.resolve(__dirname, "..");
     const pkg = JSON.parse(
-      fs.readFileSync(
-        "/Users/jaewookim/Desktop/Project/KBI_PoC/frontend/package.json",
-        "utf-8",
-      ),
+      fs.readFileSync(path.join(root, "package.json"), "utf-8"),
     );
     expect(pkg.dependencies?.["dnd-timeline"]).toBeUndefined();
   });
@@ -199,8 +198,10 @@ test.describe("8. 의존성 + README", () => {
 test.describe("9. 교체시간 분석", () => {
   test("changeover-time-analysis.md 존재", async () => {
     const fs = await import("fs");
+    const path = await import("path");
+    const root = path.resolve(__dirname, "../..");
     const exists = fs.existsSync(
-      "/Users/jaewookim/Desktop/Project/KBI_PoC/docs/changeover-time-analysis.md",
+      path.join(root, "docs/changeover-time-analysis.md"),
     );
     expect(exists).toBeTruthy();
   });

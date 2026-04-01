@@ -38,10 +38,13 @@ ERP 수주 + 재공실사 데이터를 업로드하면 공정별 작업지시서
 ### Backend (.env)
 
 ```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/kbi_poc
-LLM_PROVIDER=openai          # openai 또는 anthropic
-OPENAI_API_KEY=sk-...        # OpenAI 사용 시
-ANTHROPIC_API_KEY=sk-ant-... # Anthropic 사용 시
+DATABASE_URL=postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler
+LLM_PROVIDER=openai              # openai 또는 anthropic
+OPENAI_API_KEY=sk-...            # OpenAI 사용 시
+OPENAI_MODEL=gpt-4.1             # OpenAI 모델 (기본: gpt-4.1)
+ANTHROPIC_API_KEY=sk-ant-...     # Anthropic 사용 시
+ANTHROPIC_API_URL=               # Anthropic API URL (기본: https://api.anthropic.com)
+LLM_MODEL=                       # Anthropic 모델 오버라이드 (기본: claude-sonnet-4-20250514)
 ```
 
 ### Frontend (.env.local)
@@ -77,7 +80,12 @@ python seed_db.py     # 마스터 데이터 적재
 
 ```bash
 cd backend
-python3 -m venv venv && source venv/bin/activate
+python -m venv venv
+# macOS/Linux:
+source venv/bin/activate
+# Windows:
+# venv\Scripts\activate
+cp .env.example .env           # 환경변수 설정 (DB URL, LLM 키 등)
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
