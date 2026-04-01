@@ -18,16 +18,55 @@ ERP 수주 + 재공실사 데이터를 업로드하면 공정별 작업지시서
 
 ---
 
-## 실행 방법
+## 필수 환경
 
-### 1. 환경 변수 설정
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 15+ (Docker 또는 Supabase)
+
+---
+
+## 환경 변수
+
+### Backend (.env)
 
 ```bash
-# backend/.env
-DATABASE_URL=postgresql://user:pass@host:port/dbname
+DATABASE_URL=postgresql://user:pass@localhost:5432/kbi_poc
+LLM_PROVIDER=openai          # openai 또는 anthropic
+OPENAI_API_KEY=sk-...        # OpenAI 사용 시
+ANTHROPIC_API_KEY=sk-ant-... # Anthropic 사용 시
 ```
 
-### 2. 백엔드 실행
+### Frontend (.env.local)
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+---
+
+## 데이터베이스 설정
+
+### 로컬 개발 (Docker)
+
+```bash
+docker-compose up -d  # PostgreSQL 시작
+cd backend
+alembic upgrade head  # 스키마 마이그레이션
+python seed_db.py     # 마스터 데이터 적재
+```
+
+### Supabase 사용 시
+
+`DATABASE_URL`을 `.env`에 Supabase 연결 문자열로 설정
+
+> 마스터 데이터(설비, 선속, 제약조건 등)가 Supabase DB에 이미 적재되어 있으면 별도 시드 작업 불필요.
+
+---
+
+## 실행 방법
+
+### 1. 백엔드 실행
 
 ```bash
 cd backend
@@ -36,20 +75,18 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. 프론트엔드 실행
+### 2. 프론트엔드 설정
 
 ```bash
 cd frontend
+cp .env.example .env.local  # API URL 설정
 npm install
-npm run dev
+npm run dev  # http://localhost:3000
 ```
 
-### 4. 접속
+### 3. 접속
 
 브라우저에서 http://localhost:3000 접속
-
-> 마스터 데이터(설비, 선속, 제약조건 등)는 Supabase DB에 이미 적재되어 있습니다.
-> 별도 시드 작업 불필요.
 
 ---
 
@@ -379,16 +416,6 @@ frontend/src/
       store/                 # 배치 상태관리
       components/            # 테이블, WIP, AI 분석
 ```
-
----
-
-## 환경 변수
-
-| 변수                  | 설명                                              |
-| --------------------- | ------------------------------------------------- |
-| `DATABASE_URL`        | PostgreSQL 연결 (Supabase)                        |
-| `NEXT_PUBLIC_API_URL` | 백엔드 API 주소 (기본: http://localhost:8000/api) |
-| `ANTHROPIC_API_KEY`   | LLM 결정 설명 (선택)                              |
 
 ---
 

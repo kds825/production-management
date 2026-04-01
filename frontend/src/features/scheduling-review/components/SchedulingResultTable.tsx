@@ -668,7 +668,15 @@ export function SchedulingResultTable({
       {/* Confirm button */}
       <div className="flex justify-end mt-3">
         <button
-          onClick={() => router.push("/scheduler")}
+          onClick={() => {
+            if (hasChanges) {
+              const confirmed = window.confirm(
+                "저장되지 않은 변경사항이 있습니다. 이동하시겠습니까?",
+              );
+              if (!confirmed) return;
+            }
+            router.push("/scheduler");
+          }}
           className="text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
           style={{
             backgroundColor: PRIMARY,

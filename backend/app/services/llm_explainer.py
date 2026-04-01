@@ -162,6 +162,82 @@ def explain_decision_sync(
     return {"explanation": explanation, "source": "template", "batch_id": batch_id}
 
 
+def _detect_rule_based_risks(batches) -> tuple[int, list[str]]:
+    """규칙 기반 리스크 감지 — LLM 보완/폴백용.
+
+    Returns (riskCount, risk_highlights).
+    """
+    from collections import defaultdict
+    from datetime import date as _date
+
+    risk_count = 0
+    risk_highlights: list[str] = []
+    today = _date.today()
+
+    # --- 1) 납기 임박: due_date - today <= 3일 ---
+    urgent_count = 0
+    for b in batches:
+        if b.due_date:
+            dd = (
+                b.due_date
+                if isinstance(b.due_date, _date)
+                else _date.fromisoformat(str(b.due_date))
+            )
+            if (dd - today).days <= 3:
+                urgent_count += 1
+    if urgent_count > 0:
+        risk_count += 1
+        risk_highlights.append(f"긴급 납기: {urgent_count}건의 배치가 3일 이내 납기")
+
+    # --- 2) 설비 과부하: 특정 설비 배치 수 > 평균의 2배 ---
+    equip_counts: dict[str, int] = defaultdict(int)
+    for b in batches:
+        code = b.equipment_code or "미배정"
+        equip_counts[code] += 1
+    if equip_counts:
+        avg = sum(equip_counts.values()) / len(equip_counts)
+        for code, cnt in equip_counts.items():
+            if avg > 0 and cnt > avg * 2:
+                risk_count += 1
+                risk_highlights.append(
+                    f"병목 설비: {code}에 배치 집중 ({cnt}건, 평균 {avg:.0f}건)"
+                )
+
+    # --- 3) SQ 교체 빈도: 동일 설비에서 연속 배치의 SQ가 다른 비율 > 50% ---
+    equip_batches: dict[str, list] = defaultdict(list)
+    for b in batches:
+        if b.equipment_code:
+            equip_batches[b.equipment_code].append(b)
+    for code, eq_batches in equip_batches.items():
+        if len(eq_batches) < 2:
+            continue
+        changes = 0
+        for i in range(1, len(eq_batches)):
+            if eq_batches[i].sq_mm2 != eq_batches[i - 1].sq_mm2:
+                changes += 1
+        rate = changes / (len(eq_batches) - 1) * 100
+        if rate > 50:
+            risk_count += 1
+            risk_highlights.append(f"교체 손실: {code}에서 SQ 교체율 {rate:.0f}%")
+
+    # --- 4) 재공 미매칭: WIP 매칭 가능하지만 미활용 비율 > 30% ---
+    wip_total = sum(
+        1 for b in batches if b.wip_matched_id is not None or b.wip_matched_id == 0
+    )
+    wip_unused = sum(1 for b in batches if b.wip_matched_id is None)
+    # wip_total은 매칭된 건수, 전체에서 미매칭 비율 계산
+    total = len(batches)
+    if total > 0 and wip_total > 0:
+        unused_ratio = wip_unused / total
+        if unused_ratio > 0.3:
+            risk_count += 1
+            risk_highlights.append(
+                f"재공 활용도: 매칭 가능 {total}건 중 {wip_unused}건 미활용"
+            )
+
+    return risk_count, risk_highlights
+
+
 def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
     """run_label 전체 배치를 분석하여 AI 요약을 생성한다.
 
@@ -181,6 +257,7 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
             "riskCount": 0,
             "highlights": ["해당 run_label의 배치 데이터가 없습니다."],
             "insights": [],
+            "source": "rule-based",
         }
 
     total_m = sum(float(b.total_length_m or 0) for b in batches)
@@ -217,14 +294,18 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
         f"납기일 범위: {earliest} ~ {latest}"
     )
 
-    # LLM 호출
+    # --- 규칙 기반 리스크 감지 (LLM 성공/실패 무관하게 항상 실행) ---
+    rule_risk_count, rule_risk_highlights = _detect_rule_based_risks(batches)
+
+    # --- LLM 호출 ---
     llm_raw = _call_llm_sync(
         context,
         system_prompt=SUMMARY_SYSTEM_PROMPT,
         user_prompt=f"다음 생산 배치 현황을 분석하여 핵심 인사이트를 JSON으로 요약해주세요:\n\n{context}",
     )
-    risk_count = 0
-    highlights: list[str] = []
+    llm_succeeded = False
+    llm_risk_count = 0
+    llm_highlights: list[str] = []
 
     if llm_raw:
         try:
@@ -235,36 +316,58 @@ def generate_batch_summary_sync(run_label: str, db: Session) -> dict:
                 if raw.startswith("json"):
                     raw = raw[4:]
             parsed = json.loads(raw.strip())
-            highlights = parsed.get("highlights", [])
-            risk_count = int(parsed.get("riskCount", 0))
+            llm_highlights = parsed.get("highlights", [])
+            llm_risk_count = int(parsed.get("riskCount", 0))
+            if llm_highlights:
+                llm_succeeded = True
         except Exception:
             # JSON 파싱 실패 시 텍스트를 그대로 bullet으로 사용
-            highlights = [
+            llm_highlights = [
                 line.strip("- •").strip()
                 for line in llm_raw.splitlines()
                 if line.strip()
             ]
+            if llm_highlights:
+                llm_succeeded = True
 
-    # 템플릿 폴백 — LLM 결과가 없거나 highlights가 비어 있으면 통계 기반 생성
-    if not highlights:
-        highlights = []
-        highlights.append(f"총 {total_batches}건의 배치, {total_m:,.0f}m 생산 계획")
-        highlights.append(f"공정 구성: {process_summary}")
+    # --- LLM 성공 시: LLM 인사이트 + 규칙 기반 리스크 병합 ---
+    if llm_succeeded:
+        # LLM highlights 뒤에 규칙 기반 리스크 추가 (중복 방지)
+        merged_highlights = list(llm_highlights)
+        for rh in rule_risk_highlights:
+            if rh not in merged_highlights:
+                merged_highlights.append(rh)
+        merged_risk = max(llm_risk_count, rule_risk_count)
+        source = "llm"
+    else:
+        # LLM 실패 시: 규칙 기반 결과 + 통계 템플릿 폴백
+        merged_highlights: list[str] = []
+        merged_highlights.append(
+            f"총 {total_batches}건의 배치, {total_m:,.0f}m 생산 계획"
+        )
+        merged_highlights.append(f"공정 구성: {process_summary}")
         if earliest and latest:
-            highlights.append(f"납기일 범위: {earliest} ~ {latest}")
+            merged_highlights.append(f"납기일 범위: {earliest} ~ {latest}")
         top_customer = max(by_customer.items(), key=lambda x: x[1], default=None)
         if top_customer:
-            highlights.append(
+            merged_highlights.append(
                 f"최다 수주 거래처: {top_customer[0]} ({top_customer[1]}건)"
             )
+        # 규칙 기반 리스크 항목 추가
+        for rh in rule_risk_highlights:
+            if rh not in merged_highlights:
+                merged_highlights.append(rh)
+        merged_risk = rule_risk_count
+        source = "rule-based"
 
     return {
         "totalBatches": total_batches,
         "totalGroups": total_groups,
         "totalProductionM": round(total_m, 1),
-        "riskCount": risk_count,
-        "highlights": highlights,
+        "riskCount": merged_risk,
+        "highlights": merged_highlights,
         "insights": [],
+        "source": source,
     }
 
 

@@ -125,6 +125,7 @@ async def run_stage1(
         "wip": wip_result,
         "batches": batch_result,
         "warnings": warnings,
+        "outsource_count": batch_result.get("outsource_count", 0),
     }
 
 
@@ -465,7 +466,10 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     """저장된 모든 run_label 목록을 배치 수 및 최초 생성 시각과 함께 반환한다.
 
     최신 실행이 상단에 오도록 created_at 내림차순 정렬.
+    outsource_count: ERP 외주 플래그(is_outsourced=True) 수주 건수.
     """
+    from app.infrastructure.models.sales_order import SalesOrder
+
     rows = (
         db.query(
             ProductionBatch.run_label,
@@ -477,11 +481,30 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
         .all()
     )
 
+    # 런별 외주 건수 — ERP is_outsourced 플래그 기준
+    outsource_counts: dict[str, int] = {}
+    if rows:
+        run_labels = [r.run_label for r in rows]
+        outsource_rows = (
+            db.query(
+                SalesOrder.run_label,
+                func.count().label("cnt"),
+            )
+            .filter(
+                SalesOrder.run_label.in_(run_labels),
+                SalesOrder.is_outsourced == True,  # noqa: E712
+            )
+            .group_by(SalesOrder.run_label)
+            .all()
+        )
+        outsource_counts = {r.run_label: r.cnt for r in outsource_rows}
+
     return [
         {
             "run_label": row.run_label,
             "batch_count": row.batch_count,
             "created_at": row.created_at,
+            "outsource_count": outsource_counts.get(row.run_label, 0),
         }
         for row in rows
     ]

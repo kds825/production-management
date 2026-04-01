@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
+from app.domain.constants import PROCESS_ORDER
 from app.infrastructure.database import get_db
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.presentation.schemas import EquipmentResponse
@@ -69,7 +71,17 @@ def list_equipment(db: Session = Depends(get_db)) -> list[EquipmentResponse]:
     PostgreSQL equipment_master 테이블에서 읽는다.
     DB에 데이터가 없으면 인메모리 store로 폴백한다.
     """
-    db_equips = db.query(EquipmentMaster).order_by(EquipmentMaster.equipment_code).all()
+    # 공정 순서(신선→연선→절연→연합/TP→시스) → 설비코드 순으로 정렬
+    process_order = case(
+        PROCESS_ORDER,
+        value=EquipmentMaster.process_name,
+        else_=99,
+    )
+    db_equips = (
+        db.query(EquipmentMaster)
+        .order_by(process_order, EquipmentMaster.equipment_code)
+        .all()
+    )
 
     return [_db_equipment_to_response(eq) for eq in db_equips]
 

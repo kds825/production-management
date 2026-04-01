@@ -52,7 +52,12 @@ def create_batches(
             "warnings": [str, ...]
         }
     """
-    result: dict = {"total_batches": 0, "by_process": {}, "warnings": []}
+    result: dict = {
+        "total_batches": 0,
+        "by_process": {},
+        "warnings": [],
+        "outsource_count": 0,
+    }
 
     # ── 마스터 데이터 일괄 로드 (N+1 방지) ──────────────────────────────────
     query = db.query(SalesOrder).filter(
@@ -161,6 +166,7 @@ def create_batches(
         # SQ <= 10: 소단면적 특수 공정은 사내 설비로 생산 불가
         # 고내화: 고내화 케이블은 전문 외주 업체 전용 품목
         if sq <= 10 or "고내화" in (order.product_group or ""):
+            result["outsource_count"] += 1
             result["warnings"].append(
                 f"수주 {order_ref}: 외주 자동분류 (SQ={sq}, 제품군={order.product_group})"
             )
@@ -230,7 +236,9 @@ def create_batches(
         # 원본 계획서에서 16SQ/25SQ TFR-GV는 연선 시트에 미표시, 시스만 표시
         skip_stranding = "TFR-GV" in (order.product_group or "").upper() and sq <= 25
 
-        # 61연선(300SQ+): 7연선 코어 선행 → 61연선 완성 2단계
+        # ── 61연선(300SQ+) 2단계 분할 (Task #7 조사) ─────────────────────
+        # 61연선 = 7연선 코어(batch_seq=0, 35SQ, T6B0 설비) + 본 배치(batch_seq=1, 원래 SQ, 54BO 설비)
+        # batch_seq=0이 schedule_optimizer에서 먼저 정렬되어 간트에서 코어가 선행 배치된다.
         # 7연선 코어를 T6B0에서 먼저 제작 후 54BO에서 외층 추가
         is_61strand = sq >= 300 and conductor_material == "CU"
 

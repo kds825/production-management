@@ -4,7 +4,10 @@ import type { ProcessGroup } from "@/shared/constants/processGroups";
 import type { SchedulingBatch, WipItem, AiInsight, AiSummary } from "../types";
 import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE =
+  typeof window !== "undefined" && process.env.NEXT_PUBLIC_API_URL
+    ? `${process.env.NEXT_PUBLIC_API_URL}/api`
+    : "http://localhost:8000/api";
 
 /** 백엔드 /api/pipeline/stage1/{run_label}/batches 응답 항목 */
 interface ApiBatch {
@@ -106,6 +109,23 @@ function toBatch(b: ApiBatch): SchedulingBatch {
   };
 }
 
+/** 배치 목록에서 로컬 AiSummary를 생성하는 헬퍼 — DRY */
+function buildLocalAiSummary(
+  batches: SchedulingBatch[],
+  overrides?: Partial<AiSummary>,
+): AiSummary {
+  return {
+    totalBatches: batches.length,
+    totalGroups: new Set(batches.map((b) => b.batch_group).filter(Boolean))
+      .size,
+    totalProductionM: batches.reduce((s, b) => s + b.total_length_m, 0),
+    riskCount: 0,
+    highlights: [],
+    source: "fallback",
+    ...overrides,
+  };
+}
+
 interface SchedulingReviewState {
   // 공정별 배치 데이터
   yeonseoBatches: SchedulingBatch[];
@@ -123,9 +143,13 @@ interface SchedulingReviewState {
   isLoading: boolean;
   loadError: string | null;
 
+  // 데이터 로드 여부 (API에서 배치를 가져왔는지)
+  isLoaded: boolean;
+
   // 계산 상태
   isCalculating: boolean;
   isCalculated: boolean;
+  calcError: string | null;
 
   // AI 분석 결과
   aiInsights: AiInsight[];
@@ -164,8 +188,10 @@ const initialState: SchedulingReviewState = {
   insulationWip: [],
   isLoading: false,
   loadError: null,
+  isLoaded: false,
   isCalculating: false,
   isCalculated: false,
+  calcError: null,
   aiInsights: [],
   aiSummary: null,
   activeTab: "연선",
@@ -210,18 +236,12 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.insulationBatches = insulation;
           state.sheatBatches = sheat;
           state.isLoading = false;
+          state.isLoaded = true;
           state.runLabel = runLabel;
-          // 배치 로드 완료 = 계산 완료 (별도 버튼 불필요)
-          state.isCalculated = true;
-          state.aiSummary = {
-            totalBatches: batches.length,
-            totalGroups: new Set(
-              batches.map((b) => b.batch_group).filter(Boolean),
-            ).size,
-            totalProductionM: batches.reduce((s, b) => s + b.total_length_m, 0),
-            riskCount: 0,
-            highlights: [],
-          };
+          // 데이터 로드만 완료 — 계산은 별도 버튼으로 실행
+          state.isCalculated = false;
+          state.calcError = null;
+          state.aiSummary = null;
 
           // WIP 매칭된 항목을 WIP 리스트로 표시
           const wipItems: WipItem[] = batches
@@ -273,6 +293,12 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         });
         if (!res.ok) return false;
 
+        // 인라인 편집 후 계산 결과 무효화 — 재계산 필요
+        set((state) => {
+          state.isCalculated = false;
+          state.calcError = null;
+        });
+
         // 로컬 상태 업데이트 — 모든 배치 배열을 순회하여 해당 배치 갱신
         const frontField = field as keyof SchedulingBatch;
         set((state) => {
@@ -303,30 +329,22 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
     calculateBatches: async () => {
       set((state) => {
         state.isCalculating = true;
+        state.calcError = null;
       });
 
       const { runLabel, allBatches } = get();
 
       // runLabel이 없으면 로컬 계산 fallback
       if (!runLabel) {
+        const fallbackHighlight = `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`;
         set((state) => {
           state.isCalculating = false;
           state.isCalculated = true;
           state.aiInsights = [];
-          state.aiSummary = {
-            totalBatches: allBatches.length,
-            totalGroups: new Set(
-              allBatches.map((b) => b.batch_group).filter(Boolean),
-            ).size,
-            totalProductionM: allBatches.reduce(
-              (sum, b) => sum + b.total_length_m,
-              0,
-            ),
-            riskCount: 0,
-            highlights: [
-              `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
-            ],
-          };
+          state.aiSummary = buildLocalAiSummary(allBatches, {
+            highlights: [fallbackHighlight],
+            source: "fallback",
+          });
         });
         return;
       }
@@ -347,50 +365,25 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
               totalProductionM: data.totalProductionM,
               riskCount: data.riskCount,
               highlights: data.highlights,
+              source: data.source || "llm",
             };
           });
         } else {
-          // API 실패 시 로컬 fallback
+          // API 실패 시 에러 상태 설정 — isCalculated는 false 유지
+          const statusText = `AI 분석 API 실패 (HTTP ${res.status})`;
           set((state) => {
             state.isCalculating = false;
-            state.isCalculated = true;
+            state.calcError = statusText;
             state.aiInsights = [];
-            state.aiSummary = {
-              totalBatches: allBatches.length,
-              totalGroups: new Set(
-                allBatches.map((b) => b.batch_group).filter(Boolean),
-              ).size,
-              totalProductionM: allBatches.reduce(
-                (sum, b) => sum + b.total_length_m,
-                0,
-              ),
-              riskCount: 0,
-              highlights: [
-                `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
-              ],
-            };
           });
         }
-      } catch {
-        // 네트워크 오류 시 로컬 fallback
+      } catch (err) {
+        // 네트워크 오류 시 에러 상태 설정
+        const message = err instanceof Error ? err.message : "네트워크 오류";
         set((state) => {
           state.isCalculating = false;
-          state.isCalculated = true;
+          state.calcError = `계산 실패: ${message}`;
           state.aiInsights = [];
-          state.aiSummary = {
-            totalBatches: allBatches.length,
-            totalGroups: new Set(
-              allBatches.map((b) => b.batch_group).filter(Boolean),
-            ).size,
-            totalProductionM: allBatches.reduce(
-              (sum, b) => sum + b.total_length_m,
-              0,
-            ),
-            riskCount: 0,
-            highlights: [
-              `총 ${allBatches.length}개 배치, ${allBatches.reduce((s, b) => s + b.total_length_m, 0).toLocaleString()}m 생산`,
-            ],
-          };
         });
       }
     },

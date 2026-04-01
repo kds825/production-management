@@ -28,6 +28,10 @@ export interface ScheduleTask {
   predecessors: string[];
   notes: string;
   changeover_min: number;
+  /** 규격교체 시간 (분) — SpeedMaster 기준 */
+  setup_time_min?: number;
+  /** 색상교체 시간 (분) — 시스 공정에서 색상 변경 시 */
+  color_change_min?: number;
   /** 거래처명 — production_batch.customer_name에서 가져옴 */
   customer?: string;
   /** 배치 그룹 식별자 — 같은 간트 블록에 묶인 수주 그룹 */

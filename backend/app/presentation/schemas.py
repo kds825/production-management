@@ -75,6 +75,8 @@ class ScheduleTaskResponse(BaseModel):
     predecessors: list[str]
     notes: str
     changeover_min: int
+    setup_time_min: int = 0  # 규격교체 시간 (SpeedMaster 기준)
+    color_change_min: int = 0  # 색상교체 시간 (시스 공정)
     duration_hours: float  # 계산 프로퍼티를 직렬화
     customer: Optional[str] = None  # 거래처명 — production_batch.customer_name
     batch_group: Optional[str] = None  # 배치 그룹 식별자 — 간트 블록 1개 단위

@@ -36,4 +36,5 @@ export interface AiSummary {
   totalProductionM: number;
   riskCount: number;
   highlights: string[];
+  source?: "rule-based" | "llm" | "fallback";
 }

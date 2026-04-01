@@ -99,6 +99,9 @@ export default function SchedulerPage() {
       .catch(() => {});
   }, []);
 
+  // ── 선행 공정 이동 경고 토스트 ──
+  const [predecessorToast, setPredecessorToast] = useState<string | null>(null);
+
   // ── 자동배열 상태 ──
   const [autoScheduleLoading, setAutoScheduleLoading] = useState(false);
   const [autoScheduleResult, setAutoScheduleResult] = useState<string | null>(
@@ -490,9 +493,27 @@ export default function SchedulerPage() {
         const newEnd = new Date(newStartTs + durationMs);
 
         moveTask(task.id, targetEquipmentId, newStart, newEnd);
+
+        // 선행 공정 이동 경고: 연선→절연→시스 체인에서 후행 공정이 있으면 경고 표시
+        const bg = (task.batch_group || "").toLowerCase();
+        const eq = equipment.find((e) => e.id === task.equipment_id);
+        const processType = eq?.process_type?.toLowerCase() ?? "";
+        const isStranding =
+          bg.startsWith("연선") || processType === "stranding";
+        const isInsulation =
+          bg.startsWith("저압절연") ||
+          bg.startsWith("고압절연") ||
+          bg.startsWith("b100");
+        if (isStranding || isInsulation) {
+          const successorLabel = isStranding ? "절연/시스" : "시스";
+          setPredecessorToast(
+            `선행 공정 이동 시 후행 공정(${successorLabel})에 영향을 줄 수 있습니다`,
+          );
+          setTimeout(() => setPredecessorToast(null), 4000);
+        }
       }
     },
-    [assignOrder, moveTask, zoomLevel, range, isEditMode],
+    [assignOrder, moveTask, zoomLevel, range, isEditMode, equipment],
   );
 
   return (
@@ -644,6 +665,36 @@ export default function SchedulerPage() {
           style={{ backgroundColor: "#16A34A" }}
         >
           <span>저장 완료 -- 새 버전이 생성되었습니다.</span>
+        </div>
+      )}
+
+      {/* 선행 공정 이동 경고 토스트 */}
+      {predecessorToast && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium"
+          style={{
+            backgroundColor: "#FFFBEB",
+            color: "#92400E",
+            border: "1px solid #FCD34D",
+            transform: "translateX(-50%)",
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+            style={{ color: "#D97706", flexShrink: 0 }}
+          >
+            <path d="M8 1L1 14h14L8 1zm0 2.5l5.5 9.5h-11L8 3.5zM7.25 7v3.5h1.5V7h-1.5zm0 4.5v1.5h1.5v-1.5h-1.5z" />
+          </svg>
+          <span>{predecessorToast}</span>
+          <button
+            onClick={() => setPredecessorToast(null)}
+            className="ml-2 text-amber-400 hover:text-amber-600"
+          >
+            ✕
+          </button>
         </div>
       )}
 

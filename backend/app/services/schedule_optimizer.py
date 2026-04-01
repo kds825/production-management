@@ -1,4 +1,21 @@
-"""자동 스케줄링 엔진 — 납기역산 + 그리디 배치"""
+"""자동 스케줄링 엔진 — 납기역산 + 그리디 배치
+
+── Task #7 조사 결과 ─────────────────────────────────────────────────
+1. batch_seq 정렬:
+   - 61연선의 7연선 코어 배치(batch_seq=0)가 본 배치(batch_seq=1)보다 먼저
+     스케줄링되도록 batches query에서 batch_seq.asc()를 포함한다 (line 78).
+   - 이는 predecessor_map을 통해 코어→본 배치 선행관계를 올바르게 구성하기 위함이다.
+
+2. 공정 간 선행관계:
+   - _PREDECESSOR_PROCESS dict가 연선→절연→시스 파이프라인을 강제한다.
+   - process_end_by_sq로 같은 SQ의 앞 공정 종료 시각을 추적하여 후공정 시작을 지연시킨다.
+   - A100/A120 시스 배치는 저압절연 전체 완료 후 시작한다 (process_end_all 활용).
+
+3. 제한사항:
+   - 프론트엔드 간트에서의 수동 블록 이동 시에는 이 파이프라인 제약이 재적용되지 않는다.
+   - scheduleStore.ts의 moveTask는 같은 order_id의 후공정만 연동하며,
+     cross-equipment cascade는 미구현 상태이다.
+"""
 
 from datetime import date, datetime, timedelta
 
@@ -9,6 +26,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.constraint_config import ConstraintConfig
+from app.domain.constants import PROCESS_ORDER
 from app.services.calendar_engine import calculate_end_datetime
 from app.services.audit_logger import log_decision
 
@@ -64,17 +82,7 @@ def auto_schedule(
     # Load all batches for this run, excluding outsourced and already-scheduled
     # 공정 순서를 포함하여 정렬 — 같은 수주의 연선이 절연보다 먼저 스케줄링되어야
     # predecessor_map이 올바르게 동작함
-    _PROC_ORDER = {
-        "신선": 0,
-        "연선": 1,
-        "저압절연": 2,
-        "고압절연": 2,
-        "연합": 3,
-        "T/P": 3,
-        "저압시스": 4,
-        "고압시스": 4,
-        "HFCO시스": 4,
-    }
+    # PROCESS_ORDER: 공정 순서 상수 (domain.constants에서 공유)
     batches = (
         db.query(ProductionBatch)
         .filter(
@@ -93,7 +101,7 @@ def auto_schedule(
     # 같은 공정 내에서 SQ 내림차순, 납기순 정렬
     batches.sort(
         key=lambda b: (
-            _PROC_ORDER.get(b.process_name, 50),
+            PROCESS_ORDER.get(b.process_name, 50),
             -(float(b.sq_mm2 or 0)),
             b.due_date or date.max,
             b.customer_priority or 99,
@@ -300,7 +308,7 @@ def auto_schedule(
                     actual_setup = 0.0
             eq_total_duration = eq_total_duration - setup_min + actual_setup
 
-            # 4-2: 색상교체 시간 — 그룹 간 변경 시
+            # 4-2: 색상교체 시간 — 그룹 간 변경 시 (SpeedMaster 조회)
             color_change_min = 0.0
             if prev_batch is not None and rep.process_name in (
                 "저압시스",
@@ -310,7 +318,15 @@ def auto_schedule(
                 prev_color = (prev_batch.sheath_color or "").strip()
                 curr_color = (rep.sheath_color or "").strip()
                 if prev_color and curr_color and prev_color != curr_color:
-                    color_change_min = 120.0
+                    # SpeedMaster에서 해당 설비의 색상교체 시간 조회
+                    sm_color = (
+                        db.query(SpeedMaster.setup_color_min)
+                        .filter(SpeedMaster.equipment_code == best_eq.equipment_code)
+                        .first()
+                    )
+                    color_change_min = (
+                        float(sm_color[0] or 120.0) if sm_color else 120.0
+                    )
             eq_total_duration += color_change_min
 
             # ── 선행공정(predecessor) — 공정 순서에 따라 앞 공정 종료 후 시작
@@ -446,7 +462,7 @@ def auto_schedule(
                     "id": "1-1",
                     "name": "거래처 우선순위",
                     "result": "pass",
-                    "detail": f"priority={batch.customer_priority}",
+                    "detail": f"priority={rep.customer_priority}",
                 },
                 {
                     "id": "4-3",
@@ -464,7 +480,7 @@ def auto_schedule(
                     "id": "4-5",
                     "name": "테이핑 속도 제한",
                     "result": "pass",
-                    "detail": f"process={batch.process_name}, speed={line_speed:.1f}mpm",
+                    "detail": f"process={rep.process_name}, speed={line_speed:.1f}mpm",
                 },
                 {
                     "id": "5-1",
@@ -476,13 +492,13 @@ def auto_schedule(
                     "id": "10-2",
                     "name": "CU/AL 재질 분리",
                     "result": "pass",
-                    "detail": f"material={batch.conductor_material}, equip_limit={best_eq.material_limit}",
+                    "detail": f"material={rep.conductor_material}, equip_limit={best_eq.material_limit}",
                 },
                 {
                     "id": "10-3",
                     "name": "시스 재질 라우팅",
                     "result": "pass",
-                    "detail": f"sheath_type={_get_sheath_type(batch)}, equip={best_eq.equipment_code}",
+                    "detail": f"sheath_type={_get_sheath_type(rep)}, equip={best_eq.equipment_code}",
                 },
             ],
             reason=(

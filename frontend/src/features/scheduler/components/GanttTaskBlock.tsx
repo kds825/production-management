@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, memo } from "react";
+import { useCallback, useRef, useState, memo } from "react";
+import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
 import type { ScheduleTask } from "../types";
 import { useScheduleStore } from "../store/scheduleStore";
@@ -27,7 +28,7 @@ const SHEATH_COLOR_MAP: Record<string, string> = {
   회: "#6B7280",
   청: "#1E40AF",
   녹: "#065F46",
-  황: "#065F46",
+  황: "#B45309",
   "흑/적": "#991B1B",
 };
 
@@ -212,6 +213,37 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   const isSelected = selectedTaskId === task.id;
 
+  // --- 시간 구성 팝오버 ---
+  const [showTimePopover, setShowTimePopover] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
+
+  const totalDurationHrs = ((endTs - startTs) / MS_PER_HOUR).toFixed(1);
+  const setupMin = task.setup_time_min ?? task.changeover_min ?? 0;
+  const colorChangeMin = task.color_change_min ?? 0;
+  const totalChangeoverMin = setupMin + colorChangeMin;
+  // 작업일수로부터 부동시간 추정 (월-목 2h/day, 금 10h/day)
+  const workDays = Math.max(1, Math.ceil((endTs - startTs) / MS_PER_DAY));
+  const idleHrsEstimate = workDays * 2; // 평균 근사
+  const actualWorkHrs = Math.max(
+    0,
+    parseFloat(totalDurationHrs) - idleHrsEstimate - totalChangeoverMin / 60,
+  );
+
+  const handleBlockClick = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
+      e.stopPropagation();
+      // 선택 + 팝오버 토글
+      if (selectedTaskId === task.id) {
+        setShowTimePopover((prev) => !prev);
+      } else {
+        selectTask(task.id);
+        setShowTimePopover(true);
+      }
+    },
+    [selectTask, selectedTaskId, task.id],
+  );
+
   // --- 규격교체 구간 계산 ---
   // changeover_min을 px 폭으로 변환. 전체 블록 폭 대비 비율로 계산하되,
   // 블록이 너무 좁을 경우 표시하지 않는다 (width < 40px).
@@ -228,7 +260,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node);
+        (blockRef as React.MutableRefObject<HTMLDivElement | null>).current =
+          node;
+      }}
       data-draggable
       data-task-id={task.id}
       data-equipment-id={task.equipment_id}
@@ -243,7 +279,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         outlineOffset: 1,
         borderRadius: 4,
       }}
-      onClick={handleClick}
+      onClick={handleBlockClick}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
     >
@@ -400,6 +436,56 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           </div>
         )}
       </div>
+
+      {/* 시간 구성 팝오버 — Portal로 overflow:hidden 회피 */}
+      {showTimePopover &&
+        isSelected &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              left: blockRef.current
+                ? blockRef.current.getBoundingClientRect().left
+                : 0,
+              top: blockRef.current
+                ? blockRef.current.getBoundingClientRect().bottom + 4
+                : 0,
+              zIndex: 9999,
+              background: "#1F2937",
+              color: "#F9FAFB",
+              borderRadius: 6,
+              padding: "8px 12px",
+              fontSize: 11,
+              lineHeight: 1.6,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+              minWidth: 200,
+              pointerEvents: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              작업 시간 구성
+            </div>
+            <div>실제 작업: {actualWorkHrs.toFixed(1)}h</div>
+            {setupMin > 0 && <div>규격 교체: {setupMin}분</div>}
+            {colorChangeMin > 0 && <div>색상 교체: {colorChangeMin}분</div>}
+            <div>
+              부동시간: ~{idleHrsEstimate}h ({workDays}일)
+            </div>
+            <div
+              style={{
+                borderTop: "1px solid #374151",
+                marginTop: 4,
+                paddingTop: 4,
+                fontWeight: 600,
+              }}
+            >
+              총 기간: {totalDurationHrs}h
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 });

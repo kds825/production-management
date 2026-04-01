@@ -575,6 +575,20 @@ function GridLines({
   );
 }
 
+// ----- 공정 순서 (클라이언트 보조 정렬) -----
+
+const PROCESS_TYPE_ORDER: Record<string, number> = {
+  drawing: 0,
+  stranding: 1,
+  lv_insulation: 2,
+  hv_insulation: 2,
+  taping: 3,
+  cabling: 3,
+  lv_jacketing: 4,
+  hv_jacketing: 4,
+  neutral_wire: 4,
+};
+
 // ----- 필터 훅 -----
 
 function useFilteredEquipment(
@@ -585,21 +599,32 @@ function useFilteredEquipment(
   return useMemo(() => {
     // 신선 설비는 배치 미생성이므로 간트에서 숨김
     const withoutDrawing = equipment.filter((eq) => eq.process_type !== "신선");
-    if (filterType === "all") return withoutDrawing;
+    let result: Equipment[];
 
-    if (filterType === "voltage") {
-      if (filterValue.length === 0) return withoutDrawing;
-      return withoutDrawing.filter((eq) => filterValue.includes(eq.id));
+    if (filterType === "all") {
+      result = withoutDrawing;
+    } else if (filterType === "voltage") {
+      result =
+        filterValue.length === 0
+          ? withoutDrawing
+          : withoutDrawing.filter((eq) => filterValue.includes(eq.id));
+    } else if (filterType === "process") {
+      result =
+        filterValue.length === 0
+          ? withoutDrawing
+          : withoutDrawing.filter((eq) =>
+              filterValue.includes(eq.process_type),
+            );
+    } else {
+      result = withoutDrawing;
     }
 
-    if (filterType === "process") {
-      if (filterValue.length === 0) return withoutDrawing;
-      return withoutDrawing.filter((eq) =>
-        filterValue.includes(eq.process_type),
-      );
-    }
-
-    return withoutDrawing;
+    // 공정 순서 보조 정렬: 백엔드에서 이미 정렬되어 오지만 안전망으로 유지
+    return result.slice().sort((a, b) => {
+      const orderA = PROCESS_TYPE_ORDER[a.process_type] ?? 99;
+      const orderB = PROCESS_TYPE_ORDER[b.process_type] ?? 99;
+      return orderA - orderB;
+    });
   }, [equipment, filterType, filterValue]);
 }
 
@@ -787,7 +812,9 @@ export function SchedulerView({ activeDragGroup }: SchedulerViewProps = {}) {
 
             {filteredEquipment.length === 0 && (
               <div className="flex items-center justify-center h-32 text-sm text-gray-400">
-                설비 데이터를 불러오는 중...
+                {equipment.length === 0
+                  ? "설비 데이터를 불러오는 중..."
+                  : "선택한 필터에 해당하는 설비가 없습니다"}
               </div>
             )}
           </div>

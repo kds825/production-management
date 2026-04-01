@@ -19,6 +19,7 @@ interface PipelineRun {
   status?: string;
   warning_count?: number;
   batch_count?: number;
+  outsource_count?: number;
 }
 
 const PROCESS_TABS = [
@@ -74,6 +75,8 @@ export default function SchedulingReviewPage() {
     insulationWip,
     isCalculating,
     isCalculated,
+    isLoaded,
+    calcError,
     aiInsights,
     aiSummary,
     activeTab,
@@ -320,6 +323,24 @@ export default function SchedulingReviewPage() {
           배치 ({selectedRunInfo?.batch_count ?? totalBatches}수주)
         </span>
 
+        {/* 외주 분류 건수 */}
+        {selectedRunInfo?.outsource_count !== undefined &&
+          selectedRunInfo.outsource_count > 0 && (
+            <>
+              <div className="h-4 w-px bg-gray-200" />
+              <span
+                className="text-[11px] font-medium px-2 py-0.5 rounded"
+                style={{
+                  backgroundColor: "#EFF6FF",
+                  color: "#2563EB",
+                  border: "1px solid #BFDBFE",
+                }}
+              >
+                외주 분류 {selectedRunInfo.outsource_count}건
+              </span>
+            </>
+          )}
+
         {/* 경고 수 (런 정보에 있을 때만 표시) */}
         {selectedRunInfo?.warning_count !== undefined &&
           selectedRunInfo.warning_count > 0 && (
@@ -439,35 +460,35 @@ export default function SchedulingReviewPage() {
         <BatchCalculateButton
           isCalculating={isCalculating}
           isCalculated={isCalculated}
+          calcError={calcError}
           onCalculate={calculateBatches}
           disabled={totalBatches === 0}
         />
 
-        {/* AI 분석 결과 + Section 4 (계산 후에만 표시) */}
-        {isCalculated && (
-          <>
-            {aiSummary && (
-              <div className="mb-6">
-                <AiInsightCard summary={aiSummary} />
-              </div>
-            )}
+        {/* AI 분석 카드 — 로드 후 항상 표시 (대기/결과/미감지 상태 포함) */}
+        {isLoaded && (
+          <div className="mb-6">
+            <AiInsightCard summary={aiSummary} />
+          </div>
+        )}
 
-            <div className="mb-6">
-              <h3
-                className="text-sm font-semibold mb-3"
-                style={{ color: "#111827" }}
-              >
-                4. 생산 스케줄링 검토
-              </h3>
-              <SchedulingResultTable
-                yeonseoBatches={yeonseoBatches}
-                insulationBatches={insulationBatches}
-                sheatBatches={sheatBatches}
-                activeTab={activeTab}
-                onTabChange={setActiveTab}
-              />
-            </div>
-          </>
+        {/* Section 4: 계산 완료 후에만 표시 */}
+        {isCalculated && (
+          <div className="mb-6">
+            <h3
+              className="text-sm font-semibold mb-3"
+              style={{ color: "#111827" }}
+            >
+              4. 생산 스케줄링 검토
+            </h3>
+            <SchedulingResultTable
+              yeonseoBatches={yeonseoBatches}
+              insulationBatches={insulationBatches}
+              sheatBatches={sheatBatches}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+            />
+          </div>
         )}
       </div>
     </div>

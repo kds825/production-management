@@ -91,6 +91,7 @@ def _db_task_to_response(
     batch: ProductionBatchModel,
     group_volume_m: float | None = None,
     group_order_count: int = 1,
+    color_change_min: int = 0,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
@@ -152,6 +153,8 @@ def _db_task_to_response(
         else [],
         notes=batch.remarks or "",
         changeover_min=int(task.setup_time_min or 0),
+        setup_time_min=int(task.setup_time_min or 0),
+        color_change_min=color_change_min,
         duration_hours=duration_hours,
         customer=batch.customer_name or "",
         batch_group=task.batch_group or "",
@@ -217,24 +220,33 @@ def list_tasks(
 
     db_tasks = q.order_by(ScheduleTaskModel.start_datetime).all()
 
-    # batch_group별 합산 volume 계산
-    group_volumes: dict[str, float] = {}
-    group_counts: dict[str, int] = {}
+    # batch_group별 합산 volume 계산 — 단일 그룹 쿼리로 N+1 해소
+    group_stats_rows = (
+        db.query(
+            ProductionBatchModel.batch_group,
+            func.sum(ProductionBatchModel.total_length_m),
+            func.count(ProductionBatchModel.batch_id),
+        )
+        .filter(ProductionBatchModel.batch_group.isnot(None))
+        .group_by(ProductionBatchModel.batch_group)
+        .all()
+    )
+    group_volumes = {bg: float(vol or 0) for bg, vol, _ in group_stats_rows}
+    group_counts = {bg: int(cnt or 1) for bg, _, cnt in group_stats_rows}
+
+    # 색상교체 시간 계산을 위해 같은 설비의 직전 배치 sheath_color 조회
+    prev_colors: dict[str, str] = {}  # equipment_code → 직전 batch sheath_color
+    color_change_map: dict[int, int] = {}  # task_id → color_change_min
     for task_row, batch_row in db_tasks:
-        bg = task_row.batch_group
-        if bg:
-            all_in_group = (
-                db.query(func.sum(ProductionBatchModel.total_length_m))
-                .filter(ProductionBatchModel.batch_group == bg)
-                .scalar()
-            )
-            group_volumes[bg] = float(all_in_group or 0)
-            cnt = (
-                db.query(func.count(ProductionBatchModel.batch_id))
-                .filter(ProductionBatchModel.batch_group == bg)
-                .scalar()
-            )
-            group_counts[bg] = int(cnt or 1)
+        eq = task_row.equipment_code
+        curr_color = (batch_row.sheath_color or "").strip()
+        if batch_row.process_name in ("저압시스", "고압시스", "HFCO시스"):
+            prev_color = prev_colors.get(eq, "")
+            if prev_color and curr_color and prev_color != curr_color:
+                color_change_map[task_row.task_id] = (
+                    120  # default, could query SpeedMaster
+                )
+        prev_colors[eq] = curr_color
 
     return [
         _db_task_to_response(
@@ -242,6 +254,7 @@ def list_tasks(
             batch,
             group_volume_m=group_volumes.get(task.batch_group),
             group_order_count=group_counts.get(task.batch_group, 1),
+            color_change_min=color_change_map.get(task.task_id, 0),
         )
         for task, batch in db_tasks
     ]

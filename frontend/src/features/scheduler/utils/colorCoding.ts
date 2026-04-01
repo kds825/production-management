@@ -2,7 +2,7 @@
  * colorCoding.ts
  *
  * 제품 그룹, 작업 상태, 우선순위에 따른 색상 결정 함수 모음.
- * TaskItem 및 기타 컴포넌트에서 공통으로 사용된다.
+ * GanttTaskBlock 및 기타 컴포넌트에서 공통으로 사용된다.
  */
 
 import type { CSSProperties } from "react";

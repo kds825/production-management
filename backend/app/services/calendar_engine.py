@@ -112,8 +112,14 @@ def calculate_end_datetime(
         # Available minutes from current time to end of working window
         available_min = max(0, (day_end - current).total_seconds() / 60)
 
-        # Subtract deduction (부동시간 2hr = 120min, proportional if partial day)
-        deduction_min = 120.0  # 2hr daily deduction
+        # Subtract deduction (부동시간: 월~목 2hr=120min, 금 10hr=600min)
+        weekday = current_date.weekday()
+        if weekday == 4:  # Friday
+            deduction_min = 600.0
+        elif weekday == 0 and _is_last_two_mondays(current_date):
+            deduction_min = 240.0  # 안전교육일 4hr
+        else:
+            deduction_min = 120.0  # Mon~Thu 2hr
         if available_min > deduction_min:
             effective_min = available_min - deduction_min
         else:

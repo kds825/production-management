@@ -1,26 +1,33 @@
-"""작업지시서 Excel 생성 — openpyxl 기반, 공정별 시트 + SQ 그룹핑"""
+"""작업지시서 Excel 생성 — openpyxl 기반, 공정별 시트 + SQ 그룹핑
+
+3.25계획.xls 템플릿 포맷 준수:
+  - 헤더 행 없음 (데이터가 row 1부터 시작)
+  - SQ 그룹 사이 빈 행 + 소계(SUM 수식) + 주석 행
+  - 폰트 색상: 짙은 회색(WIP 재고), 파란색(신규), 주황색 볼드(소계/주석)
+"""
 
 from io import BytesIO
 from datetime import date
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, Border, Side
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 
 
-# Visible columns rendered in the sheet
+# Visible columns rendered in the sheet (헤더 행은 없지만 열 순서 정의용)
+# 조장(m) = 드럼길이, 조수 = 드럼수 (현장 용어)
 VISIBLE_COLS = [
-    "품종",
-    "규격",
-    "색상",
-    "거래처",
-    "납기",
-    "드럼길이",
-    "드럼수",
-    "총길이",
-    "비고",
+    "품종",  # col 1 (A)
+    "규격",  # col 2 (B)
+    "색상",  # col 3 (C)
+    "거래처",  # col 4 (D)
+    "납기",  # col 5 (E)
+    "조장(m)",  # col 6 (F) — drum_length_m
+    "조수",  # col 7 (G) — drum_count
+    "총길이(m)",  # col 8 (H) — total_length_m
+    "비고",  # col 9 (I)
 ]
 # Hidden columns appended after visible ones (preserved for downstream use)
 HIDDEN_COLS = ["수주번호", "batch_id", "단가", "CU/AL량", "상태", "재공매칭"]
@@ -30,19 +37,16 @@ _SHEET_ORDER = ["연선", "B100", "A100", "A120", "연합", "CV절연", "A150시
 
 # ── Styles ────────────────────────────────────────────────────────────────────
 
-_HEADER_FONT = Font(bold=True, size=10)
-_HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
-_SUBTOTAL_FONT_LABEL = Font(bold=True, color="00B050", size=10)  # 녹색 텍스트
-_SUBTOTAL_FONT_NUM = Font(bold=True, size=10)
-_WIP_FILL = PatternFill("solid", fgColor="C6EFCE")  # green — WIP 매칭됨
+# 폰트 색상 코딩 (3.25계획.xls 템플릿 기준)
+_WIP_FONT = Font(color="333333", size=10)  # 짙은 회색 — WIP 재공재고 사용 행
+_NEW_FONT = Font(color="0066CC", size=10)  # 파란색 — 신규 스케줄 행
+_SUBTOTAL_FONT = Font(color="FF6600", bold=True, size=10)  # 주황색 볼드 — 소계/주석
 _THIN_BORDER = Border(
     left=Side(style="thin"),
     right=Side(style="thin"),
     top=Side(style="thin"),
     bottom=Side(style="thin"),
 )
-_CENTER = Alignment(horizontal="center", vertical="center")
-
 # Column widths (index-aligned to VISIBLE_COLS + HIDDEN_COLS)
 _COL_WIDTHS = [15, 22, 8, 18, 12, 10, 8, 12, 25, 14, 10, 10, 10, 8, 10]
 
@@ -115,7 +119,7 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         if sname not in sheet_data:
             continue
         ws = wb.create_sheet(title=sname)
-        _write_sheet(ws, sheet_data[sname], wip_stage_lookup)
+        _write_sheet(ws, sheet_data[sname], wip_stage_lookup, sname)
 
     output = BytesIO()
     wb.save(output)
@@ -214,19 +218,23 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
 
 
 def _write_sheet(
-    ws, batches: list[ProductionBatch], wip_stage_lookup: dict[int, str]
+    ws,
+    batches: list[ProductionBatch],
+    wip_stage_lookup: dict[int, str],
+    sheet_name: str,
 ) -> None:
-    """단일 시트에 헤더 → 데이터 행(batch_group 소계 포함) → 서식 적용.
+    """단일 시트에 데이터 행(batch_group 소계 포함) → 서식 적용.
 
+    3.25계획.xls 포맷: 헤더 없음, row 1부터 데이터 시작.
     batch_group 기준으로 배치를 그룹핑하여 순서대로 출력하고,
-    각 그룹의 마지막 행 다음에 소계행을 삽입한다.
+    각 그룹 마지막 행 다음에 소계행 + 주석행을 삽입한다.
     """
     from collections import OrderedDict
 
     all_cols = VISIBLE_COLS + HIDDEN_COLS
     total_cols = len(all_cols)
 
-    _write_header(ws, all_cols)
+    # 헤더 행 없음 — 3.25계획.xls 템플릿 준수
     _apply_col_widths(ws, total_cols)
     _hide_trailing_cols(ws, len(VISIBLE_COLS) + 1, total_cols)
 
@@ -236,18 +244,24 @@ def _write_sheet(
         bg = batch.batch_group or f"_unknown_{int(batch.sq_mm2 or 0)}SQ"
         groups.setdefault(bg, []).append(batch)
 
-    row_num = 2
+    row_num = 1  # 헤더 없으므로 row 1부터 시작
+    is_first_group = True
+
     for batch_group_key, group_batches in groups.items():
-        group_total_m: float = 0.0
-        group_count: int = 0
+        # SQ 그룹 사이에 빈 구분 행 삽입 (첫 그룹 제외)
+        if not is_first_group:
+            row_num += 1  # 빈 행 1줄
+        is_first_group = False
+
+        group_start_row = row_num  # SUM 수식 범위 시작점
+        group_drum_count_total: int = 0
 
         for batch in group_batches:
             # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
             # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
             color_label = batch.sheath_color or batch.core_colors or ""
             length_m = float(batch.total_length_m or 0)
-            group_total_m += length_m
-            group_count += 1
+            group_drum_count_total += int(batch.drum_count or 1)
             row_num = _write_data_row(
                 ws,
                 row_num,
@@ -264,63 +278,33 @@ def _write_sheet(
             if group_batches[0].sq_mm2 is not None
             else 0.0
         )
+        group_end_row = row_num - 1  # 마지막 데이터 행
+
         row_num = _write_subtotal(
-            ws, row_num, sq, group_total_m, group_count, total_cols
+            ws,
+            row_num,
+            sq,
+            group_start_row,
+            group_end_row,
+            len(group_batches),
+            total_cols,
         )
 
-    # 헤더 고정 + 자동 필터 (가시 열 범위만)
-    ws.freeze_panes = "A2"
-    last_visible_letter = _col_letter(len(VISIBLE_COLS))
-    ws.auto_filter.ref = f"A1:{last_visible_letter}1"
+        # 주석 행: SQ 그룹 요약 (예: "240SQ--->2틀(절연1570)")
+        row_num = _write_annotation(
+            ws,
+            row_num,
+            sq,
+            group_drum_count_total,
+            group_batches,
+            wip_stage_lookup,
+            sheet_name,
+        )
+
+    # 헤더 없으므로 freeze_panes, auto_filter 불필요
 
 
 # ── Row-level helpers ─────────────────────────────────────────────────────────
-
-
-def _expand_color_rows(batch: ProductionBatch) -> list[tuple[str, float]]:
-    """배치를 색상별 (색상 레이블, 길이) 목록으로 변환한다.
-
-    멀티코어(core_count > 1)이고 core_colors에 복수 색상이 있으면
-    총길이를 색상 수로 균등 분배하여 행을 분리한다.
-    싱글코어 또는 색상 정보가 없으면 단일 행으로 반환한다.
-    """
-    core_count = batch.core_count or 1
-    total_m = float(batch.total_length_m or 0)
-
-    # 단일 코어는 분리 불필요
-    if core_count <= 1:
-        color = batch.sheath_color or batch.core_colors or ""
-        return [(color, total_m)]
-
-    # core_colors 파싱 — "갈/흑/회" 또는 "갈,흑,회" 형식 지원
-    raw_colors = batch.core_colors or ""
-    if "/" in raw_colors:
-        colors = [c.strip() for c in raw_colors.split("/") if c.strip()]
-    elif "," in raw_colors:
-        colors = [c.strip() for c in raw_colors.split(",") if c.strip()]
-    else:
-        # 파싱 불가 — 단일 행으로 fallback
-        color = batch.sheath_color or raw_colors or ""
-        return [(color, total_m)]
-
-    if not colors:
-        color = batch.sheath_color or raw_colors or ""
-        return [(color, total_m)]
-
-    # 총길이를 색상 수로 균등 분배 (소수점 버림, 마지막 행에서 나머지 보정)
-    n = len(colors)
-    per_color_m = round(total_m / n, 1)
-    rows: list[tuple[str, float]] = []
-    allocated = 0.0
-    for i, color in enumerate(colors):
-        if i == n - 1:
-            # 마지막 행: 반올림 오차를 흡수
-            length = round(total_m - allocated, 1)
-        else:
-            length = per_color_m
-            allocated += length
-        rows.append((color, length))
-    return rows
 
 
 def _build_remarks(
@@ -328,12 +312,13 @@ def _build_remarks(
     base_remarks: str | None = None,
     *,
     wip_stage: str | None = None,
+    wip_id: int | None = None,
 ) -> str:
     """비고 문자열을 조합한다.
 
     wip_stage: WIP의 실제 process_stage ("연선재고", "절연재고" 등).
     절연재고는 연선·절연 공정 모두에서 "절연재고 사용"으로 표시한다.
-    (이전: batch.process_name에서 유도 → 연선 시트에서 잘못 표시되던 버그 수정)
+    wip_id: WIP ID (lot 참조용) — "연선4520 사용" 같은 형태로 표시.
     """
     parts: list[str] = []
 
@@ -341,10 +326,16 @@ def _build_remarks(
     if base_remarks:
         parts.append(base_remarks.strip())
 
-    # WIP 매칭 텍스트 — 실제 WIP 종류를 그대로 사용
+    # WIP 매칭 텍스트 — 실제 WIP 종류를 그대로 사용 + lot 참조
     if batch.wip_matched_id is not None:
         if wip_stage:
-            parts.append(f"{wip_stage} 사용")
+            # "절연재고" → "절연재고 사용", lot ID 추가: "절연4520 사용"
+            # process_stage에서 "재고" 접미사를 제거하고 wip_id 붙임
+            stage_prefix = wip_stage.replace("재고", "")
+            if wip_id is not None:
+                parts.append(f"{stage_prefix}{wip_id} 사용")
+            else:
+                parts.append(f"{wip_stage} 사용")
         else:
             parts.append("재공재고 사용")
 
@@ -356,16 +347,6 @@ def _build_remarks(
     return " / ".join(parts)
 
 
-def _write_header(ws, all_cols: list[str]) -> None:
-    """행 1에 헤더 셀을 쓰고 스타일을 적용한다."""
-    for col_idx, col_name in enumerate(all_cols, 1):
-        cell = ws.cell(row=1, column=col_idx, value=col_name)
-        cell.font = _HEADER_FONT
-        cell.fill = _HEADER_FILL
-        cell.border = _THIN_BORDER
-        cell.alignment = _CENTER
-
-
 def _write_data_row(
     ws,
     row_num: int,
@@ -375,7 +356,12 @@ def _write_data_row(
     length_m: float,
     wip_stage_lookup: dict[int, str],
 ) -> int:
-    """배치 1건(색상 분리 후 단일 행)을 데이터 행으로 작성하고 다음 row_num을 반환한다."""
+    """배치 1건을 데이터 행으로 작성하고 다음 row_num을 반환한다.
+
+    WIP 매칭 여부에 따라 폰트 색상을 분기한다:
+      - WIP 매칭 → 짙은 회색(_WIP_FONT) — 재공재고 사용 행
+      - 신규 → 파란색(_NEW_FONT) — 새로 편성된 행
+    """
     due_str = (
         batch.due_date.strftime("%Y%m%d")
         if isinstance(batch.due_date, date)
@@ -391,9 +377,11 @@ def _write_data_row(
 
     # WIP 실제 종류 조회: wip_stage_lookup에서 process_stage 가져옴
     wip_stage: str | None = None
+    wip_id: int | None = None
     if batch.wip_matched_id is not None:
         wip_stage = wip_stage_lookup.get(batch.wip_matched_id)
-    remarks = _build_remarks(batch, batch.remarks, wip_stage=wip_stage)
+        wip_id = batch.wip_matched_id
+    remarks = _build_remarks(batch, batch.remarks, wip_stage=wip_stage, wip_id=wip_id)
 
     visible_values = [
         batch.product_group or "",
@@ -415,13 +403,13 @@ def _write_data_row(
         "Y" if batch.wip_matched_id else "",  # 재공매칭 여부
     ]
 
-    row_fill = _WIP_FILL if batch.wip_matched_id else None
+    # 폰트 색상: WIP 매칭 → 짙은 회색, 신규 → 파란색
+    row_font = _WIP_FONT if batch.wip_matched_id else _NEW_FONT
 
     for col_idx, val in enumerate(visible_values + hidden_values, 1):
         cell = ws.cell(row=row_num, column=col_idx, value=val)
         cell.border = _THIN_BORDER
-        if row_fill:
-            cell.fill = row_fill
+        cell.font = row_font
 
     return row_num + 1
 
@@ -430,23 +418,74 @@ def _write_subtotal(
     ws,
     row_num: int,
     sq: float,
-    total_length: float,
+    start_row: int,
+    end_row: int,
     count: int,
     total_cols: int,
 ) -> int:
-    """SQ 그룹 소계 행을 쓰고 다음 row_num을 반환한다."""
+    """SQ 그룹 소계 행을 쓰고 다음 row_num을 반환한다.
+
+    총길이(col H=8) 셀에 =SUM() 수식을 삽입한다.
+    소계 폰트: 주황색 볼드 (RGB 255,102,0).
+    """
     sq_label = int(sq) if sq == int(sq) else sq
+    total_length_col = 8  # H열 = 총길이(m)
 
     label_cell = ws.cell(row=row_num, column=1, value=f"{sq_label}SQ → {count}건")
-    label_cell.font = _SUBTOTAL_FONT_LABEL
+    label_cell.font = _SUBTOTAL_FONT
 
-    # 총길이(8번째 가시 열)에 소계 합산값 표시
-    total_cell = ws.cell(row=row_num, column=8, value=round(total_length, 1))
-    total_cell.font = _SUBTOTAL_FONT_NUM
+    # 총길이(H열)에 SUM 수식 — 영문 함수명 사용 (openpyxl 요건)
+    col_letter = _col_letter(total_length_col)
+    sum_formula = f"=SUM({col_letter}{start_row}:{col_letter}{end_row})"
+    total_cell = ws.cell(row=row_num, column=total_length_col, value=sum_formula)
+    total_cell.font = _SUBTOTAL_FONT
 
     # 소계 행 전체에 테두리 적용
     for col_idx in range(1, total_cols + 1):
         ws.cell(row=row_num, column=col_idx).border = _THIN_BORDER
+
+    return row_num + 1
+
+
+def _write_annotation(
+    ws,
+    row_num: int,
+    sq: float,
+    drum_count_total: int,
+    group_batches: list[ProductionBatch],
+    wip_stage_lookup: dict[int, str],
+    sheet_name: str,
+) -> int:
+    """SQ 그룹 주석 행을 쓰고 다음 row_num을 반환한다.
+
+    연선 시트: "240SQ--->2틀" (drum_count 합계)
+    기타 시트: WIP 참조 정보가 있으면 "(절연1570)" 등 포함.
+    포맷: 주황색 볼드 (RGB 255,102,0).
+    """
+    sq_label = int(sq) if sq == int(sq) else sq
+
+    # WIP 참조 텍스트 수집 — 그룹 내 WIP 매칭된 배치의 process_stage + wip_id
+    wip_refs: list[str] = []
+    for b in group_batches:
+        if b.wip_matched_id is not None:
+            stage = wip_stage_lookup.get(b.wip_matched_id, "")
+            # "절연재고" → "절연", "연선재고" → "연선" (접미사 제거)
+            stage_short = stage.replace("재고", "") if stage else ""
+            wip_refs.append(f"{stage_short}{b.wip_matched_id}")
+
+    if sheet_name == "연선":
+        # 연선 시트: 틀 수(drum count) 표시
+        annotation = f"{sq_label}SQ--->{drum_count_total}틀"
+        if wip_refs:
+            annotation += f"({', '.join(wip_refs)})"
+    else:
+        # 기타 시트: WIP 참조 정보만 표시 (없으면 틀 수만)
+        annotation = f"{sq_label}SQ--->{drum_count_total}틀"
+        if wip_refs:
+            annotation += f"({', '.join(wip_refs)})"
+
+    cell = ws.cell(row=row_num, column=1, value=annotation)
+    cell.font = _SUBTOTAL_FONT
 
     return row_num + 1
 
