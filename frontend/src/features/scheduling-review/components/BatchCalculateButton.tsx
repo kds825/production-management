@@ -32,7 +32,7 @@ export function BatchCalculateButton({
 
   let bgColor = PRIMARY;
   let hoverColor = PRIMARY_HOVER;
-  let label = "AI 재분석";
+  let label = isCalculated ? "AI 재분석" : "AI 배치 분석";
   let textColor = "#FFFFFF";
   let cursor = "pointer";
   let clickable = true;

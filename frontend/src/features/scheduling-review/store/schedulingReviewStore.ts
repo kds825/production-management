@@ -297,9 +297,8 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         // 외주 분류 수주 병렬 로드
         get().loadOutsourcedOrders(runLabel);
 
-        // 배치 로드 완료 후 AI 분석 상태 자동 폴링 시작
-        // Stage 2에서 이미 백그라운드로 AI 분석이 시작되었을 수 있음
-        get().pollAiStatus();
+        // AI 분석은 사용자가 명시적으로 버튼을 클릭할 때만 실행
+        // (자동 폴링 제거 — LLM 비용 절감)
       } catch (err) {
         set((state) => {
           state.isLoading = false;
