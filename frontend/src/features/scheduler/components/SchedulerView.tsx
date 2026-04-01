@@ -589,15 +589,15 @@ function GridLines({
 // ----- 공정 순서 (클라이언트 보조 정렬) -----
 
 const PROCESS_TYPE_ORDER: Record<string, number> = {
-  drawing: 0,
-  stranding: 1,
-  lv_insulation: 2,
-  hv_insulation: 2,
-  taping: 3,
-  cabling: 3,
-  lv_jacketing: 4,
-  hv_jacketing: 4,
-  neutral_wire: 4,
+  신선: 0,
+  연선: 1,
+  저압절연: 2,
+  고압절연: 2,
+  "T/P": 3,
+  연합: 3,
+  저압시스: 4,
+  고압시스: 4,
+  HFCO시스: 4,
 };
 
 // ----- 필터 훅 -----
@@ -653,24 +653,26 @@ export function equipmentMatchesGroup(
   taskSq?: number,
   taskMaterial?: string,
 ): boolean {
-  const processType = equipment.process_type.toLowerCase();
+  const processType = equipment.process_type;
   const name = equipment.name.toUpperCase();
 
-  // 기존 그룹 매칭 로직
+  // 그룹 매칭 — process_type은 한국어 (연선, 저압절연 등)
   let groupMatch: boolean;
   switch (group) {
     case "연선":
-      // 연선기(stranding) 또는 신선기(drawing)
-      groupMatch = processType === "stranding" || processType === "drawing";
+      groupMatch = processType === "연선" || processType === "신선";
       break;
     case "B100":
-      groupMatch = name.includes("B100");
+      groupMatch =
+        name.includes("B100") ||
+        processType === "저압절연" ||
+        processType === "고압절연";
       break;
     case "A100":
-      groupMatch = name.includes("A100");
+      groupMatch = name.includes("A100") || name.includes("A150");
       break;
     case "A120":
-      groupMatch = name.includes("A120") || name.includes("A150");
+      groupMatch = name.includes("A120") || name.includes("B150");
       break;
     default:
       groupMatch = true;
