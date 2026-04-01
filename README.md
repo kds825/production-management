@@ -20,9 +20,16 @@ ERP 수주 + 재공실사 데이터를 업로드하면 공정별 작업지시서
 
 ## 필수 환경
 
-- Python 3.11+
+- Python 3.11+ (3.9 이상 필수 — `zoneinfo` 표준 라이브러리 사용)
 - Node.js 18+
 - PostgreSQL 15+ (Docker 또는 Supabase)
+
+### Windows 실행 시 참고
+
+- `psycopg2-binary`: Windows wheel 제공 (별도 설치 불필요)
+- `uvicorn[standard]`: Windows에서 `uvloop` 대신 `asyncio` 사용 (자동)
+- `venv` 생성: `python -m venv venv && venv\Scripts\activate`
+- `npm` 실행: PowerShell 또는 Git Bash 권장
 
 ---
 
