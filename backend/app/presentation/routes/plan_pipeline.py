@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
-from app.services.batch_grouping import create_batches
+from app.services.batch_grouping import create_batches, format_spec_display
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
@@ -234,7 +234,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "status": b.status,
             "order_status": order_status,
             "remarks": b.remarks,
-            "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
+            "spec_raw": format_spec_display(getattr(b, "spec_raw", None), b.core_count or 1, float(b.sq_mm2 or 0)),
             "core_colors": b.core_colors or "",
             "voltage": b.voltage,
             "equipment_code": b.equipment_code,
@@ -436,7 +436,7 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
         {
             "batch_id": b.batch_id,
             "sales_order_id": b.sales_order_id,
-            "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
+            "spec_raw": format_spec_display(getattr(b, "spec_raw", None), b.core_count or 1, float(b.sq_mm2 or 0)),
             "sheath_color": b.sheath_color or "",
             "customer_name": b.customer_name or "",
             "due_date": str(b.due_date or ""),

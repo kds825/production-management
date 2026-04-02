@@ -154,7 +154,7 @@ def create_batches(
         order_ref = f"{order.order_id}-{order.order_line}"
 
         # SQ 추출 실패 시 스킵 (규격 텍스트 품질 문제)
-        sq = _extract_sq(order.spec_raw)
+        sq = extract_sq(order.spec_raw)
         if sq is None:
             result["warnings"].append(
                 f"수주 {order_ref}: SQ 파싱 실패 (spec_raw={order.spec_raw!r})"
@@ -301,6 +301,7 @@ def create_batches(
                     remarks=remarks,
                     equipment_code=None,
                     wip_matched_id=wip_id,
+                    spec_raw=order.spec_raw,
                 )
                 batches.append(batch)
 
@@ -355,6 +356,7 @@ def create_batches(
                         remarks=f"61연선 코어 ({int(sq)}SQ용)",
                         equipment_code=None,
                         wip_matched_id=wip_id,
+                        spec_raw=order.spec_raw,
                     )
                     batches.append(core_batch)
 
@@ -435,7 +437,7 @@ def create_batches(
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────
 
 
-def _extract_sq(spec_raw: str | None) -> float | None:
+def extract_sq(spec_raw: str | None) -> float | None:
     """
     규격 텍스트에서 SQ(mm²) 값을 추출한다.
 
@@ -471,6 +473,36 @@ def _extract_sq(spec_raw: str | None) -> float | None:
             return sq_val
 
     return None
+
+
+def format_spec_display(
+    spec_raw: str | None,
+    core_count: int,
+    sq_mm2: float,
+) -> str:
+    """
+    규격 표시 문자열을 반환한다.
+
+    고압 제품(AWG / KCMIL 단위)은 원본 단위를 그대로 사용하고,
+    일반 저압 제품은 "{core_count}C x {sq_mm2}SQ" 형태를 반환한다.
+
+    지원 패턴 (spec_raw 기준):
+      - "4C x 4/0AWG(107SQ)"   → "4C x 4/0AWG"
+      - "1C x 500KCMIL(253SQ)" → "1C x 500KCMIL"
+      - "4C x 35SQ"            → "4C x 35SQ"  (기본)
+    """
+    if spec_raw:
+        # AWG 표기 — "4/0AWG" 또는 "2AWG" 등
+        m_awg = re.search(r"(\d+/\d+|\d+)\s*AWG", spec_raw, re.IGNORECASE)
+        if m_awg:
+            return f"{core_count}C x {m_awg.group(1)}AWG"
+
+        # KCMIL 표기 — "500KCMIL", "1250 KCMIL" 등
+        m_kcmil = re.search(r"(\d+(?:\.\d+)?)\s*KCMIL", spec_raw, re.IGNORECASE)
+        if m_kcmil:
+            return f"{core_count}C x {m_kcmil.group(1)}KCMIL"
+
+    return f"{core_count}C x {int(sq_mm2)}SQ"
 
 
 def _find_item(order: SalesOrder, items: dict[str, ItemMaster]) -> ItemMaster | None:

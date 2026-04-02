@@ -58,6 +58,9 @@ class ProductionBatch(Base):
     # 예: "연선_120SQ_G01" → 연선 120SQ 1번 그룹
     batch_group = Column(String(50), index=True)
 
+    # 원본 규격 텍스트 (SalesOrder.spec_raw 복사) — 고압 AWG/KCMIL 표기 보존용
+    spec_raw = Column(String(200), nullable=True)
+
     # SM 재고 출력 — 이 배치 생산 시 발생하는 반제품 재고량
     wip_output_expected_m = Column(Numeric, default=0)  # 예상 SM재고 발생량
     wip_output_actual_m = Column(Numeric, nullable=True)  # 실제 SM재고 발생량

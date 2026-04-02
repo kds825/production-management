@@ -27,6 +27,7 @@ from app.presentation.schemas import (
     ScheduleTaskResponse,
     ScheduleTaskUpdate,
 )
+from app.services.batch_grouping import format_spec_display, extract_sq
 
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
 
@@ -112,10 +113,10 @@ def _db_task_to_response(
     else:
         priority = TaskPriority.NORMAL
 
-    # spec: "1C x 633SQ" 형태
+    # spec: 고압이면 "1C x 4/0AWG" / "1C x 500KCMIL", 일반이면 "1C x 633SQ"
     core_count = batch.core_count or 1
-    sq_mm2 = batch.sq_mm2 or 0
-    spec = f"{core_count}C x {int(sq_mm2)}SQ"
+    sq_mm2 = float(batch.sq_mm2 or 0)
+    spec = format_spec_display(getattr(batch, "spec_raw", None), core_count, sq_mm2)
 
     # color: sheath_color 우선, 없으면 core_colors
     color = batch.sheath_color or batch.core_colors or ""
@@ -449,9 +450,8 @@ def update_task(
             .first()
         )
         if target_equip:
-            # 인메모리 태스크의 spec에서 SQ 값 파싱 ("1C x 120SQ" → 120)
-            sq_match = re.search(r"(\d+)SQ", existing.spec or "")
-            sq_val = float(sq_match.group(1)) if sq_match else None
+            # 인메모리 태스크의 spec에서 SQ 값 파싱 (SQ/AWG/KCMIL 모두 처리)
+            sq_val = extract_sq(existing.spec or "")
 
             # SQ 범위 검증
             if (
