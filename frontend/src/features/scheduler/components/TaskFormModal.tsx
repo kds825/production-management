@@ -178,7 +178,7 @@ export function TaskFormModal() {
         });
 
         try {
-          await apiFetch(`/api/schedules/tasks/${taskFormModal.taskId}`, {
+          await apiFetch(`/schedules/tasks/${taskFormModal.taskId}`, {
             method: "PATCH",
             body: JSON.stringify({
               equipment_id: form.equipment_id,
@@ -219,7 +219,7 @@ export function TaskFormModal() {
 
         try {
           const created = await apiFetch<{ id: string }>(
-            "/api/schedules/tasks",
+            "/schedules/tasks",
             {
               method: "POST",
               body: JSON.stringify({

@@ -67,12 +67,12 @@ export function useScheduleData() {
       setError(null);
       try {
         const { dateFrom, dateTo } = getThreeWeekWindow();
-        const tasksUrl = `/api/schedules/tasks?date_from=${dateFrom}&date_to=${dateTo}`;
+        const tasksUrl = `/schedules/tasks?date_from=${dateFrom}&date_to=${dateTo}`;
 
         const [equipment, rawTasks, lineSpeeds] = await Promise.all([
-          apiFetch<Equipment[]>("/api/equipment"),
+          apiFetch<Equipment[]>("/equipment"),
           apiFetch<RawScheduleTask[]>(tasksUrl),
-          apiFetch<LineSpeedEntry[]>("/api/line-speeds").catch(() => {
+          apiFetch<LineSpeedEntry[]>("/line-speeds").catch(() => {
             // 라인 속도 API가 없을 경우 빈 배열로 폴백
             console.warn(
               "[useScheduleData] 라인 속도 API 응답 없음 — 기본값 사용",
