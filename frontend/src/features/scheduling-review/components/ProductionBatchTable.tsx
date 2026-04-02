@@ -26,6 +26,7 @@ interface ProductionBatchTableProps {
 const COL_DEFS = [
   { key: "processGroup", label: "구분", align: "left", width: 60 },
   { key: "batch_label", label: "배치", align: "left", width: 64 },
+  { key: "processStatus", label: "공정상태", align: "left", width: 64 },
   { key: "product", label: "품목", align: "left", width: 120 },
   { key: "spec", label: "규격", align: "left", width: 130 },
   { key: "color", label: "외피색상", align: "left", width: 90 },
