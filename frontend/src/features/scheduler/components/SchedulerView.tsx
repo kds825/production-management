@@ -411,79 +411,87 @@ function DateHeader({
 
   return (
     <div
-      className="relative border-b border-gray-200 bg-white"
       style={{
         height: DATE_HEADER_HEIGHT,
         position: "sticky",
         top: 0,
         zIndex: 10,
         width: "100%",
+        display: "flex",
+        backgroundColor: "#FFFFFF",
+        borderBottom: "1px solid #E5E7EB",
       }}
     >
-      {/* 사이드바 헤더 */}
+      {/* 사이드바 헤더 — 가로 스크롤 시 좌측 고정 */}
       <div
-        className="absolute top-0 bottom-0 flex items-center px-2 bg-gray-50 border-r border-gray-200"
         style={{
           width: SIDEBAR_WIDTH,
-          left: 0,
+          minWidth: SIDEBAR_WIDTH,
           position: "sticky",
+          left: 0,
           zIndex: 11,
+          backgroundColor: "#F9FAFB",
+          borderRight: "1px solid #E5E7EB",
+          display: "flex",
+          alignItems: "center",
+          paddingLeft: 8,
         }}
       >
         <span className="text-xs font-semibold text-gray-500">설비</span>
       </div>
 
-      {/* 날짜 레이블 */}
-      {days.map((day, idx) => {
-        const left =
-          timeToX(day.timestamp, rangeStart, dayWidth) + SIDEBAR_WIDTH;
-        const weekend = isWeekend(day.date);
-        return (
+      {/* 날짜 레이블 영역 — 사이드바 오른쪽부터 클리핑 */}
+      <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
+        {days.map((day, idx) => {
+          const left = timeToX(day.timestamp, rangeStart, dayWidth);
+          const weekend = isWeekend(day.date);
+          return (
+            <div
+              key={idx}
+              style={{
+                position: "absolute",
+                left,
+                top: 0,
+                bottom: 0,
+                display: "flex",
+                alignItems: "center",
+                paddingLeft: 4,
+                borderLeft: "1px solid #E5E7EB",
+                width: dayWidth,
+              }}
+            >
+              <span
+                className="text-[10px] font-medium"
+                style={{ color: weekend ? "#C41230" : "#4B5563" }}
+              >
+                {day.date.getMonth() + 1}/{day.date.getDate()}
+              </span>
+            </div>
+          );
+        })}
+
+        {/* 시간 눈금 */}
+        {hourMarkers.map((marker, idx) => (
           <div
-            key={idx}
+            key={`h-${idx}`}
             style={{
               position: "absolute",
-              left,
+              left: marker.left - SIDEBAR_WIDTH,
               top: 0,
               bottom: 0,
               display: "flex",
-              alignItems: "center",
-              paddingLeft: 4,
-              borderLeft: "1px solid #E5E7EB",
-              width: dayWidth,
+              alignItems: "flex-end",
+              paddingLeft: 3,
+              paddingBottom: 2,
+              borderLeft: "1px dashed #D1D5DB",
             }}
           >
-            <span
-              className="text-[10px] font-medium"
-              style={{ color: weekend ? "#C41230" : "#4B5563" }}
-            >
-              {day.date.getMonth() + 1}/{day.date.getDate()}
+            <span className="text-[8px]" style={{ color: "#9CA3AF" }}>
+              {marker.label}
             </span>
           </div>
-        );
-      })}
-
-      {/* 시간 줌 레벨: 2시간 단위 눈금 */}
-      {hourMarkers.map((marker, idx) => (
-        <div
-          key={`h-${idx}`}
-          style={{
-            position: "absolute",
-            left: marker.left,
-            top: 0,
-            bottom: 0,
-            display: "flex",
-            alignItems: "flex-end",
-            paddingLeft: 3,
-            paddingBottom: 2,
-            borderLeft: "1px dashed #D1D5DB",
-          }}
-        >
-          <span className="text-[8px]" style={{ color: "#9CA3AF" }}>
-            {marker.label}
-          </span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
