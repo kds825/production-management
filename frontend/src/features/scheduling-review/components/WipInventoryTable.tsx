@@ -13,7 +13,7 @@ interface WipInventoryTableProps {
 
 const COL_DEFS = [
   { key: "spec", label: "규격", align: "left", width: 100 },
-  { key: "color", label: "색상", align: "left", width: 60 },
+  { key: "color", label: "선심색상", align: "left", width: 80 },
   { key: "stock", label: "재고", align: "right", width: 70 },
   { key: "convertedQty", label: "환산수량", align: "right", width: 70 },
 ] as const;

@@ -8,6 +8,10 @@ export interface SchedulingBatch extends ProductionBatch {
   processGroup: ProcessGroup;
   processStatus: ProcessStatus;
   convertedQty: number;
+  /** wip_inventory.length_m × count — WIP 재고 실수량 (null이면 WIP 미매칭) */
+  wip_total_length_m?: number | null;
+  /** wip_inventory.core_colors — WIP 재고 선심색상 */
+  wip_core_colors?: string | null;
 }
 
 export interface WipItem {

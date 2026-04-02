@@ -30,6 +30,9 @@ interface ApiBatch {
   product_group: string;
   sales_order_id: string;
   wip_matched_id: number | null;
+  wip_length_m: number | null;   // wip_inventory.length_m — 1드럼 기준 길이
+  wip_count: number | null;      // wip_inventory.count — 드럼 수
+  wip_core_colors: string | null; // wip_inventory.core_colors
   status: string;
   order_status: string | null;
   remarks: string | null;
@@ -114,6 +117,10 @@ function toBatch(b: ApiBatch): SchedulingBatch {
       b.order_status === "진행" ? ("진행" as const) : ("대기" as const),
     convertedQty: calcConvertedQty(b.spec_raw, b.total_length_m),
     batch_group: b.batch_group || undefined,
+    wip_total_length_m: b.wip_length_m != null && b.wip_count != null
+      ? b.wip_length_m * b.wip_count
+      : b.wip_length_m ?? null,
+    wip_core_colors: b.wip_core_colors ?? null,
   };
 }
 
@@ -277,6 +284,8 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.aiAnalysisStatus = "idle";
 
           // WIP 매칭된 항목을 WIP 리스트로 표시
+          // stock = wip_inventory.length_m (1드럼 기준 — 드럼 분할 불가)
+          // color = wip_inventory.core_colors (선심색상)
           const wipItems: WipItem[] = batches
             .filter((b) => b.notes === "재고 사용")
             .map((b) => ({
@@ -285,9 +294,9 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
               processGroup: b.processGroup,
               product: b.product,
               spec: b.spec,
-              color: b.color,
-              stock: b.total_length_m,
-              convertedQty: b.convertedQty,
+              color: b.wip_core_colors ?? "",
+              stock: b.wip_total_length_m ?? b.total_length_m,
+              convertedQty: calcConvertedQty(b.spec, b.wip_total_length_m ?? b.total_length_m),
             }));
 
           state.yeonaeoWip = wipItems.filter((w) => w.processGroup === "연선");

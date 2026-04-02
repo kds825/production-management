@@ -37,8 +37,9 @@ def match_wip(run_label: str, db: Session) -> dict:
 
     for wip in wip_items:
         wip_sq = float(wip.cross_section) if wip.cross_section else None
-        wip_length = float(wip.total_length_m) if wip.total_length_m else 0
-        if not wip_sq or wip_length <= 0:
+        # 1드럼(릴) 기준 길이 — 드럼을 분할해서 쓸 수 없으므로 total_length_m이 아닌 length_m 사용
+        wip_drum_length = float(wip.length_m) if wip.length_m else 0
+        if not wip_sq or wip_drum_length <= 0:
             continue
 
         # Find matching order
@@ -69,26 +70,28 @@ def match_wip(run_label: str, db: Session) -> dict:
             if wip.material and order.voltage:
                 pass
 
-            order_qty = float(order.ordered_qty_m or 0)
-            if order_qty <= 0:
+            # 수주 1드럼 기준 조장 — drum_length_m이 없으면 ordered_qty_m으로 대체
+            order_drum_length = float(order.drum_length_m or order.ordered_qty_m or 0)
+            if order_drum_length <= 0:
                 continue
 
-            # Loss check: wip_length must cover order_qty within allowed loss rate
-            if wip_length < order_qty * (1 - loss_limit):
+            # WIP 1드럼이 수주 1드럼을 커버할 수 있는지 비교 (드럼 분할 불가)
+            # Loss check: wip 1드럼이 수주 1드럼 기준 Loss 허용 한도 이상
+            if wip_drum_length < order_drum_length * (1 - loss_limit):
                 continue
 
-            # Shortage tolerance: wip can be slightly shorter than order qty
-            if wip_length < order_qty * (1 - shortage_tolerance):
+            # Shortage tolerance: 소폭 부족도 허용
+            if wip_drum_length < order_drum_length * (1 - shortage_tolerance):
                 continue
 
             # Remainder too small → treat as scrap, still use the WIP
-            remainder = wip_length - order_qty
+            remainder = wip_drum_length - order_drum_length
             if 0 < remainder < min_remainder:
                 pass
 
             order.use_wip = True
             order.wip_type = wip.process_stage
-            order.actual_length_m = wip_length
+            order.actual_length_m = wip_drum_length
             wip.status = "사용완료"
             wip.matched_order_id = f"{order.order_id}:{order.order_line}"
 
@@ -99,8 +102,8 @@ def match_wip(run_label: str, db: Session) -> dict:
                     "wip_id": wip.wip_id,
                     "wip_process": wip.process_stage,
                     "sq": wip_sq,
-                    "wip_length": wip_length,
-                    "order_qty": order_qty,
+                    "wip_drum_length": wip_drum_length,
+                    "order_drum_length": order_drum_length,
                 }
             )
 
@@ -115,14 +118,14 @@ def match_wip(run_label: str, db: Session) -> dict:
                         "name": "재공 활용",
                         "result": "pass",
                         "detail": (
-                            f"WIP {wip.wip_id}({wip.process_stage} {wip_sq}SQ {wip_length}m)"
-                            f" → 수주 {order.order_id}"
+                            f"WIP {wip.wip_id}({wip.process_stage} {wip_sq}SQ {wip_drum_length}m/드럼)"
+                            f" → 수주 {order.order_id} ({order_drum_length}m/드럼)"
                         ),
                     }
                 ],
                 reason=(
-                    f"재공 매칭: {wip.process_stage} {wip_sq}SQ {wip_length}m"
-                    f" → {order.order_id} ({order_qty}m)"
+                    f"재공 매칭: {wip.process_stage} {wip_sq}SQ {wip_drum_length}m/드럼"
+                    f" → {order.order_id} ({order_drum_length}m/드럼)"
                 ),
             )
             break  # One WIP per order

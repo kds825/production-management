@@ -36,9 +36,11 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
         "inserted": 0, "updated": 0, "warnings": [],
     }
 
-    # ── 기존 레코드 로드 — order_id 기준 upsert 판단에 사용 ──────────────────
-    existing_orders: dict[str, SalesOrder] = {
-        o.order_id: o for o in db.query(SalesOrder).all()
+    # ── 기존 레코드 로드 — (order_id, product_group, spec_raw, drum_length_m) 복합키 ──
+    # 수주번호+제품군+규격+조장이 모두 같은 경우만 동일 행으로 간주
+    existing_orders: dict[tuple, SalesOrder] = {
+        (o.order_id, o.product_group or "", o.spec_raw or "", float(o.drum_length_m or 0)): o
+        for o in db.query(SalesOrder).all()
     }
     # 신규 삽입 시 order_line 중복 방지: 기존 최대값 이후부터 부여
     existing_max_line: int = max(
@@ -65,10 +67,14 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
         # ── 컬럼명 → 인덱스 맵 구성 ────────────────────────────────────────────
         headers = _build_header_map(sheet, header_row_idx)
 
+        # 수주번호 컬럼 인덱스 — 빈 행 체크에 사용 (컬럼 0 고정이 아닌 실제 위치)
+        order_id_col_idx = headers.get("수주번호")
+
         # ── 데이터 행 파싱 ───────────────────────────────────────────────────────
         for r in range(header_row_idx + 1, sheet.nrows):
-            # 첫 번째 셀(수주번호 위치 또는 컬럼 0)이 비어 있으면 빈 행으로 간주
-            if not str(sheet.cell_value(r, 0)).strip():
+            # 수주번호 컬럼이 비어 있으면 빈 행(합계/소계 행 등)으로 간주 → 건너뜀
+            check_col = order_id_col_idx if order_id_col_idx is not None else 0
+            if not str(sheet.cell_value(r, check_col)).strip():
                 continue
 
             try:
@@ -89,18 +95,23 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                 spec_raw = _get_str(sheet, r, headers, "규격") or ""
                 core_count = _extract_core_count(spec_raw)
 
-                # ── UPSERT: order_id 기준으로 기존재건 UPDATE, 신규건 INSERT ──
-                if order_id in existing_orders:
+                drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
+                product_group = _get_str(sheet, r, headers, "제품군") or ""
+
+                # ── UPSERT: (수주번호, 제품군, 규격, 조장) 복합키 기준 ──
+                upsert_key = (order_id, product_group, spec_raw, float(drum_length_m or 0))
+
+                if upsert_key in existing_orders:
                     # 기존 레코드 UPDATE — order_line(PK)은 유지
-                    existing = existing_orders[order_id]
+                    existing = existing_orders[upsert_key]
                     existing.order_status = sheet_name
                     existing.run_label = run_label
-                    existing.product_group = _get_str(sheet, r, headers, "제품군")
+                    existing.product_group = product_group
                     existing.voltage = _get_str(sheet, r, headers, "전압")
                     existing.spec_raw = spec_raw
                     existing.customer_name = _get_str(sheet, r, headers, "거래처명")
                     existing.due_date = due_date
-                    existing.drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
+                    existing.drum_length_m = drum_length_m
                     existing.drum_count = _get_int(sheet, r, headers, "(수주)개수(ea)")
                     existing.ordered_qty_m = _get_num(sheet, r, headers, "(수주)수량(M)")
                     existing.self_plan_qty_m = _get_num(sheet, r, headers, "(자체)조장")
@@ -121,13 +132,13 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                         order_id=order_id,
                         order_line=new_line_counter,
                         order_status=sheet_name,
-                        product_group=_get_str(sheet, r, headers, "제품군"),
+                        product_group=product_group,
                         voltage=_get_str(sheet, r, headers, "전압"),
                         spec_raw=spec_raw,
                         customer_name=_get_str(sheet, r, headers, "거래처명"),
                         due_date=due_date,
                         due_type="출하기준",
-                        drum_length_m=_get_num(sheet, r, headers, "(수주)조장(M)"),
+                        drum_length_m=drum_length_m,
                         drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
                         ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
                         self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
@@ -143,7 +154,7 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                         run_label=run_label,
                     )
                     db.add(order)
-                    existing_orders[order_id] = order  # 동일 시트 내 중복 방지
+                    existing_orders[upsert_key] = order  # 동일 시트 내 같은 키 중복 방지
                     result["inserted"] += 1
 
                 if is_outsourced:
@@ -164,12 +175,8 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
     all_orders = db.query(SalesOrder).filter(SalesOrder.run_label == run_label).all()
     key_status: defaultdict[tuple, list] = defaultdict(list)
     for o in all_orders:
-        key = (
-            o.order_id,
-            o.spec_raw or "",
-            o.sheath_color or "",
-            float(o.drum_length_m or 0),
-        )
+        # UPSERT 복합키와 동일: (수주번호, 제품군, 규격, 조장)
+        key = (o.order_id, o.product_group or "", o.spec_raw or "", float(o.drum_length_m or 0))
         key_status[key].append(o)
 
     dup_removed = 0

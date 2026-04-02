@@ -174,19 +174,30 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     COLOR_ORDER = {"흑": 0, "갈": 1, "회": 2, "청": 3, "녹/황": 4, "흑/적": 5}
 
     from app.infrastructure.models.sales_order import SalesOrder
+    from app.infrastructure.models.wip_inventory import WipInventory
 
-    # production_batch + sales_order JOIN으로 order_status(진행/대기) 가져오기
+    # production_batch + sales_order + wip_inventory JOIN
     rows = (
-        db.query(ProductionBatch, SalesOrder.order_status)
+        db.query(
+            ProductionBatch,
+            SalesOrder.order_status,
+            WipInventory.length_m,
+            WipInventory.count,
+            WipInventory.core_colors,
+        )
         .outerjoin(
             SalesOrder,
             (ProductionBatch.sales_order_id == SalesOrder.order_id)
             & (ProductionBatch.sales_order_line == SalesOrder.order_line),
         )
+        .outerjoin(
+            WipInventory,
+            ProductionBatch.wip_matched_id == WipInventory.wip_id,
+        )
         .filter(ProductionBatch.run_label == run_label)
         .all()
     )
-    batches = [(b, os or "대기") for b, os in rows]
+    batches = [(b, os or "대기", wip_len_m, wip_cnt, wip_cc) for b, os, wip_len_m, wip_cnt, wip_cc in rows]
     if not batches:
         raise HTTPException(
             status_code=404,
@@ -217,6 +228,9 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "product_group": b.product_group,
             "sales_order_id": b.sales_order_id,
             "wip_matched_id": b.wip_matched_id,
+            "wip_length_m": float(wip_len_m) if wip_len_m is not None else None,
+            "wip_count": int(wip_cnt) if wip_cnt is not None else None,
+            "wip_core_colors": wip_cc or None,
             "status": b.status,
             "order_status": order_status,
             "remarks": b.remarks,
@@ -226,7 +240,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "equipment_code": b.equipment_code,
             "batch_group": b.batch_group,
         }
-        for b, order_status in batches
+        for b, order_status, wip_len_m, wip_cnt, wip_cc in batches
     ]
 
 
