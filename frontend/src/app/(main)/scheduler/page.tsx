@@ -32,7 +32,7 @@ import { ConflictResolutionModal } from "@/features/scheduler/components/Conflic
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
-import { xToTime, SIDEBAR_WIDTH } from "@/features/scheduler/utils/ganttUtils";
+import { xToTime, computeTimeBreakdown } from "@/features/scheduler/utils/ganttUtils";
 
 /** 드래그 중인 아이템 정보 */
 interface ActiveDragItem {
@@ -523,7 +523,6 @@ export default function SchedulerPage() {
       // --- 기존 작업을 다른 설비로 이동 ---
       if (activeData.type === "task") {
         const task = activeData.task as ScheduleTask;
-        const rangeStart = range.start;
 
         // 현재 작업의 duration을 유지한 채 새 위치로 이동
         const taskStartTs =
@@ -1179,6 +1178,34 @@ export default function SchedulerPage() {
                       )}
                     </div>
                   )}
+
+                  {/* 작업 시간 구성 */}
+                  {selectedTask && (() => {
+                    const startTs = new Date(selectedTask.start).getTime();
+                    const endTs = new Date(selectedTask.end).getTime();
+                    const setupMin = (selectedTask as { setup_time_min?: number }).setup_time_min ?? selectedTask.changeover_min ?? 0;
+                    const colorChangeMin = (selectedTask as { color_change_min?: number }).color_change_min ?? 0;
+                    const tb = computeTimeBreakdown(startTs, endTs, setupMin + colorChangeMin);
+                    const totalHrs = ((endTs - startTs) / (60 * 60 * 1000)).toFixed(1);
+                    return (
+                      <div className="px-4 py-2 border-t" style={{ borderColor: "#F3F4F6" }}>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <svg width="10" height="10" viewBox="0 0 16 16" fill="#9CA3AF">
+                            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
+                          </svg>
+                          <span className="text-[10px] font-medium text-gray-400">작업 시간 구성</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+                          <span><span className="text-gray-400">총 기간</span> <span className="font-medium text-gray-700">{totalHrs}h</span></span>
+                          <span><span className="text-gray-400">실제 작업</span> <span className="font-medium" style={{ color: "#C41230" }}>{tb.actualWork.toFixed(1)}h</span></span>
+                          {tb.weekendHrs > 0 && <span><span className="text-gray-400">주말 휴무</span> <span className="text-gray-600">{tb.weekendHrs}h</span></span>}
+                          <span><span className="text-gray-400">일일 부동</span> <span className="text-gray-600">{tb.dailyIdleHrs}h</span></span>
+                          {setupMin > 0 && <span><span className="text-gray-400">규격교체</span> <span className="text-gray-600">{setupMin}분</span></span>}
+                          {colorChangeMin > 0 && <span><span className="text-gray-400">색상교체</span> <span className="text-gray-600">{colorChangeMin}분</span></span>}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* AI 스케줄링 근거 */}
                   <div className="px-4 py-2">

@@ -10,7 +10,7 @@ import {
   getPriorityStyle,
   getStatusStyle,
 } from "../utils/colorCoding";
-import { timeToX, ROW_HEIGHT } from "../utils/ganttUtils";
+import { timeToX, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
 
 interface GanttTaskBlockProps {
   task: ScheduleTask;
@@ -18,8 +18,58 @@ interface GanttTaskBlockProps {
   dayWidth: number;
 }
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
+
+/**
+ * 주말(토 00:00 ~ 월 00:00)을 건너뛰어 연속 평일 구간 배열을 반환한다.
+ * 블록이 금요일을 넘어 이어지면 금요일 자정(토 00:00)에서 끊고
+ * 다음 월요일 00:00에 새 구간을 시작한다.
+ */
+function splitByWeekends(
+  startTs: number,
+  endTs: number,
+): { start: number; end: number }[] {
+  const segments: { start: number; end: number }[] = [];
+  let cur = startTs;
+
+  while (cur < endTs) {
+    const day = new Date(cur).getDay(); // 0=Sun, 6=Sat
+
+    // 주말이면 월요일 00:00으로 이동
+    if (day === 6) {
+      const mon = new Date(cur);
+      mon.setHours(0, 0, 0, 0);
+      mon.setDate(mon.getDate() + 2);
+      cur = mon.getTime();
+      continue;
+    }
+    if (day === 0) {
+      const mon = new Date(cur);
+      mon.setHours(0, 0, 0, 0);
+      mon.setDate(mon.getDate() + 1);
+      cur = mon.getTime();
+      continue;
+    }
+
+    // 다음 토요일 00:00 계산 (6 - day: Mon=5, Tue=4, ..., Fri=1)
+    const nextSat = new Date(cur);
+    nextSat.setHours(0, 0, 0, 0);
+    nextSat.setDate(nextSat.getDate() + (6 - day));
+
+    const segEnd = Math.min(endTs, nextSat.getTime());
+    if (segEnd > cur) segments.push({ start: cur, end: segEnd });
+
+    cur = segEnd;
+    // 토요일에 도달하면 월요일로 점프
+    if (cur < endTs && cur === nextSat.getTime()) {
+      const mon = new Date(cur);
+      mon.setDate(mon.getDate() + 2);
+      cur = mon.getTime();
+    }
+  }
+
+  return segments.length > 0 ? segments : [{ start: startTs, end: endTs }];
+}
 
 /** 시스 공정(SH-A100/SH-A120) 설비의 sheath_color → 블록 배경색 매핑 */
 const SHEATH_COLOR_MAP: Record<string, string> = {
@@ -143,17 +193,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const selectTask = useScheduleStore((s) => s.selectTask);
   const selectedTaskId = useScheduleStore((s) => s.selectedTaskId);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      // 리사이즈 핸들에서 발생한 이벤트는 무시
-      if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
-      e.stopPropagation();
-      // 이미 선택된 경우 선택 해제, 아니면 선택
-      selectTask(selectedTaskId === task.id ? null : task.id);
-    },
-    [selectTask, selectedTaskId, task.id],
-  );
-
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       if (!isEditMode) return;
@@ -182,23 +221,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const statusStyle = getStatusStyle(task.status, baseColor);
   const HANDLE_W = 6;
 
-  const barStyle: React.CSSProperties = {
-    ...statusStyle,
-    ...priorityStyle,
-    borderRadius: 4,
-    boxShadow: isDragging
-      ? "0 4px 12px rgba(0,0,0,0.3)"
-      : "0 1px 3px rgba(0,0,0,0.15)",
-    userSelect: "none",
-    overflow: "hidden",
-    height: ROW_HEIGHT - 8,
-    opacity: isDragging ? 0 : 1,
-    transition: isDragging ? "none" : "box-shadow 0.15s ease",
-    position: "relative",
-    display: "flex",
-    alignItems: "stretch",
-  };
-
   const handleDotStyle: React.CSSProperties = {
     position: "absolute",
     top: "50%",
@@ -213,98 +235,24 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   const isSelected = selectedTaskId === task.id;
 
-  // --- 시간 구성 팝오버 ---
+  // --- 시간 구성 팝오버 (호버) ---
   const [showTimePopover, setShowTimePopover] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
 
   const totalDurationHrs = ((endTs - startTs) / MS_PER_HOUR).toFixed(1);
   const setupMin = task.setup_time_min ?? task.changeover_min ?? 0;
   const colorChangeMin = task.color_change_min ?? 0;
-  const totalChangeoverMin = setupMin + colorChangeMin;
-
-  // 주말/부동시간 정밀 계산 — 날짜별로 순회
-  // 가동시간: 월~목 08:00~다음날06:00(22h), 금 08:00~22:00(14h), 토일 0h
-  const timeBreakdown = (() => {
-    let weekendHrs = 0;
-    let dailyIdleHrs = 0;
-    let overnightHrs = 0; // 야간(06~08시) + 금 22시~토 00시
-    let workingDays = 0;
-    const details: string[] = [];
-    const cur = new Date(startTs);
-    cur.setHours(0, 0, 0, 0);
-
-    while (cur.getTime() < endTs) {
-      const day = cur.getDay(); // 0=Sun, 6=Sat
-
-      if (day === 0 || day === 6) {
-        weekendHrs += 24;
-        details.push(
-          `${cur.getMonth() + 1}/${cur.getDate()}(${day === 6 ? "토" : "일"}) 휴무`,
-        );
-      } else {
-        workingDays++;
-        if (day === 5) {
-          // 금요일: 가동 14h (08~22시), 부동 10h
-          dailyIdleHrs += 10;
-        } else {
-          // 월~목: 가동 22h (08~06시), 부동 2h (06~08시)
-          dailyIdleHrs += 2;
-        }
-      }
-      cur.setDate(cur.getDate() + 1);
-    }
-    // 월요일 08시 시작 고려: 블록이 주말을 포함하면
-    // 토 00:00 ~ 월 08:00 = 56h (토24+일24+월아침8h)
-    // 이미 토/일 48h 계산됨 → 월 00~08시 8h 추가
-    const startDate = new Date(startTs);
-    const endDate = new Date(endTs);
-    if (
-      startDate.getDay() !== endDate.getDay() ||
-      endTs - startTs > MS_PER_DAY
-    ) {
-      // 다일 블록: 각 평일 아침 08시까지 유휴 (이미 부동시간에 포함)
-      // 주말 후 월요일 00~08시 갭은 weekendHrs에 미포함 → 추가
-      const c2 = new Date(startTs);
-      c2.setHours(0, 0, 0, 0);
-      while (c2.getTime() < endTs) {
-        const d = c2.getDay();
-        // 월요일이고 직전이 일요일(주말)이면 00~08시 8h 추가
-        if (d === 1 && c2.getTime() > startTs) {
-          overnightHrs += 8;
-          details.push(
-            `${c2.getMonth() + 1}/${c2.getDate()}(월) 08시 업무시작`,
-          );
-        }
-        c2.setDate(c2.getDate() + 1);
-      }
-    }
-
-    const totalIdleHrs = weekendHrs + dailyIdleHrs + overnightHrs;
-    const actualWork = Math.max(
-      0,
-      parseFloat(totalDurationHrs) - totalIdleHrs - totalChangeoverMin / 60,
-    );
-    return {
-      weekendHrs: weekendHrs + overnightHrs,
-      dailyIdleHrs,
-      totalIdleHrs,
-      workingDays,
-      actualWork,
-      details,
-    };
-  })();
+  const timeBreakdown = computeTimeBreakdown(
+    startTs,
+    endTs,
+    setupMin + colorChangeMin,
+  );
 
   const handleBlockClick = useCallback(
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
       e.stopPropagation();
-      // 선택 + 팝오버 토글
-      if (selectedTaskId === task.id) {
-        setShowTimePopover((prev) => !prev);
-      } else {
-        selectTask(task.id);
-        setShowTimePopover(true);
-      }
+      selectTask(selectedTaskId === task.id ? null : task.id);
     },
     [selectTask, selectedTaskId, task.id],
   );
@@ -323,12 +271,16 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
       )
     : 0;
 
+  // --- 주말 분할 세그먼트 ---
+  const segments = splitByWeekends(startTs, endTs);
+  // 각 세그먼트의 x 위치는 startTs 기준 상대 좌표로 계산 (previewOffset은 외부 div에 적용)
+  const startX = timeToX(startTs, rangeStart, dayWidth);
+
   return (
     <div
       ref={(node) => {
         setNodeRef(node);
-        (blockRef as React.MutableRefObject<HTMLDivElement | null>).current =
-          node;
+        (blockRef as { current: HTMLDivElement | null }).current = node;
       }}
       data-draggable
       data-task-id={task.id}
@@ -338,173 +290,213 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         left,
         top: 4,
         width: Math.max(width, 30),
+        height: ROW_HEIGHT - 8,
         zIndex: isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
-        outline: isSelected ? "2px solid #FBBF24" : "none",
-        outlineOffset: 1,
-        borderRadius: 4,
       }}
       onClick={handleBlockClick}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
+      onMouseEnter={() => setShowTimePopover(true)}
+      onMouseLeave={() => setShowTimePopover(false)}
     >
-      <div style={barStyle}>
-        {/* 좌측 리사이즈 핸들 — dnd 없음 */}
-        {isEditMode && (
-          <div
-            data-resize-handle="left"
-            style={{
-              width: HANDLE_W,
-              flexShrink: 0,
-              cursor: "w-resize",
-              position: "relative",
-              zIndex: 5,
-            }}
-            onMouseDown={(e) => handleResizeStart("left", e)}
-          >
-            <div style={{ ...handleDotStyle, left: 1 }} />
-          </div>
-        )}
+      {segments.map((seg, idx) => {
+        const isFirst = idx === 0;
+        const isLast = idx === segments.length - 1;
+        const isSingle = segments.length === 1;
+        const segLeft = timeToX(seg.start, rangeStart, dayWidth) - startX;
+        const segW = Math.max(
+          timeToX(seg.end, rangeStart, dayWidth) -
+            timeToX(seg.start, rangeStart, dayWidth),
+          isFirst ? 30 : 4,
+        );
+        const radius = isSingle
+          ? 4
+          : isFirst
+            ? "4px 0 0 4px"
+            : isLast
+              ? "0 4px 4px 0"
+              : 0;
 
-        {/* 규격교체 세그먼트 — 좌측에 어두운 줄무늬 영역으로 표시 */}
-        {hasChangeover && (
-          <div
-            style={{
-              width: changeoverPx,
-              flexShrink: 0,
-              alignSelf: "stretch",
-              // 줄무늬 패턴: 어두운 반투명 색상 + 대각선 스트라이프
-              background:
-                "repeating-linear-gradient(45deg, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 3px, rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 6px)",
-              borderRight: "1px solid rgba(255,255,255,0.3)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-              pointerEvents: "none",
-            }}
-            title={`규격교체: ${task.changeover_min}분`}
-          >
-            {/* 폭이 충분할 때만 교체 시간 텍스트 표시 */}
-            {changeoverPx >= 18 && (
-              <span
+        const segBarStyle: React.CSSProperties = {
+          ...statusStyle,
+          ...priorityStyle,
+          borderRadius: radius,
+          boxShadow: isDragging
+            ? "0 4px 12px rgba(0,0,0,0.3)"
+            : "0 1px 3px rgba(0,0,0,0.15)",
+          userSelect: "none",
+          overflow: "hidden",
+          height: ROW_HEIGHT - 8,
+          opacity: isDragging ? 0 : 1,
+          transition: isDragging ? "none" : "box-shadow 0.15s ease",
+          position: "absolute",
+          left: segLeft,
+          top: 0,
+          width: segW,
+          display: "flex",
+          alignItems: "stretch",
+          outline: isSelected ? "2px solid #FBBF24" : "none",
+          outlineOffset: 1,
+        };
+
+        return (
+          <div key={idx} style={segBarStyle}>
+            {/* 좌측 리사이즈 핸들 — 첫 세그먼트만 */}
+            {isFirst && isEditMode && (
+              <div
+                data-resize-handle="left"
                 style={{
-                  fontSize: 7,
-                  color: "rgba(255,255,255,0.9)",
-                  fontWeight: 700,
-                  textShadow: "0 1px 2px rgba(0,0,0,0.5)",
-                  writingMode:
-                    changeoverPx < 28 ? "vertical-rl" : "horizontal-tb",
-                  whiteSpace: "nowrap",
+                  width: HANDLE_W,
+                  flexShrink: 0,
+                  cursor: "w-resize",
+                  position: "relative",
+                  zIndex: 5,
+                }}
+                onMouseDown={(e) => handleResizeStart("left", e)}
+              >
+                <div style={{ ...handleDotStyle, left: 1 }} />
+              </div>
+            )}
+
+            {/* 규격교체 세그먼트 — 첫 세그먼트만 */}
+            {isFirst && hasChangeover && (
+              <div
+                style={{
+                  width: changeoverPx,
+                  flexShrink: 0,
+                  alignSelf: "stretch",
+                  background:
+                    "repeating-linear-gradient(45deg, rgba(0,0,0,0.35) 0px, rgba(0,0,0,0.35) 3px, rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 6px)",
+                  borderRight: "1px solid rgba(255,255,255,0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  pointerEvents: "none",
+                }}
+                title={`규격교체: ${task.changeover_min}분`}
+              >
+                {changeoverPx >= 18 && (
+                  <span
+                    style={{
+                      fontSize: 7,
+                      color: "rgba(255,255,255,0.9)",
+                      fontWeight: 700,
+                      textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+                      writingMode:
+                        changeoverPx < 28 ? "vertical-rl" : "horizontal-tb",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    교체
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* 가운데 콘텐츠 + dnd listeners — 첫 세그먼트만 */}
+            {isFirst ? (
+              <div
+                {...listeners}
+                {...attributes}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  paddingLeft: 4,
+                  paddingRight: 4,
+                  gap: 1,
+                  cursor: isDragging ? "grabbing" : "grab",
                 }}
               >
-                교체
-              </span>
+                {task.order_id && segW >= 50 && (
+                  <span
+                    className="text-[8px] truncate leading-tight"
+                    style={{
+                      color: "rgba(255,255,255,0.7)",
+                      textShadow: "0 1px 1px rgba(0,0,0,0.4)",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    #{task.order_id}
+                  </span>
+                )}
+                {segW > 60 ? (
+                  <>
+                    <span
+                      className="text-white text-[10px] font-semibold truncate leading-tight"
+                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+                    >
+                      {task.spec || task.product}
+                      {task.color ? ` ${task.color}` : ""}
+                    </span>
+                    <span
+                      className="text-white/80 text-[9px] truncate leading-tight"
+                      style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
+                    >
+                      {volumeLabel}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className="text-white text-[10px] font-semibold truncate leading-tight"
+                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+                    >
+                      {task.product}
+                      {task.spec ? ` ${task.spec}` : ""}
+                    </span>
+                    <span
+                      className="text-white/80 text-[9px] truncate leading-tight"
+                      style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
+                    >
+                      {task.color && `${task.color} `}
+                      {task.core_count > 0 && `${task.core_count}C `}
+                      {volumeLabel}
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : (
+              /* 중간/마지막 세그먼트 — flex 여백 채우기 */
+              <div style={{ flex: 1, minWidth: 0 }} />
+            )}
+
+            {/* 우측 리사이즈 핸들 — 마지막 세그먼트만 */}
+            {isLast && isEditMode && (
+              <div
+                data-resize-handle="right"
+                style={{
+                  width: HANDLE_W,
+                  flexShrink: 0,
+                  cursor: "e-resize",
+                  position: "relative",
+                  zIndex: 5,
+                }}
+                onMouseDown={(e) => handleResizeStart("right", e)}
+              >
+                <div style={{ ...handleDotStyle, right: 1 }} />
+              </div>
+            )}
+
+            {/* 우선순위 배지 — 첫 세그먼트만 */}
+            {isFirst && task.priority !== "normal" && (
+              <div
+                className="absolute top-0.5 right-1 text-[8px] font-bold text-white bg-red-600 rounded px-0.5"
+                style={{ lineHeight: "1.2", zIndex: 3 }}
+              >
+                {task.priority === "critical" ? "긴급" : "우선"}
+              </div>
             )}
           </div>
-        )}
-
-        {/* 가운데 — dnd listeners 여기에만 */}
-        <div
-          {...listeners}
-          {...attributes}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            paddingLeft: 4,
-            paddingRight: 4,
-            gap: 1,
-            cursor: isDragging ? "grabbing" : "grab",
-          }}
-        >
-          {/* 수주 ID — 블록 상단에 작게 표시 */}
-          {task.order_id && width >= 50 && (
-            <span
-              className="text-[8px] truncate leading-tight"
-              style={{
-                color: "rgba(255,255,255,0.7)",
-                textShadow: "0 1px 1px rgba(0,0,0,0.4)",
-                letterSpacing: "0.02em",
-              }}
-            >
-              #{task.order_id}
-            </span>
-          )}
-          {/* 블록이 충분히 넓으면(>60px) 공장 수동 계획표 스타일로 2행 표시:
-              1행: "{spec} {color}"  (예: "95SQ 갈")
-              2행: "{volume_m}m"     (예: "1200m")
-              좁으면 기존 1행 스타일 유지 */}
-          {width > 60 ? (
-            <>
-              <span
-                className="text-white text-[10px] font-semibold truncate leading-tight"
-                style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-              >
-                {task.spec || task.product}
-                {task.color ? ` ${task.color}` : ""}
-              </span>
-              <span
-                className="text-white/80 text-[9px] truncate leading-tight"
-                style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-              >
-                {volumeLabel}
-              </span>
-            </>
-          ) : (
-            <>
-              <span
-                className="text-white text-[10px] font-semibold truncate leading-tight"
-                style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-              >
-                {task.product}
-                {task.spec ? ` ${task.spec}` : ""}
-              </span>
-              <span
-                className="text-white/80 text-[9px] truncate leading-tight"
-                style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-              >
-                {task.color && `${task.color} `}
-                {task.core_count > 0 && `${task.core_count}C `}
-                {volumeLabel}
-              </span>
-            </>
-          )}
-        </div>
-
-        {/* 우측 리사이즈 핸들 — dnd 없음 */}
-        {isEditMode && (
-          <div
-            data-resize-handle="right"
-            style={{
-              width: HANDLE_W,
-              flexShrink: 0,
-              cursor: "e-resize",
-              position: "relative",
-              zIndex: 5,
-            }}
-            onMouseDown={(e) => handleResizeStart("right", e)}
-          >
-            <div style={{ ...handleDotStyle, right: 1 }} />
-          </div>
-        )}
-
-        {/* 우선순위 배지 */}
-        {task.priority !== "normal" && (
-          <div
-            className="absolute top-0.5 right-1 text-[8px] font-bold text-white bg-red-600 rounded px-0.5"
-            style={{ lineHeight: "1.2", zIndex: 3 }}
-          >
-            {task.priority === "critical" ? "긴급" : "우선"}
-          </div>
-        )}
-      </div>
+        );
+      })}
 
       {/* 시간 구성 팝오버 — Portal로 overflow:hidden 회피 */}
       {showTimePopover &&
-        isSelected &&
         typeof document !== "undefined" &&
         createPortal(
           <div

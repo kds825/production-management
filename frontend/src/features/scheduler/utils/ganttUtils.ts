@@ -173,6 +173,81 @@ export function calculateDurationMs(
 }
 
 /**
+ * 작업 시간 구성 계산 — GanttTaskBlock 호버 팝오버 및 상세 패널 공용.
+ * 가동시간: 월~목 08~익일06(22h), 금 08~22(14h), 토일 0h.
+ */
+export interface TimeBreakdown {
+  weekendHrs: number;   // 주말 + 월요일 00~08시
+  dailyIdleHrs: number; // 일일 부동시간
+  totalIdleHrs: number;
+  workingDays: number;
+  actualWork: number;   // 순수 작업 시간(h)
+  details: string[];
+}
+
+export function computeTimeBreakdown(
+  startTs: number,
+  endTs: number,
+  changeoverTotalMin: number, // setupMin + colorChangeMin
+): TimeBreakdown {
+  const MS_PER_DAY_LOCAL = 24 * 60 * 60 * 1000;
+  const MS_PER_HOUR_LOCAL = 60 * 60 * 1000;
+  const totalDurationHrs = (endTs - startTs) / MS_PER_HOUR_LOCAL;
+
+  let weekendHrs = 0;
+  let dailyIdleHrs = 0;
+  let overnightHrs = 0;
+  let workingDays = 0;
+  const details: string[] = [];
+  const cur = new Date(startTs);
+  cur.setHours(0, 0, 0, 0);
+
+  while (cur.getTime() < endTs) {
+    const day = cur.getDay();
+    if (day === 0 || day === 6) {
+      weekendHrs += 24;
+      details.push(
+        `${cur.getMonth() + 1}/${cur.getDate()}(${day === 6 ? "토" : "일"}) 휴무`,
+      );
+    } else {
+      workingDays++;
+      dailyIdleHrs += day === 5 ? 10 : 2;
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // 주말 후 월요일 00~08시 추가
+  if (endTs - startTs > MS_PER_DAY_LOCAL) {
+    const c2 = new Date(startTs);
+    c2.setHours(0, 0, 0, 0);
+    while (c2.getTime() < endTs) {
+      if (c2.getDay() === 1 && c2.getTime() > startTs) {
+        overnightHrs += 8;
+        details.push(
+          `${c2.getMonth() + 1}/${c2.getDate()}(월) 08시 업무시작`,
+        );
+      }
+      c2.setDate(c2.getDate() + 1);
+    }
+  }
+
+  const totalIdleHrs = weekendHrs + dailyIdleHrs + overnightHrs;
+  const actualWork = Math.max(
+    0,
+    totalDurationHrs - totalIdleHrs - changeoverTotalMin / 60,
+  );
+
+  return {
+    weekendHrs: weekendHrs + overnightHrs,
+    dailyIdleHrs,
+    totalIdleHrs,
+    workingDays,
+    actualWork,
+    details,
+  };
+}
+
+/**
  * 주문의 종료 시각을 계산한다.
  */
 export function calculateTaskEnd(
