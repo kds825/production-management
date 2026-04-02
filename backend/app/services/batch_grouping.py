@@ -281,7 +281,7 @@ def create_batches(
                     batch_seq=batch_seq,
                     drum_length_m=drum_length,
                     drum_count=lot_drums,
-                    total_length_m=lot_length,
+                    total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=extra_total,
                     sq_mm2=sq,
                     core_count=core_count,
@@ -335,7 +335,7 @@ def create_batches(
                         batch_seq=0,  # 선행 공정 = seq 0
                         drum_length_m=drum_length,
                         drum_count=drum_count,
-                        total_length_m=lot_length,
+                        total_length_m=float(order.ordered_qty_m or 0),
                         extra_length_m=extra_total,
                         sq_mm2=35,  # 7연선 코어는 소형 SQ로 T6B0에 배정
                         core_count=core_count,

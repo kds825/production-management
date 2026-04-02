@@ -93,7 +93,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     delivery_date: b.due_date,
     length_per_unit_m: b.drum_length_m,
     unit_count: b.drum_count,
-    total_length_m: b.drum_length_m * b.drum_count,
+    total_length_m: b.total_length_m,
     equipment_group: equipmentGroup,
     voltage_type: voltageType,
     notes: b.wip_matched_id ? "재고 사용" : (b.remarks ?? ""),
