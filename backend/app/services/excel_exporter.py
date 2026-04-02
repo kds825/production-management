@@ -278,6 +278,16 @@ def _write_sheet(
     _apply_col_widths(ws, total_cols)
     _hide_trailing_cols(ws, len(VISIBLE_COLS) + 1, total_cols)
 
+    # wip_matched_id별 총 길이(m) 누적
+    # - 비고에서 "절연/연선재고 XXX사용"의 XXX를 wip_id가 아니라 길이 합으로 표시하기 위함
+    wip_total_len_lookup: dict[int, float] = {}
+    for b in batches:
+        if b.wip_matched_id is None:
+            continue
+        wip_total_len_lookup[b.wip_matched_id] = (
+            wip_total_len_lookup.get(b.wip_matched_id, 0.0) + float(b.total_length_m or 0)
+        )
+
     # batch_group 기준 그룹핑 — 원본 정렬 순서를 유지하기 위해 OrderedDict 사용
     groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
     for batch in batches:
@@ -296,21 +306,69 @@ def _write_sheet(
         group_start_row = row_num  # SUM 수식 범위 시작점
         group_drum_count_total: int = 0
 
-        for batch in group_batches:
-            # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
-            # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
-            color_label = batch.sheath_color or batch.core_colors or ""
-            length_m = float(batch.total_length_m or 0)
-            group_drum_count_total += int(batch.drum_count or 1)
-            row_num = _write_data_row(
-                ws,
-                row_num,
-                batch,
-                all_cols,
-                color_label,
-                length_m,
-                wip_stage_lookup,
-            )
+        remarks_col_idx = VISIBLE_COLS.index("비고") + 1  # Excel column index (1-based)
+
+        # batch_group 안에서 wip_matched_id가 "연속으로 동일"한 구간만 병합
+        idx = 0
+        while idx < len(group_batches):
+            block_wip_id = group_batches[idx].wip_matched_id
+            end_idx = idx + 1
+            while end_idx < len(group_batches) and group_batches[end_idx].wip_matched_id == block_wip_id:
+                end_idx += 1
+
+            block_first_row = row_num
+            block_first_remarks_override: str | None = None
+            if block_wip_id is not None and (end_idx - idx) > 1:
+                merged_base_remarks = " / ".join(
+                    b.remarks.strip()
+                    for b in group_batches[idx:end_idx]
+                    if b.remarks and b.remarks.strip()
+                )
+                wip_stage = wip_stage_lookup.get(block_wip_id)
+                wip_total_len_m = wip_total_len_lookup.get(block_wip_id, 0.0)
+                block_first_remarks_override = _build_remarks(
+                    group_batches[idx],
+                    merged_base_remarks or None,
+                    wip_stage=wip_stage,
+                    wip_total_len_m=wip_total_len_m,
+                )
+
+            for j in range(idx, end_idx):
+                batch = group_batches[j]
+                # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
+                # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
+                color_label = batch.sheath_color or batch.core_colors or ""
+                length_m = float(batch.total_length_m or 0)
+                group_drum_count_total += int(batch.drum_count or 1)
+
+                row_num = _write_data_row(
+                    ws,
+                    row_num,
+                    batch,
+                    all_cols,
+                    color_label,
+                    length_m,
+                    wip_stage_lookup,
+                    wip_total_len_lookup,
+                    remarks_override=(
+                        block_first_remarks_override
+                        if j == idx
+                        else ("" if (block_wip_id is not None and j > idx) else None)
+                    ),
+                )
+
+            block_last_row = row_num - 1
+
+            # wip_matched_id가 있는 구간에 대해서만 병합
+            if block_wip_id is not None and block_last_row > block_first_row:
+                ws.merge_cells(
+                    start_row=block_first_row,
+                    start_column=remarks_col_idx,
+                    end_row=block_last_row,
+                    end_column=remarks_col_idx,
+                )
+
+            idx = end_idx
 
         # batch_group에서 SQ 추출하여 소계 레이블 생성
         sq = (
@@ -352,13 +410,13 @@ def _build_remarks(
     base_remarks: str | None = None,
     *,
     wip_stage: str | None = None,
-    wip_id: int | None = None,
+    wip_total_len_m: float | None = None,
 ) -> str:
     """비고 문자열을 조합한다.
 
     wip_stage: WIP의 실제 process_stage ("연선재고", "절연재고" 등).
     절연재고는 연선·절연 공정 모두에서 "절연재고 사용"으로 표시한다.
-    wip_id: WIP ID (lot 참조용) — "연선4520 사용" 같은 형태로 표시.
+    wip_total_len_m: 동일 wip_matched_id에 매칭된 총 길이(m) — "절연재고 XXXm 사용" 형태로 표시.
     """
     parts: list[str] = []
 
@@ -366,18 +424,21 @@ def _build_remarks(
     if base_remarks:
         parts.append(base_remarks.strip())
 
-    # WIP 매칭 텍스트 — 실제 WIP 종류를 그대로 사용 + lot 참조
+    # WIP 매칭 텍스트 — 실제 WIP 종류를 그대로 사용 + 총 길이 참조
     if batch.wip_matched_id is not None:
+        wip_len = float(wip_total_len_m or 0)
+        wip_len_int = int(wip_len) if wip_len > 0 else 0
+
         if wip_stage:
-            # "절연재고" → "절연재고 사용", lot ID 추가: "절연4520 사용"
-            # process_stage에서 "재고" 접미사를 제거하고 wip_id 붙임
-            stage_prefix = wip_stage.replace("재고", "")
-            if wip_id is not None:
-                parts.append(f"{stage_prefix}{wip_id} 사용")
+            if wip_len_int > 0:
+                parts.append(f"{wip_stage}{wip_len_int}m 사용")
             else:
                 parts.append(f"{wip_stage} 사용")
         else:
-            parts.append("재공재고 사용")
+            if wip_len_int > 0:
+                parts.append(f"재공재고 {wip_len_int}m 사용")
+            else:
+                parts.append("재공재고 사용")
 
     # SM 재고 발생 예정량
     wip_out = float(batch.wip_output_expected_m or 0)
@@ -395,6 +456,9 @@ def _write_data_row(
     color_label: str,
     length_m: float,
     wip_stage_lookup: dict[int, str],
+    wip_total_len_lookup: dict[int, float],
+    *,
+    remarks_override: str | None = None,
 ) -> int:
     """배치 1건을 데이터 행으로 작성하고 다음 row_num을 반환한다.
 
@@ -417,11 +481,21 @@ def _write_data_row(
 
     # WIP 실제 종류 조회: wip_stage_lookup에서 process_stage 가져옴
     wip_stage: str | None = None
-    wip_id: int | None = None
+    wip_total_len_m: float | None = None
     if batch.wip_matched_id is not None:
         wip_stage = wip_stage_lookup.get(batch.wip_matched_id)
-        wip_id = batch.wip_matched_id
-    remarks = _build_remarks(batch, batch.remarks, wip_stage=wip_stage, wip_id=wip_id)
+        wip_total_len_m = wip_total_len_lookup.get(batch.wip_matched_id, 0.0)
+
+    remarks = (
+        remarks_override
+        if remarks_override is not None
+        else _build_remarks(
+            batch,
+            batch.remarks,
+            wip_stage=wip_stage,
+            wip_total_len_m=wip_total_len_m,
+        )
+    )
 
     visible_values = [
         batch.product_group or "",

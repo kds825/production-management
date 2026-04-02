@@ -141,6 +141,8 @@ interface ScheduleState {
   viewFilter: ViewFilter;
   zoomLevel: ZoomLevel;
   range: { start: number; end: number };
+  /** +/- 버튼으로 조정하는 픽셀 밀도 배율 (1.0 = 기본값) */
+  dayWidthScale: number;
 
   // 편집 모드 — 기본은 읽기 전용(false)
   isEditMode: boolean;
@@ -274,6 +276,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "day",
     range: getDefaultRange(7), // day 줌: ±7일 = 2주 뷰
+    dayWidthScale: 1.0,
     isEditMode: false,
     savedVersions: [],
     showSavedToast: false,
