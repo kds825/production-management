@@ -721,6 +721,7 @@ export function SchedulerView({
   const tasks = useScheduleStore((s) => s.tasks);
   const viewFilter = useScheduleStore((s) => s.viewFilter);
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
+  const dayWidthScale = useScheduleStore((s) => s.dayWidthScale);
   const range = useScheduleStore((s) => s.range);
 
   // 필터 적용
@@ -751,10 +752,10 @@ export function SchedulerView({
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const totalDays = Math.max((rangeEnd - rangeStart) / MS_PER_DAY, 1);
   const availableWidth = Math.max(containerWidth - SIDEBAR_WIDTH, 100);
-  // dayWidth: fit-to-container와 줌 레벨 최솟값 중 큰 값 사용
-  // - 줌인(범위 좁음): fit이 크므로 항상 화면을 채움 (사라지지 않음)
-  // - 줌아웃(범위 넓음): preset이 하한선 → 넘으면 가로 스크롤 등장
-  const dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel], availableWidth / totalDays);
+  // dayWidth: (줌 레벨 기본값 × scale) 와 fit-to-container 중 큰 값
+  // - +/-로 scale을 키우면 픽셀 밀도 증가 → 가로 스크롤 등장
+  // - range는 그대로 유지 → 작업 컬링 범위 불변, 스크롤로 전체 탐색 가능
+  const dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, availableWidth / totalDays);
   const timelineWidth = dayWidth * totalDays;
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 

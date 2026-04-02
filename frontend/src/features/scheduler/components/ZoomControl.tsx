@@ -18,6 +18,8 @@ export function ZoomControl() {
   const setZoomLevel = useScheduleStore((s) => s.setZoomLevel);
   const range = useScheduleStore((s) => s.range);
   const setRange = useScheduleStore((s) => s.setRange);
+  const dayWidthScale = useScheduleStore((s) => s.dayWidthScale);
+  const setDayWidthScale = useScheduleStore((s) => s.setDayWidthScale);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   // 이전: 범위를 1주 전으로 이동
@@ -48,28 +50,21 @@ export function ZoomControl() {
     const center = target.getTime();
     const halfSpan = (range.end - range.start) / 2;
     setRange({ start: center - halfSpan, end: center + halfSpan });
-    // 선택 후 input 초기화 (같은 날짜 재선택 가능)
     e.target.value = "";
   }
 
-  // 확대(+): 중심 기준으로 범위를 절반으로 줄임 → 더 좁은 범위 = 확대
+  // 확대(+): dayWidthScale을 2배 → 픽셀 밀도 증가, range는 유지 (스크롤로 탐색)
   function handleZoomIn() {
-    const center = (range.start + range.end) / 2;
-    const currentSpan = range.end - range.start;
-    const newSpan = currentSpan / 2;
-    const minSpan = 6 * 60 * 60 * 1000; // 최소 6시간
-    if (newSpan < minSpan) return;
-    setRange({ start: center - newSpan / 2, end: center + newSpan / 2 });
+    const next = dayWidthScale * 2;
+    if (next > 32) return; // 최대 32배
+    setDayWidthScale(next);
   }
 
-  // 축소(-): 중심 기준으로 범위를 두배로 확장 → 더 넓은 범위 = 축소
+  // 축소(-): dayWidthScale을 절반 → 픽셀 밀도 감소, range는 유지
   function handleZoomOut() {
-    const center = (range.start + range.end) / 2;
-    const currentSpan = range.end - range.start;
-    const newSpan = currentSpan * 2;
-    const maxSpan = 180 * DAY_MS; // 최대 180일
-    if (newSpan > maxSpan) return;
-    setRange({ start: center - newSpan / 2, end: center + newSpan / 2 });
+    const next = dayWidthScale / 2;
+    if (next < 0.25) return; // 최소 0.25배
+    setDayWidthScale(next);
   }
 
   const btnBase =
@@ -183,6 +178,7 @@ export function ZoomControl() {
             key={value}
             onClick={() => {
               setZoomLevel(value);
+              setDayWidthScale(1.0); // 프리셋 전환 시 scale 초기화
               // 프리셋 클릭 시 각 줌 레벨에 맞는 범위로 재설정
               const today = new Date();
               today.setHours(0, 0, 0, 0);

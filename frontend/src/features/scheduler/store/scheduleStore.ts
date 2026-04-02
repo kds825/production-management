@@ -193,6 +193,7 @@ interface ScheduleActions {
   setViewFilter: (filter: Partial<ViewFilter>) => void;
   setZoomLevel: (level: ZoomLevel) => void;
   setRange: (range: { start: number; end: number }) => void;
+  setDayWidthScale: (scale: number) => void;
 
   /**
    * 생산계획등록에서 확정된 배치를 간트 차트에 자동 배치한다.
@@ -437,6 +438,12 @@ export const useScheduleStore = create<ScheduleStore>()(
     setRange: (range) => {
       set((state) => {
         state.range = range;
+      });
+    },
+
+    setDayWidthScale: (scale) => {
+      set((state) => {
+        state.dayWidthScale = scale;
       });
     },
 
