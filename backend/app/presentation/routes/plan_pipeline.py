@@ -221,6 +221,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "order_status": order_status,
             "remarks": b.remarks,
             "spec_raw": f"{b.core_count or 1}C x {int(b.sq_mm2 or 0)}SQ",
+            "core_colors": b.core_colors or "",
             "voltage": b.voltage,
             "equipment_code": b.equipment_code,
             "batch_group": b.batch_group,

@@ -151,6 +151,7 @@ export interface ProductionBatch {
   product: string;
   spec: string;
   color: string;
+  core_colors?: string;
   customer: string;
   delivery_date: string;
   length_per_unit_m: number;

@@ -37,6 +37,7 @@ interface ApiBatch {
   voltage: string | null;
   equipment_code: string | null;
   batch_group: string | null;
+  core_colors: string | null;
 }
 
 /** process_name + batch_group → equipment_group 매핑
@@ -87,6 +88,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     product: b.product_group || "",
     spec: b.spec_raw,
     color: b.sheath_color,
+    core_colors: b.core_colors || "",
     customer: b.customer_name || "",
     delivery_date: b.due_date,
     length_per_unit_m: b.drum_length_m,
