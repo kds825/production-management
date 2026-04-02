@@ -122,22 +122,32 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         .all()
     )
     if outsourced:
+        import re as _re
+
+        def _parse_sq(spec_raw: str | None) -> float:
+            """spec_raw(예: '3C x 95SQ')에서 SQ 값을 추출한다."""
+            if not spec_raw:
+                return 0.0
+            m = _re.search(r"(\d+(?:\.\d+)?)\s*SQ", spec_raw, _re.IGNORECASE)
+            return float(m.group(1)) if m else 0.0
+
         # 외주 수주를 pseudo-batch 형태로 변환 (시트 작성 호환용)
         outsource_batches = []
         for o in outsourced:
+            sq = _parse_sq(o.spec_raw)
             pseudo = ProductionBatch(
                 product_group=o.product_group,
-                sq_mm2=o.cross_section,
+                sq_mm2=sq,
                 sheath_color=o.sheath_color or "",
                 customer_name=o.customer_name,
                 due_date=o.due_date,
                 drum_length_m=o.drum_length_m,
                 drum_count=o.drum_count,
-                total_length_m=o.actual_length_m
+                total_length_m=o.ordered_qty_m
                 or ((o.drum_length_m or 0) * (o.drum_count or 1)),
                 core_count=o.core_count or 1,
                 remarks="외주생산",
-                batch_group=f"외주_{int(o.cross_section or 0)}SQ",
+                batch_group=f"외주_{int(sq)}SQ",
             )
             outsource_batches.append(pseudo)
         sheet_data["외주"] = outsource_batches
