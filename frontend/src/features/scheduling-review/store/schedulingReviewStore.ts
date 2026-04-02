@@ -12,7 +12,7 @@ import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
 const API_BASE =
   typeof window !== "undefined" && process.env.NEXT_PUBLIC_API_URL
-    ? `${process.env.NEXT_PUBLIC_API_URL}/api`
+    ? `${process.env.NEXT_PUBLIC_API_URL}`
     : "http://localhost:8000/api";
 
 /** 백엔드 /api/pipeline/stage1/{run_label}/batches 응답 항목 */
@@ -91,7 +91,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     delivery_date: b.due_date,
     length_per_unit_m: b.drum_length_m,
     unit_count: b.drum_count,
-    total_length_m: b.total_length_m,
+    total_length_m: b.drum_length_m * b.drum_count,
     equipment_group: equipmentGroup,
     voltage_type: voltageType,
     notes: b.wip_matched_id ? "재고 사용" : (b.remarks ?? ""),
