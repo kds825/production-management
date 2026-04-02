@@ -11,7 +11,8 @@ from app.infrastructure.models.sales_order import SalesOrder
 
 def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
     """
-    ERP .xls 파일을 파싱하여 sales_order 테이블에 INSERT.
+    ERP .xls 파일을 파싱하여 sales_order 테이블에 UPSERT.
+    수주번호(order_id) 기준으로 신규건은 INSERT, 기존재건은 UPDATE.
 
     Args:
         file_content: .xls 파일의 raw bytes
@@ -20,17 +21,30 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
 
     Returns:
         {
-            "total":    int,       # 삽입된 전체 행 수
+            "total":    int,       # 처리된 전체 행 수
             "진행":     int,       # 진행 시트 행 수
             "대기":     int,       # 대기 시트 행 수
             "외주_제외": int,       # is_outsourced=True 로 마킹된 행 수
+            "inserted": int,       # 신규 삽입 건수
+            "updated":  int,       # 기존 업데이트 건수
             "warnings": list[str], # 비치명적 이슈 메시지
         }
     """
     workbook = xlrd.open_workbook(file_contents=file_content)
-    result: dict = {"total": 0, "진행": 0, "대기": 0, "외주_제외": 0, "warnings": []}
+    result: dict = {
+        "total": 0, "진행": 0, "대기": 0, "외주_제외": 0,
+        "inserted": 0, "updated": 0, "warnings": [],
+    }
 
-    global_line_num = 0  # 시트 간 글로벌 라인 번호
+    # ── 기존 레코드 로드 — order_id 기준 upsert 판단에 사용 ──────────────────
+    existing_orders: dict[str, SalesOrder] = {
+        o.order_id: o for o in db.query(SalesOrder).all()
+    }
+    # 신규 삽입 시 order_line 중복 방지: 기존 최대값 이후부터 부여
+    existing_max_line: int = max(
+        (o.order_line for o in existing_orders.values()), default=0
+    )
+    new_line_counter = existing_max_line
 
     for sheet_name in ["진행", "대기"]:
         if sheet_name not in workbook.sheet_names():
@@ -57,8 +71,6 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
             if not str(sheet.cell_value(r, 0)).strip():
                 continue
 
-            global_line_num += 1
-
             try:
                 order_id = _get_str(sheet, r, headers, "수주번호")
                 if not order_id:
@@ -77,37 +89,66 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                 spec_raw = _get_str(sheet, r, headers, "규격") or ""
                 core_count = _extract_core_count(spec_raw)
 
-                order = SalesOrder(
-                    order_id=order_id,
-                    order_line=global_line_num,
-                    order_status=sheet_name,  # 진행 or 대기
-                    product_group=_get_str(sheet, r, headers, "제품군"),
-                    voltage=_get_str(sheet, r, headers, "전압"),
-                    spec_raw=spec_raw,
-                    customer_name=_get_str(sheet, r, headers, "거래처명"),
-                    due_date=due_date,
-                    due_type="출하기준",  # 기본값; customer_master 조회 후 덮어씀
-                    drum_length_m=_get_num(sheet, r, headers, "(수주)조장(M)"),
-                    drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
-                    ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
-                    # "(자체)조장" 컬럼이 없을 수 있으므로 None 허용
-                    self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
-                    unit_price_krw=_get_num(sheet, r, headers, "원화단가"),
-                    amount_krw=_get_num(sheet, r, headers, "원화금액"),
-                    cu_weight_kg=_get_num(sheet, r, headers, "CU량"),
-                    al_weight_kg=_get_num(sheet, r, headers, "AL량"),
-                    core_count=core_count,
-                    core_colors=_get_str(sheet, r, headers, "선심색상"),
-                    sheath_color=_get_str(sheet, r, headers, "색상"),
-                    neutral_wire=_get_str(sheet, r, headers, "중성선"),
-                    is_outsourced=is_outsourced,
-                    run_label=run_label,
-                )
+                # ── UPSERT: order_id 기준으로 기존재건 UPDATE, 신규건 INSERT ──
+                if order_id in existing_orders:
+                    # 기존 레코드 UPDATE — order_line(PK)은 유지
+                    existing = existing_orders[order_id]
+                    existing.order_status = sheet_name
+                    existing.run_label = run_label
+                    existing.product_group = _get_str(sheet, r, headers, "제품군")
+                    existing.voltage = _get_str(sheet, r, headers, "전압")
+                    existing.spec_raw = spec_raw
+                    existing.customer_name = _get_str(sheet, r, headers, "거래처명")
+                    existing.due_date = due_date
+                    existing.drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
+                    existing.drum_count = _get_int(sheet, r, headers, "(수주)개수(ea)")
+                    existing.ordered_qty_m = _get_num(sheet, r, headers, "(수주)수량(M)")
+                    existing.self_plan_qty_m = _get_num(sheet, r, headers, "(자체)조장")
+                    existing.unit_price_krw = _get_num(sheet, r, headers, "원화단가")
+                    existing.amount_krw = _get_num(sheet, r, headers, "원화금액")
+                    existing.cu_weight_kg = _get_num(sheet, r, headers, "CU량")
+                    existing.al_weight_kg = _get_num(sheet, r, headers, "AL량")
+                    existing.core_count = core_count
+                    existing.core_colors = _get_str(sheet, r, headers, "선심색상")
+                    existing.sheath_color = _get_str(sheet, r, headers, "색상")
+                    existing.neutral_wire = _get_str(sheet, r, headers, "중성선")
+                    existing.is_outsourced = is_outsourced
+                    result["updated"] += 1
+                else:
+                    # 신규 INSERT — order_line은 기존 최대값 이후 순번 부여
+                    new_line_counter += 1
+                    order = SalesOrder(
+                        order_id=order_id,
+                        order_line=new_line_counter,
+                        order_status=sheet_name,
+                        product_group=_get_str(sheet, r, headers, "제품군"),
+                        voltage=_get_str(sheet, r, headers, "전압"),
+                        spec_raw=spec_raw,
+                        customer_name=_get_str(sheet, r, headers, "거래처명"),
+                        due_date=due_date,
+                        due_type="출하기준",
+                        drum_length_m=_get_num(sheet, r, headers, "(수주)조장(M)"),
+                        drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
+                        ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
+                        self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
+                        unit_price_krw=_get_num(sheet, r, headers, "원화단가"),
+                        amount_krw=_get_num(sheet, r, headers, "원화금액"),
+                        cu_weight_kg=_get_num(sheet, r, headers, "CU량"),
+                        al_weight_kg=_get_num(sheet, r, headers, "AL량"),
+                        core_count=core_count,
+                        core_colors=_get_str(sheet, r, headers, "선심색상"),
+                        sheath_color=_get_str(sheet, r, headers, "색상"),
+                        neutral_wire=_get_str(sheet, r, headers, "중성선"),
+                        is_outsourced=is_outsourced,
+                        run_label=run_label,
+                    )
+                    db.add(order)
+                    existing_orders[order_id] = order  # 동일 시트 내 중복 방지
+                    result["inserted"] += 1
 
                 if is_outsourced:
                     result["외주_제외"] += 1
 
-                db.add(order)
                 result[sheet_name] += 1
                 result["total"] += 1
 

@@ -77,7 +77,6 @@ async def run_stage1(
     db.execute(text("DELETE FROM audit_log"))
     db.execute(text("DELETE FROM schedule_task"))
     db.execute(text("DELETE FROM production_batch"))
-    db.execute(text("DELETE FROM sales_order"))
     db.execute(text("DELETE FROM wip_inventory"))
     db.commit()
 
