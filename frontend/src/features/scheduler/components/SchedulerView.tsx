@@ -247,8 +247,6 @@ const GanttRow = memo(function GanttRow({
         width: "100%",
         borderBottom: "1px solid #E5E7EB",
         minHeight: ROW_HEIGHT,
-        // 행 전체가 컨테이너 너비를 초과하지 않도록
-        overflow: "hidden",
       }}
     >
       {/* 사이드바: 설비 정보 — sticky */}
@@ -419,9 +417,7 @@ function DateHeader({
         position: "sticky",
         top: 0,
         zIndex: 10,
-        // 헤더도 컨테이너 너비를 초과하지 않도록
         width: "100%",
-        overflow: "hidden",
       }}
     >
       {/* 사이드바 헤더 */}
@@ -738,7 +734,6 @@ export function SchedulerView({
   const rangeStart = range.start;
   const rangeEnd = range.end;
 
-  // 컨테이너 너비를 측정하여 dayWidth를 동적 계산
   const outerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -746,23 +741,22 @@ export function SchedulerView({
     const el = outerRef.current;
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width);
-      }
+      for (const entry of entries) setContainerWidth(entry.contentRect.width);
     });
     observer.observe(el);
     setContainerWidth(el.clientWidth);
     return () => observer.disconnect();
   }, []);
 
-  // dayWidth: 컨테이너 전체 너비에 날짜 범위가 딱 맞게
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const totalDays = Math.max((rangeEnd - rangeStart) / MS_PER_DAY, 1);
   const availableWidth = Math.max(containerWidth - SIDEBAR_WIDTH, 100);
-  const dayWidth = availableWidth / totalDays;
-
-  // 타임라인은 항상 컨테이너에 딱 맞음
-  const timelineWidth = availableWidth;
+  // dayWidth: fit-to-container와 줌 레벨 최솟값 중 큰 값 사용
+  // - 줌인(범위 좁음): fit이 크므로 항상 화면을 채움 (사라지지 않음)
+  // - 줌아웃(범위 넓음): preset이 하한선 → 넘으면 가로 스크롤 등장
+  const dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel], availableWidth / totalDays);
+  const timelineWidth = dayWidth * totalDays;
+  const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
   // 전체 높이 (설비 수 * 행 높이)
   const totalHeight = filteredEquipment.length * ROW_HEIGHT;
@@ -794,9 +788,12 @@ export function SchedulerView({
     >
       <div
         ref={scrollContainerRef}
-        className="border border-gray-200 rounded-lg overflow-y-auto overflow-x-hidden"
+        className="border border-gray-200 rounded-lg overflow-y-auto overflow-x-auto"
         style={{ position: "relative" }}
       >
+        {/* 전체 콘텐츠 너비 — 이 div가 가로 스크롤 범위를 결정 */}
+        <div style={{ width: totalContentWidth }}>
+
         {/* 날짜 헤더 */}
         <DateHeader
           rangeStart={rangeStart}
@@ -878,6 +875,7 @@ export function SchedulerView({
             )}
           </div>
         </div>
+        </div> {/* totalContentWidth wrapper */}
       </div>
     </div>
   );
