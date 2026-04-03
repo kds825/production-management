@@ -24,6 +24,7 @@ export function ProcessOptimizationSection({
   wipTitle,
 }: ProcessOptimizationSectionProps) {
   const hasWip = wipItems !== undefined && wipTitle;
+  const [wipExpanded, setWipExpanded] = useState(true);
   const [highlightedBatchId, setHighlightedBatchId] = useState<string | null>(
     null,
   );
@@ -89,26 +90,48 @@ export function ProcessOptimizationSection({
 
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold mb-3" style={{ color: "#111827" }}>
-        {sectionNumber}. {title}
-      </h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold" style={{ color: "#111827" }}>
+          {sectionNumber}. {title}
+        </h3>
+        {hasWip && (
+          <button
+            onClick={() => setWipExpanded((v) => !v)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
+            style={{
+              backgroundColor: wipExpanded ? "#EFF6FF" : "#F3F4F6",
+              color: wipExpanded ? "#2563EB" : "#6B7280",
+              border: `1px solid ${wipExpanded ? "#BFDBFE" : "#E5E7EB"}`,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: wipExpanded ? "#2563EB" : "#9CA3AF",
+              }}
+            />
+            WIP 재고 {wipItems!.length}건
+            <span style={{ fontSize: 9 }}>{wipExpanded ? "◀" : "▶"}</span>
+          </button>
+        )}
+      </div>
 
-      <div className="flex gap-4" style={{ flexWrap: "wrap" }}>
-        <div
-          ref={batchTableRef}
-          style={{ flex: "1 1 0%", minWidth: hasWip ? 800 : 0 }}
-        >
+      <div className="flex gap-4" style={{ alignItems: "flex-start" }}>
+        <div ref={batchTableRef} style={{ flex: "1 1 0%", minWidth: 0 }}>
           <ProductionBatchTable
             title={title}
             batches={batches}
             processGroup={processGroup}
             highlightedBatchId={highlightedBatchId}
-            onBatchWipClick={hasWip ? handleBatchWipClick : undefined}
+            onBatchWipClick={hasWip && wipExpanded ? handleBatchWipClick : undefined}
           />
         </div>
 
-        {hasWip && (
-          <div ref={wipTableRef} style={{ flex: "0 0 288px", minWidth: 0 }}>
+        {hasWip && wipExpanded && (
+          <div ref={wipTableRef} style={{ flex: "0 0 268px", minWidth: 0 }}>
             <WipInventoryTable
               title={wipTitle}
               items={wipItems}
