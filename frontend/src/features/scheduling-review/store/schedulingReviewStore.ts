@@ -190,6 +190,8 @@ interface SchedulingReviewActions {
   loadFromPlanRegister: () => void;
   /** API에서 배치 로드 (run_label 지정) — 로드 후 자동으로 AI 상태 폴링 시작 */
   loadBatchesFromApi: (runLabel: string) => Promise<void>;
+  /** wip_inventory 직접 조회 — production_batch 파생 방식 대체 */
+  loadWipInventory: (runLabel: string) => Promise<void>;
   /** 외주 분류 수주 목록 로드 */
   loadOutsourcedOrders: (runLabel: string) => Promise<void>;
   /** 배치 인라인 편집 — PATCH /api/pipeline/batch/{batch_id} */
@@ -283,30 +285,11 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.aiSummary = null;
           state.aiAnalysisStatus = "idle";
 
-          // WIP 매칭된 항목을 WIP 리스트로 표시
-          // stock = wip_inventory.length_m (1드럼 기준 — 드럼 분할 불가)
-          // color = wip_inventory.core_colors (선심색상)
-          const wipItems: WipItem[] = batches
-            .filter((b) => b.notes === "재고 사용")
-            .map((b) => ({
-              id: `wip-${b.id}`,
-              matchedBatchId: b.id,
-              processGroup: b.processGroup,
-              product: b.product,
-              spec: b.spec,
-              color: b.wip_core_colors ?? "",
-              stock: b.wip_total_length_m ?? b.total_length_m,
-              convertedQty: calcConvertedQty(b.spec, b.wip_total_length_m ?? b.total_length_m),
-            }));
-
-          state.yeonaeoWip = wipItems.filter((w) => w.processGroup === "연선");
-          state.insulationWip = wipItems.filter(
-            (w) => w.processGroup !== "연선",
-          );
         });
 
-        // 외주 분류 수주 병렬 로드
+        // 외주 분류 수주 + WIP 재고 병렬 로드
         get().loadOutsourcedOrders(runLabel);
+        get().loadWipInventory(runLabel);
 
         // AI 분석은 사용자가 명시적으로 버튼을 클릭할 때만 실행
         // (자동 폴링 제거 — LLM 비용 절감)
@@ -316,6 +299,66 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.loadError =
             err instanceof Error ? err.message : "배치 로드 실패";
         });
+      }
+    },
+
+    loadWipInventory: async (runLabel: string) => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/stage1/${encodeURIComponent(runLabel)}/wip-inventory`,
+        );
+        if (!res.ok) return;
+        const data: {
+          wip_id: number;
+          process_stage: string;
+          voltage_class: string;
+          material: string;
+          product_name: string;
+          spec: string;
+          cross_section: number | null;
+          length_m: number;
+          count: number;
+          total_length_m: number;
+          core_colors: string;
+          status: string;
+          matched_batch_id: number | null;
+          matched_batch_group: string | null;
+        }[] = await res.json();
+
+        const wipItems: WipItem[] = data.map((w) => {
+          // process_stage("연선재고", "절연재고" 등) → ProcessGroup
+          const processGroup: import("@/shared/constants/processGroups").ProcessGroup =
+            w.process_stage.includes("연선") ? "연선" : "절연";
+
+          const matchedBatchId = w.matched_batch_id != null
+            ? `batch-${w.matched_batch_id}`
+            : undefined;
+
+          return {
+            id: `wip-${w.wip_id}`,
+            wip_id: w.wip_id,
+            process_stage: w.process_stage,
+            processGroup,
+            product: w.product_name,
+            spec: w.spec,
+            color: w.core_colors,
+            stock: w.length_m,
+            count: w.count,
+            total_length_m: w.total_length_m,
+            convertedQty: calcConvertedQty(w.spec, w.total_length_m),
+            status: w.status,
+            voltage_class: w.voltage_class,
+            matchedBatchId,
+            matchedBatchGroup: w.matched_batch_group ?? undefined,
+          };
+        });
+
+        set((state) => {
+          state.yeonaeoWip = wipItems.filter((w) => w.process_stage.includes("연선"));
+          state.insulationWip = wipItems.filter((w) => !w.process_stage.includes("연선"));
+        });
+      } catch {
+        // WIP 로드 실패는 핵심 기능이 아니므로 무시
       }
     },
 

@@ -13,9 +13,10 @@ interface WipInventoryTableProps {
 
 const COL_DEFS = [
   { key: "spec", label: "규격", align: "left", width: 100 },
-  { key: "color", label: "선심색상", align: "left", width: 80 },
-  { key: "stock", label: "재고", align: "right", width: 70 },
-  { key: "convertedQty", label: "환산수량", align: "right", width: 70 },
+  { key: "color", label: "선심색상", align: "left", width: 70 },
+  { key: "stock", label: "조장(m)", align: "right", width: 65 },
+  { key: "count", label: "드럼수", align: "right", width: 55 },
+  { key: "status", label: "상태", align: "center", width: 65 },
 ] as const;
 
 const totalWidth = COL_DEFS.reduce((sum, c) => sum + c.width, 0);
@@ -120,6 +121,8 @@ export function WipInventoryTable({
                           typeof raw === "number"
                             ? raw.toLocaleString()
                             : String(raw ?? "");
+                        const isStatusCol = col.key === "status";
+                        const statusUsed = isStatusCol && raw === "사용완료";
                         return (
                           <td
                             key={col.key}
@@ -133,18 +136,32 @@ export function WipInventoryTable({
                                   : "none",
                               verticalAlign: "middle",
                               overflow: "hidden",
+                              textAlign: col.align as "left" | "right" | "center",
                             }}
                           >
-                            <span
-                              className="block truncate text-[11px]"
-                              style={{
-                                textAlign: col.align as "left" | "right",
-                                fontWeight: isActive ? 600 : 400,
-                                color: isActive ? "#C41230" : undefined,
-                              }}
-                            >
-                              {display || "\u2014"}
-                            </span>
+                            {isStatusCol ? (
+                              <span
+                                className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
+                                style={
+                                  statusUsed
+                                    ? { backgroundColor: "#FEE2E2", color: "#B91C1C" }
+                                    : { backgroundColor: "#DCFCE7", color: "#15803D" }
+                                }
+                              >
+                                {display || "—"}
+                              </span>
+                            ) : (
+                              <span
+                                className="block truncate text-[11px]"
+                                style={{
+                                  textAlign: col.align as "left" | "right",
+                                  fontWeight: isActive ? 600 : 400,
+                                  color: isActive ? "#C41230" : undefined,
+                                }}
+                              >
+                                {display || "\u2014"}
+                              </span>
+                            )}
                           </td>
                         );
                       })}

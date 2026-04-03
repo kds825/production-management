@@ -244,6 +244,67 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
+@router.get("/stage1/{run_label}/wip-inventory", summary="SM 재공 재고 목록")
+def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
+    """wip_inventory 테이블을 직접 조회해서 반환한다.
+
+    - run_label에 해당하는 모든 WIP 재고 (status 무관)
+    - production_batch.wip_matched_id 로 어떤 배치에 매칭됐는지 batch_id / batch_group 포함
+    """
+    from app.infrastructure.models.wip_inventory import WipInventory
+    from sqlalchemy import and_
+
+    # wip_inventory 전체 조회 (해당 run_label)
+    wip_rows = (
+        db.query(WipInventory)
+        .filter(WipInventory.run_label == run_label)
+        .order_by(WipInventory.process_stage, WipInventory.cross_section.desc())
+        .all()
+    )
+
+    # 매칭 정보: wip_id → (batch_id, batch_group) — 한 번에 로드해서 N+1 방지
+    matched_batches = (
+        db.query(
+            ProductionBatch.wip_matched_id,
+            ProductionBatch.batch_id,
+            ProductionBatch.batch_group,
+        )
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.wip_matched_id.isnot(None),
+        )
+        .all()
+    )
+    # wip_id → {batch_id, batch_group} 매핑 (1:1 — 1개 WIP드럼은 1개 배치에만 매칭)
+    wip_match_map: dict[int, dict] = {
+        row.wip_matched_id: {
+            "matched_batch_id": row.batch_id,
+            "matched_batch_group": row.batch_group,
+        }
+        for row in matched_batches
+    }
+
+    return [
+        {
+            "wip_id": w.wip_id,
+            "process_stage": w.process_stage or "",
+            "voltage_class": w.voltage_class or "",
+            "material": w.material or "",
+            "product_name": w.product_name or "",
+            "spec": w.spec or "",
+            "cross_section": float(w.cross_section) if w.cross_section else None,
+            "length_m": float(w.length_m) if w.length_m else 0,
+            "count": w.count or 1,
+            "total_length_m": float(w.total_length_m) if w.total_length_m else 0,
+            "core_colors": w.core_colors or "",
+            "status": w.status or "",
+            "matched_batch_id": wip_match_map.get(w.wip_id, {}).get("matched_batch_id"),
+            "matched_batch_group": wip_match_map.get(w.wip_id, {}).get("matched_batch_group"),
+        }
+        for w in wip_rows
+    ]
+
+
 @router.get("/stage1/{run_label}/outsourced", summary="외주 분류 수주 목록")
 def list_outsourced_orders(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     """지정한 run_label에서 외주로 분류된 수주(is_outsourced=True) 목록을 반환한다.

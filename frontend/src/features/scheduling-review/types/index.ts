@@ -16,14 +16,27 @@ export interface SchedulingBatch extends ProductionBatch {
 
 export interface WipItem {
   id: string;
+  /** wip_inventory.wip_id */
+  wip_id: number;
   processGroup: ProcessGroup;
+  /** wip_inventory.process_stage */
+  process_stage: string;
   product: string;
   spec: string;
   color: string;
+  /** wip_inventory.length_m — 1드럼 기준 길이 */
   stock: number;
+  /** wip_inventory.count — 드럼 수 */
+  count: number;
+  /** wip_inventory.total_length_m */
+  total_length_m: number;
   convertedQty: number;
-  /** 매칭된 배치 ID — 클릭 시 해당 배치로 스크롤 */
+  status: string;
+  voltage_class: string;
+  /** 매칭된 production_batch.batch_id */
   matchedBatchId?: string;
+  /** 매칭된 production_batch.batch_group */
+  matchedBatchGroup?: string;
 }
 
 export interface AiInsight {
