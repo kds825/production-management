@@ -70,18 +70,25 @@ def create_batches(
         query = query.filter(SalesOrder.due_date <= date_to)
     orders = query.all()
 
-    # ── WIP 매칭 룩업: "order_id:order_line" → wip ────────────────────────
-    # matched_order_id 형식: "S1202602260013M:37" (order_id:order_line)
-    # order_line 단위로 매칭해야 같은 수주번호의 다른 규격/색상은 스킵하지 않음
+    # ── WIP 매칭 룩업: "order_id:order_line" → WipInventory ───────────────
+    # order.wip_id(FK)를 기준으로 구성 — 1개 WIP가 여러 수주에 매칭될 수 있으므로
+    # wip.matched_order_id(단일값) 대신 order 쪽 wip_id를 역참조한다.
     wip_by_order_line: dict[str, WipInventory] = {}
     if any(o.use_wip for o in orders):
-        matched_wips = (
-            db.query(WipInventory)
-            .filter(WipInventory.matched_order_id.isnot(None))
-            .all()
-        )
-        for w in matched_wips:
-            wip_by_order_line[w.matched_order_id] = w
+        # 이번 run에서 WIP를 사용하는 수주들이 참조하는 wip_id 목록
+        wip_ids_used = {o.wip_id for o in orders if o.use_wip and o.wip_id is not None}
+        if wip_ids_used:
+            wip_objects = (
+                db.query(WipInventory)
+                .filter(WipInventory.wip_id.in_(wip_ids_used))
+                .all()
+            )
+            wip_by_id: dict[int, WipInventory] = {w.wip_id: w for w in wip_objects}
+            for o in orders:
+                if o.use_wip and o.wip_id is not None:
+                    wip = wip_by_id.get(o.wip_id)
+                    if wip:
+                        wip_by_order_line[f"{o.order_id}:{o.order_line}"] = wip
 
     # float 변환 후 키로 사용해야 dict lookup이 안전하게 동작한다
     drum_lots: dict[float, DrumLotMaster] = {

@@ -45,6 +45,8 @@ class SalesOrder(Base):
     use_wip = Column(Boolean, default=False)
     wip_type = Column(String(20))  # 연선, 절연, 연합, 완제품
     actual_length_m = Column(Numeric)
+    # 이 수주에 사용되는 wip_inventory.wip_id — 1개 WIP가 여러 수주에 적용될 수 있음
+    wip_id = Column(Integer, ForeignKey("wip_inventory.wip_id"), nullable=True)
     is_outsourced = Column(Boolean, default=False)
     run_label = Column(String(50))  # 어떤 계획 실행에 속하는지
     created_at = Column(DateTime, default=datetime.utcnow)
