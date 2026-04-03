@@ -175,6 +175,52 @@ def _routings():
             process_5=None,
             process_6=None,
         ),
+        # ── TFR-8 일반 (고내화 제외) ──
+        # 신선 → 연선 → 저압절연 → 저압시스 (단심)
+        ProcessRouting(
+            routing_code="RT-005",
+            routing_name="TFR-8 단심",
+            process_1="신선",
+            process_2="연선",
+            process_3="저압절연",
+            process_4="저압시스",
+            process_5=None,
+            process_6=None,
+        ),
+        # 신선 → 연선 → 저압절연 → 연합 → 저압시스 (다심)
+        ProcessRouting(
+            routing_code="RT-006",
+            routing_name="TFR-8 다심(2C+)",
+            process_1="신선",
+            process_2="연선",
+            process_3="저압절연",
+            process_4="연합",
+            process_5="저압시스",
+            process_6=None,
+        ),
+        # ── TFR-8 고내화 (T/P 공정 추가) ──
+        # 신선 → 연선 → T/P → 저압절연 → 저압시스 (단심)
+        ProcessRouting(
+            routing_code="RT-007",
+            routing_name="TFR-8 고내화 단심",
+            process_1="신선",
+            process_2="연선",
+            process_3="T/P",
+            process_4="저압절연",
+            process_5="저압시스",
+            process_6=None,
+        ),
+        # 신선 → 연선 → T/P → 저압절연 → 연합 → 저압시스 (다심)
+        ProcessRouting(
+            routing_code="RT-008",
+            routing_name="TFR-8 고내화 다심(2C+)",
+            process_1="신선",
+            process_2="연선",
+            process_3="T/P",
+            process_4="저압절연",
+            process_5="연합",
+            process_6="저압시스",
+        ),
     ]
 
 
@@ -897,6 +943,36 @@ def _speed_master():
                 line_speed_mpm=spd,
                 line_speed_hr=round(spd * 60, 1),
                 setup_spec_min=30,
+            )
+        )
+
+    # ── 7-G. T/P 공정 선속 (TFR-8 고내화) ──
+    # T/P(Tape/Padding): 내화층 권포 공정. TP-1/TP-2(일반, 최대 60Ø), TP-GD(강대, 최대 100Ø)
+    # 선속은 드럼 외경에 따라 달라지나 SQ 기준 근사값 사용. setup 180분(규격교체).
+    tp_data = [
+        # (cross_section, line_speed_mpm, setup_spec_min)
+        (16,  40, 180),
+        (25,  38, 180),
+        (35,  35, 180),
+        (50,  32, 180),
+        (70,  28, 180),
+        (95,  25, 180),
+        (120, 22, 180),
+        (150, 20, 180),
+        (185, 18, 180),
+        (240, 15, 180),
+        (300, 12, 180),
+        (400, 10, 180),
+    ]
+    for sq, speed, setup in tp_data:
+        rows.append(
+            SpeedMaster(
+                equipment_code="TP-1",
+                product_type="T/P",
+                cross_section=sq,
+                line_speed_mpm=speed,
+                line_speed_hr=speed * 60,
+                setup_spec_min=setup,
             )
         )
 

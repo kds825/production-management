@@ -113,7 +113,7 @@ export function ProcessOptimizationSection({
                 backgroundColor: wipExpanded ? "#2563EB" : "#9CA3AF",
               }}
             />
-            WIP 재고 {wipItems!.length}건
+            SM 재고 {wipItems!.length}건
             <span style={{ fontSize: 9 }}>{wipExpanded ? "◀" : "▶"}</span>
           </button>
         )}
@@ -154,7 +154,7 @@ export function ProcessOptimizationSection({
               border: "1px solid #FECACA",
             }}
           >
-            ← WIP 재고로 돌아가기
+            ← SM 재고로 돌아가기
           </button>
         </div>
       )}

@@ -746,6 +746,7 @@ def _find_speed(
         "연선": ["ST-T6B0", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
         "신선": ["WD-A100"],
         "연합": ["AS-A100"],
+        "T/P": ["TP-2"],
     }
 
     pg = order.product_group or ""
@@ -753,7 +754,7 @@ def _find_speed(
 
     # product_type 결정 — SpeedMaster.product_type 컬럼 값과 일치시킴
     # 연선/신선 공정은 제품군 무관하게 설비 기준 선속 적용
-    if process_name in ("연선", "신선"):
+    if process_name in ("연선", "신선", "T/P"):
         product_type: str | None = process_name
     elif "HFCO" in pg.upper():
         product_type = "HFCO"
