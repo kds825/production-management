@@ -55,9 +55,9 @@ def match_wip(run_label: str, db: Session) -> dict:
 
     for wip in wip_items:
         wip_sq = float(wip.cross_section) if wip.cross_section else None
-        # total_length_m = length_m(드럼 1개) × count(드럼 수)
-        wip_total = float(wip.total_length_m or 0)
-        if not wip_sq or wip_total <= 0:
+        wip_drum_length = float(wip.length_m or 0)   # 드럼 1개 기준 길이
+        wip_total = float(wip.total_length_m or 0)   # 전체 재고 (length_m × count)
+        if not wip_sq or wip_total <= 0 or wip_drum_length <= 0:
             continue
 
         remaining = wip_total  # 이 WIP에서 아직 배분 가능한 잔여 길이
@@ -82,19 +82,27 @@ def match_wip(run_label: str, db: Session) -> dict:
                 if wip.voltage_class != order_volt:
                     continue
 
-            # ── 수량 체크 ──
+            # ── 드럼 1개 길이 체크 ──────────────────────────────────────────
+            # WIP 드럼 1개가 수주 조장(drum_length_m)을 커버할 수 있어야 매칭 가능.
+            # 드럼을 분할할 수 없으므로 total_length_m 여유가 있어도
+            # 드럼 1개가 짧으면 물리적으로 사용 불가.
+            order_drum_length = float(order.drum_length_m or order.ordered_qty_m or 0)
+            if order_drum_length > 0:
+                if wip_drum_length < order_drum_length * (1 - loss_limit):
+                    continue  # WIP 드럼이 수주 조장보다 짧음 — 사용 불가
+
+            # ── 총량 체크: 잔여 재고가 수주 전체 수량을 커버하는지 ──
             order_qty = float(order.ordered_qty_m or 0)
             if order_qty <= 0:
                 continue
 
-            # 잔여량이 수주 수량을 커버하는지 (shortage_tolerance 허용)
             if remaining < order_qty * (1 - shortage_tolerance):
-                continue  # 잔여 재고 부족 — 이 수주는 스킵
+                continue  # 잔여 재고 부족
 
             matched_orders.append(order)
             remaining -= order_qty
 
-            # 잔여량이 loss_limit 이하로 떨어지면 더 이상 배분하지 않음
+            # 잔여량이 loss_limit 이하로 떨어지면 추가 배분 중단
             if remaining <= wip_total * loss_limit:
                 break
 
