@@ -640,28 +640,49 @@ def update_batch(batch_id: int, body: dict, db: Session = Depends(get_db)):
 
 @router.delete("/runs/{run_label}", summary="특정 계획 실행 삭제")
 def delete_run(run_label: str, db: Session = Depends(get_db)):
-    """특정 run_label의 실행 데이터만 삭제한다.
+    """특정 run_label의 실행 데이터를 삭제한다.
 
-    삭제 대상: audit_log, schedule_task, production_batch, sales_order, wip_inventory
-    (해당 run_label 분만 삭제, 다른 실행분은 유지)
+    - audit_log, schedule_task, production_batch, sales_order: run_label 행 삭제
+    - wip_inventory: run_label 행 삭제 + 해당 run에서 매칭된 다른 WIP 행 상태 초기화
+      (matched_order_id → NULL, status → 사용가능)
     """
     counts = {}
-    for table in [
-        "audit_log",
-        "schedule_task",
-        "production_batch",
-        "sales_order",
-        "wip_inventory",
-    ]:
+    for table in ["audit_log", "schedule_task", "production_batch", "sales_order"]:
         result = db.execute(
             text(f"DELETE FROM {table} WHERE run_label = :rl"),
             {"rl": run_label},
         )
         counts[table] = result.rowcount
 
+    # wip_inventory: run_label 일치 행 삭제
+    wip_del = db.execute(
+        text("DELETE FROM wip_inventory WHERE run_label = :rl"),
+        {"rl": run_label},
+    )
+    counts["wip_inventory"] = wip_del.rowcount
+
+    # wip_inventory: 이 run에서 매칭(사용완료)됐지만 다른 run_label을 가진 WIP 상태 초기화.
+    # production_batch가 이미 삭제됐으므로 wip_matched_id 역참조가 깨진 WIP를 정리한다.
+    # matched_order_id는 "order_id:order_line" 형식 — 해당 run의 sales_order가 지워졌으므로
+    # 더 이상 유효하지 않다. status를 사용가능으로 되돌리고 매칭 정보를 초기화한다.
+    wip_reset = db.execute(
+        text("""
+            UPDATE wip_inventory
+            SET status = '사용가능',
+                matched_order_id = NULL
+            WHERE status = '사용완료'
+              AND run_label != :rl
+              AND matched_order_id IS NOT NULL
+        """),
+        {"rl": run_label},
+    )
+    counts["wip_inventory_reset"] = wip_reset.rowcount
+
     db.commit()
-    total = sum(counts.values())
-    if total == 0:
+    total = counts["wip_inventory"] + sum(
+        v for k, v in counts.items() if k not in ("wip_inventory", "wip_inventory_reset")
+    )
+    if total == 0 and counts.get("wip_inventory_reset", 0) == 0:
         raise HTTPException(status_code=404, detail=f"run_label '{run_label}' 없음")
     return {"run_label": run_label, "deleted": counts, "total": total}
 
