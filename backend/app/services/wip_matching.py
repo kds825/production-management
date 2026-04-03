@@ -72,6 +72,13 @@ def match_wip(run_label: str, db: Session) -> dict:
             if order_sq is None or abs(order_sq - wip_sq) > 0.01:
                 continue
 
+            # ── 제품군 매칭 (절연재고만 적용) ──
+            # 연선재고는 도체 규격·전압이 같으면 제품군 무관하게 사용 가능.
+            # 절연재고는 컴파운드·색상이 제품군에 종속되므로 제품군까지 일치해야 함.
+            if wip.process_stage == "절연재고":
+                if not _product_group_matches(wip.product_name, order.product_group):
+                    continue
+
             # ── 전압 매칭 ──
             if wip.voltage_class and order.voltage:
                 order_volt = (
@@ -155,6 +162,33 @@ def match_wip(run_label: str, db: Session) -> dict:
 
     db.flush()
     return result
+
+
+def _product_group_matches(wip_product_name: str | None, order_product_group: str | None) -> bool:
+    """WIP 제품명과 수주 제품군이 호환되는지 판별.
+
+    wip_product_name 이 없거나 order_product_group 이 없으면 필터 없이 통과.
+    """
+    if not wip_product_name or not order_product_group:
+        return True
+
+    wpn = wip_product_name.strip()
+    opg = order_product_group.strip()
+
+    if wpn == "TFR-CV(WB)":
+        # TFR-CV, TFR-CV-WB 계열 전체 허용
+        return opg == "TFR-CV" or opg.startswith("TFR-CV-WB") or opg.startswith("TFR-CV(")
+    if wpn == "TFR-8 고내화":
+        # TFR-8(온도조건) 형태 — 괄호 있는 것만 허용
+        return opg.startswith("TFR-8(")
+    if wpn == "TFR-8":
+        # 일반 TFR-8 — 괄호 없는 것만 허용 (고내화 제외)
+        return opg == "TFR-8" or (opg.startswith("TFR-8") and "(" not in opg)
+    if "URD" in wpn:
+        return "URD" in opg
+
+    # 그 외 규칙 미정의 제품군: 필터 없이 통과
+    return True
 
 
 def _extract_sq(spec_raw: str | None) -> float | None:
