@@ -466,17 +466,25 @@ export default function SchedulingReviewPage() {
               }
               wipItems={
                 activeProcessTab === "저압연선"
-                  ? yeonaeoWip
-                  : activeProcessTab === "저압절연(B100)"
-                    ? insulationWip
-                    : undefined
+                  ? yeonaeoWip.filter((w) => !w.voltage_class.includes("고압"))
+                  : activeProcessTab === "고압연선"
+                    ? yeonaeoWip.filter((w) => w.voltage_class.includes("고압"))
+                    : activeProcessTab === "저압절연(B100)"
+                      ? insulationWip.filter((w) => !w.voltage_class.includes("고압"))
+                      : activeProcessTab === "고압절연(CV)"
+                        ? insulationWip.filter((w) => w.voltage_class.includes("고압"))
+                        : undefined
               }
               wipTitle={
                 activeProcessTab === "저압연선"
-                  ? "연선 재공(WIP) 재고"
-                  : activeProcessTab === "저압절연(B100)"
-                    ? "절연 재공(WIP) 재고"
-                    : undefined
+                  ? "저압 연선 재공(WIP) 재고"
+                  : activeProcessTab === "고압연선"
+                    ? "고압 연선 재공(WIP) 재고"
+                    : activeProcessTab === "저압절연(B100)"
+                      ? "저압 절연 재공(WIP) 재고"
+                      : activeProcessTab === "고압절연(CV)"
+                        ? "고압 절연 재공(WIP) 재고"
+                        : undefined
               }
             />
 
