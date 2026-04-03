@@ -48,16 +48,16 @@ interface ApiBatch {
 function toEquipmentGroup(
   processName: string,
   batchGroup?: string | null,
-): "연선" | "B100" | "A100" | "A120" {
+): "연선" | "B100" | "A100" | "A120" | "T/P" {
   if (
     processName === "연선" ||
     processName === "신선" ||
     processName === "연합"
   )
     return "연선";
+  if (processName === "T/P") return "T/P";
   if (processName.includes("절연")) return "B100";
   if (processName.includes("시스")) {
-    // batch_group 접두사로 A100/A120 구분
     if (batchGroup?.startsWith("A100")) return "A100";
     return "A120";
   }
@@ -75,6 +75,7 @@ function toProcessGroup(processName: string): ProcessGroup {
     processName === "연합"
   )
     return "연선";
+  if (processName === "T/P") return "T/P" as ProcessGroup;
   if (processName.includes("절연")) return "절연";
   if (processName.includes("시스")) return "시스";
   return processName as ProcessGroup;

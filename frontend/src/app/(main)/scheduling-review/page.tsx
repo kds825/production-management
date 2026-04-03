@@ -29,6 +29,7 @@ const PROCESS_TABS = [
   "저압시스(A100)",
   "저압시스(A120)",
   "연합",
+  "T/P(고내화)",
   "고압연선",
   "고압절연(CV)",
   "고압시스(A150)",
@@ -42,6 +43,9 @@ type ProcessTab = (typeof PROCESS_TABS)[number];
  */
 function resolveSheetName(b: SchedulingBatch): ProcessTab {
   const bg = b.batch_group || "";
+
+  // T/P 공정 (TFR-8 고내화)
+  if (b.processGroup === "T/P") return "T/P(고내화)";
 
   // 연선: 전압으로 고압/저압 분기
   if (bg.startsWith("연선_")) {
@@ -460,7 +464,9 @@ export default function SchedulingReviewPage() {
                   ? "연선"
                   : activeProcessTab === "저압절연(B100)" || activeProcessTab === "고압절연(CV)"
                     ? "절연"
-                    : "시스"
+                    : activeProcessTab === "T/P(고내화)"
+                      ? "T/P"
+                      : "시스"
               }
               batches={
                 filterBatchesByTab(
