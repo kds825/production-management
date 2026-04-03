@@ -477,7 +477,7 @@ export function ProductionBatchTable({
                 ) : (
                   filteredBatches.map((batch) => {
                     const isHighlighted = highlightedBatchId === batch.id;
-                    const isWipSkipped = batch.notes === "재고 사용";
+                    const isWipSkipped = batch.notes.includes("재고 사용");
                     const rowBg = isHighlighted ? "#FEF2F2" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
                     const hoverBg = isHighlighted ? "#FEE2E2" : isWipSkipped ? "#E5E7EB" : getRowHoverBg(batch);
                     const statusColor = PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
@@ -511,7 +511,7 @@ export function ProductionBatchTable({
                               }}
                               onDoubleClick={() => {
                                 if (!editable) return;
-                                if (col.key === "notes" && batch.notes === "재고 사용") return;
+                                if (col.key === "notes" && batch.notes.includes("재고 사용")) return;
                                 const raw = batch[col.key as keyof SchedulingBatch];
                                 startEditing(batch.id, col.key, raw != null ? String(raw) : "");
                               }}
@@ -531,13 +531,13 @@ export function ProductionBatchTable({
                                 <span className="block truncate text-[10px] font-medium" style={{ color: "#9CA3AF" }}>
                                   {getBatchLabel(batch)}
                                 </span>
-                              ) : col.key === "notes" && batch.notes === "재고 사용" ? (
+                              ) : col.key === "notes" && batch.notes.includes("재고 사용") ? (
                                 <button
                                   onClick={() => onBatchWipClick?.(batch.id)}
                                   className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
                                   style={{ backgroundColor: "#FEF2F2", color: "#C41230", cursor: onBatchWipClick ? "pointer" : "default" }}
                                 >
-                                  재고 사용 →
+                                  {batch.notes}
                                 </button>
                               ) : (
                                 <span className="block truncate text-[11px]" style={{ textAlign: col.align as "left" | "right" }}>

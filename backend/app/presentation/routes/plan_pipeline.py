@@ -184,6 +184,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             WipInventory.length_m,
             WipInventory.count,
             WipInventory.core_colors,
+            WipInventory.process_stage,
         )
         .outerjoin(
             SalesOrder,
@@ -197,7 +198,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
         .filter(ProductionBatch.run_label == run_label)
         .all()
     )
-    batches = [(b, os or "대기", wip_len_m, wip_cnt, wip_cc) for b, os, wip_len_m, wip_cnt, wip_cc in rows]
+    batches = [(b, os or "대기", wip_len_m, wip_cnt, wip_cc, wip_ps) for b, os, wip_len_m, wip_cnt, wip_cc, wip_ps in rows]
     if not batches:
         raise HTTPException(
             status_code=404,
@@ -228,6 +229,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "product_group": b.product_group,
             "sales_order_id": b.sales_order_id,
             "wip_matched_id": b.wip_matched_id,
+            "wip_process_stage": wip_ps or None,
             "wip_length_m": float(wip_len_m) if wip_len_m is not None else None,
             "wip_count": int(wip_cnt) if wip_cnt is not None else None,
             "wip_core_colors": wip_cc or None,
@@ -240,7 +242,7 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "equipment_code": b.equipment_code,
             "batch_group": b.batch_group,
         }
-        for b, order_status, wip_len_m, wip_cnt, wip_cc in batches
+        for b, order_status, wip_len_m, wip_cnt, wip_cc, wip_ps in batches
     ]
 
 

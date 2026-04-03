@@ -157,7 +157,7 @@ export interface ProductionBatch {
   length_per_unit_m: number;
   unit_count: number;
   total_length_m: number;
-  equipment_group: "연선" | "B100" | "A100" | "A120";
+  equipment_group: "연선" | "B100" | "A100" | "A120" | "T/P";
   voltage_type: "저압" | "고압";
   notes: string;
   /** AI 분류 근거 */

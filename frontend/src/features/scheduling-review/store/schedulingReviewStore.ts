@@ -30,6 +30,7 @@ interface ApiBatch {
   product_group: string;
   sales_order_id: string;
   wip_matched_id: number | null;
+  wip_process_stage: string | null; // wip_inventory.process_stage (연선재고, 절연재고 등)
   wip_length_m: number | null;   // wip_inventory.length_m — 1드럼 기준 길이
   wip_count: number | null;      // wip_inventory.count — 드럼 수
   wip_core_colors: string | null; // wip_inventory.core_colors
@@ -100,7 +101,11 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     total_length_m: b.total_length_m,
     equipment_group: equipmentGroup,
     voltage_type: voltageType,
-    notes: b.wip_matched_id ? "재고 사용" : (b.remarks ?? ""),
+    notes: b.wip_matched_id
+      ? b.wip_process_stage
+        ? `${b.wip_process_stage} 사용`
+        : "재고 사용"
+      : (b.remarks ?? ""),
     classification_reason: (() => {
       const reasons: string[] = [];
       const sq = Math.round(b.sq_mm2);
