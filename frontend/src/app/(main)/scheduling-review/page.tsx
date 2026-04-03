@@ -99,6 +99,18 @@ export default function SchedulingReviewPage() {
   const [excelLoading, setExcelLoading] = useState(false);
   const outsourceRef = useRef<HTMLDivElement>(null);
   const batchTabRef = useRef<HTMLDivElement>(null);
+  const [planDate, setPlanDate] = useState<string>("");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("plan_base_date");
+    if (stored && stored.length === 8) {
+      setPlanDate(
+        `${stored.slice(0, 4)}.${stored.slice(4, 6)}.${stored.slice(6, 8)}`,
+      );
+    } else {
+      setPlanDate(new Date().toISOString().slice(0, 10).replace(/-/g, "."));
+    }
+  }, []);
 
   // 런 목록 로드
   const loadRuns = useCallback(async () => {
@@ -401,15 +413,7 @@ export default function SchedulingReviewPage() {
         <span className="text-[11px] text-gray-500">
           계획일{" "}
           <span style={{ color: "#111827", fontWeight: 500 }}>
-            {(() => {
-              const stored =
-                typeof window !== "undefined"
-                  ? localStorage.getItem("plan_base_date")
-                  : null;
-              if (stored && stored.length === 8)
-                return `${stored.slice(0, 4)}.${stored.slice(4, 6)}.${stored.slice(6, 8)}`;
-              return new Date().toISOString().slice(0, 10).replace(/-/g, ".");
-            })()}
+            {planDate}
           </span>
         </span>
       </div>
