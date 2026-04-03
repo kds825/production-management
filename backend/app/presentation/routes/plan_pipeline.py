@@ -268,12 +268,20 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
         .all()
     )
 
+    # WIP process_stage 룩업 (연선재고→연선, 절연재고→절연 등 공정 매칭용)
+    wip_process_stages: dict[int, str] = {
+        w.wip_id: (w.process_stage or "") for w in wip_rows
+    }
+
     # 매칭 정보: wip_id → (batch_id, batch_group) — 한 번에 로드해서 N+1 방지
+    # wip_matched_id가 같은 배치가 여러 개일 수 있음(연선·절연·시스 모두 전파됨).
+    # WIP process_stage와 batch process_name이 일치하는 배치를 우선 선택한다.
     matched_batches = (
         db.query(
             ProductionBatch.wip_matched_id,
             ProductionBatch.batch_id,
             ProductionBatch.batch_group,
+            ProductionBatch.process_name,
         )
         .filter(
             ProductionBatch.run_label == run_label,
@@ -281,14 +289,22 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
         )
         .all()
     )
-    # wip_id → {batch_id, batch_group} 매핑 (1:1 — 1개 WIP드럼은 1개 배치에만 매칭)
-    wip_match_map: dict[int, dict] = {
-        row.wip_matched_id: {
-            "matched_batch_id": row.batch_id,
-            "matched_batch_group": row.batch_group,
-        }
-        for row in matched_batches
-    }
+    wip_match_map: dict[int, dict] = {}
+    for row in matched_batches:
+        wip_process = wip_process_stages.get(row.wip_matched_id, "")
+        proc = row.process_name or ""
+        # WIP 공정과 배치 공정이 일치하는지 확인
+        is_match = (
+            ("연선" in wip_process and "연선" in proc)
+            or ("절연" in wip_process and ("절연" in proc or "B100" in proc))
+            or ("시스" in wip_process and "시스" in proc)
+        )
+        # 아직 미등록이거나 공정이 더 잘 맞는 배치로 갱신
+        if row.wip_matched_id not in wip_match_map or is_match:
+            wip_match_map[row.wip_matched_id] = {
+                "matched_batch_id": row.batch_id,
+                "matched_batch_group": row.batch_group,
+            }
 
     return [
         {
