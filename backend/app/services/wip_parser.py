@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.wip_inventory import WipInventory
 
 
-def parse_wip_file(file_content: bytes, db: Session) -> dict:
+def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = None) -> dict:
     """재공실사 Excel 파일을 파싱하여 wip_inventory 테이블에 INSERT.
 
     Args:
@@ -78,6 +78,7 @@ def parse_wip_file(file_content: bytes, db: Session) -> dict:
             wire_diameter=_get_num(ws, r, header_map, "소선경"),
             wire_count=_get_int(ws, r, header_map, "가닥수"),
             status="사용가능",
+            run_label=run_label,
         )
         db.add(wip)
         result["total"] += 1

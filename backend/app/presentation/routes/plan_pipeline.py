@@ -103,7 +103,7 @@ async def run_stage1(
 
             wip_content = await wip_file.read()
             if wip_content:
-                wip_parse = parse_wip_file(wip_content, db)
+                wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
                 wip_warnings.extend(wip_parse.get("warnings", []))
                 if wip_parse["total"] > 0:
                     wip_warnings.append(f"재공실사 {wip_parse['total']}건 등록 완료.")
@@ -252,12 +252,18 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
     - production_batch.wip_matched_id 로 어떤 배치에 매칭됐는지 batch_id / batch_group 포함
     """
     from app.infrastructure.models.wip_inventory import WipInventory
-    from sqlalchemy import and_
+    from sqlalchemy import or_
 
-    # wip_inventory 전체 조회 (해당 run_label)
+    # wip_inventory 전체 조회
+    # run_label이 일치하거나 NULL인 경우 모두 포함 (기존 데이터 호환)
     wip_rows = (
         db.query(WipInventory)
-        .filter(WipInventory.run_label == run_label)
+        .filter(
+            or_(
+                WipInventory.run_label == run_label,
+                WipInventory.run_label.is_(None),
+            )
+        )
         .order_by(WipInventory.process_stage, WipInventory.cross_section.desc())
         .all()
     )
