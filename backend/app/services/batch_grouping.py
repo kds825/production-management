@@ -162,13 +162,21 @@ def create_batches(
             continue
 
         # ── 외주 자동분류 (2-2) ─────────────────────────────────────────────
-        # ERP 플래그와 무관하게 SQ 기준 또는 고내화 제품군이면 외주로 처리한다.
-        # SQ <= 10: 소단면적 특수 공정은 사내 설비로 생산 불가
-        # 고내화: 고내화 케이블은 전문 외주 업체 전용 품목
-        if sq <= 10 or "고내화" in (order.product_group or ""):
+        # ERP 플래그와 무관하게 아래 조건 중 하나라도 해당하면 외주로 처리한다.
+        # (1) SQ <= 10: 소단면적 특수 공정은 사내 설비로 생산 불가
+        # (2) 고내화(TFR-8( 제품군) 16SQ: 고온 사양 특수 외주 전용
+        # (3) 아이마켓코리아 고객의 TFR-GV 품목: 고객 지정 외주
+        pg_upper = (order.product_group or "").upper()
+        customer_name = order.customer_name or ""
+        _is_outsourced = (
+            sq <= 10
+            or ("TFR-8(" in (order.product_group or "") and sq == 16)
+            or (customer_name == "아이마켓코리아" and "TFR-GV" in pg_upper)
+        )
+        if _is_outsourced:
             result["outsource_count"] += 1
             result["warnings"].append(
-                f"수주 {order_ref}: 외주 자동분류 (SQ={sq}, 제품군={order.product_group})"
+                f"수주 {order_ref}: 외주 자동분류 (SQ={sq}, 제품군={order.product_group}, 고객={customer_name})"
             )
             continue
 
@@ -536,6 +544,8 @@ def _infer_routing(order: SalesOrder) -> str:
 
     RT-001/002: 저압 CV (단심/다심)
     RT-003/004: HFCO (단심/다심)
+    RT-005/006 : TFR-8 (단심/다심)
+    RT-006/007 : TFR-8 고내화 (단심/다심)
     RT-HP1:     6/10kV 고압
     RT-HP2:     22.9kV/35kV URD
     RT-TFR:     TFR-GV 내화케이블
@@ -544,14 +554,20 @@ def _infer_routing(order: SalesOrder) -> str:
     voltage = order.voltage or ""
     core_count = int(order.core_count or 1)
 
-    if "URD" in pg or "22.9" in voltage or "35" in voltage:
+    if "URD" in pg or "35" in voltage:
+        return "RT-HP3"
+    if "22.9" in voltage:
         return "RT-HP2"
     if "6/10" in voltage:
         return "RT-HP1"
     if "TFR-GV" in pg:
         return "RT-TFR"
-    if "HFCO" in pg:
-        return "RT-004" if core_count > 1 else "RT-003"
+    if "TFR-CV" in pg:
+        return "RT-002" if core_count > 1 else "RT-001"
+    if "TFR-8(" in pg:
+        return "RT-008" if core_count > 1 else "RT-007"
+    if "TFR-8" in pg:
+        return "RT-006" if core_count > 1 else "RT-005"
     if "연동선" in pg or "나동선" in pg:
         return "RT-BARE"  # 연동선/나동선: 연선만 (절연/시스 불필요)
     # 기본값: 저압 CV
