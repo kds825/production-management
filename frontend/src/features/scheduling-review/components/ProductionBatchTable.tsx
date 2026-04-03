@@ -538,7 +538,7 @@ export function ProductionBatchTable({
                                 </button>
                               ) : (
                                 <span className="block truncate text-[11px]" style={{ textAlign: col.align as "left" | "right" }}>
-                                  {getCellValue(col, batch) || "\u2014"}
+                                  {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
                                 </span>
                               )}
                             </td>

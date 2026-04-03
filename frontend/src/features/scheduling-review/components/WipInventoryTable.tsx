@@ -148,7 +148,7 @@ export function WipInventoryTable({
                                     : { backgroundColor: "#DCFCE7", color: "#15803D" }
                                 }
                               >
-                                {display || "—"}
+                                {display || "–"}
                               </span>
                             ) : (
                               <span
@@ -159,7 +159,7 @@ export function WipInventoryTable({
                                   color: isActive ? "#C41230" : undefined,
                                 }}
                               >
-                                {display || "\u2014"}
+                                {display || <span style={{ color: "#CBD5E1" }}>–</span>}
                               </span>
                             )}
                           </td>

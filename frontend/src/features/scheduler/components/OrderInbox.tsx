@@ -142,7 +142,7 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
       </div>
 
       <div className="text-[10px] text-gray-500 truncate mb-0.5">
-        {order.spec || "\u2014"}
+        {order.spec || "–"}
         {order.core_count > 0 && ` \u00B7 ${order.core_count}C`}
         {order.color && ` \u00B7 ${order.color}`}
       </div>

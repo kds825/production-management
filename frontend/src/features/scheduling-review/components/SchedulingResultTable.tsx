@@ -628,7 +628,7 @@ export function SchedulingResultTable({
                                   textAlign: col.align as "left" | "right",
                                 }}
                               >
-                                {getCellValue(col, batch) || "\u2014"}
+                                {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
                               </span>
                             )}
                           </td>
