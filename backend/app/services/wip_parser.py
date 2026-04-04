@@ -1,8 +1,7 @@
-"""재공실사 Excel 파일(.xlsx) 파싱 → WipInventory 레코드 생성"""
+"""재공실사 Excel 파일(.xlsx / .xls) 파싱 → WipInventory 레코드 생성"""
 
 import re
 
-from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.wip_inventory import WipInventory
@@ -12,7 +11,7 @@ def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = Non
     """재공실사 Excel 파일을 파싱하여 wip_inventory 테이블에 INSERT.
 
     Args:
-        file_content: .xlsx 파일의 raw bytes
+        file_content: .xlsx 또는 .xls 파일의 raw bytes
         db:           SQLAlchemy 세션 (commit은 호출부 책임)
 
     Returns:
@@ -22,9 +21,26 @@ def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = Non
 
     result = {"total": 0, "warnings": []}
 
-    wb = load_workbook(BytesIO(file_content), data_only=True)
-    ws = wb.active
+    # .xlsx 시도 → 실패 시 .xls(xlrd)로 폴백
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(file_content), data_only=True)
+        ws = wb.active
+        _parse_openpyxl(ws, db, run_label, result)
+    except Exception:
+        try:
+            import xlrd
+            book = xlrd.open_workbook(file_contents=file_content)
+            sheet = book.sheet_by_index(0)
+            _parse_xlrd(sheet, db, run_label, result)
+        except Exception as e2:
+            raise ValueError(f"xlsx/xls 모두 파싱 실패: {e2}") from e2
 
+    return result
+
+
+def _parse_openpyxl(ws, db: Session, run_label: str | None, result: dict) -> None:
+    """openpyxl 워크시트 파싱 (xlsx)"""
     # 헤더 행 탐지 — "공정" 컬럼이 있는 행
     header_row = None
     header_map: dict[str, int] = {}
@@ -39,52 +55,144 @@ def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = Non
 
     if header_row is None:
         result["warnings"].append("헤더 행 탐지 실패 — '공정' 컬럼을 찾을 수 없습니다.")
-        return result
+        return
 
-    # 헤더 맵 구성
     for c in range(1, ws.max_column + 1):
         val = str(ws.cell(header_row, c).value or "").strip()
         if val:
             header_map[val] = c
 
-    # 데이터 행 파싱
     for r in range(header_row + 1, ws.max_row + 1):
         process = _get(ws, r, header_map, "공정")
         if not process:
             continue
-
-        spec_raw = _get(ws, r, header_map, "규격") or ""
-        sq = _extract_sq(spec_raw)
-
-        length_m = _get_num(ws, r, header_map, "길이(M)")
-        count = _get_int(ws, r, header_map, "개수")
-        total_m = _get_num(ws, r, header_map, "총량(M)")
-
-        # 총량이 없으면 길이×개수로 계산
-        if total_m is None and length_m is not None and count is not None:
-            total_m = length_m * count
-
-        wip = WipInventory(
-            process_stage=process,
+        _add_wip(
+            db, run_label, result,
+            process=process,
+            spec_raw=_get(ws, r, header_map, "규격") or "",
             voltage_class=_get(ws, r, header_map, "전압구분"),
             material=_get(ws, r, header_map, "재질"),
             product_name=_get(ws, r, header_map, "품명"),
-            spec=spec_raw,
-            cross_section=sq,
-            length_m=length_m,
-            count=count or 1,
-            total_length_m=total_m,
+            length_m=_get_num(ws, r, header_map, "길이(M)"),
+            count=_get_int(ws, r, header_map, "개수"),
+            total_m=_get_num(ws, r, header_map, "총량(M)"),
             core_colors=_get(ws, r, header_map, "선심색상"),
             wire_diameter=_get_num(ws, r, header_map, "소선경"),
             wire_count=_get_int(ws, r, header_map, "가닥수"),
-            status="사용가능",
-            run_label=run_label,
         )
-        db.add(wip)
-        result["total"] += 1
 
     db.flush()
-    return result
+
+
+def _parse_xlrd(sheet, db: Session, run_label: str | None, result: dict) -> None:
+    """xlrd 시트 파싱 (xls)"""
+    import xlrd
+
+    header_row = None
+    header_map: dict[str, int] = {}
+    for r in range(min(5, sheet.nrows)):
+        for c in range(sheet.ncols):
+            val = str(sheet.cell_value(r, c) or "").strip()
+            if val == "공정":
+                header_row = r
+                break
+        if header_row is not None:
+            break
+
+    if header_row is None:
+        result["warnings"].append("헤더 행 탐지 실패 — '공정' 컬럼을 찾을 수 없습니다.")
+        return
+
+    for c in range(sheet.ncols):
+        val = str(sheet.cell_value(header_row, c) or "").strip()
+        if val:
+            header_map[val] = c
+
+    def xget(r: int, col_name: str) -> str | None:
+        col = header_map.get(col_name)
+        if col is None:
+            return None
+        val = sheet.cell_value(r, col)
+        if val is None or val == "":
+            return None
+        ctype = sheet.cell_type(r, col)
+        if ctype == xlrd.XL_CELL_FLOAT:
+            v = int(val) if val == int(val) else val
+            return str(v)
+        return str(val).strip() or None
+
+    def xget_num(r: int, col_name: str) -> float | None:
+        v = xget(r, col_name)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    def xget_int(r: int, col_name: str) -> int | None:
+        v = xget_num(r, col_name)
+        return int(v) if v is not None else None
+
+    for r in range(header_row + 1, sheet.nrows):
+        process = xget(r, "공정")
+        if not process:
+            continue
+        _add_wip(
+            db, run_label, result,
+            process=process,
+            spec_raw=xget(r, "규격") or "",
+            voltage_class=xget(r, "전압구분"),
+            material=xget(r, "재질"),
+            product_name=xget(r, "품명"),
+            length_m=xget_num(r, "길이(M)"),
+            count=xget_int(r, "개수"),
+            total_m=xget_num(r, "총량(M)"),
+            core_colors=xget(r, "선심색상"),
+            wire_diameter=xget_num(r, "소선경"),
+            wire_count=xget_int(r, "가닥수"),
+        )
+
+    db.flush()
+
+
+def _add_wip(
+    db: Session,
+    run_label: str | None,
+    result: dict,
+    process: str,
+    spec_raw: str,
+    voltage_class: str | None,
+    material: str | None,
+    product_name: str | None,
+    length_m: float | None,
+    count: int | None,
+    total_m: float | None,
+    core_colors: str | None,
+    wire_diameter: float | None,
+    wire_count: int | None,
+) -> None:
+    sq = _extract_sq(spec_raw)
+    if total_m is None and length_m is not None and count is not None:
+        total_m = length_m * count
+    wip = WipInventory(
+        process_stage=process,
+        voltage_class=voltage_class,
+        material=material,
+        product_name=product_name,
+        spec=spec_raw,
+        cross_section=sq,
+        length_m=length_m,
+        count=count or 1,
+        total_length_m=total_m,
+        core_colors=core_colors,
+        wire_diameter=wire_diameter,
+        wire_count=wire_count,
+        status="사용가능",
+        run_label=run_label,
+    )
+    db.add(wip)
+    result["total"] += 1
 
 
 def _get(ws, row: int, header_map: dict, col_name: str) -> str | None:
