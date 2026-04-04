@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import type { SchedulingBatch } from "../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
@@ -254,6 +254,16 @@ export function ProductionBatchTable({
 
   function getCellValue(col: (typeof COL_DEFS)[number], batch: SchedulingBatch): string {
     return getCellValueStatic(col, batch, batchNumbers);
+  }
+
+  function getWipNoteStyle(notes: string): React.CSSProperties {
+    if (notes.startsWith("연선재고"))
+      return { backgroundColor: "#ECFDF5", color: "#065F46" }; // 초록
+    if (notes.startsWith("절연재고"))
+      return { backgroundColor: "#EFF6FF", color: "#1D4ED8" }; // 파랑
+    if (notes.startsWith("시스재고"))
+      return { backgroundColor: "#F5F3FF", color: "#6D28D9" }; // 보라
+    return { backgroundColor: "#FEF2F2", color: "#C41230" };   // 기본 빨강
   }
 
   function getRowBg(b: SchedulingBatch) {
@@ -535,7 +545,10 @@ export function ProductionBatchTable({
                                 <button
                                   onClick={() => onBatchWipClick?.(batch.id)}
                                   className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
-                                  style={{ backgroundColor: "#FEF2F2", color: "#C41230", cursor: onBatchWipClick ? "pointer" : "default" }}
+                                  style={{
+                                    ...getWipNoteStyle(batch.notes),
+                                    cursor: onBatchWipClick ? "pointer" : "default",
+                                  }}
                                 >
                                   {batch.notes}
                                 </button>
