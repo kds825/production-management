@@ -226,6 +226,7 @@ def create_batches(
             lot_count_g = math.ceil(total_qty_g / lot_size_g)
             work_qty_g = lot_count_g * lot_size_g
         else:
+            lot_count_g = 1
             lot_size_g = total_qty_g
             work_qty_g = total_qty_g
 
