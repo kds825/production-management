@@ -86,8 +86,6 @@ def _parse_openpyxl(ws, db: Session, run_label: str | None, result: dict) -> Non
 
 def _parse_xlrd(sheet, db: Session, run_label: str | None, result: dict) -> None:
     """xlrd 시트 파싱 (xls)"""
-    import xlrd
-
     header_row = None
     header_map: dict[str, int] = {}
     for r in range(min(5, sheet.nrows)):
@@ -115,10 +113,9 @@ def _parse_xlrd(sheet, db: Session, run_label: str | None, result: dict) -> None
         val = sheet.cell_value(r, col)
         if val is None or val == "":
             return None
-        ctype = sheet.cell_type(r, col)
-        if ctype == xlrd.XL_CELL_FLOAT:
-            v = int(val) if val == int(val) else val
-            return str(v)
+        # xlrd 2.x: 숫자 셀은 float으로 반환됨 — 정수이면 소수점 제거
+        if isinstance(val, float):
+            val = int(val) if val == int(val) else val
         return str(val).strip() or None
 
     def xget_num(r: int, col_name: str) -> float | None:
