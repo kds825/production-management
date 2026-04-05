@@ -372,14 +372,24 @@ def _write_sheet(
         )
         group_end_row = row_num - 1  # 마지막 데이터 행
 
+        # 연선 시트: remarks에서 실제 틀(lot) 수 추출 — 수주 건수와 구분
+        # remarks 형식: "연선그룹 20건 1틀 / 그룹총량 ..."
+        if sheet_name == "연선":
+            import re as _re
+            m = _re.search(r"\d+건\s+(\d+)틀", group_batches[0].remarks or "")
+            lot_count = int(m.group(1)) if m else group_drum_count_total
+        else:
+            lot_count = None  # 연선 외엔 미사용
+
         row_num = _write_subtotal(
             ws,
             row_num,
             sq,
             group_start_row,
             group_end_row,
-            len(group_batches),
+            lot_count if lot_count is not None else len(group_batches),
             total_cols,
+            is_stranding=sheet_name == "연선",
         )
 
         # 주석 행: SQ 그룹 요약 (예: "240SQ--->2틀(절연1570)")
@@ -387,7 +397,7 @@ def _write_sheet(
             ws,
             row_num,
             sq,
-            group_drum_count_total,
+            lot_count if lot_count is not None else group_drum_count_total,
             group_batches,
             wip_stage_lookup,
             sheet_name,
@@ -509,6 +519,8 @@ def _write_subtotal(
     end_row: int,
     count: int,
     total_cols: int,
+    *,
+    is_stranding: bool = False,
 ) -> int:
     """SQ 그룹 소계 행을 쓰고 다음 row_num을 반환한다.
 
@@ -518,7 +530,8 @@ def _write_subtotal(
     sq_label = int(sq) if sq == int(sq) else sq
     total_length_col = 8  # H열 = 총길이(m)
 
-    label_cell = ws.cell(row=row_num, column=1, value=f"{sq_label}SQ → {count}건")
+    unit = "틀" if is_stranding else "건"
+    label_cell = ws.cell(row=row_num, column=1, value=f"{sq_label}SQ → {count}{unit}")
     label_cell.font = _SUBTOTAL_FONT
 
     # 총길이(H열)에 SUM 수식 — 영문 함수명 사용 (openpyxl 요건)
@@ -545,8 +558,8 @@ def _write_annotation(
 ) -> int:
     """SQ 그룹 주석 행을 쓰고 다음 row_num을 반환한다.
 
-    연선 시트: "240SQ--->2틀" (drum_count 합계)
-    기타 시트: WIP 참조 정보가 있으면 "(절연1570)" 등 포함.
+    연선 시트: drum_count_total = lot_count (실제 작업지시 틀 수)
+    기타 시트: drum_count_total = 수주 drum_count 합산
     포맷: 주황색 볼드 (RGB 255,102,0).
     """
     sq_label = int(sq) if sq == int(sq) else sq
