@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -707,6 +707,18 @@ function getKstToday(): string {
 export default function PlanRegisterPage() {
   const [baseDate, setBaseDate] = useState(getKstToday());
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
+
+  // localStorage에서 기존 기준일자 복원, 없으면 오늘로 초기화 후 저장
+  useEffect(() => {
+    const stored = localStorage.getItem("plan_base_date");
+    if (stored && stored.length === 8) {
+      const formatted = `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
+      setBaseDate(formatted);
+    } else {
+      const today = getKstToday();
+      localStorage.setItem("plan_base_date", today.replace(/-/g, ""));
+    }
+  }, []);
 
   return (
     <div
