@@ -475,7 +475,6 @@ def _write_data_row(
         if remarks_override is not None
         else _build_remarks(
             batch,
-            batch.remarks,
             wip_stage=wip_stage,
             wip_total_len_m=wip_total_len_m,
         )
