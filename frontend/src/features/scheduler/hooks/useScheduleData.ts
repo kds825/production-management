@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { Equipment, ScheduleTask, LineSpeedEntry } from "../types";
+import { getDefaultRange } from "../utils/ganttUtils";
 
 interface RawScheduleTask extends Omit<
   ScheduleTask,
@@ -29,21 +30,14 @@ function parseTask(raw: RawScheduleTask): ScheduleTask {
  * 공장 수동 계획표 기준(3주 창)에 맞춰 조회 범위를 제한하여 불필요한 데이터를 줄인다.
  */
 function getThreeWeekWindow(): { dateFrom: string; dateTo: string } {
-  const now = new Date();
-  // 이번 주 월요일 (일=0 기준 → 월=1)
-  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday);
-  monday.setHours(0, 0, 0, 0);
-
-  // +3주 금요일
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 3 * 7 - 3); // +18일 = 3주 뒤 금요일
-  friday.setHours(23, 59, 59, 999);
-
+  // 오늘부터 +4주까지 조회 — 계획 기준일이 오늘이면 반드시 포함
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setDate(today.getDate() + 28); // +4주
+  end.setHours(23, 59, 59, 999);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  return { dateFrom: fmt(monday), dateTo: fmt(friday) };
+  return { dateFrom: fmt(today), dateTo: fmt(end) };
 }
 
 /**
@@ -55,6 +49,7 @@ export function useScheduleData() {
   const setEquipment = useScheduleStore((s) => s.setEquipment);
   const setTasks = useScheduleStore((s) => s.setTasks);
   const setLineSpeedData = useScheduleStore((s) => s.setLineSpeedData);
+  const setRange = useScheduleStore((s) => s.setRange);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,9 +78,19 @@ export function useScheduleData() {
 
         if (cancelled) return;
 
+        const tasks = rawTasks.map(parseTask);
         setEquipment(equipment);
-        setTasks(rawTasks.map(parseTask));
+        setTasks(tasks);
         setLineSpeedData(lineSpeeds);
+
+        // 계획 기준일자로 간트 뷰 자동 이동 — 가장 이른 task 시작 시각 기준
+        if (tasks.length > 0) {
+          const minStart = Math.min(...tasks.map((t) => t.start.getTime()));
+          const THREE_WEEKS_MS = 21 * 24 * 60 * 60 * 1000;
+          setRange({ start: minStart, end: minStart + THREE_WEEKS_MS });
+        } else {
+          setRange(getDefaultRange(7));
+        }
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "데이터 로드 실패";

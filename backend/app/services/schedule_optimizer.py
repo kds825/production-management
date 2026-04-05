@@ -138,14 +138,20 @@ def auto_schedule(
     if wip_skipped:
         result["wip_skipped"] = wip_skipped
 
-    # ── 기준일시 설정 — KST 당일 08:00 (현장 근무 시작) ───────────────────
+    # ── 기준일시 설정 — 계획 생성일(run_label) 08:00 ─────────────────────
+    # run_label 형식: "YYYYMMDD_HHMMSS" — 앞 8자리를 날짜로 파싱한다.
+    # 파싱 실패 시 KST 당일 08:00으로 폴백.
     if base_date is None:
-        from zoneinfo import ZoneInfo
-
-        kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
-        base_date = kst_now.replace(hour=8, minute=0, second=0, microsecond=0)
-        if base_date.tzinfo:
-            base_date = base_date.replace(tzinfo=None)  # naive datetime for DB
+        try:
+            date_part = run_label.split("_")[0]  # "20260406"
+            base_date = datetime(
+                int(date_part[:4]), int(date_part[4:6]), int(date_part[6:8]),
+                8, 0, 0,
+            )
+        except Exception:
+            from zoneinfo import ZoneInfo
+            kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
+            base_date = kst_now.replace(hour=8, minute=0, second=0, microsecond=0).replace(tzinfo=None)
 
     # Load equipment into memory
     equipment_list = db.query(EquipmentMaster).all()
