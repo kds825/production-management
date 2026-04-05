@@ -232,104 +232,100 @@ def create_batches(
         routing_code_g = grp["routing_code"]
         is_61strand_g = sq >= 300
 
-        # ── 틀 단위 연선 배치 생성 ─────────────────────────────────────────
-        # 연선은 수주별이 아닌 lot(틀) 단위로 작업지시.
-        # lot_count_g 개 배치만 생성. 각 틀의 대표 수주 = 해당 lot 인덱스에 해당하는 수주.
-        # batch_group: 엑셀 수주별 확장 시 같은 그룹을 묶는 키로 활용
+        # ── 수주별 연선 배치 생성 ──────────────────────────────────────────
+        # scheduling-review 및 Excel 모두 수주 단위 행으로 표시.
+        # 틀(lot) 계산은 remarks에만 기록 — drum_length_m/drum_count는 수주 수량 기준.
         strand_batch_group = f"ST-{int(sq)}-{voltage_g}-{stranding_type_g}"
-        rep_order_0 = orders_g[0]
-        item_rep = _find_item(rep_order_0, items)
-        conductor_material_rep = _infer_material(rep_order_0)
-        speed_rep = _find_speed(speed_lookup, "연선", rep_order_0, sq)
-        line_speed_rep = float(speed_rep.line_speed_mpm) if speed_rep and speed_rep.line_speed_mpm else None
-        setup_time_rep = float(speed_rep.setup_spec_min) if speed_rep and speed_rep.setup_spec_min else 0.0
-        # 1틀 소요 시간
-        duration_per_lot = lot_size_g / line_speed_rep if line_speed_rep else None
+        remarks_group = (
+            f"연선그룹 {len(orders_g)}건 {lot_count_g}틀 / "
+            f"그룹총량 {total_qty_g:.0f}m→{work_qty_g:.0f}m (틀단위 {lot_size_g:.0f}m)"
+        )
 
-        for lot_idx in range(lot_count_g):
-            # 틀별 대표 수주 — 그룹 내 수주를 순서대로 배정 (수주 수 < 틀 수이면 첫 수주로 고정)
-            rep_order = orders_g[min(lot_idx, len(orders_g) - 1)]
-            matched_wip = wip_by_order_line.get(f"{rep_order.order_id}:{rep_order.order_line}")
-            wip_id_lot: int | None = matched_wip.wip_id if matched_wip else None
+        for order in orders_g:
+            order_qty_o: float = float(order.ordered_qty_m or 0) * (1.0 + defect_buffer_pct)
+            item_o = _find_item(order, items)
+            conductor_material_o = _infer_material(order)
+            speed_o = _find_speed(speed_lookup, "연선", order, sq)
+            line_speed_o = float(speed_o.line_speed_mpm) if speed_o and speed_o.line_speed_mpm else None
+            setup_time_o = float(speed_o.setup_spec_min) if speed_o and speed_o.setup_spec_min else 0.0
+            duration_o = order_qty_o / line_speed_o if line_speed_o else None
 
-            lot_label = f"{lot_idx + 1}/{lot_count_g}틀" if lot_count_g > 1 else "1틀"
-            remarks_lot = (
-                f"연선그룹 {len(orders_g)}건 {lot_label} / "
-                f"그룹총량 {total_qty_g:.0f}m→{work_qty_g:.0f}m (틀단위 {lot_size_g:.0f}m)"
-            )
+            matched_wip_o = wip_by_order_line.get(f"{order.order_id}:{order.order_line}")
+            wip_id_o: int | None = matched_wip_o.wip_id if matched_wip_o else None
 
             strand_batch = ProductionBatch(
                 run_label=run_label,
-                sales_order_id=rep_order.order_id,
-                sales_order_line=rep_order.order_line,
-                item_code=item_rep.item_code if item_rep else None,
+                sales_order_id=order.order_id,
+                sales_order_line=order.order_line,
+                item_code=item_o.item_code if item_o else None,
                 routing_code=routing_code_g,
                 process_name="연선",
                 batch_seq=1,
-                drum_length_m=lot_size_g,
+                drum_length_m=float(order.ordered_qty_m or 0),
                 drum_count=1,
-                total_length_m=lot_size_g,
+                total_length_m=float(order.ordered_qty_m or 0),
                 extra_length_m=0,
                 sq_mm2=sq,
-                core_count=int(rep_order_0.core_count or 1),
-                core_colors=rep_order_0.core_colors,
-                sheath_color=rep_order_0.sheath_color,
-                customer_name=rep_order_0.customer_name,
-                due_date=rep_order_0.due_date,
-                customer_priority=rep_order_0.customer_priority or 99,
-                line_speed_mpm=line_speed_rep,
-                setup_time_min=setup_time_rep,
-                estimated_duration_min=duration_per_lot,
+                core_count=int(order.core_count or 1),
+                core_colors=order.core_colors,
+                sheath_color=order.sheath_color,
+                customer_name=order.customer_name,
+                due_date=order.due_date,
+                customer_priority=order.customer_priority or 99,
+                line_speed_mpm=line_speed_o,
+                setup_time_min=setup_time_o,
+                estimated_duration_min=duration_o,
                 status="planned",
-                product_group=rep_order_0.product_group,
-                voltage=rep_order_0.voltage,
-                conductor_material=conductor_material_rep,
+                product_group=order.product_group,
+                voltage=order.voltage,
+                conductor_material=conductor_material_o,
                 stranding_type=stranding_type_g,
-                remarks=remarks_lot,
+                remarks=remarks_group,
                 equipment_code=None,
-                wip_matched_id=wip_id_lot,
-                spec_raw=rep_order_0.spec_raw,
+                wip_matched_id=wip_id_o,
+                spec_raw=order.spec_raw,
                 batch_group=strand_batch_group,
             )
             batches.append(strand_batch)
 
-            # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 틀 단위로 생성
-            if is_61strand_g and conductor_material_rep == "CU":
-                core_speed = _find_speed(speed_lookup, "연선", rep_order_0, 35.0)
-                core_spd = float(core_speed.line_speed_mpm) if core_speed and core_speed.line_speed_mpm else 25.0
-                core_setup = float(core_speed.setup_spec_min) if core_speed and core_speed.setup_spec_min else 210.0
-                core_dur = lot_size_g / core_spd if core_spd > 0 else None
+            # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 수주 단위로 생성
+            if is_61strand_g and conductor_material_o == "CU":
+                core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
+                core_spd = float(core_speed_o.line_speed_mpm) if core_speed_o and core_speed_o.line_speed_mpm else 25.0
+                core_setup = float(core_speed_o.setup_spec_min) if core_speed_o and core_speed_o.setup_spec_min else 210.0
+                core_dur = order_qty_o / core_spd if core_spd > 0 else None
                 core_batch = ProductionBatch(
                     run_label=run_label,
-                    sales_order_id=rep_order.order_id,
-                    sales_order_line=rep_order.order_line,
-                    item_code=item_rep.item_code if item_rep else None,
+                    sales_order_id=order.order_id,
+                    sales_order_line=order.order_line,
+                    item_code=item_o.item_code if item_o else None,
                     routing_code=routing_code_g,
                     process_name="연선",
                     batch_seq=0,
-                    drum_length_m=lot_size_g,
+                    drum_length_m=float(order.ordered_qty_m or 0),
                     drum_count=1,
-                    total_length_m=lot_size_g,
+                    total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,
-                    core_count=int(rep_order_0.core_count or 1),
-                    core_colors=rep_order_0.core_colors,
-                    sheath_color=rep_order_0.sheath_color,
-                    customer_name=rep_order_0.customer_name,
-                    due_date=rep_order_0.due_date,
-                    customer_priority=rep_order_0.customer_priority or 99,
+                    core_count=int(order.core_count or 1),
+                    core_colors=order.core_colors,
+                    sheath_color=order.sheath_color,
+                    customer_name=order.customer_name,
+                    due_date=order.due_date,
+                    customer_priority=order.customer_priority or 99,
                     line_speed_mpm=core_spd,
                     setup_time_min=core_setup,
                     estimated_duration_min=core_dur,
                     status="planned",
-                    product_group=rep_order_0.product_group,
-                    voltage=rep_order_0.voltage,
-                    conductor_material=conductor_material_rep,
+                    product_group=order.product_group,
+                    voltage=order.voltage,
+                    conductor_material=conductor_material_o,
                     stranding_type="7연선코어",
-                    remarks=f"61연선 코어 ({int(sq)}SQ용) {lot_label} / 틀단위 {lot_size_g:.0f}m",
+                    remarks=f"61연선 코어 ({int(sq)}SQ용)",
                     equipment_code=None,
-                    wip_matched_id=wip_id_lot,
-                    spec_raw=rep_order_0.spec_raw,
+                    wip_matched_id=wip_id_o,
+                    spec_raw=order.spec_raw,
+                    batch_group=strand_batch_group,
                 )
                 batches.append(core_batch)
 
