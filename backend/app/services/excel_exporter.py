@@ -319,16 +319,10 @@ def _write_sheet(
             block_first_row = row_num
             block_first_remarks_override: str | None = None
             if block_wip_id is not None and (end_idx - idx) > 1:
-                merged_base_remarks = " / ".join(
-                    b.remarks.strip()
-                    for b in group_batches[idx:end_idx]
-                    if b.remarks and b.remarks.strip()
-                )
                 wip_stage = wip_stage_lookup.get(block_wip_id)
                 wip_total_len_m = wip_total_len_lookup.get(block_wip_id, 0.0)
                 block_first_remarks_override = _build_remarks(
                     group_batches[idx],
-                    merged_base_remarks or None,
                     wip_stage=wip_stage,
                     wip_total_len_m=wip_total_len_m,
                 )
@@ -407,7 +401,6 @@ def _write_sheet(
 
 def _build_remarks(
     batch: ProductionBatch,
-    base_remarks: str | None = None,
     *,
     wip_stage: str | None = None,
     wip_total_len_m: float | None = None,

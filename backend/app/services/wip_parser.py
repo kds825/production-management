@@ -1,10 +1,9 @@
 """재공실사 Excel 파일(.xlsx / .xls) 파싱 → WipInventory 레코드 생성"""
 
-import re
-
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.wip_inventory import WipInventory
+from app.services.wip_matching import _extract_sq
 
 
 def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = None) -> dict:
@@ -216,12 +215,3 @@ def _get_num(ws, row: int, header_map: dict, col_name: str) -> float | None:
 def _get_int(ws, row: int, header_map: dict, col_name: str) -> int | None:
     val = _get_num(ws, row, header_map, col_name)
     return int(val) if val is not None else None
-
-
-def _extract_sq(spec: str) -> float | None:
-    if not spec:
-        return None
-    m = re.search(r"(\d+(?:\.\d+)?)\s*SQ", spec, re.IGNORECASE)
-    if m:
-        return float(m.group(1))
-    return None

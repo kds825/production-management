@@ -7,6 +7,8 @@
   - 마지막 수주는 shortage_tolerance 범위 내 부족 허용
 """
 
+import re
+
 from sqlalchemy.orm import Session
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.sales_order import SalesOrder
@@ -193,7 +195,6 @@ def _product_group_matches(wip_product_name: str | None, order_product_group: st
 
 def _extract_sq(spec_raw: str | None) -> float | None:
     """규격 문자열에서 SQ 값(숫자)을 추출"""
-    import re
     if not spec_raw:
         return None
     m = re.search(r"(\d+(?:\.\d+)?)\s*SQ", spec_raw, re.IGNORECASE)
