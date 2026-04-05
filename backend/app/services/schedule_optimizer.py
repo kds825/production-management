@@ -272,16 +272,28 @@ def auto_schedule(
             process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
 
-        # ── 그룹 전체 duration 합산 ──────────────────────────────────────────
+        # ── 그룹 전체 duration 계산 ──────────────────────────────────────────
+        # batch_seq=-1 헤더 배치가 있으면 그 estimated_duration_min을 직접 사용.
+        # (연선 그룹: 실제 작업량 work_qty_g / 선속 — 수주 건수와 무관)
+        # 헤더 없으면 기존 방식으로 각 배치 duration 합산.
         line_speed = float(rep.line_speed_mpm or 10)
-        group_duration = 0.0
-        for b in group_batches:
-            d = float(b.estimated_duration_min or 0)
-            if d <= 0:
-                total = float(b.total_length_m or 0) + float(b.extra_length_m or 0)
-                ls = float(b.line_speed_mpm or 0) or line_speed
-                d = total / ls if ls > 0 else 60
-            group_duration += d
+        header_batch = next((b for b in group_batches if b.batch_seq == -1), None)
+        if header_batch is not None:
+            hd = float(header_batch.estimated_duration_min or 0)
+            if hd <= 0:
+                total = float(header_batch.total_length_m or 0)
+                ls = float(header_batch.line_speed_mpm or 0) or line_speed
+                hd = total / ls if ls > 0 else 60
+            group_duration = hd
+        else:
+            group_duration = 0.0
+            for b in group_batches:
+                d = float(b.estimated_duration_min or 0)
+                if d <= 0:
+                    total = float(b.total_length_m or 0) + float(b.extra_length_m or 0)
+                    ls = float(b.line_speed_mpm or 0) or line_speed
+                    d = total / ls if ls > 0 else 60
+                group_duration += d
 
         setup_min = float(rep.setup_time_min or 0)
         drum_winding_min = _get_drum_winding_min(

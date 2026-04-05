@@ -197,7 +197,10 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             WipInventory,
             ProductionBatch.wip_matched_id == WipInventory.wip_id,
         )
-        .filter(ProductionBatch.run_label == run_label)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.batch_seq != -1,  # 헤더 배치(스케줄러 전용) 제외
+        )
         .all()
     )
     batches = [(b, os or "대기", wip_len_m, wip_cnt, wip_cc, wip_ps) for b, os, wip_len_m, wip_cnt, wip_cc, wip_ps in rows]

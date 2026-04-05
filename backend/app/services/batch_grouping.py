@@ -233,15 +233,66 @@ def create_batches(
         routing_code_g = grp["routing_code"]
         is_61strand_g = sq >= 300
 
-        # ── 수주별 연선 배치 생성 ──────────────────────────────────────────
-        # scheduling-review 및 Excel 모두 수주 단위 행으로 표시.
-        # 틀(lot) 계산은 remarks에만 기록 — drum_length_m/drum_count는 수주 수량 기준.
+        # ── 연선 그룹 공통 정보 ──────────────────────────────────────────────
         strand_batch_group = f"ST-{int(sq)}-{voltage_g}-{stranding_type_g}"
         remarks_group = (
             f"연선그룹 {len(orders_g)}건 {lot_count_g}틀 / "
             f"그룹총량 {total_qty_g:.0f}m→{work_qty_g:.0f}m (틀단위 {lot_size_g:.0f}m)"
         )
 
+        # 그룹 대표 선속·준비시간 (첫 번째 수주 기준, 동일 SQ 그룹이므로 동일 선속)
+        rep_order_g = orders_g[0]
+        rep_speed_g = _find_speed(speed_lookup, "연선", rep_order_g, sq)
+        line_speed_g = float(rep_speed_g.line_speed_mpm) if rep_speed_g and rep_speed_g.line_speed_mpm else None
+        setup_time_g = float(rep_speed_g.setup_spec_min) if rep_speed_g and rep_speed_g.setup_spec_min else 0.0
+        rep_item_g = _find_item(rep_order_g, items)
+        rep_material_g = _infer_material(rep_order_g)
+        earliest_due_g = min((o.due_date for o in orders_g if o.due_date), default=None)
+        best_priority_g = min(o.customer_priority or 99 for o in orders_g)
+
+        # batch_seq=-1: 그룹 헤더 배치 ─────────────────────────────────────
+        # 스케줄러(schedule_optimizer)가 이 배치의 estimated_duration_min으로
+        # 실제 틀단위 작업량(work_qty_g) 기준 간트 블록 크기를 결정한다.
+        # Excel·scheduling-review 표시에서는 제외(batch_seq=-1 필터)된다.
+        header_duration_g = work_qty_g / line_speed_g if line_speed_g else None
+        header_batch = ProductionBatch(
+            run_label=run_label,
+            sales_order_id=rep_order_g.order_id,
+            sales_order_line=rep_order_g.order_line,
+            item_code=rep_item_g.item_code if rep_item_g else None,
+            routing_code=routing_code_g,
+            process_name="연선",
+            batch_seq=-1,
+            drum_length_m=lot_size_g,
+            drum_count=lot_count_g,
+            total_length_m=work_qty_g,
+            extra_length_m=0,
+            sq_mm2=sq,
+            core_count=int(rep_order_g.core_count or 1),
+            core_colors=rep_order_g.core_colors,
+            sheath_color=rep_order_g.sheath_color,
+            customer_name=rep_order_g.customer_name,
+            due_date=earliest_due_g,
+            customer_priority=best_priority_g,
+            line_speed_mpm=line_speed_g,
+            setup_time_min=setup_time_g,
+            estimated_duration_min=header_duration_g,
+            status="planned",
+            product_group=rep_order_g.product_group,
+            voltage=rep_order_g.voltage,
+            conductor_material=rep_material_g,
+            stranding_type=stranding_type_g,
+            remarks=remarks_group,
+            equipment_code=None,
+            wip_matched_id=None,
+            spec_raw=rep_order_g.spec_raw,
+            batch_group=strand_batch_group,
+        )
+        batches.append(header_batch)
+
+        # ── 수주별 연선 배치 생성 (display용) ────────────────────────────────
+        # scheduling-review·Excel 수주 단위 행 표시용.
+        # estimated_duration_min=None — 스케줄러는 헤더 배치(seq=-1) duration 사용.
         for order in orders_g:
             order_qty_o: float = float(order.ordered_qty_m or 0) * (1.0 + defect_buffer_pct)
             item_o = _find_item(order, items)
@@ -249,7 +300,6 @@ def create_batches(
             speed_o = _find_speed(speed_lookup, "연선", order, sq)
             line_speed_o = float(speed_o.line_speed_mpm) if speed_o and speed_o.line_speed_mpm else None
             setup_time_o = float(speed_o.setup_spec_min) if speed_o and speed_o.setup_spec_min else 0.0
-            duration_o = order_qty_o / line_speed_o if line_speed_o else None
 
             matched_wip_o = wip_by_order_line.get(f"{order.order_id}:{order.order_line}")
             wip_id_o: int | None = matched_wip_o.wip_id if matched_wip_o else None
@@ -275,7 +325,7 @@ def create_batches(
                 customer_priority=order.customer_priority or 99,
                 line_speed_mpm=line_speed_o,
                 setup_time_min=setup_time_o,
-                estimated_duration_min=duration_o,
+                estimated_duration_min=None,
                 status="planned",
                 product_group=order.product_group,
                 voltage=order.voltage,
