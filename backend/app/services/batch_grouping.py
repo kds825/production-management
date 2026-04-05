@@ -235,6 +235,8 @@ def create_batches(
         # ── 틀 단위 연선 배치 생성 ─────────────────────────────────────────
         # 연선은 수주별이 아닌 lot(틀) 단위로 작업지시.
         # lot_count_g 개 배치만 생성. 각 틀의 대표 수주 = 해당 lot 인덱스에 해당하는 수주.
+        # batch_group: 엑셀 수주별 확장 시 같은 그룹을 묶는 키로 활용
+        strand_batch_group = f"ST-{int(sq)}-{voltage_g}-{stranding_type_g}"
         rep_order_0 = orders_g[0]
         item_rep = _find_item(rep_order_0, items)
         conductor_material_rep = _infer_material(rep_order_0)
@@ -287,6 +289,7 @@ def create_batches(
                 equipment_code=None,
                 wip_matched_id=wip_id_lot,
                 spec_raw=rep_order_0.spec_raw,
+                batch_group=strand_batch_group,
             )
             batches.append(strand_batch)
 

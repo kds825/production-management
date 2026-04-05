@@ -87,6 +87,9 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     # 신선(wire drawing)은 연선의 전처리 공정으로 현장 계획서에 표시하지 않는다.
     batches = [b for b in batches if b.process_name != "신선"]
 
+    # ── 연선 lot 배치 → 수주별 행으로 확장 (Excel은 수주 단위 표시) ──────────
+    batches = _expand_strand_lots(batches, run_label, db)
+
     # ── 틀분할 배치 병합 — 같은 수주+공정을 1행으로 합산 ──────────────────────
     # batch_grouping의 틀분할(2-3)은 스케줄링에 필요하지만,
     # Excel 계획서는 수주 단위 표시이므로 분할 행을 합쳐 원본과 동일한 행 구조를 만든다.
@@ -165,6 +168,114 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     wb.save(output)
     output.seek(0)
     return output
+
+
+# ── Strand lot expand helper ──────────────────────────────────────────────────
+
+
+def _expand_strand_lots(
+    batches: list[ProductionBatch], run_label: str, db: Session
+) -> list[ProductionBatch]:
+    """연선 lot 단위 배치를 수주별 행으로 확장 (Excel 출력 전용).
+
+    scheduling-review 표시는 lot 단위(N틀)이지만,
+    Excel 계획서는 수주 단위 행을 요구하므로 lot 배치를 sales_order 기준으로 펼친다.
+    """
+    import re as _re
+    from app.infrastructure.models.sales_order import SalesOrder
+
+    strand_lots = [b for b in batches if b.process_name == "연선" and (b.batch_seq or 1) >= 1]
+    core_lots   = [b for b in batches if b.process_name == "연선" and (b.batch_seq or 1) == 0]
+    non_strand  = [b for b in batches if b.process_name != "연선"]
+
+    if not strand_lots:
+        return batches
+
+    # 이번 run의 연선 대상 수주 전체 조회
+    orders = (
+        db.query(SalesOrder)
+        .filter(
+            SalesOrder.run_label == run_label,
+            SalesOrder.is_outsourced == False,  # noqa: E712
+        )
+        .order_by(SalesOrder.customer_priority, SalesOrder.due_date, SalesOrder.order_id)
+        .all()
+    )
+
+    def _sq(spec_raw: str | None) -> float | None:
+        if not spec_raw:
+            return None
+        m = _re.search(r"(\d+(?:\.\d+)?)\s*SQ", spec_raw, _re.IGNORECASE)
+        return float(m.group(1)) if m else None
+
+    def _volt_key(voltage: str | None) -> str:
+        v = (voltage or "").strip()
+        if "22.9" in v or "35" in v:
+            return "고압"
+        return "저압"
+
+    # lot 배치의 (sq, volt_key) → lot 배치 매핑 (같은 그룹 내 첫 번째 lot 기준)
+    from collections import defaultdict
+    lot_by_group: dict[tuple, ProductionBatch] = {}
+    for lot in strand_lots:
+        key = (float(lot.sq_mm2 or 0), _volt_key(lot.voltage))
+        if key not in lot_by_group:
+            lot_by_group[key] = lot
+
+    # 수주를 (sq, volt_key) 그룹으로 분류
+    order_groups: dict[tuple, list[SalesOrder]] = defaultdict(list)
+    for order in orders:
+        sq_val = _sq(order.spec_raw)
+        if sq_val is None:
+            continue
+        order_groups[(_sq(order.spec_raw), _volt_key(order.voltage))].append(order)
+
+    expanded: list[ProductionBatch] = []
+    handled_keys: set[tuple] = set()
+
+    for lot in strand_lots:
+        key = (float(lot.sq_mm2 or 0), _volt_key(lot.voltage))
+        if key in handled_keys:
+            continue
+        handled_keys.add(key)
+
+        group_orders = order_groups.get(key, [])
+        if not group_orders:
+            expanded.append(lot)
+            continue
+
+        for order in group_orders:
+            virtual = ProductionBatch(
+                run_label=lot.run_label,
+                sales_order_id=order.order_id,
+                sales_order_line=order.order_line,
+                item_code=lot.item_code,
+                routing_code=lot.routing_code,
+                process_name="연선",
+                batch_seq=1,
+                sq_mm2=lot.sq_mm2,
+                core_count=order.core_count or 1,
+                product_group=order.product_group,
+                sheath_color=order.sheath_color,
+                core_colors=order.core_colors,
+                customer_name=order.customer_name,
+                due_date=order.due_date,
+                drum_length_m=lot.drum_length_m,   # 틀 단위 조장 (참조용)
+                drum_count=1,
+                total_length_m=float(order.ordered_qty_m or 0),  # 수주 실제 수량
+                extra_length_m=0,
+                voltage=order.voltage,
+                stranding_type=lot.stranding_type,
+                wip_matched_id=order.wip_id if getattr(order, "wip_id", None) else None,
+                remarks=lot.remarks,
+                batch_group=lot.batch_group,
+                status=lot.status,
+                spec_raw=order.spec_raw,
+                conductor_material=lot.conductor_material,
+            )
+            expanded.append(virtual)
+
+    return expanded + core_lots + non_strand
 
 
 # ── Batch merge helper ────────────────────────────────────────────────────────
