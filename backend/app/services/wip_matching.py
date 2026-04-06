@@ -16,7 +16,7 @@ from app.infrastructure.models.decision_criteria import DecisionCriteria
 from app.services.audit_logger import log_decision
 
 _EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
-_DP_GRANULARITY_M = 10    # DP 이산화 단위 (10m)
+_DP_GRANULARITY_M = 10  # DP 이산화 단위 (10m)
 
 
 def match_wip(run_label: str, db: Session) -> dict:
@@ -40,28 +40,30 @@ def match_wip(run_label: str, db: Session) -> dict:
     if not wip_items:
         return result
 
-    # 이번 run의 수주 로드 (외주 제외)
+    # 이번 run의 수주 로드 (외주 포함 — 재공 활용 가능 수주는 외주 여부와 무관)
     orders = (
         db.query(SalesOrder)
         .filter(
             SalesOrder.run_label == run_label,
-            SalesOrder.is_outsourced == False,  # noqa: E712
         )
         .all()
     )
 
     # 수주 정렬: 고객 우선순위 → 납기 → order_id (재현성)
     from datetime import date as _date
-    orders.sort(key=lambda o: (
-        o.customer_priority or 99,
-        o.due_date or _date.max,
-        o.order_id or "",
-    ))
+
+    orders.sort(
+        key=lambda o: (
+            o.customer_priority or 99,
+            o.due_date or _date.max,
+            o.order_id or "",
+        )
+    )
 
     for wip in wip_items:
         wip_sq = float(wip.cross_section) if wip.cross_section else None
-        wip_drum_length = float(wip.length_m or 0)   # 드럼 1개 기준 길이
-        wip_total = float(wip.total_length_m or 0)   # 전체 재고 (length_m × count)
+        wip_drum_length = float(wip.length_m or 0)  # 드럼 1개 기준 길이
+        wip_total = float(wip.total_length_m or 0)  # 전체 재고 (length_m × count)
         if not wip_sq or wip_total <= 0 or wip_drum_length <= 0:
             continue
 
@@ -103,16 +105,16 @@ def match_wip(run_label: str, db: Session) -> dict:
             continue
 
         # ── 최적 조합 탐색: WIP 잔여량 최소화 ──────────────────────────────
-        matched_orders = _find_best_combo(
-            candidates, wip_total, shortage_tolerance
-        )
+        matched_orders = _find_best_combo(candidates, wip_total, shortage_tolerance)
 
         if not matched_orders:
             continue
 
         # ── WIP 상태 갱신 ──
         wip.status = "사용완료"
-        wip.matched_order_id = f"{matched_orders[0].order_id}:{matched_orders[0].order_line}"
+        wip.matched_order_id = (
+            f"{matched_orders[0].order_id}:{matched_orders[0].order_line}"
+        )
 
         # ── 수주별 매칭 정보 설정 ──
         for order in matched_orders:
@@ -122,31 +124,35 @@ def match_wip(run_label: str, db: Session) -> dict:
             order.wip_id = wip.wip_id
 
             result["matched"] += 1
-            result["details"].append({
-                "order_id": order.order_id,
-                "order_line": order.order_line,
-                "wip_id": wip.wip_id,
-                "wip_process": wip.process_stage,
-                "wip_sq": wip_sq,
-                "wip_total_m": wip_total,
-                "order_qty_m": float(order.ordered_qty_m or 0),
-            })
+            result["details"].append(
+                {
+                    "order_id": order.order_id,
+                    "order_line": order.order_line,
+                    "wip_id": wip.wip_id,
+                    "wip_process": wip.process_stage,
+                    "wip_sq": wip_sq,
+                    "wip_total_m": wip_total,
+                    "order_qty_m": float(order.ordered_qty_m or 0),
+                }
+            )
 
             log_decision(
                 db=db,
                 run_label=run_label,
                 stage="stage1",
                 action_type="wip_matched",
-                constraints_applied=[{
-                    "id": "2-1",
-                    "name": "재공 활용",
-                    "result": "pass",
-                    "detail": (
-                        f"WIP {wip.wip_id}({wip.process_stage} {wip_sq}SQ "
-                        f"총{wip_total}m) → 수주 {order.order_id}:{order.order_line} "
-                        f"({float(order.ordered_qty_m or 0)}m)"
-                    ),
-                }],
+                constraints_applied=[
+                    {
+                        "id": "2-1",
+                        "name": "재공 활용",
+                        "result": "pass",
+                        "detail": (
+                            f"WIP {wip.wip_id}({wip.process_stage} {wip_sq}SQ "
+                            f"총{wip_total}m) → 수주 {order.order_id}:{order.order_line} "
+                            f"({float(order.ordered_qty_m or 0)}m)"
+                        ),
+                    }
+                ],
                 reason=(
                     f"재공 매칭: {wip.process_stage} {wip_sq}SQ 총{wip_total}m → "
                     f"{order.order_id}:{order.order_line}"
@@ -221,7 +227,9 @@ def _find_best_combo(
         return selected
 
 
-def _product_group_matches(wip_product_name: str | None, order_product_group: str | None) -> bool:
+def _product_group_matches(
+    wip_product_name: str | None, order_product_group: str | None
+) -> bool:
     """WIP 제품명과 수주 제품군이 호환되는지 판별.
 
     wip_product_name 이 없거나 order_product_group 이 없으면 필터 없이 통과.
@@ -233,7 +241,9 @@ def _product_group_matches(wip_product_name: str | None, order_product_group: st
     opg = order_product_group.strip()
 
     if wpn == "TFR-CV(WB)":
-        return opg == "TFR-CV" or opg.startswith("TFR-CV-WB") or opg.startswith("TFR-CV(")
+        return (
+            opg == "TFR-CV" or opg.startswith("TFR-CV-WB") or opg.startswith("TFR-CV(")
+        )
     if wpn == "TFR-8 고내화":
         return opg.startswith("TFR-8(")
     if wpn == "TFR-8":

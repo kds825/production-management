@@ -452,15 +452,20 @@ def auto_schedule(
                     earliest = core_end
 
             # 개별 수주 레벨 predecessor도 확인 (더 늦은 것 우선)
-            for b in group_batches:
-                pred_key = (b.sales_order_id, b.sales_order_line)
-                pred_tid = predecessor_map.get(pred_key)
-                if pred_tid:
-                    pred_task = next(
-                        (t for t in tasks_created if t.task_id == pred_tid), None
-                    )
-                    if pred_task and pred_task.end_datetime > earliest:
-                        earliest = pred_task.end_datetime
+            # 시스 공정은 제외: 혼합 SQ 그룹에서 개별 predecessor를 모두 대기하면
+            # 가장 느린 절연 배치까지 기다려야 해서 26일 지연됨.
+            # 시스는 위의 process-level first-drum overlap(lines 414-434)만으로
+            # 파이프라인 시작 시점을 올바르게 결정한다.
+            if rep.process_name not in ("저압시스", "고압시스"):
+                for b in group_batches:
+                    pred_key = (b.sales_order_id, b.sales_order_line)
+                    pred_tid = predecessor_map.get(pred_key)
+                    if pred_tid:
+                        pred_task = next(
+                            (t for t in tasks_created if t.task_id == pred_tid), None
+                        )
+                        if pred_task and pred_task.end_datetime > earliest:
+                            earliest = pred_task.end_datetime
 
             slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
 

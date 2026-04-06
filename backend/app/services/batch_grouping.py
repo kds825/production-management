@@ -238,7 +238,12 @@ def create_batches(
             key=lambda o: (o.customer_priority or 99, o.due_date or date.max),
         )
 
-        if lot_size_g and lot_size_g > 0:
+        # WIP 전량 활용 시(net_qty_g ≈ 0) 연선 작업 불요 → 틀·작업량 0
+        skip_strand_work = net_qty_g < 1.0  # 1m 미만이면 사실상 0
+        if skip_strand_work:
+            lot_count_g = 0
+            work_qty_g = 0.0
+        elif lot_size_g and lot_size_g > 0:
             lot_count_g = max(math.ceil(net_qty_g / lot_size_g), 1)
             work_qty_g = lot_count_g * lot_size_g
         else:
@@ -251,10 +256,17 @@ def create_batches(
 
         # ── 연선 그룹 공통 정보 ──────────────────────────────────────────────
         strand_batch_group = f"ST-{int(sq)}-{voltage_g}-{stranding_type_g}"
-        remarks_group = (
-            f"연선그룹 {len(orders_g)}건 {lot_count_g}틀 / "
-            f"그룹총량 {total_qty_g:.0f}m→{work_qty_g:.0f}m (틀단위 {lot_size_g:.0f}m)"
-        )
+        if skip_strand_work:
+            remarks_group = (
+                f"연선그룹 {len(orders_g)}건 / "
+                f"WIP 전량 활용 — 연선 작업 불요 "
+                f"(총량 {total_qty_g:.0f}m, WIP {wip_strand_qty_g:.0f}m)"
+            )
+        else:
+            remarks_group = (
+                f"연선그룹 {len(orders_g)}건 {lot_count_g}틀 / "
+                f"그룹총량 {total_qty_g:.0f}m→{work_qty_g:.0f}m (틀단위 {lot_size_g:.0f}m)"
+            )
 
         # 그룹 대표 선속·준비시간 (첫 번째 수주 기준, 동일 SQ 그룹이므로 동일 선속)
         rep_order_g = orders_g[0]
@@ -278,41 +290,44 @@ def create_batches(
         # 스케줄러(schedule_optimizer)가 이 배치의 estimated_duration_min으로
         # 실제 틀단위 작업량(work_qty_g) 기준 간트 블록 크기를 결정한다.
         # Excel·scheduling-review 표시에서는 제외(batch_seq=-1 필터)된다.
-        header_duration_g = work_qty_g / line_speed_g if line_speed_g else None
-        header_batch = ProductionBatch(
-            run_label=run_label,
-            sales_order_id=rep_order_g.order_id,
-            sales_order_line=rep_order_g.order_line,
-            item_code=rep_item_g.item_code if rep_item_g else None,
-            routing_code=routing_code_g,
-            process_name="연선",
-            batch_seq=-1,
-            drum_length_m=lot_size_g,
-            drum_count=lot_count_g,
-            total_length_m=work_qty_g,
-            extra_length_m=0,
-            sq_mm2=sq,
-            core_count=int(rep_order_g.core_count or 1),
-            core_colors=rep_order_g.core_colors,
-            sheath_color=rep_order_g.sheath_color,
-            customer_name=rep_order_g.customer_name,
-            due_date=earliest_due_g,
-            customer_priority=best_priority_g,
-            line_speed_mpm=line_speed_g,
-            setup_time_min=setup_time_g,
-            estimated_duration_min=header_duration_g,
-            status="planned",
-            product_group=rep_order_g.product_group,
-            voltage=rep_order_g.voltage,
-            conductor_material=rep_material_g,
-            stranding_type=stranding_type_g,
-            remarks=remarks_group,
-            equipment_code=None,
-            wip_matched_id=None,
-            spec_raw=rep_order_g.spec_raw,
-            batch_group=strand_batch_group,
-        )
-        batches.append(header_batch)
+        # WIP 전량 활용(skip_strand_work) 시 헤더 배치를 생성하지 않는다 —
+        # 스케줄러가 불필요한 연선 작업을 배정하지 않도록.
+        if not skip_strand_work:
+            header_duration_g = work_qty_g / line_speed_g if line_speed_g else None
+            header_batch = ProductionBatch(
+                run_label=run_label,
+                sales_order_id=rep_order_g.order_id,
+                sales_order_line=rep_order_g.order_line,
+                item_code=rep_item_g.item_code if rep_item_g else None,
+                routing_code=routing_code_g,
+                process_name="연선",
+                batch_seq=-1,
+                drum_length_m=lot_size_g,
+                drum_count=lot_count_g,
+                total_length_m=work_qty_g,
+                extra_length_m=0,
+                sq_mm2=sq,
+                core_count=int(rep_order_g.core_count or 1),
+                core_colors=rep_order_g.core_colors,
+                sheath_color=rep_order_g.sheath_color,
+                customer_name=rep_order_g.customer_name,
+                due_date=earliest_due_g,
+                customer_priority=best_priority_g,
+                line_speed_mpm=line_speed_g,
+                setup_time_min=setup_time_g,
+                estimated_duration_min=header_duration_g,
+                status="planned",
+                product_group=rep_order_g.product_group,
+                voltage=rep_order_g.voltage,
+                conductor_material=rep_material_g,
+                stranding_type=stranding_type_g,
+                remarks=remarks_group,
+                equipment_code=None,
+                wip_matched_id=None,
+                spec_raw=rep_order_g.spec_raw,
+                batch_group=strand_batch_group,
+            )
+            batches.append(header_batch)
 
         # ── 수주별 연선 배치 생성 (display용) ────────────────────────────────
         # scheduling-review·Excel 수주 단위 행 표시용.
@@ -376,7 +391,8 @@ def create_batches(
             batches.append(strand_batch)
 
             # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 수주 단위로 생성
-            if is_61strand_g and conductor_material_o == "CU":
+            # WIP 전량 활용 시 코어 선행 배치도 불요
+            if is_61strand_g and conductor_material_o == "CU" and not skip_strand_work:
                 core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
                 core_spd = (
                     float(core_speed_o.line_speed_mpm)
