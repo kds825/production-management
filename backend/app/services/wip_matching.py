@@ -2,9 +2,9 @@
 
 매칭 정책:
   - WIP 1건의 total_length_m(= length_m × count)을 기준으로
-    동일 규격/전압 수주들을 우선순위·납기 순으로 쌓아가며 배분한다.
+    동일 규격/전압 수주들을 대상으로 잔여량이 최소화되는 최적 조합을 찾는다.
   - 1개 WIP → 여러 수주 적용 가능
-  - 마지막 수주는 shortage_tolerance 범위 내 부족 허용
+  - 최적 조합 탐색: n ≤ 22 완전 탐색(2^n), n > 22 동적 계획법(10m 이산화)
 """
 
 import re
@@ -14,6 +14,9 @@ from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.decision_criteria import DecisionCriteria
 from app.services.audit_logger import log_decision
+
+_EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
+_DP_GRANULARITY_M = 10    # DP 이산화 단위 (10m)
 
 
 def match_wip(run_label: str, db: Session) -> dict:
@@ -62,26 +65,20 @@ def match_wip(run_label: str, db: Session) -> dict:
         if not wip_sq or wip_total <= 0 or wip_drum_length <= 0:
             continue
 
-        remaining = wip_total  # 이 WIP에서 아직 배분 가능한 잔여 길이
-        matched_orders: list[SalesOrder] = []
-
+        # ── 이 WIP에 매칭 가능한 후보 수주 필터링 ──────────────────────────
+        candidates: list[SalesOrder] = []
         for order in orders:
             if order.use_wip:
-                continue  # 이미 다른 WIP에 매칭됨
+                continue
 
-            # ── 규격 매칭 ──
             order_sq = _extract_sq(order.spec_raw)
             if order_sq is None or abs(order_sq - wip_sq) > 0.01:
                 continue
 
-            # ── 제품군 매칭 (절연재고만 적용) ──
-            # 연선재고는 도체 규격·전압이 같으면 제품군 무관하게 사용 가능.
-            # 절연재고는 컴파운드·색상이 제품군에 종속되므로 제품군까지 일치해야 함.
             if wip.process_stage == "절연재고":
                 if not _product_group_matches(wip.product_name, order.product_group):
                     continue
 
-            # ── 전압 매칭 ──
             if wip.voltage_class and order.voltage:
                 order_volt = (
                     "저압"
@@ -91,36 +88,30 @@ def match_wip(run_label: str, db: Session) -> dict:
                 if wip.voltage_class != order_volt:
                     continue
 
-            # ── 드럼 1개 길이 체크 ──────────────────────────────────────────
-            # WIP 드럼 1개가 수주 조장(drum_length_m)을 커버할 수 있어야 매칭 가능.
-            # 드럼을 분할할 수 없으므로 total_length_m 여유가 있어도
-            # 드럼 1개가 짧으면 물리적으로 사용 불가.
             order_drum_length = float(order.drum_length_m or order.ordered_qty_m or 0)
             if order_drum_length > 0:
                 if wip_drum_length < order_drum_length * (1 - loss_limit):
-                    continue  # WIP 드럼이 수주 조장보다 짧음 — 사용 불가
+                    continue
 
-            # ── 총량 체크: 잔여 재고가 수주 전체 수량을 커버하는지 ──
             order_qty = float(order.ordered_qty_m or 0)
             if order_qty <= 0:
                 continue
 
-            if remaining < order_qty * (1 - shortage_tolerance):
-                continue  # 잔여 재고 부족
+            candidates.append(order)
 
-            matched_orders.append(order)
-            remaining -= order_qty
+        if not candidates:
+            continue
 
-            # 잔여량이 loss_limit 이하로 떨어지면 추가 배분 중단
-            if remaining <= wip_total * loss_limit:
-                break
+        # ── 최적 조합 탐색: WIP 잔여량 최소화 ──────────────────────────────
+        matched_orders = _find_best_combo(
+            candidates, wip_total, shortage_tolerance
+        )
 
         if not matched_orders:
             continue
 
         # ── WIP 상태 갱신 ──
         wip.status = "사용완료"
-        # 참조용으로 첫 번째 수주 저장 (다중 매칭은 order.wip_id로 역참조)
         wip.matched_order_id = f"{matched_orders[0].order_id}:{matched_orders[0].order_line}"
 
         # ── 수주별 매칭 정보 설정 ──
@@ -128,7 +119,7 @@ def match_wip(run_label: str, db: Session) -> dict:
             order.use_wip = True
             order.wip_type = wip.process_stage
             order.actual_length_m = float(order.ordered_qty_m or 0)
-            order.wip_id = wip.wip_id  # sales_order → wip_inventory 직접 참조
+            order.wip_id = wip.wip_id
 
             result["matched"] += 1
             result["details"].append({
@@ -166,6 +157,70 @@ def match_wip(run_label: str, db: Session) -> dict:
     return result
 
 
+def _find_best_combo(
+    candidates: list[SalesOrder],
+    wip_total: float,
+    shortage_tolerance: float,
+) -> list[SalesOrder]:
+    """WIP 잔여량을 최소화하는 최적 수주 조합 탐색 (0-1 Knapsack).
+
+    shortage_tolerance: 마지막 수주를 부분 충당할 때 허용 부족률.
+      → 유효 capacity를 wip_total / (1 - shortage_tolerance)까지 소폭 확장하여
+        거의 다 쓰는 조합도 후보로 포함.
+
+    n ≤ 22: 완전 탐색 (2^n 부분집합 열거)
+    n > 22: DP (10m 단위 이산화, O(n × cap/gran))
+    """
+    n = len(candidates)
+    qtys = [float(o.ordered_qty_m or 0) for o in candidates]
+
+    # shortage_tolerance만큼 capacity를 늘려 마지막 수주 부분 충당 허용
+    effective_cap = wip_total / max(1 - shortage_tolerance, 0.01)
+
+    best_used = 0.0
+    best_mask: int = 0  # 선택된 후보 인덱스를 비트마스크로 표현
+
+    if n <= _EXACT_SEARCH_LIMIT:
+        # ── 완전 탐색 ────────────────────────────────────────────────────────
+        for mask in range(1, 1 << n):
+            total = sum(qtys[i] for i in range(n) if mask & (1 << i))
+            if total <= effective_cap and total > best_used:
+                best_used = total
+                best_mask = mask
+
+        return [candidates[i] for i in range(n) if best_mask & (1 << i)]
+
+    else:
+        # ── 동적 계획법 (10m 이산화) ─────────────────────────────────────────
+        gran = _DP_GRANULARITY_M
+        cap_disc = int(effective_cap / gran)
+
+        # dp[c] = capacity c*gran 이하에서 달성 가능한 최대 총 수량 (float)
+        dp = [0.0] * (cap_disc + 1)
+        # kept[i][c] = i번째 후보를 capacity c에서 선택했는지
+        kept = [[False] * (cap_disc + 1) for _ in range(n)]
+
+        for i, qty in enumerate(qtys):
+            qty_disc = max(1, round(qty / gran))
+            # 역순 순회 — 같은 아이템을 중복 선택하지 않도록
+            for c in range(cap_disc, qty_disc - 1, -1):
+                val = dp[c - qty_disc] + qty
+                if val > dp[c]:
+                    dp[c] = val
+                    kept[i][c] = True
+
+        # 역추적으로 선택된 후보 복원
+        selected: list[SalesOrder] = []
+        c = cap_disc
+        for i in range(n - 1, -1, -1):
+            if kept[i][c]:
+                selected.append(candidates[i])
+                qty_disc = max(1, round(qtys[i] / gran))
+                c -= qty_disc
+
+        return selected
+
+
 def _product_group_matches(wip_product_name: str | None, order_product_group: str | None) -> bool:
     """WIP 제품명과 수주 제품군이 호환되는지 판별.
 
@@ -178,18 +233,14 @@ def _product_group_matches(wip_product_name: str | None, order_product_group: st
     opg = order_product_group.strip()
 
     if wpn == "TFR-CV(WB)":
-        # TFR-CV, TFR-CV-WB 계열 전체 허용
         return opg == "TFR-CV" or opg.startswith("TFR-CV-WB") or opg.startswith("TFR-CV(")
     if wpn == "TFR-8 고내화":
-        # TFR-8(온도조건) 형태 — 괄호 있는 것만 허용
         return opg.startswith("TFR-8(")
     if wpn == "TFR-8":
-        # 일반 TFR-8 — 괄호 없는 것만 허용 (고내화 제외)
         return opg == "TFR-8" or (opg.startswith("TFR-8") and "(" not in opg)
     if "URD" in wpn:
         return "URD" in opg
 
-    # 그 외 규칙 미정의 제품군: 필터 없이 통과
     return True
 
 
