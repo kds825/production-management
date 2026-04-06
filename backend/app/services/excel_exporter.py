@@ -88,7 +88,12 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     # 신선(wire drawing)은 연선의 전처리 공정으로 현장 계획서에 표시하지 않는다.
     # batch_seq=-1 헤더 배치는 스케줄러 duration 전용 — 계획서 행으로 출력하지 않는다.
     all_count = len(batches)
-    batches = [b for b in batches if b.process_name != "신선" and b.batch_seq != -1]
+    batches = [
+        b for b in batches
+        if b.process_name != "신선"
+        and b.batch_seq != -1
+        and b.stranding_type != "7연선코어"  # 61연선 CORE(T6BO) 배치는 엑셀 미출력
+    ]
     if not batches:
         raise ValueError(
             f"run_label='{run_label}'의 배치 {all_count}건이 모두 신선 또는 헤더 배치(seq=-1)입니다. "
@@ -198,7 +203,6 @@ def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
             b.sales_order_line,
             b.process_name,
             int(b.drum_count or 1),
-            b.stranding_type or "",  # 61연선 CORE("7연선코어")와 ST("61연선") 병합 방지
         )
         groups.setdefault(key, []).append(b)
 
