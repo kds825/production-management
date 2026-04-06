@@ -81,12 +81,18 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     )
 
     if not batches:
-        raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다.")
+        raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다. Stage 1을 먼저 실행하세요.")
 
     # ── 신선·헤더 배치 제외 ───────────────────────────────────────────────
     # 신선(wire drawing)은 연선의 전처리 공정으로 현장 계획서에 표시하지 않는다.
     # batch_seq=-1 헤더 배치는 스케줄러 duration 전용 — 계획서 행으로 출력하지 않는다.
+    all_count = len(batches)
     batches = [b for b in batches if b.process_name != "신선" and b.batch_seq != -1]
+    if not batches:
+        raise ValueError(
+            f"run_label='{run_label}'의 배치 {all_count}건이 모두 신선 또는 헤더 배치(seq=-1)입니다. "
+            "Stage 1을 다시 실행하세요."
+        )
 
     # ── 틀분할 배치 병합 — 같은 수주+공정을 1행으로 합산 ──────────────────────
     # batch_grouping의 틀분할(2-3)은 스케줄링에 필요하지만,

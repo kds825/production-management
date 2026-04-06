@@ -157,9 +157,12 @@ export default function SchedulingReviewPage() {
           match?.[1]?.replace(/['"]/g, "") ?? `schedule_${selectedRun}.xlsx`;
         a.click();
         URL.revokeObjectURL(url);
+      } else {
+        const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        alert(`Excel 다운로드 실패: ${body.detail ?? res.statusText}`);
       }
-    } catch {
-      // 에러 처리 생략 — 백엔드 미연결 환경 고려
+    } catch (err) {
+      alert(`Excel 다운로드 오류: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setExcelLoading(false);
     }
