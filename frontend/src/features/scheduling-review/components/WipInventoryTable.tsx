@@ -9,9 +9,11 @@ interface WipInventoryTableProps {
   onWipClick?: (matchedBatchIds: string[]) => void;
   /** 현재 하이라이트된 WIP ID */
   activeWipId?: string | null;
+  /** 여러 종류의 WIP이 섞여있을 때 구분 컬럼 표시 */
+  showProcessStage?: boolean;
 }
 
-const COL_DEFS = [
+const BASE_COL_DEFS = [
   { key: "spec", label: "규격", align: "left", width: 100 },
   { key: "color", label: "선심색상", align: "left", width: 70 },
   { key: "stock", label: "조장(m)", align: "right", width: 65 },
@@ -19,14 +21,25 @@ const COL_DEFS = [
   { key: "status", label: "상태", align: "center", width: 65 },
 ] as const;
 
-const totalWidth = COL_DEFS.reduce((sum, c) => sum + c.width, 0);
+const STAGE_COL = {
+  key: "process_stage",
+  label: "구분",
+  align: "left",
+  width: 65,
+} as const;
 
 export function WipInventoryTable({
   title,
   items,
   onWipClick,
   activeWipId,
+  showProcessStage,
 }: WipInventoryTableProps) {
+  const COL_DEFS = showProcessStage
+    ? [STAGE_COL, ...BASE_COL_DEFS]
+    : [...BASE_COL_DEFS];
+  const totalWidth = COL_DEFS.reduce((sum, c) => sum + c.width, 0);
+
   return (
     <div>
       <h4
@@ -36,10 +49,7 @@ export function WipInventoryTable({
         {title}
       </h4>
 
-      <div
-        className="overflow-hidden"
-        style={{ border: "1px solid #D1D5DB" }}
-      >
+      <div className="overflow-hidden" style={{ border: "1px solid #D1D5DB" }}>
         {items.length === 0 ? (
           <div
             className="flex items-center justify-center py-8 text-[11px]"
@@ -99,7 +109,6 @@ export function WipInventoryTable({
                       data-wip-id={item.id}
                       onClick={() => {
                         if (hasMatch && onWipClick) {
-                          // 이미 선택된 항목 재클릭 → 해제
                           onWipClick(activeWipId === item.id ? [] : batchIds);
                         }
                       }}
@@ -123,8 +132,10 @@ export function WipInventoryTable({
                     >
                       {COL_DEFS.map((col, colIdx) => {
                         const raw = item[col.key as keyof WipItem];
-                        const display =
-                          typeof raw === "number"
+                        const isStageCol = col.key === "process_stage";
+                        const display = isStageCol
+                          ? String(raw ?? "").replace("재고", "")
+                          : typeof raw === "number"
                             ? raw.toLocaleString()
                             : String(raw ?? "");
                         const isStatusCol = col.key === "status";
@@ -142,17 +153,43 @@ export function WipInventoryTable({
                                   : "none",
                               verticalAlign: "middle",
                               overflow: "hidden",
-                              textAlign: col.align as "left" | "right" | "center",
+                              textAlign: col.align as
+                                | "left"
+                                | "right"
+                                | "center",
                             }}
                           >
-                            {isStatusCol ? (
+                            {isStageCol ? (
+                              <span
+                                className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
+                                style={
+                                  String(raw ?? "").includes("절연")
+                                    ? {
+                                        backgroundColor: "#EFF6FF",
+                                        color: "#1D4ED8",
+                                      }
+                                    : {
+                                        backgroundColor: "#ECFDF5",
+                                        color: "#065F46",
+                                      }
+                                }
+                              >
+                                {display}
+                              </span>
+                            ) : isStatusCol ? (
                               <div className="flex flex-col items-center gap-0.5">
                                 <span
                                   className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
                                   style={
                                     statusUsed
-                                      ? { backgroundColor: "#FEE2E2", color: "#B91C1C" }
-                                      : { backgroundColor: "#DCFCE7", color: "#15803D" }
+                                      ? {
+                                          backgroundColor: "#FEE2E2",
+                                          color: "#B91C1C",
+                                        }
+                                      : {
+                                          backgroundColor: "#DCFCE7",
+                                          color: "#15803D",
+                                        }
                                   }
                                 >
                                   {display || "–"}
@@ -160,7 +197,10 @@ export function WipInventoryTable({
                                 {batchIds.length > 1 && (
                                   <span
                                     className="inline-block text-[8px] font-bold px-1 rounded"
-                                    style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+                                    style={{
+                                      backgroundColor: "#FEF3C7",
+                                      color: "#92400E",
+                                    }}
                                   >
                                     {batchIds.length}건
                                   </span>
@@ -175,7 +215,9 @@ export function WipInventoryTable({
                                   color: isActive ? "#C41230" : undefined,
                                 }}
                               >
-                                {display || <span style={{ color: "#CBD5E1" }}>–</span>}
+                                {display || (
+                                  <span style={{ color: "#CBD5E1" }}>–</span>
+                                )}
                               </span>
                             )}
                           </td>
@@ -189,7 +231,9 @@ export function WipInventoryTable({
           </div>
         )}
       </div>
-      {items.some((i) => (i.matchedBatchIds?.length ?? 0) > 0 || !!i.matchedBatchId) && (
+      {items.some(
+        (i) => (i.matchedBatchIds?.length ?? 0) > 0 || !!i.matchedBatchId,
+      ) && (
         <p className="text-[9px] text-gray-400 mt-1">
           클릭하면 매칭된 배치로 이동합니다
         </p>

@@ -94,7 +94,12 @@ function getColorPriority(color: string): number {
  * assignBatchNumbers 결과를 기반으로 정렬하므로 배치 번호와 표시 순서가 일치.
  */
 export function sortBatchesByBatchNumber<
-  T extends { delivery_date: string; color: string },
+  T extends {
+    delivery_date: string;
+    color: string;
+    notes?: string;
+    wip_matched_id?: number | null;
+  },
 >(batches: T[], batchNumbers: Map<string, number>): T[] {
   return [...batches].sort((a, b) => {
     const numA =
@@ -104,7 +109,17 @@ export function sortBatchesByBatchNumber<
       batchNumbers.get(getBatchGroupKey(b as unknown as ProductionBatch)) ??
       999;
     if (numA !== numB) return numA - numB;
-    // 같은 batch_group 내: 색상 순서
+    // 같은 batch_group 내: WIP 사용 행을 앞쪽에 모음
+    const wipA = a.wip_matched_id != null ? 0 : 1;
+    const wipB = b.wip_matched_id != null ? 0 : 1;
+    if (wipA !== wipB) return wipA - wipB;
+    // 같은 WIP 재고끼리 연속 배치
+    if (wipA === 0 && wipB === 0) {
+      const idA = a.wip_matched_id ?? 0;
+      const idB = b.wip_matched_id ?? 0;
+      if (idA !== idB) return idA - idB;
+    }
+    // 색상 순서
     const colorA = getColorPriority(a.color);
     const colorB = getColorPriority(b.color);
     if (colorA !== colorB) return colorA - colorB;

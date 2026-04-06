@@ -485,9 +485,23 @@ export default function SchedulingReviewPage() {
               }
               wipItems={
                 activeProcessTab === "저압연선"
-                  ? yeonaeoWip.filter((w) => !w.voltage_class.includes("고압"))
+                  ? [
+                      ...yeonaeoWip.filter(
+                        (w) => !w.voltage_class.includes("고압"),
+                      ),
+                      ...insulationWip.filter(
+                        (w) => !w.voltage_class.includes("고압"),
+                      ),
+                    ]
                   : activeProcessTab === "고압연선"
-                    ? yeonaeoWip.filter((w) => w.voltage_class.includes("고압"))
+                    ? [
+                        ...yeonaeoWip.filter((w) =>
+                          w.voltage_class.includes("고압"),
+                        ),
+                        ...insulationWip.filter((w) =>
+                          w.voltage_class.includes("고압"),
+                        ),
+                      ]
                     : activeProcessTab === "저압절연(B100)"
                       ? insulationWip.filter(
                           (w) => !w.voltage_class.includes("고압"),
@@ -500,9 +514,9 @@ export default function SchedulingReviewPage() {
               }
               wipTitle={
                 activeProcessTab === "저압연선"
-                  ? "저압 연선 재공(WIP) 재고"
+                  ? "저압 연선/절연 재공(WIP) 재고"
                   : activeProcessTab === "고압연선"
-                    ? "고압 연선 재공(WIP) 재고"
+                    ? "고압 연선/절연 재공(WIP) 재고"
                     : activeProcessTab === "저압절연(B100)"
                       ? "저압 절연 재공(WIP) 재고"
                       : activeProcessTab === "고압절연(CV)"
@@ -528,8 +542,8 @@ export default function SchedulingReviewPage() {
               </div>
             )}
 
-            {/* Section 4: 배치 데이터 로드 후 항상 표시 */}
-            {isLoaded && totalBatches > 0 && (
+            {/* Section 4: AI 분석 완료 후에만 표시 */}
+            {isLoaded && totalBatches > 0 && isCalculated && (
               <div className="mb-6">
                 <h3
                   className="text-sm font-semibold mb-3"

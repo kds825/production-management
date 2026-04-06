@@ -25,7 +25,9 @@ export function ProcessOptimizationSection({
 }: ProcessOptimizationSectionProps) {
   const hasWip = wipItems !== undefined && wipTitle;
   const [wipExpanded, setWipExpanded] = useState(true);
-  const [highlightedBatchIds, setHighlightedBatchIds] = useState<Set<string>>(new Set());
+  const [highlightedBatchIds, setHighlightedBatchIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [activeWipId, setActiveWipId] = useState<string | null>(null);
   const batchTableRef = useRef<HTMLDivElement>(null);
   const wipTableRef = useRef<HTMLDivElement>(null);
@@ -151,7 +153,9 @@ export function ProcessOptimizationSection({
             batches={batches}
             processGroup={processGroup}
             highlightedBatchIds={highlightedBatchIds}
-            onBatchWipClick={hasWip && wipExpanded ? handleBatchWipClick : undefined}
+            onBatchWipClick={
+              hasWip && wipExpanded ? handleBatchWipClick : undefined
+            }
           />
         </div>
 
@@ -162,6 +166,7 @@ export function ProcessOptimizationSection({
               items={enhancedWipItems ?? wipItems ?? []}
               onWipClick={handleWipClick}
               activeWipId={activeWipId}
+              showProcessStage={processGroup === "연선"}
             />
           </div>
         )}

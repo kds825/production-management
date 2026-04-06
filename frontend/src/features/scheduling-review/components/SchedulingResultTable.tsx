@@ -473,7 +473,9 @@ export function SchedulingResultTable({
                       {/* 그룹 내 데이터 행 */}
                       {group.batches.map((batch) => {
                         const isNewRow = batch.id.startsWith("new-");
-                        const isWipSkipped = batch.notes === "재고 사용";
+                        const isWipSkipped =
+                          !!batch.wip_matched_id ||
+                          batch.notes.includes("재고");
                         const rowBg = isNewRow
                           ? "#FFFBEB"
                           : isWipSkipped
@@ -585,10 +587,7 @@ export function SchedulingResultTable({
                                   }}
                                   onClick={() => {
                                     if (!canEdit) return;
-                                    if (
-                                      col.key === "notes" &&
-                                      batch.notes === "재고 사용"
-                                    )
+                                    if (col.key === "notes" && isWipSkipped)
                                       return;
                                     const raw =
                                       batch[col.key as keyof SchedulingBatch];
@@ -630,8 +629,7 @@ export function SchedulingResultTable({
                                     >
                                       {isNewRow ? "신규" : getBatchLabel(batch)}
                                     </span>
-                                  ) : col.key === "notes" &&
-                                    batch.notes === "재고 사용" ? (
+                                  ) : col.key === "notes" && isWipSkipped ? (
                                     <span
                                       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
                                       style={{
@@ -639,7 +637,7 @@ export function SchedulingResultTable({
                                         color: "#1D4ED8",
                                       }}
                                     >
-                                      재고 사용
+                                      {batch.notes}
                                     </span>
                                   ) : (
                                     <span
@@ -687,8 +685,35 @@ export function SchedulingResultTable({
                         </td>
                         <td
                           colSpan={2}
-                          style={{ borderBottom: "2px solid #D1D5DB" }}
-                        />
+                          className="px-2 py-1 text-[10px]"
+                          style={{
+                            borderBottom: "2px solid #D1D5DB",
+                            color: "#2563EB",
+                          }}
+                        >
+                          {(() => {
+                            const wipM: Record<string, number> = {};
+                            for (const b of group.batches) {
+                              if (b.notes.includes("연선재고"))
+                                wipM["연선재고"] =
+                                  (wipM["연선재고"] || 0) + b.total_length_m;
+                              else if (b.notes.includes("절연재고"))
+                                wipM["절연재고"] =
+                                  (wipM["절연재고"] || 0) + b.total_length_m;
+                              else if (b.notes.includes("연합재고"))
+                                wipM["연합재고"] =
+                                  (wipM["연합재고"] || 0) + b.total_length_m;
+                              else if (b.notes.includes("시스재고"))
+                                wipM["시스재고"] =
+                                  (wipM["시스재고"] || 0) + b.total_length_m;
+                            }
+                            const parts = Object.entries(wipM).map(
+                              ([k, v]) =>
+                                `${k} ${Math.round(v).toLocaleString()}m`,
+                            );
+                            return parts.length > 0 ? parts.join(", ") : null;
+                          })()}
+                        </td>
                         <td
                           className="px-3 py-1 text-[10px] font-semibold text-right"
                           style={{
