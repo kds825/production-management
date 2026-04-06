@@ -535,7 +535,7 @@ def download_wip_template() -> StreamingResponse:
     )
 
 
-@router.get("/batch-group/{batch_group}/orders", summary="배치 그룹 내 수주 목록")
+@router.get("/batch-group/{batch_group:path}/orders", summary="배치 그룹 내 수주 목록")
 def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
     """지정한 batch_group에 속하는 production_batch 목록을 반환한다.
 
@@ -616,7 +616,7 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
     return [_to_dict(b) for b in batches]
 
 
-@router.post("/batch-group/{batch_group}/split", summary="배치 그룹 분할")
+@router.post("/batch-group/{batch_group:path}/split", summary="배치 그룹 분할")
 def split_batch_group(
     batch_group: str,
     body: dict,
