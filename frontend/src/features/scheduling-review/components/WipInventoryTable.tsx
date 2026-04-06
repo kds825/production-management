@@ -5,8 +5,8 @@ import type { WipItem } from "../types";
 interface WipInventoryTableProps {
   title: string;
   items: WipItem[];
-  /** WIP 행 클릭 시 매칭 배치로 스크롤 */
-  onWipClick?: (matchedBatchId: string) => void;
+  /** WIP 행 클릭 시 매칭된 모든 배치 ID 목록 전달 */
+  onWipClick?: (matchedBatchIds: string[]) => void;
   /** 현재 하이라이트된 WIP ID */
   activeWipId?: string | null;
 }
@@ -87,14 +87,19 @@ export function WipInventoryTable({
               <tbody>
                 {items.map((item) => {
                   const isActive = activeWipId === item.id;
-                  const hasMatch = !!item.matchedBatchId;
+                  const batchIds = item.matchedBatchIds?.length
+                    ? item.matchedBatchIds
+                    : item.matchedBatchId
+                      ? [item.matchedBatchId]
+                      : [];
+                  const hasMatch = batchIds.length > 0;
                   return (
                     <tr
                       key={item.id}
                       data-wip-id={item.id}
                       onClick={() => {
-                        if (hasMatch && onWipClick && item.matchedBatchId) {
-                          onWipClick(item.matchedBatchId);
+                        if (hasMatch && onWipClick) {
+                          onWipClick(batchIds);
                         }
                       }}
                       style={{
@@ -140,16 +145,26 @@ export function WipInventoryTable({
                             }}
                           >
                             {isStatusCol ? (
-                              <span
-                                className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
-                                style={
-                                  statusUsed
-                                    ? { backgroundColor: "#FEE2E2", color: "#B91C1C" }
-                                    : { backgroundColor: "#DCFCE7", color: "#15803D" }
-                                }
-                              >
-                                {display || "–"}
-                              </span>
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span
+                                  className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
+                                  style={
+                                    statusUsed
+                                      ? { backgroundColor: "#FEE2E2", color: "#B91C1C" }
+                                      : { backgroundColor: "#DCFCE7", color: "#15803D" }
+                                  }
+                                >
+                                  {display || "–"}
+                                </span>
+                                {batchIds.length > 1 && (
+                                  <span
+                                    className="inline-block text-[8px] font-bold px-1 rounded"
+                                    style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+                                  >
+                                    {batchIds.length}건
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span
                                 className="block truncate text-[11px]"
@@ -173,7 +188,7 @@ export function WipInventoryTable({
           </div>
         )}
       </div>
-      {items.some((i) => i.matchedBatchId) && (
+      {items.some((i) => (i.matchedBatchIds?.length ?? 0) > 0 || !!i.matchedBatchId) && (
         <p className="text-[9px] text-gray-400 mt-1">
           클릭하면 매칭된 배치로 이동합니다
         </p>

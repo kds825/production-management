@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { SchedulingBatch } from "../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
@@ -485,9 +485,9 @@ export function SchedulingResultTable({
                   const colSpan = COL_DEFS.length + (crudMode === "delete" ? 1 : 0);
 
                   return (
-                    <>
+                    <React.Fragment key={group.key}>
                       {/* 규격 그룹 헤더 행 */}
-                      <tr key={`hdr-${group.key}`} style={{ backgroundColor: "#F1F5F9" }}>
+                      <tr style={{ backgroundColor: "#F1F5F9" }}>
                         <td
                           colSpan={colSpan}
                           className="px-3 py-1 text-[10px] font-semibold"
@@ -582,7 +582,7 @@ export function SchedulingResultTable({
                       })}
 
                       {/* 규격 합계 행 */}
-                      <tr key={`sum-${group.key}`} style={{ backgroundColor: "#FDF2F2" }}>
+                      <tr style={{ backgroundColor: "#FDF2F2" }}>
                         <td
                           colSpan={colSpan - 1}
                           className="px-3 py-1 text-[10px] font-semibold text-right"
@@ -597,7 +597,7 @@ export function SchedulingResultTable({
                           {groupTotal.toLocaleString()}m
                         </td>
                       </tr>
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

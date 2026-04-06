@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import type { SchedulingBatch, WipItem } from "../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import { ProductionBatchTable } from "./ProductionBatchTable";
@@ -25,26 +25,52 @@ export function ProcessOptimizationSection({
 }: ProcessOptimizationSectionProps) {
   const hasWip = wipItems !== undefined && wipTitle;
   const [wipExpanded, setWipExpanded] = useState(true);
-  const [highlightedBatchId, setHighlightedBatchId] = useState<string | null>(
-    null,
-  );
+  const [highlightedBatchIds, setHighlightedBatchIds] = useState<Set<string>>(new Set());
   const [activeWipId, setActiveWipId] = useState<string | null>(null);
   const batchTableRef = useRef<HTMLDivElement>(null);
   const wipTableRef = useRef<HTMLDivElement>(null);
-  const lastClickedWipRef = useRef<string | null>(null);
+
+  // wip_id → 해당 WIP을 사용하는 모든 배치 ID 목록
+  const wipBatchMap = useMemo(() => {
+    const map = new Map<number, string[]>();
+    for (const b of batches) {
+      if (b.wip_matched_id != null) {
+        const ids = map.get(b.wip_matched_id) ?? [];
+        ids.push(b.id);
+        map.set(b.wip_matched_id, ids);
+      }
+    }
+    return map;
+  }, [batches]);
+
+  // WIP 아이템에 matchedBatchIds(1:N) 보강
+  const enhancedWipItems = useMemo(
+    () =>
+      wipItems?.map((w) => ({
+        ...w,
+        matchedBatchIds:
+          wipBatchMap.get(w.wip_id) ??
+          (w.matchedBatchId ? [w.matchedBatchId] : []),
+      })),
+    [wipItems, wipBatchMap],
+  );
 
   const handleWipClick = useCallback(
-    (matchedBatchId: string) => {
-      setHighlightedBatchId(matchedBatchId);
+    (matchedBatchIds: string[]) => {
+      setHighlightedBatchIds(new Set(matchedBatchIds));
 
-      const wip = wipItems?.find((w) => w.matchedBatchId === matchedBatchId);
+      // 첫 번째 배치 ID로 연결된 WIP 행 활성화
+      const wip = wipItems?.find((w) =>
+        matchedBatchIds.some((id) => id === w.matchedBatchId),
+      );
       setActiveWipId(wip?.id ?? null);
-      lastClickedWipRef.current = wip?.id ?? null;
 
-      // 배치 테이블에서 해당 행으로 스크롤
+      // 배치 테이블에서 첫 번째 행으로 스크롤
       setTimeout(() => {
+        const firstId = matchedBatchIds[0];
+        if (!firstId) return;
         const row = batchTableRef.current?.querySelector(
-          `[data-batch-id="${matchedBatchId}"]`,
+          `[data-batch-id="${firstId}"]`,
         );
         if (row) {
           row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -55,14 +81,13 @@ export function ProcessOptimizationSection({
   );
 
   const handleBackToWip = useCallback(() => {
-    // WIP 테이블로 스크롤 복귀
     if (wipTableRef.current) {
       wipTableRef.current.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
     }
-    setHighlightedBatchId(null);
+    setHighlightedBatchIds(new Set());
     setActiveWipId(null);
   }, []);
 
@@ -125,7 +150,7 @@ export function ProcessOptimizationSection({
             title={title}
             batches={batches}
             processGroup={processGroup}
-            highlightedBatchId={highlightedBatchId}
+            highlightedBatchIds={highlightedBatchIds}
             onBatchWipClick={hasWip && wipExpanded ? handleBatchWipClick : undefined}
           />
         </div>
@@ -134,7 +159,7 @@ export function ProcessOptimizationSection({
           <div ref={wipTableRef} style={{ flex: "0 0 268px", minWidth: 0 }}>
             <WipInventoryTable
               title={wipTitle}
-              items={wipItems}
+              items={enhancedWipItems ?? wipItems ?? []}
               onWipClick={handleWipClick}
               activeWipId={activeWipId}
             />
@@ -143,7 +168,7 @@ export function ProcessOptimizationSection({
       </div>
 
       {/* 배치 하이라이트 중 → WIP로 돌아가기 버튼 */}
-      {highlightedBatchId && (
+      {highlightedBatchIds.size > 0 && (
         <div className="mt-2 flex justify-end">
           <button
             onClick={handleBackToWip}

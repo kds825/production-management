@@ -17,7 +17,7 @@ interface ProductionBatchTableProps {
   batches: SchedulingBatch[];
   processGroup: ProcessGroup;
   showProcessColumn?: boolean;
-  highlightedBatchId?: string | null;
+  highlightedBatchIds?: ReadonlySet<string> | null;
   onBatchWipClick?: (batchId: string) => void;
 }
 
@@ -77,7 +77,7 @@ export function ProductionBatchTable({
   title,
   batches,
   processGroup,
-  highlightedBatchId,
+  highlightedBatchIds,
   onBatchWipClick,
   showProcessColumn,
 }: ProductionBatchTableProps) {
@@ -486,7 +486,7 @@ export function ProductionBatchTable({
                   </tr>
                 ) : (
                   filteredBatches.map((batch) => {
-                    const isHighlighted = highlightedBatchId === batch.id;
+                    const isHighlighted = highlightedBatchIds?.has(batch.id) ?? false;
                     const isWipSkipped = batch.notes.includes("재고 사용");
                     const rowBg = isHighlighted ? "#FEF2F2" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
                     const hoverBg = isHighlighted ? "#FEE2E2" : isWipSkipped ? "#E5E7EB" : getRowHoverBg(batch);

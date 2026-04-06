@@ -12,6 +12,8 @@ export interface SchedulingBatch extends ProductionBatch {
   wip_total_length_m?: number | null;
   /** wip_inventory.core_colors — WIP 재고 선심색상 */
   wip_core_colors?: string | null;
+  /** 매칭된 WIP 재고 ID (wip_inventory.wip_id) — 다중 배치→WIP 연결에 사용 */
+  wip_matched_id?: number | null;
 }
 
 export interface WipItem {
@@ -33,8 +35,10 @@ export interface WipItem {
   convertedQty: number;
   status: string;
   voltage_class: string;
-  /** 매칭된 production_batch.batch_id */
+  /** 매칭된 production_batch.batch_id (단일) */
   matchedBatchId?: string;
+  /** 이 WIP을 사용하는 모든 production_batch.id 목록 (1:N) */
+  matchedBatchIds?: string[];
   /** 매칭된 production_batch.batch_group */
   matchedBatchGroup?: string;
 }

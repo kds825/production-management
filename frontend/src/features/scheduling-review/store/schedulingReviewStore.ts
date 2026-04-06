@@ -127,6 +127,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
       ? b.wip_length_m * b.wip_count
       : b.wip_length_m ?? null,
     wip_core_colors: b.wip_core_colors ?? null,
+    wip_matched_id: b.wip_matched_id,
   };
 }
 
