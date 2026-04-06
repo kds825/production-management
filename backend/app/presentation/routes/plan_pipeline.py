@@ -77,7 +77,8 @@ async def run_stage1(
     db.execute(text("DELETE FROM audit_log"))
     db.execute(text("DELETE FROM schedule_task"))
     db.execute(text("DELETE FROM production_batch"))
-    # sales_order.wip_id FK 참조를 먼저 해제한 뒤 wip_inventory 삭제
+    # sales_order.wip_id FK 참조 해제 후 wip_inventory 삭제
+    # (sales_order 자체는 parse_erp_file에서 전체 삭제 후 재적재)
     db.execute(text("UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, wip_type = NULL, actual_length_m = NULL"))
     db.execute(text("DELETE FROM wip_inventory"))
     db.commit()
