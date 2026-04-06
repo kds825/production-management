@@ -66,6 +66,16 @@ _SHEATH_ROUTING = {
     "LLDPE": "A150",  # LLDPE → A150 설비 고정
 }
 
+# 공정 간 선행/후행 관계 — 연선→절연→시스 파이프라인 강제
+# schedules.py cascade_preview 와 공유하는 단일 진실 공급원(single source of truth)
+PREDECESSOR_PROCESS: dict[str, str] = {
+    "저압절연": "연선",
+    "고압절연": "연선",
+    "저압시스": "저압절연",
+    "고압시스": "고압절연",
+    "연합": "연선",
+}
+
 
 def auto_schedule(
     run_label: str, db: Session, *, base_date: datetime | None = None
@@ -145,13 +155,20 @@ def auto_schedule(
         try:
             date_part = run_label.split("_")[0]  # "20260406"
             base_date = datetime(
-                int(date_part[:4]), int(date_part[4:6]), int(date_part[6:8]),
-                8, 0, 0,
+                int(date_part[:4]),
+                int(date_part[4:6]),
+                int(date_part[6:8]),
+                8,
+                0,
+                0,
             )
         except Exception:
             from zoneinfo import ZoneInfo
+
             kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
-            base_date = kst_now.replace(hour=8, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+            base_date = kst_now.replace(
+                hour=8, minute=0, second=0, microsecond=0
+            ).replace(tzinfo=None)
 
     # Load equipment into memory
     equipment_list = db.query(EquipmentMaster).all()
@@ -270,14 +287,23 @@ def auto_schedule(
 
         # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
         # CORE- 그룹은 제외: 61연선에서 CORE(T6BO)와 ST(54BO)는 서로 다른 설비를 타야 함
-        if is_stranding and sq >= 70 and sq_key in sq_to_equip and not group_key.startswith("CORE-"):
+        if (
+            is_stranding
+            and sq >= 70
+            and sq_key in sq_to_equip
+            and not group_key.startswith("CORE-")
+        ):
             preferred_eq = sq_to_equip[sq_key]
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
             if pref_match:
                 eligible = pref_match
 
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
-        if is_stranding and sq_key not in sq_to_equip and not group_key.startswith("CORE-"):
+        if (
+            is_stranding
+            and sq_key not in sq_to_equip
+            and not group_key.startswith("CORE-")
+        ):
             wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
             if wire_d > 0:
                 same_wd_equips = set()
@@ -384,21 +410,15 @@ def auto_schedule(
 
             # 파이프라인 겹침: 앞 공정에서 첫 번째 드럼이 나오면 후공정 시작 가능
             # 연선 1틀 완료 → 절연 시작 / 절연 1틀 완료 → 시스 시작
-            _PREDECESSOR_PROCESS = {
-                "저압절연": "연선",
-                "고압절연": "연선",
-                "저압시스": "저압절연",
-                "고압시스": "고압절연",
-                "연합": "연선",
-            }
-            pred_proc = _PREDECESSOR_PROCESS.get(rep.process_name)
+            pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
             if pred_proc:
                 all_sqs = {int(b.sq_mm2 or 0) for b in group_batches}
                 if len(all_sqs) > 1:
                     # 색상 기준 혼합 SQ 그룹(시스): 어느 SQ든 첫 드럼이 나오면 시작 가능
                     # → 그룹 내 SQ 중 가장 이른 첫 출력 시각을 선행 제약으로 사용
                     valid_firsts = [
-                        t for sq_i in all_sqs
+                        t
+                        for sq_i in all_sqs
                         if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
                         and t < datetime.max
                     ]
@@ -503,7 +523,10 @@ def auto_schedule(
         if group_key.startswith("CORE-"):
             try:
                 main_sq = int(group_key.split("-")[1])
-                if main_sq not in core_end_by_main_sq or end_dt > core_end_by_main_sq[main_sq]:
+                if (
+                    main_sq not in core_end_by_main_sq
+                    or end_dt > core_end_by_main_sq[main_sq]
+                ):
                     core_end_by_main_sq[main_sq] = end_dt
             except (IndexError, ValueError):
                 pass
@@ -640,7 +663,17 @@ def _find_eligible_equipment(
         if eq.color_group:
             color = (batch.sheath_color or "").strip()
             if eq.color_group == "흑/청":
-                if color not in ("흑", "청", "흑색", "청색", "BLACK", "BLUE", "BK", "BL", ""):
+                if color not in (
+                    "흑",
+                    "청",
+                    "흑색",
+                    "청색",
+                    "BLACK",
+                    "BLUE",
+                    "BK",
+                    "BL",
+                    "",
+                ):
                     continue
 
         eligible.append(eq)
@@ -662,7 +695,8 @@ def _narrow_by_stranding(
     if batch_st == "7연선코어":
         # T6BO 선호: stranding_method="7연선" 또는 코드에 "T6B" 포함
         preferred = [
-            e for e in eligible
+            e
+            for e in eligible
             if (e.stranding_method or "").strip() == "7연선"
             or "T6B" in (e.equipment_code or "").upper()
         ]
@@ -671,7 +705,8 @@ def _narrow_by_stranding(
     if sq_val >= 300:
         # 54BO 선호: stranding_method="61연선" 또는 코드에 "54BO" 포함
         preferred = [
-            e for e in eligible
+            e
+            for e in eligible
             if (e.stranding_method or "").strip() == "61연선"
             or "54BO" in (e.equipment_code or "").upper()
         ]
@@ -679,8 +714,7 @@ def _narrow_by_stranding(
 
     # 일반 연선: 7연선/61연선 전용 설비는 제외 (stranding_method 기준, 없으면 무시)
     excluded = [
-        e for e in eligible
-        if (e.stranding_method or "").strip() in ("7연선", "61연선")
+        e for e in eligible if (e.stranding_method or "").strip() in ("7연선", "61연선")
     ]
     if len(excluded) < len(eligible):
         return [e for e in eligible if e not in excluded]

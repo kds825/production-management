@@ -92,14 +92,14 @@ export default function SchedulingReviewPage() {
     isLoading: batchesLoading,
     loadError,
     calculateBatches,
-    setActiveTab,
   } = useSchedulingReviewStore();
 
   // ── 파이프라인 런 목록 ──
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<string>("");
   const [runsLoading, setRunsLoading] = useState(false);
-  const [activeProcessTab, setActiveProcessTab] = useState<ProcessTab>("저압연선");
+  const [activeProcessTab, setActiveProcessTab] =
+    useState<ProcessTab>("저압연선");
   const [excelLoading, setExcelLoading] = useState(false);
   const outsourceRef = useRef<HTMLDivElement>(null);
   const batchTabRef = useRef<HTMLDivElement>(null);
@@ -161,11 +161,15 @@ export default function SchedulingReviewPage() {
         a.click();
         URL.revokeObjectURL(url);
       } else {
-        const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        const body = await res
+          .json()
+          .catch(() => ({ detail: `HTTP ${res.status}` }));
         alert(`Excel 다운로드 실패: ${body.detail ?? res.statusText}`);
       }
     } catch (err) {
-      alert(`Excel 다운로드 오류: ${err instanceof Error ? err.message : String(err)}`);
+      alert(
+        `Excel 다운로드 오류: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setExcelLoading(false);
     }
@@ -422,9 +426,7 @@ export default function SchedulingReviewPage() {
 
         <span className="text-[11px] text-gray-500">
           계획일{" "}
-          <span style={{ color: "#111827", fontWeight: 500 }}>
-            {planDate}
-          </span>
+          <span style={{ color: "#111827", fontWeight: 500 }}>{planDate}</span>
         </span>
       </div>
 
@@ -468,7 +470,8 @@ export default function SchedulingReviewPage() {
                 activeProcessTab === "고압연선" ||
                 activeProcessTab === "연합"
                   ? "연선"
-                  : activeProcessTab === "저압절연(B100)" || activeProcessTab === "고압절연(CV)"
+                  : activeProcessTab === "저압절연(B100)" ||
+                      activeProcessTab === "고압절연(CV)"
                     ? "절연"
                     : activeProcessTab === "T/P(고내화)"
                       ? "T/P"
@@ -486,9 +489,13 @@ export default function SchedulingReviewPage() {
                   : activeProcessTab === "고압연선"
                     ? yeonaeoWip.filter((w) => w.voltage_class.includes("고압"))
                     : activeProcessTab === "저압절연(B100)"
-                      ? insulationWip.filter((w) => !w.voltage_class.includes("고압"))
+                      ? insulationWip.filter(
+                          (w) => !w.voltage_class.includes("고압"),
+                        )
                       : activeProcessTab === "고압절연(CV)"
-                        ? insulationWip.filter((w) => w.voltage_class.includes("고압"))
+                        ? insulationWip.filter((w) =>
+                            w.voltage_class.includes("고압"),
+                          )
                         : undefined
               }
               wipTitle={
@@ -535,7 +542,6 @@ export default function SchedulingReviewPage() {
                   insulationBatches={insulationBatches}
                   sheatBatches={sheatBatches}
                   activeTab={activeTab}
-                  onTabChange={setActiveTab}
                 />
               </div>
             )}

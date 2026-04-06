@@ -1,5 +1,4 @@
 import copy
-import re
 import uuid
 from collections import deque
 from datetime import datetime, timedelta
@@ -28,6 +27,7 @@ from app.presentation.schemas import (
     ScheduleTaskUpdate,
 )
 from app.services.batch_grouping import format_spec_display, extract_sq
+from app.services.schedule_optimizer import PREDECESSOR_PROCESS
 
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
 
@@ -575,21 +575,12 @@ def get_version(version_id: str) -> VersionDetailResponse:
 
 # ---------------------------------------------------------------------------
 # 공정 간 선행/후행 관계 — cascade preview 에서 사용
-# schedule_optimizer._PREDECESSOR_PROCESS 와 동일한 매핑을 로컬에 정의하여
-# 순환 import 를 방지하고 후행(successor) 역매핑도 함께 구성한다.
+# PREDECESSOR_PROCESS 는 schedule_optimizer 에서 import 한 단일 진실 공급원
+# 역매핑: 선행 → [후행, ...] (예: "연선" → ["저압절연", "고압절연", "연합"])
 # ---------------------------------------------------------------------------
 
-_PREDECESSOR_PROCESS: dict[str, str] = {
-    "저압절연": "연선",
-    "고압절연": "연선",
-    "저압시스": "저압절연",
-    "고압시스": "고압절연",
-    "연합": "연선",
-}
-
-# 역매핑: 선행 → [후행, ...] (예: "연선" → ["저압절연", "고압절연", "연합"])
 _SUCCESSOR_PROCESSES: dict[str, list[str]] = {}
-for _succ, _pred in _PREDECESSOR_PROCESS.items():
+for _succ, _pred in PREDECESSOR_PROCESS.items():
     _SUCCESSOR_PROCESSES.setdefault(_pred, []).append(_succ)
 
 
