@@ -318,8 +318,18 @@ def _write_sheet(
             row_num += 1  # 빈 행 1줄
         is_first_group = False
 
-        # 같은 규격(batch_group) 내 행을 품목(product_group) 기준 정렬
-        group_batches = sorted(group_batches, key=lambda b: b.product_group or "")
+        # 같은 규격(batch_group) 내 행 정렬:
+        # 1) product_group — 품목 기준 정렬
+        # 2) wip_matched_id 유무 — WIP 사용 행끼리 모으기 (비사용 → 사용 순)
+        # 3) wip_matched_id 값 — 같은 WIP 재고를 사용하는 행끼리 연속 배치
+        #    → 셀병합 로직이 연속 구간만 병합하므로, 같은 WIP 행이 모여야 정상 동작
+        group_batches = sorted(
+            group_batches,
+            key=lambda b: (
+                b.product_group or "",
+                (0, b.wip_matched_id) if b.wip_matched_id is not None else (1, 0),
+            ),
+        )
 
         group_start_row = row_num  # SUM 수식 범위 시작점
         group_drum_count_total: int = 0
