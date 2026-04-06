@@ -303,6 +303,14 @@ def _write_sheet(
     _apply_col_widths(ws, total_cols)
     _hide_trailing_cols(ws, len(VISIBLE_COLS) + 1, total_cols)
 
+    # 시스 시트에서는 WIP 표시를 하지 않음 — 어차피 시스 생산은 수행해야 함
+    is_sheath = "시스" in sheet_name
+    if is_sheath:
+        wip_stage_lookup = {}
+        wip_total_len_lookup = {}
+        for b in batches:
+            b.wip_matched_id = None  # type: ignore[assignment]
+
     # batch_group 기준 그룹핑 — 원본 정렬 순서를 유지하기 위해 OrderedDict 사용
     groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
     for batch in batches:
