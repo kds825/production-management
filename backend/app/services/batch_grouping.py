@@ -42,8 +42,10 @@ def create_batches(
     """
     run_label에 해당하는 sales_order를 읽어서 production_batch를 생성한다.
 
-    외주 품목(is_outsourced=True)은 건너뛰고, 라우팅이 없거나 SQ 파싱에 실패하면
-    warnings 목록에 기록한 뒤 계속 진행한다 (Fail-Fast 대신 Best-Effort).
+    ERP 외주계획 플래그(is_outsourced)와 무관하게 모든 수주를 대상으로 배치를 생성한다.
+    (외주 플래그는 특정 공정 외주를 의미하며, 연선/절연/시스 계획 대상에서 제외하지 않는다.)
+    코드 내 하드코딩된 설비 제약 조건(SQ≤10 등)에 의한 외주 분류만 적용한다.
+    라우팅이 없거나 SQ 파싱에 실패하면 warnings에 기록 후 계속 진행한다.
 
     Returns:
         {
@@ -62,7 +64,6 @@ def create_batches(
     # ── 마스터 데이터 일괄 로드 (N+1 방지) ──────────────────────────────────
     query = db.query(SalesOrder).filter(
         SalesOrder.run_label == run_label,
-        SalesOrder.is_outsourced == False,  # noqa: E712
     )
     if date_from is not None:
         query = query.filter(SalesOrder.due_date >= date_from)
