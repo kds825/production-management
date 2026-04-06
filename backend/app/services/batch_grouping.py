@@ -357,7 +357,7 @@ def create_batches(
                     drum_count=1,
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
-                    sq_mm2=sq,  # 본 케이블 SQ(300/400) 유지 — T6BO 설비 범위 매칭용
+                    sq_mm2=35,  # T6BO SQ 범위(≤35) 매칭용 — 실제 선심 소선경 기준
                     core_count=int(order.core_count or 1),
                     core_colors=order.core_colors,
                     sheath_color=order.sheath_color,
@@ -611,6 +611,12 @@ def create_batches(
                 group_key = f"A120_{sq_key}SQ"
             else:
                 group_key = f"A100_{sq_key}SQ"
+
+        # CORE-/ST- 등 Phase 1에서 이미 할당된 batch_group은 보존
+        if b.batch_group:
+            if b.batch_group not in group_counters:
+                group_counters[b.batch_group] = len(group_counters) + 1
+            continue
 
         if group_key not in group_counters:
             group_counters[group_key] = len(group_counters) + 1
