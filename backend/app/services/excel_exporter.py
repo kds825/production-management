@@ -314,6 +314,9 @@ def _write_sheet(
             row_num += 1  # 빈 행 1줄
         is_first_group = False
 
+        # 같은 규격(batch_group) 내 행을 품목(product_group) 기준 정렬
+        group_batches = sorted(group_batches, key=lambda b: (b.product_group or ""))
+
         group_start_row = row_num  # SUM 수식 범위 시작점
         group_drum_count_total: int = 0
 

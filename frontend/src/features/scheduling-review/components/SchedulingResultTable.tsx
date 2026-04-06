@@ -95,11 +95,18 @@ export function SchedulingResultTable({
     [activeBatches],
   );
 
-  // 배치번호 기준 오름차순 정렬 (납기 빠른 그룹 -> 색상 순)
-  const sortedBatches = useMemo(
-    () => sortBatchesByBatchNumber(activeBatches, batchNumbers),
-    [activeBatches, batchNumbers],
-  );
+  // 배치번호 기준 오름차순 정렬, 같은 그룹 내에서는 품목(product) 기준 정렬
+  const sortedBatches = useMemo(() => {
+    const base = sortBatchesByBatchNumber(activeBatches, batchNumbers);
+    return [...base].sort((a, b) => {
+      const keyA = a.batch_group || `${a.product}||${a.spec}`;
+      const keyB = b.batch_group || `${b.product}||${b.spec}`;
+      const numA = batchNumbers.get(keyA) ?? 999;
+      const numB = batchNumbers.get(keyB) ?? 999;
+      if (numA !== numB) return numA - numB;
+      return (a.product || "").localeCompare(b.product || "", "ko");
+    });
+  }, [activeBatches, batchNumbers]);
 
   function getBatchLabel(b: SchedulingBatch): string {
     const num = batchNumbers.get(getBatchGroupKey(b));
@@ -308,6 +315,21 @@ export function SchedulingResultTable({
     return [...filtered, ...addedRows];
   }, [sortedBatches, deletedIds, addedRows]);
 
+  // 규격(batch_group)별 그룹핑 — 순서 유지
+  const groupedBatches = useMemo(() => {
+    const groups: { key: string; label: string; batches: SchedulingBatch[] }[] = [];
+    const seen = new Map<string, number>(); // key → groups index
+    for (const b of displayBatches) {
+      const key = b.batch_group || `_${b.spec || b.product}`;
+      if (!seen.has(key)) {
+        seen.set(key, groups.length);
+        groups.push({ key, label: b.spec || b.batch_group || "", batches: [] });
+      }
+      groups[seen.get(key)!].batches.push(b);
+    }
+    return groups;
+  }, [displayBatches]);
+
   // 체크박스 컬럼 포함 시 총 너비
   const checkboxColWidth = 36;
   const totalWidth =
@@ -455,186 +477,127 @@ export function SchedulingResultTable({
                 </tr>
               </thead>
               <tbody>
-                {displayBatches.map((batch) => {
-                  const isNewRow = batch.id.startsWith("new-");
-                  const isWipSkipped = batch.notes === "재고 사용";
-                  const rowBg = isNewRow
-                    ? "#FFFBEB"
-                    : isWipSkipped
-                      ? "#F3F4F6"
-                      : getRowBg(batch);
-                  const hoverBg = isNewRow
-                    ? "#FEF3C7"
-                    : isWipSkipped
-                      ? "#E5E7EB"
-                      : getRowHoverBg(batch);
-                  const statusColor =
-                    PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
-                  /** 재고 사용 행은 텍스트를 회색으로 -- 간트 차트 미반영 표시 */
-                  const textColor = isWipSkipped ? "#9CA3AF" : undefined;
-
-                  const isSelected = selectedForDelete.has(batch.id);
+                {groupedBatches.map((group) => {
+                  const groupTotal = group.batches.reduce(
+                    (sum, b) => sum + (b.total_length_m || 0),
+                    0,
+                  );
+                  const colSpan = COL_DEFS.length + (crudMode === "delete" ? 1 : 0);
 
                   return (
-                    <tr
-                      key={batch.id}
-                      style={{
-                        backgroundColor: isSelected ? "#FEE2E2" : rowBg,
-                        color: textColor,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) {
-                          (
-                            e.currentTarget as HTMLElement
-                          ).style.backgroundColor = hoverBg;
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.backgroundColor =
-                          isSelected
-                            ? "#FEE2E2"
-                            : isNewRow
-                              ? "#FFFBEB"
-                              : isWipSkipped
-                                ? "#F3F4F6"
-                                : getRowBg(batch);
-                      }}
-                    >
-                      {/* 삭제 모드 체크박스 */}
-                      {crudMode === "delete" && (
+                    <>
+                      {/* 규격 그룹 헤더 행 */}
+                      <tr key={`hdr-${group.key}`} style={{ backgroundColor: "#F1F5F9" }}>
                         <td
-                          className="px-1"
-                          style={{
-                            height: 38,
-                            borderBottom: "1px solid #E5E7EB",
-                            borderRight: "1px solid #F3F4F6",
-                            textAlign: "center",
-                            verticalAlign: "middle",
-                          }}
+                          colSpan={colSpan}
+                          className="px-3 py-1 text-[10px] font-semibold"
+                          style={{ color: "#475569", borderBottom: "1px solid #E5E7EB" }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelectForDelete(batch.id)}
-                            className="rounded"
-                            style={{
-                              width: 14,
-                              height: 14,
-                              accentColor: PRIMARY,
-                            }}
-                          />
+                          {group.label}
                         </td>
-                      )}
+                      </tr>
 
-                      {COL_DEFS.map((col, colIdx) => {
-                        const editable =
-                          isEditable && EDITABLE_KEYS.has(col.key);
-                        // 새 행에서는 규격도 편집 가능
-                        const editableForNewRow =
-                          isEditable &&
-                          isNewRow &&
-                          (col.key === "spec" ||
-                            col.key === "product" ||
-                            col.key === "customer" ||
-                            col.key === "delivery_date");
-                        const canEdit = editable || editableForNewRow;
-                        const currentlyEditing = isCellEditing(
-                          batch.id,
-                          col.key,
-                        );
+                      {/* 그룹 내 데이터 행 */}
+                      {group.batches.map((batch) => {
+                        const isNewRow = batch.id.startsWith("new-");
+                        const isWipSkipped = batch.notes === "재고 사용";
+                        const rowBg = isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
+                        const hoverBg = isNewRow ? "#FEF3C7" : isWipSkipped ? "#E5E7EB" : getRowHoverBg(batch);
+                        const statusColor = PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
+                        const textColor = isWipSkipped ? "#9CA3AF" : undefined;
+                        const isSelected = selectedForDelete.has(batch.id);
 
                         return (
-                          <td
-                            key={col.key}
-                            className="px-3"
-                            style={{
-                              height: 38,
-                              borderBottom: "1px solid #E5E7EB",
-                              borderRight:
-                                colIdx < COL_DEFS.length - 1
-                                  ? "1px solid #F3F4F6"
-                                  : "none",
-                              borderLeft:
-                                colIdx === 0
-                                  ? `3px solid ${statusColor}`
-                                  : "none",
-                              verticalAlign: "middle",
-                              overflow: "hidden",
-                              outline: currentlyEditing
-                                ? "2px solid #3B82F6"
-                                : "none",
-                              outlineOffset: -2,
-                              cursor: canEdit ? "text" : "default",
-                              backgroundColor:
-                                canEdit && !currentlyEditing
-                                  ? "#F0F9FF"
-                                  : undefined,
-                            }}
-                            onClick={() => {
-                              if (!canEdit) return;
-                              if (
-                                col.key === "notes" &&
-                                batch.notes === "재고 사용"
-                              )
-                                return;
-                              const raw =
-                                batch[col.key as keyof SchedulingBatch];
-                              const strVal = raw != null ? String(raw) : "";
-                              startEditing(batch.id, col.key, strVal);
+                          <tr
+                            key={batch.id}
+                            style={{ backgroundColor: isSelected ? "#FEE2E2" : rowBg, color: textColor }}
+                            onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = hoverBg; }}
+                            onMouseLeave={(e) => {
+                              (e.currentTarget as HTMLElement).style.backgroundColor =
+                                isSelected ? "#FEE2E2" : isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
                             }}
                           >
-                            {currentlyEditing ? (
-                              <input
-                                ref={inputRef}
-                                type={
-                                  col.key === "unit_count" ||
-                                  col.key === "length_per_unit_m"
-                                    ? "number"
-                                    : "text"
-                                }
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onBlur={commitEdit}
-                                onKeyDown={handleKeyDown}
-                                className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
-                                style={{
-                                  textAlign: col.align as "left" | "right",
-                                  outline: "none",
-                                  border: "1px solid #3B82F6",
-                                }}
-                              />
-                            ) : col.key === "batch_label" ? (
-                              <span
-                                className="block truncate text-[10px] font-medium"
-                                style={{ color: "#9CA3AF" }}
-                              >
-                                {isNewRow ? "신규" : getBatchLabel(batch)}
-                              </span>
-                            ) : col.key === "notes" &&
-                              batch.notes === "재고 사용" ? (
-                              <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                                style={{
-                                  backgroundColor: "#DBEAFE",
-                                  color: "#1D4ED8",
-                                }}
-                              >
-                                재고 사용
-                              </span>
-                            ) : (
-                              <span
-                                className="block truncate text-[11px]"
-                                style={{
-                                  textAlign: col.align as "left" | "right",
-                                }}
-                              >
-                                {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
-                              </span>
+                            {crudMode === "delete" && (
+                              <td className="px-1" style={{ height: 38, borderBottom: "1px solid #E5E7EB", borderRight: "1px solid #F3F4F6", textAlign: "center", verticalAlign: "middle" }}>
+                                <input type="checkbox" checked={isSelected} onChange={() => toggleSelectForDelete(batch.id)} className="rounded" style={{ width: 14, height: 14, accentColor: PRIMARY }} />
+                              </td>
                             )}
-                          </td>
+                            {COL_DEFS.map((col, colIdx) => {
+                              const editable = isEditable && EDITABLE_KEYS.has(col.key);
+                              const editableForNewRow = isEditable && isNewRow && (col.key === "spec" || col.key === "product" || col.key === "customer" || col.key === "delivery_date");
+                              const canEdit = editable || editableForNewRow;
+                              const currentlyEditing = isCellEditing(batch.id, col.key);
+                              return (
+                                <td
+                                  key={col.key}
+                                  className="px-3"
+                                  style={{
+                                    height: 38,
+                                    borderBottom: "1px solid #E5E7EB",
+                                    borderRight: colIdx < COL_DEFS.length - 1 ? "1px solid #F3F4F6" : "none",
+                                    borderLeft: colIdx === 0 ? `3px solid ${statusColor}` : "none",
+                                    verticalAlign: "middle",
+                                    overflow: "hidden",
+                                    outline: currentlyEditing ? "2px solid #3B82F6" : "none",
+                                    outlineOffset: -2,
+                                    cursor: canEdit ? "text" : "default",
+                                    backgroundColor: canEdit && !currentlyEditing ? "#F0F9FF" : undefined,
+                                  }}
+                                  onClick={() => {
+                                    if (!canEdit) return;
+                                    if (col.key === "notes" && batch.notes === "재고 사용") return;
+                                    const raw = batch[col.key as keyof SchedulingBatch];
+                                    startEditing(batch.id, col.key, raw != null ? String(raw) : "");
+                                  }}
+                                >
+                                  {currentlyEditing ? (
+                                    <input
+                                      ref={inputRef}
+                                      type={col.key === "unit_count" || col.key === "length_per_unit_m" ? "number" : "text"}
+                                      value={editValue}
+                                      onChange={(e) => setEditValue(e.target.value)}
+                                      onBlur={commitEdit}
+                                      onKeyDown={handleKeyDown}
+                                      className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
+                                      style={{ textAlign: col.align as "left" | "right", outline: "none", border: "1px solid #3B82F6" }}
+                                    />
+                                  ) : col.key === "batch_label" ? (
+                                    <span className="block truncate text-[10px] font-medium" style={{ color: "#9CA3AF" }}>
+                                      {isNewRow ? "신규" : getBatchLabel(batch)}
+                                    </span>
+                                  ) : col.key === "notes" && batch.notes === "재고 사용" ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ backgroundColor: "#DBEAFE", color: "#1D4ED8" }}>
+                                      재고 사용
+                                    </span>
+                                  ) : (
+                                    <span className="block truncate text-[11px]" style={{ textAlign: col.align as "left" | "right" }}>
+                                      {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
                         );
                       })}
-                    </tr>
+
+                      {/* 규격 합계 행 */}
+                      <tr key={`sum-${group.key}`} style={{ backgroundColor: "#FDF2F2" }}>
+                        <td
+                          colSpan={colSpan - 1}
+                          className="px-3 py-1 text-[10px] font-semibold text-right"
+                          style={{ borderBottom: "2px solid #E5E7EB", color: "#7F1D1D" }}
+                        >
+                          소계
+                        </td>
+                        <td
+                          className="px-3 py-1 text-[10px] font-semibold text-right"
+                          style={{ borderBottom: "2px solid #E5E7EB", color: "#7F1D1D" }}
+                        >
+                          {groupTotal.toLocaleString()}m
+                        </td>
+                      </tr>
+                    </>
                   );
                 })}
               </tbody>
