@@ -43,30 +43,54 @@ type ProcessTab = (typeof PROCESS_TABS)[number];
  */
 function resolveSheetName(b: SchedulingBatch): ProcessTab {
   const bg = b.batch_group || "";
+  const pn = b.processGroup;
+  const isHV = b.voltage_type === "고압";
 
   // T/P 공정 (TFR-8 고내화)
-  if (b.processGroup === "T/P") return "T/P(고내화)";
+  if (pn === "T/P") return "T/P(고내화)";
 
-  // 연선: 전압으로 고압/저압 분기
-  if (bg.startsWith("연선_")) {
-    return b.voltage_type === "고압" ? "고압연선" : "저압연선";
+  // 연선/연합: process_name + voltage 기준
+  if (pn === "연선") {
+    if (bg.startsWith("연합_")) return "연합";
+    return isHV ? "고압연선" : "저압연선";
   }
-  if (bg.startsWith("저압절연_")) return "저압절연(B100)";
-  if (bg.startsWith("A100_")) return "저압시스(A100)";
-  if (bg.startsWith("A120_")) return "저압시스(A120)";
+
+  // 절연
+  if (pn === "절연") {
+    return isHV ? "고압절연(CV)" : "저압절연(B100)";
+  }
+
+  // 시스: batch_group 접두사로 분기
+  if (pn === "시스") {
+    if (bg.startsWith("고압시스_")) return "고압시스(A150)";
+    if (bg.startsWith("A100_")) return "저압시스(A100)";
+    if (bg.startsWith("A120_")) return "저압시스(A120)";
+    return "저압시스(A120)"; // fallback
+  }
+
+  // batch_group 접두사 fallback
   if (bg.startsWith("연합_")) return "연합";
   if (bg.startsWith("고압절연_")) return "고압절연(CV)";
   if (bg.startsWith("고압시스_")) return "고압시스(A150)";
+  if (bg.startsWith("A100_")) return "저압시스(A100)";
+  if (bg.startsWith("A120_")) return "저압시스(A120)";
 
-  return "저압연선"; // fallback
+  return "저압연선";
 }
 
-/** 탭별 배치 필터 — Excel 시트와 동일 분류 */
+/** CORE 배치 판별 — 61연선 내부 7연선코어(T6BO/AL6BO)는 배치 테이블에서 숨김 */
+function isCoreGroup(bg: string): boolean {
+  return bg.startsWith("CORE-") || bg.startsWith("AL-CORE-");
+}
+
+/** 탭별 배치 필터 — Excel 시트와 동일 분류, CORE 배치 제외 */
 function filterBatchesByTab(
   allBatches: SchedulingBatch[],
   tab: ProcessTab,
 ): SchedulingBatch[] {
-  return allBatches.filter((b) => resolveSheetName(b) === tab);
+  return allBatches.filter(
+    (b) => resolveSheetName(b) === tab && !isCoreGroup(b.batch_group || ""),
+  );
 }
 
 const PRIMARY = "#C41230";
