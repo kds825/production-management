@@ -6,6 +6,7 @@
   - 폰트 색상: 짙은 회색(WIP 재고), 파란색(신규), 주황색 볼드(소계/주석)
 """
 
+import re
 from io import BytesIO
 from datetime import date
 
@@ -259,9 +260,12 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
             return "CV절연"
         case "고압시스":
             return "A150시스"
+        case "T/P":
+            return "TP"
         case _:
-            # 미정의 공정은 이름 그대로 시트로 생성 (확장성 유지)
-            return proc
+            # Excel 시트 이름 금지 문자 제거: / \ * ? [ ] :
+            safe = re.sub(r'[/\\*?\[\]:]', '_', proc)
+            return safe[:31]  # Excel 시트명 최대 31자
 
 
 def _write_sheet(
@@ -382,8 +386,7 @@ def _write_sheet(
         # 연선 시트: remarks에서 실제 틀(lot) 수 추출 — 수주 건수와 구분
         # remarks 형식: "연선그룹 20건 1틀 / 그룹총량 ..."
         if sheet_name == "연선":
-            import re as _re
-            m = _re.search(r"\d+건\s+(\d+)틀", group_batches[0].remarks or "")
+            m = re.search(r"\d+건\s+(\d+)틀", group_batches[0].remarks or "")
             lot_count = int(m.group(1)) if m else group_drum_count_total
         else:
             lot_count = None  # 연선 외엔 미사용
