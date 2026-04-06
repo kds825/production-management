@@ -19,12 +19,12 @@ interface DrumChunk {
 interface SplitCandidate {
   batch_group: string;
   equipment_code: string | null;
-  sq: number;
+  sq_mm2: number;
   lot_count: number;
   total_length_m: number;
-  chunks: DrumChunk[];
+  proposed_splits: DrumChunk[];
   gaps_days: number[]; // gap between chunk[i] and chunk[i+1]
-  equip_load_hours: number;
+  equipment_load_hours: number;
 }
 
 interface Props {
@@ -154,7 +154,7 @@ function CandidateCard({
         const chunkIndices = groups[g];
         const batchIds: number[] = [];
         for (const ci of chunkIndices) {
-          const chunk = c.chunks[ci];
+          const chunk = c.proposed_splits[ci];
           if (
             chunk &&
             (chunk as unknown as { batch_ids?: number[] }).batch_ids
@@ -207,7 +207,7 @@ function CandidateCard({
           color: "#065F46",
         }}
       >
-        {c.sq}SQ 연선 —{" "}
+        {c.sq_mm2}SQ 연선 —{" "}
         {splitCount > 1 ? `${splitCount}개로 분할 완료` : "1개 배치 유지"}
       </div>
     );
@@ -231,7 +231,7 @@ function CandidateCard({
             {index + 1}
           </span>
           <span className="text-xs font-semibold text-gray-800">
-            연선 {c.sq}SQ
+            연선 {c.sq_mm2}SQ
           </span>
           <span className="text-[10px] text-gray-400">
             {c.lot_count}틀 · {c.total_length_m.toLocaleString()}m
@@ -239,9 +239,9 @@ function CandidateCard({
           {c.equipment_code && (
             <span className="text-[10px] text-gray-400">
               · {c.equipment_code}
-              {c.equip_load_hours > 0 && (
+              {c.equipment_load_hours > 0 && (
                 <span className="text-orange-500 ml-1">
-                  ({Math.round(c.equip_load_hours)}h 부하)
+                  ({Math.round(c.equipment_load_hours)}h 부하)
                 </span>
               )}
             </span>
@@ -254,7 +254,7 @@ function CandidateCard({
 
       {/* Timeline bar: chunks with cut toggles */}
       <div className="flex items-center gap-0 overflow-x-auto py-1">
-        {c.chunks.map((chunk, i) => (
+        {c.proposed_splits.map((chunk, i) => (
           <div key={i} className="flex items-center">
             {/* Chunk block */}
             <div
@@ -276,7 +276,7 @@ function CandidateCard({
             </div>
 
             {/* Gap / cut toggle between chunks */}
-            {i < c.chunks.length - 1 && (
+            {i < c.proposed_splits.length - 1 && (
               <button
                 onClick={() => toggleCut(i)}
                 className="flex flex-col items-center mx-1 cursor-pointer group"

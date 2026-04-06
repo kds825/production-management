@@ -59,12 +59,12 @@ interface SplitChunk {
 interface SplitCandidate {
   batch_group: string;
   equipment_code: string | null;
-  sq: number;
+  sq_mm2: number;
   lot_count: number;
   total_length_m: number;
-  chunks: SplitChunk[];
+  proposed_splits: SplitChunk[];
   gaps_days: number[];
-  equip_load_hours: number;
+  equipment_load_hours: number;
 }
 
 interface Stage1Result {
