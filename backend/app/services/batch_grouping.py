@@ -376,7 +376,10 @@ def create_batches(
                     equipment_code=None,
                     wip_matched_id=wip_id_o,
                     spec_raw=order.spec_raw,
-                    batch_group=strand_batch_group,
+                    # 7연선 코어는 별도 그룹 — optimizer가 T6B0에 독립 배치하기 위해
+                    # "CORE-{main_sq}-{voltage}" 키를 사용한다.
+                    # ST-{sq} 그룹 처리 전에 먼저 스케줄링하여 선행관계를 만족시킨다.
+                    batch_group=f"CORE-{int(sq)}-{voltage_g}",
                 )
                 batches.append(core_batch)
 

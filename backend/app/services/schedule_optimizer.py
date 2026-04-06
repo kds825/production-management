@@ -214,6 +214,10 @@ def auto_schedule(
     # 공정 전체 종료 시각 추적 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
     process_end_all: dict[str, datetime] = {}  # "저압절연" → 마지막 절연 그룹 종료 시각
 
+    # 61연선 코어(T6B0) 완료 시각 — main_sq → CORE 그룹 종료 시각
+    # "CORE-300-..." 완료 후 "ST-300-..." 시작 가능
+    core_end_by_main_sq: dict[int, datetime] = {}
+
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
     from collections import OrderedDict
 
@@ -222,7 +226,14 @@ def auto_schedule(
         key = batch.batch_group or f"_single_{batch.batch_id}"
         batch_groups.setdefault(key, []).append(batch)
 
-    for group_key, group_batches in batch_groups.items():
+    # CORE- 그룹(7연선 코어)을 ST- 그룹보다 먼저 처리 — T6B0 선행 스케줄링 보장
+    # Python sort는 stable하므로 동일 우선순위 내 삽입 순서 유지
+    ordered_group_items = sorted(
+        batch_groups.items(),
+        key=lambda kv: 0 if kv[0].startswith("CORE-") else 1,
+    )
+
+    for group_key, group_batches in ordered_group_items:
         rep = group_batches[0]  # 대표 배치 (설비 선정용)
 
         # 10-3: 시스 재질 라우팅
@@ -269,8 +280,11 @@ def auto_schedule(
                         eligible = wd_match
 
         if not eligible:
+            candidate_codes = [e.equipment_code for e in candidate_equip]
             result["warnings"].append(
-                f"배치그룹 {group_key}: 공정 '{rep.process_name}'에 적합한 설비 없음"
+                f"배치그룹 {group_key}: 공정 '{rep.process_name}' SQ={rep.sq_mm2} "
+                f"재질={rep.conductor_material} — 적합한 설비 없음 "
+                f"(후보설비={candidate_codes})"
             )
             # 미스케줄된 공정을 process_end_by_sq에 max 시간으로 등록 →
             # 후행 공정이 이 공정 없이 시작하는 것을 방지
@@ -379,6 +393,17 @@ def auto_schedule(
                 if all_insul_end and all_insul_end > earliest:
                     earliest = all_insul_end
 
+            # 61연선 ST- 그룹: 동일 SQ의 CORE-(T6B0) 완료 후 시작
+            # 예: "ST-300-..." 그룹 → core_end_by_main_sq[300] 완료 대기
+            if group_key.startswith("ST-") and rep.process_name == "연선":
+                try:
+                    main_sq = int(group_key.split("-")[1])
+                except (IndexError, ValueError):
+                    main_sq = sq_int
+                core_end = core_end_by_main_sq.get(main_sq)
+                if core_end and core_end > earliest:
+                    earliest = core_end
+
             # 개별 수주 레벨 predecessor도 확인 (더 늦은 것 우선)
             for b in group_batches:
                 pred_key = (b.sales_order_id, b.sales_order_line)
@@ -433,6 +458,15 @@ def auto_schedule(
             or end_dt > process_end_by_sq[proc_sq_key]
         ):
             process_end_by_sq[proc_sq_key] = end_dt
+
+        # 61연선 CORE- 그룹 완료 시각 기록 — "CORE-{main_sq}-..." 패턴
+        if group_key.startswith("CORE-"):
+            try:
+                main_sq = int(group_key.split("-")[1])
+                if main_sq not in core_end_by_main_sq or end_dt > core_end_by_main_sq[main_sq]:
+                    core_end_by_main_sq[main_sq] = end_dt
+            except (IndexError, ValueError):
+                pass
 
         # 공정 전체 종료 시각 갱신 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
         if rep.process_name == "저압절연":
