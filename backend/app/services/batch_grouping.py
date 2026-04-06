@@ -702,6 +702,12 @@ def format_spec_display(
         if m_kcmil:
             return f"{core_count}C x {m_kcmil.group(1)}KCMIL"
 
+        # SQ 표기 — spec_raw의 SQ 값을 우선 사용 (sq_mm2 파라미터 무시)
+        # CORE 배치처럼 sq_mm2가 내부 작업용으로 변경된 경우에도 원본 규격 표시
+        m_sq = re.search(r"(\d+(?:\.\d+)?)\s*SQ", spec_raw, re.IGNORECASE)
+        if m_sq:
+            return f"{core_count}C x {int(float(m_sq.group(1)))}SQ"
+
     return f"{core_count}C x {int(sq_mm2)}SQ"
 
 
