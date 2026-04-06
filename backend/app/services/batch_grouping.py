@@ -603,14 +603,19 @@ def create_batches(
         sq_key = int(b.sq_mm2 or 0)
         group_key = f"{proc}_{sq_key}SQ"
 
-        # 저압시스: 색상 기준 설비 분리 (원본 계획서 A100/A120 시트 구조)
-        # A120 = 흑/청, A100 = 갈/회/녹황 등 나머지
-        if proc == "저압시스":
+        # 시스: 색상 기준으로 묶음 — SQ가 달라도 동일 색상이면 같은 배치 블록
+        # (색상 전환이 설비 준비 시간을 결정하며, SQ 변경은 시스에서 부수적임)
+        # 저압시스는 A100/A120 설비 분리 추가 (원본 계획서 A100/A120 시트 구조)
+        if proc in ("저압시스", "고압시스"):
             color = (b.sheath_color or "").strip()
-            if color in ("흑", "청", "흑/적"):
-                group_key = f"A120_{sq_key}SQ"
+            color_key = color.replace("/", "_") if color else "기타"
+            if proc == "저압시스":
+                if color in ("흑", "청", "흑/적"):
+                    group_key = f"A120_{color_key}"
+                else:
+                    group_key = f"A100_{color_key}"
             else:
-                group_key = f"A100_{sq_key}SQ"
+                group_key = f"{proc}_{color_key}"
 
         # CORE-/ST- 등 Phase 1에서 이미 할당된 batch_group은 보존
         if b.batch_group:

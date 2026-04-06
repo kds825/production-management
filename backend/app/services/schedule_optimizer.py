@@ -393,11 +393,14 @@ def auto_schedule(
             }
             pred_proc = _PREDECESSOR_PROCESS.get(rep.process_name)
             if pred_proc:
-                pred_first = process_first_output_by_sq.get((pred_proc, sq_int))
-                if pred_first and pred_first > earliest:
-                    earliest = pred_first
-                    if rep.process_name == "고압시스":
-                        earliest += timedelta(hours=20)
+                # 시스처럼 색상 기준으로 그룹화된 경우 그룹 내 모든 SQ의 선행 제약 확인
+                all_sqs = {int(b.sq_mm2 or 0) for b in group_batches}
+                for sq_i in all_sqs:
+                    pred_first = process_first_output_by_sq.get((pred_proc, sq_i))
+                    if pred_first and pred_first > earliest:
+                        earliest = pred_first
+                if rep.process_name == "고압시스":
+                    earliest += timedelta(hours=20)
 
             # 시스 배치(A100/A120): 저압절연 첫 번째 드럼 출력 후 시작
             if group_key.startswith("A100_") or group_key.startswith("A120_"):

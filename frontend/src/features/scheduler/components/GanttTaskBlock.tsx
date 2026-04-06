@@ -422,7 +422,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   className="text-white text-[10px] font-semibold truncate leading-tight"
                   style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
                 >
-                  {task.spec || task.product}
+                  {SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color
+                    ? task.color
+                    : task.spec || task.product}
                 </span>
                 {segW >= 40 && (
                   <span
