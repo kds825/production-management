@@ -110,9 +110,11 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
 
     wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id is not None}
     wip_stage_lookup: dict[int, str] = {}
+    wip_total_len_lookup: dict[int, float] = {}  # wip_id → WIP 재고 실제 길이(m)
     if wip_ids:
         wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
         wip_stage_lookup = {w.wip_id: w.process_stage or "" for w in wips}
+        wip_total_len_lookup = {w.wip_id: float(w.total_length_m or 0) for w in wips}
 
     wb = Workbook()
     wb.remove(wb.active)  # 기본 Sheet1 제거
@@ -172,7 +174,7 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         if sname not in sheet_data:
             continue
         ws = wb.create_sheet(title=sname)
-        _write_sheet(ws, sheet_data[sname], wip_stage_lookup, sname)
+        _write_sheet(ws, sheet_data[sname], wip_stage_lookup, wip_total_len_lookup, sname)
 
     output = BytesIO()
     wb.save(output)
@@ -277,6 +279,7 @@ def _write_sheet(
     ws,
     batches: list[ProductionBatch],
     wip_stage_lookup: dict[int, str],
+    wip_total_len_lookup: dict[int, float],
     sheet_name: str,
 ) -> None:
     """단일 시트에 데이터 행(batch_group 소계 포함) → 서식 적용.
@@ -293,16 +296,6 @@ def _write_sheet(
     # 헤더 행 없음 — 3.25계획.xls 템플릿 준수
     _apply_col_widths(ws, total_cols)
     _hide_trailing_cols(ws, len(VISIBLE_COLS) + 1, total_cols)
-
-    # wip_matched_id별 총 길이(m) 누적
-    # - 비고에서 "절연/연선재고 XXX사용"의 XXX를 wip_id가 아니라 길이 합으로 표시하기 위함
-    wip_total_len_lookup: dict[int, float] = {}
-    for b in batches:
-        if b.wip_matched_id is None:
-            continue
-        wip_total_len_lookup[b.wip_matched_id] = (
-            wip_total_len_lookup.get(b.wip_matched_id, 0.0) + float(b.total_length_m or 0)
-        )
 
     # batch_group 기준 그룹핑 — 원본 정렬 순서를 유지하기 위해 OrderedDict 사용
     groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
