@@ -418,52 +418,19 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   cursor: isDragging ? "grabbing" : "grab",
                 }}
               >
-                {task.order_id && segW >= 50 && (
+                <span
+                  className="text-white text-[10px] font-semibold truncate leading-tight"
+                  style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+                >
+                  {task.spec || task.product}
+                </span>
+                {segW >= 40 && (
                   <span
-                    className="text-[8px] truncate leading-tight"
-                    style={{
-                      color: "rgba(255,255,255,0.7)",
-                      textShadow: "0 1px 1px rgba(0,0,0,0.4)",
-                      letterSpacing: "0.02em",
-                    }}
+                    className="text-white/80 text-[9px] truncate leading-tight"
+                    style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
                   >
-                    #{task.order_id}
+                    {lotLabel ? `${lotLabel} · ` : ""}{volumeLabel}
                   </span>
-                )}
-                {segW > 60 ? (
-                  <>
-                    <span
-                      className="text-white text-[10px] font-semibold truncate leading-tight"
-                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-                    >
-                      {task.spec || task.product}
-                      {task.color ? ` ${task.color}` : ""}
-                    </span>
-                    <span
-                      className="text-white/80 text-[9px] truncate leading-tight"
-                      style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-                    >
-                      {lotLabel ? `${lotLabel} · ` : ""}{volumeLabel}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span
-                      className="text-white text-[10px] font-semibold truncate leading-tight"
-                      style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-                    >
-                      {task.product}
-                      {task.spec ? ` ${task.spec}` : ""}
-                    </span>
-                    <span
-                      className="text-white/80 text-[9px] truncate leading-tight"
-                      style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-                    >
-                      {task.color && `${task.color} `}
-                      {task.core_count > 0 && `${task.core_count}C `}
-                      {lotLabel ? `${lotLabel} ` : ""}{volumeLabel}
-                    </span>
-                  </>
                 )}
               </div>
             ) : (
