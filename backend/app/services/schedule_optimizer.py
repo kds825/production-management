@@ -567,8 +567,12 @@ def auto_schedule(
             process_end_by_sq[proc_sq_key] = end_dt
 
         # ── 파이프라인 겹침: 첫 번째 드럼 출력 시각 계산 ────────────────────
-        # setup 완료 후 전체 런타임을 드럼 수로 나눈 만큼이 1틀 생산 시간
-        lot_count = max(int(rep.drum_count or 1), 1)
+        # 연선: 헤더 배치(seq=-1)의 drum_count = 실제 틀 수
+        # 절연/시스 등: 헤더 없으므로 그룹 내 배치 수 = 순차 처리 단위 수
+        if header_batch is not None:
+            lot_count = max(int(header_batch.drum_count or 1), 1)
+        else:
+            lot_count = max(len(group_batches), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
         first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
         # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
