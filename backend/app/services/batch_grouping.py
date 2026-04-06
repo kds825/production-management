@@ -357,7 +357,7 @@ def create_batches(
                     drum_count=1,
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
-                    sq_mm2=35,
+                    sq_mm2=sq,  # 본 케이블 SQ(300/400) 유지 — T6BO 설비 범위 매칭용
                     core_count=int(order.core_count or 1),
                     core_colors=order.core_colors,
                     sheath_color=order.sheath_color,

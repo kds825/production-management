@@ -9,7 +9,7 @@
 2. 공정 간 선행관계:
    - _PREDECESSOR_PROCESS dict가 연선→절연→시스 파이프라인을 강제한다.
    - process_end_by_sq로 같은 SQ의 앞 공정 종료 시각을 추적하여 후공정 시작을 지연시킨다.
-   - A100/A120 시스 배치는 저압절연 전체 완료 후 시작한다 (process_end_all 활용).
+   - A100/A120 시스 배치는 저압절연 첫 번째 드럼 출력 후 시작 (파이프라인 겹침).
 
 3. 제한사항:
    - 프론트엔드 간트에서의 수동 블록 이동 시에는 이 파이프라인 제약이 재적용되지 않는다.
@@ -211,8 +211,13 @@ def auto_schedule(
     process_end_by_sq: dict[tuple[str, int], datetime] = {}
     # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
 
-    # 공정 전체 종료 시각 추적 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
-    process_end_all: dict[str, datetime] = {}  # "저압절연" → 마지막 절연 그룹 종료 시각
+    # 파이프라인 겹침용: 앞 공정에서 첫 번째 드럼이 출력되는 시각
+    # 연선에서 1틀이 나오면 절연 시작 가능, 절연 1틀 나오면 시스 시작 가능
+    # = task.start_datetime + setup_min + (group_run_duration / drum_count)
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
+
+    # 저압절연 전체 중 가장 이른 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
+    first_insul_output: datetime | None = None
 
     # 61연선 코어(T6B0) 완료 시각 — main_sq → CORE 그룹 종료 시각
     # "CORE-300-..." 완료 후 "ST-300-..." 시작 가능
@@ -254,18 +259,25 @@ def auto_schedule(
 
         eligible = _find_eligible_equipment(rep, candidate_equip)
 
-        # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
         sq = int(rep.sq_mm2 or 0)
         sq_key = (rep.process_name, sq)
         is_stranding = rep.process_name == "연선"
-        if is_stranding and sq >= 70 and sq_key in sq_to_equip:
+
+        # ── 61연선 설비 선호도 좁히기 (T6BO / 54BO) ──────────────────────
+        # 매칭 설비 없으면 eligible 전체 유지 → 스케줄링 skip 방지
+        if is_stranding:
+            eligible = _narrow_by_stranding(rep, eligible)
+
+        # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
+        # CORE- 그룹은 제외: 61연선에서 CORE(T6BO)와 ST(54BO)는 서로 다른 설비를 타야 함
+        if is_stranding and sq >= 70 and sq_key in sq_to_equip and not group_key.startswith("CORE-"):
             preferred_eq = sq_to_equip[sq_key]
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
             if pref_match:
                 eligible = pref_match
 
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
-        if is_stranding and sq_key not in sq_to_equip:
+        if is_stranding and sq_key not in sq_to_equip and not group_key.startswith("CORE-"):
             wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
             if wire_d > 0:
                 same_wd_equips = set()
@@ -286,10 +298,10 @@ def auto_schedule(
                 f"재질={rep.conductor_material} — 적합한 설비 없음 "
                 f"(후보설비={candidate_codes})"
             )
-            # 미스케줄된 공정을 process_end_by_sq에 max 시간으로 등록 →
-            # 후행 공정이 이 공정 없이 시작하는 것을 방지
+            # 미스케줄된 공정을 max 시간으로 등록 → 후행 공정이 이 공정 없이 시작하는 것을 방지
             sq_int = int(rep.sq_mm2 or 0)
             process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
+            process_first_output_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
 
         # ── 그룹 전체 duration 계산 ──────────────────────────────────────────
@@ -370,7 +382,8 @@ def auto_schedule(
             earliest = base_date
             sq_int = int(rep.sq_mm2 or 0)
 
-            # 공정 간 선행관계: 연선→절연→시스 순서 강제
+            # 파이프라인 겹침: 앞 공정에서 첫 번째 드럼이 나오면 후공정 시작 가능
+            # 연선 1틀 완료 → 절연 시작 / 절연 1틀 완료 → 시스 시작
             _PREDECESSOR_PROCESS = {
                 "저압절연": "연선",
                 "고압절연": "연선",
@@ -380,18 +393,16 @@ def auto_schedule(
             }
             pred_proc = _PREDECESSOR_PROCESS.get(rep.process_name)
             if pred_proc:
-                pred_end = process_end_by_sq.get((pred_proc, sq_int))
-                if pred_end and pred_end > earliest:
-                    earliest = pred_end
-                    # 고압 건조대기 20hr
-                    if rep.process_name in ("고압시스",):
+                pred_first = process_first_output_by_sq.get((pred_proc, sq_int))
+                if pred_first and pred_first > earliest:
+                    earliest = pred_first
+                    if rep.process_name == "고압시스":
                         earliest += timedelta(hours=20)
 
-            # 시스 배치(A100/A120): 저압절연 전체 완료 후 시작
+            # 시스 배치(A100/A120): 저압절연 첫 번째 드럼 출력 후 시작
             if group_key.startswith("A100_") or group_key.startswith("A120_"):
-                all_insul_end = process_end_all.get("저압절연")
-                if all_insul_end and all_insul_end > earliest:
-                    earliest = all_insul_end
+                if first_insul_output and first_insul_output > earliest:
+                    earliest = first_insul_output
 
             # 61연선 ST- 그룹: 동일 SQ의 CORE-(T6B0) 완료 후 시작
             # 예: "ST-300-..." 그룹 → core_end_by_main_sq[300] 완료 대기
@@ -459,6 +470,19 @@ def auto_schedule(
         ):
             process_end_by_sq[proc_sq_key] = end_dt
 
+        # ── 파이프라인 겹침: 첫 번째 드럼 출력 시각 계산 ────────────────────
+        # setup 완료 후 전체 런타임을 드럼 수로 나눈 만큼이 1틀 생산 시간
+        lot_count = max(int(rep.drum_count or 1), 1)
+        first_drum_min = setup_min + (group_duration / lot_count)
+        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
+        # CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
+        # (CORE 첫 드럼은 너무 이르므로 후행 공정 선행 제약으로 부적합)
+        if not group_key.startswith("CORE-") and (
+            proc_sq_key not in process_first_output_by_sq
+            or first_output_dt < process_first_output_by_sq[proc_sq_key]
+        ):
+            process_first_output_by_sq[proc_sq_key] = first_output_dt
+
         # 61연선 CORE- 그룹 완료 시각 기록 — "CORE-{main_sq}-..." 패턴
         if group_key.startswith("CORE-"):
             try:
@@ -468,13 +492,10 @@ def auto_schedule(
             except (IndexError, ValueError):
                 pass
 
-        # 공정 전체 종료 시각 갱신 — 시스 배치 스케줄링 시 절연 전체 완료 대기용
+        # 저압절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
         if rep.process_name == "저압절연":
-            if (
-                "저압절연" not in process_end_all
-                or end_dt > process_end_all["저압절연"]
-            ):
-                process_end_all["저압절연"] = end_dt
+            if first_insul_output is None or first_output_dt < first_insul_output:
+                first_insul_output = first_output_dt
 
         # 그룹 내 모든 배치의 predecessor + status 갱신
         for b in group_batches:
@@ -483,8 +504,8 @@ def auto_schedule(
             b.equipment_code = best_eq.equipment_code
             b.status = "scheduled"
 
-        # 규칙 2: SQ→설비 매핑 기록
-        if rep.process_name == "연선":
+        # 규칙 2: SQ→설비 매핑 기록 (CORE- 그룹 제외 — 61연선은 ST 그룹만 ST설비에 고정)
+        if rep.process_name == "연선" and not group_key.startswith("CORE-"):
             sq_to_equip[sq_key] = best_eq.equipment_code
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신 (그룹의 마지막 배치)
@@ -575,7 +596,7 @@ def _find_eligible_equipment(
     """배치에 적합한 설비 필터링 (재질, SQ범위, 색상그룹)"""
     eligible = []
     for eq in equipment:
-        # Material filter
+        # ── Material filter ────────────────────────────────────────────────
         if eq.material_limit and eq.material_limit != "ALL":
             if (
                 batch.conductor_material
@@ -583,18 +604,12 @@ def _find_eligible_equipment(
             ):
                 continue
 
-        # Range filter — 단위에 따라 다른 비교
-        # 신선: range_unit="mm" → 소선경과 비교 (SQ 비교 안함, 신선은 모든 SQ 가능)
-        # 연합/T/P: range_unit="Ø" → 외경 기준 (배치에 외경 정보 없으므로 SQ 비교 안함)
-        # 연선/절연/시스: range_unit="SQ" → SQ로 비교
+        # ── Range filter ───────────────────────────────────────────────────
         if eq.range_unit == "mm":
-            # 신선: 소선경 기준 — 배치에 소선경 정보 없으므로 재질로만 필터링
             pass
         elif eq.range_unit == "Ø":
-            # 연합/T/P/시스: 외경(Ø) 기준 — SQ에서 근사 외경으로 변환 후 비교
             sq = float(batch.sq_mm2) if batch.sq_mm2 else None
             if sq and eq.range_max:
-                # SQ → 근사 외경(mm) 변환: Ø ≈ sqrt(SQ) * 1.5 + 5 (단심 기준 경험식)
                 approx_od = (sq**0.5) * 1.5 + 5
                 if approx_od > float(eq.range_max):
                     continue
@@ -605,26 +620,54 @@ def _find_eligible_equipment(
             if sq and eq.range_max and sq > float(eq.range_max):
                 continue
 
-        # Color group filter (저압시스)
+        # ── Color group filter (저압시스) ──────────────────────────────────
         if eq.color_group:
             color = (batch.sheath_color or "").strip()
             if eq.color_group == "흑/청":
-                if color not in (
-                    "흑",
-                    "청",
-                    "흑색",
-                    "청색",
-                    "BLACK",
-                    "BLUE",
-                    "BK",
-                    "BL",
-                    "",
-                ):
+                if color not in ("흑", "청", "흑색", "청색", "BLACK", "BLUE", "BK", "BL", ""):
                     continue
-            # "전색상" accepts everything
 
         eligible.append(eq)
 
+    return eligible
+
+
+def _narrow_by_stranding(
+    batch: ProductionBatch, eligible: list[EquipmentMaster]
+) -> list[EquipmentMaster]:
+    """61연선 케이스 설비 선호도 좁히기 (fallback 있음).
+
+    stranding_method 컬럼 또는 equipment_code 명칭으로 선호 설비를 추립니다.
+    매칭 설비가 없으면 eligible 전체를 그대로 반환하여 스케줄링 skip을 방지합니다.
+    """
+    batch_st = (batch.stranding_type or "").strip()
+    sq_val = float(batch.sq_mm2 or 0)
+
+    if batch_st == "7연선코어":
+        # T6BO 선호: stranding_method="7연선" 또는 코드에 "T6B" 포함
+        preferred = [
+            e for e in eligible
+            if (e.stranding_method or "").strip() == "7연선"
+            or "T6B" in (e.equipment_code or "").upper()
+        ]
+        return preferred if preferred else eligible
+
+    if sq_val >= 300:
+        # 54BO 선호: stranding_method="61연선" 또는 코드에 "54BO" 포함
+        preferred = [
+            e for e in eligible
+            if (e.stranding_method or "").strip() == "61연선"
+            or "54BO" in (e.equipment_code or "").upper()
+        ]
+        return preferred if preferred else eligible
+
+    # 일반 연선: 7연선/61연선 전용 설비는 제외 (stranding_method 기준, 없으면 무시)
+    excluded = [
+        e for e in eligible
+        if (e.stranding_method or "").strip() in ("7연선", "61연선")
+    ]
+    if len(excluded) < len(eligible):
+        return [e for e in eligible if e not in excluded]
     return eligible
 
 
