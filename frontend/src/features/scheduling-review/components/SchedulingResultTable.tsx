@@ -44,10 +44,7 @@ const COL_DEFS = [
   { key: "convertedQty", label: "환산수량", align: "right", width: 80 },
 ] as const;
 
-const BATCH_BG_EVEN = "#FFFFFF";
-const BATCH_BG_ODD = "#F7F8FA";
-const BATCH_BG_EVEN_HOVER = "#FEF9F9";
-const BATCH_BG_ODD_HOVER = "#FDF4F4";
+const ROW_HOVER_BG = "#F8F9FA";
 
 /** 인라인 편집 가능한 컬럼 키 */
 const EDITABLE_KEYS = new Set([
@@ -111,16 +108,6 @@ export function SchedulingResultTable({
   function getBatchLabel(b: SchedulingBatch): string {
     const num = batchNumbers.get(getBatchGroupKey(b));
     return num != null ? `배치 ${num}` : "";
-  }
-
-  function getRowBg(b: SchedulingBatch): string {
-    const num = batchNumbers.get(getBatchGroupKey(b)) ?? 1;
-    return num % 2 === 0 ? BATCH_BG_ODD : BATCH_BG_EVEN;
-  }
-
-  function getRowHoverBg(b: SchedulingBatch): string {
-    const num = batchNumbers.get(getBatchGroupKey(b)) ?? 1;
-    return num % 2 === 0 ? BATCH_BG_ODD_HOVER : BATCH_BG_EVEN_HOVER;
   }
 
   function getCellValue(
@@ -409,9 +396,9 @@ export function SchedulingResultTable({
 
       {/* Table */}
       <div
-        className="rounded-b-lg overflow-hidden"
+        className="overflow-hidden"
         style={{
-          border: "1px solid #E5E7EB",
+          border: "1px solid #D1D5DB",
           borderTop: "none",
         }}
       >
@@ -441,14 +428,14 @@ export function SchedulingResultTable({
                 ))}
               </colgroup>
               <thead>
-                <tr style={{ backgroundColor: "#F9FAFB" }}>
+                <tr style={{ backgroundColor: "#F5F7FA" }}>
                   {crudMode === "delete" && (
                     <th
                       className="text-[10px] font-semibold px-1 py-2"
                       style={{
-                        color: "#6B7280",
-                        borderBottom: "1px solid #E5E7EB",
-                        borderRight: "1px solid #E5E7EB",
+                        color: "#64748B",
+                        borderBottom: "2px solid #D1D5DB",
+                        borderRight: "1px solid #E2E8F0",
                         textAlign: "center",
                         whiteSpace: "nowrap",
                       }}
@@ -461,12 +448,12 @@ export function SchedulingResultTable({
                       key={col.key}
                       className="text-[10px] font-semibold px-3 py-2"
                       style={{
-                        color: "#6B7280",
+                        color: "#64748B",
                         textAlign: col.align as "left" | "right",
-                        borderBottom: "1px solid #E5E7EB",
+                        borderBottom: "2px solid #D1D5DB",
                         borderRight:
                           i < COL_DEFS.length - 1
-                            ? "1px solid #E5E7EB"
+                            ? "1px solid #E2E8F0"
                             : "none",
                         whiteSpace: "nowrap",
                       }}
@@ -482,18 +469,44 @@ export function SchedulingResultTable({
                     (sum, b) => sum + (b.total_length_m || 0),
                     0,
                   );
-                  const colSpan = COL_DEFS.length + (crudMode === "delete" ? 1 : 0);
+                  const groupConvertedTotal = group.batches.reduce(
+                    (sum, b) => sum + (b.convertedQty || 0),
+                    0,
+                  );
+                  const checkboxExtra = crudMode === "delete" ? 1 : 0;
+                  // batch_label~unit_count: 8컬럼(0~7), total_length_m: 1컬럼(8), notes+processStatus: 2컬럼(9~10), convertedQty: 1컬럼(11)
+                  const leftSpan = checkboxExtra + 8; // 소계 레이블이 차지할 왼쪽 컬럼 수
+                  const colSpan = COL_DEFS.length + checkboxExtra;
+
+                  const firstBatch = group.batches[0];
+                  const batchNum = firstBatch
+                    ? batchNumbers.get(getBatchGroupKey(firstBatch))
+                    : undefined;
 
                   return (
                     <React.Fragment key={group.key}>
                       {/* 규격 그룹 헤더 행 */}
-                      <tr style={{ backgroundColor: "#F1F5F9" }}>
+                      <tr style={{ backgroundColor: "#EEF2F7" }}>
                         <td
                           colSpan={colSpan}
-                          className="px-3 py-1 text-[10px] font-semibold"
-                          style={{ color: "#475569", borderBottom: "1px solid #E5E7EB" }}
+                          className="px-3"
+                          style={{
+                            paddingTop: 5,
+                            paddingBottom: 5,
+                            borderTop: "2px solid #CBD5E1",
+                            borderBottom: "1px solid #D1D5DB",
+                            color: "#334155",
+                          }}
                         >
-                          {group.label}
+                          <div className="flex items-center gap-2 text-[10px] font-semibold">
+                            {batchNum != null && (
+                              <span style={{ color: "#64748B" }}>배치 {batchNum}</span>
+                            )}
+                            {batchNum != null && (
+                              <span style={{ color: "#CBD5E1" }}>—</span>
+                            )}
+                            {group.label}
+                          </div>
                         </td>
                       </tr>
 
@@ -501,8 +514,8 @@ export function SchedulingResultTable({
                       {group.batches.map((batch) => {
                         const isNewRow = batch.id.startsWith("new-");
                         const isWipSkipped = batch.notes === "재고 사용";
-                        const rowBg = isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
-                        const hoverBg = isNewRow ? "#FEF3C7" : isWipSkipped ? "#E5E7EB" : getRowHoverBg(batch);
+                        const rowBg = isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : "#FFFFFF";
+                        const hoverBg = isNewRow ? "#FEF3C7" : isWipSkipped ? "#E5E7EB" : ROW_HOVER_BG;
                         const statusColor = PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
                         const textColor = isWipSkipped ? "#9CA3AF" : undefined;
                         const isSelected = selectedForDelete.has(batch.id);
@@ -514,11 +527,11 @@ export function SchedulingResultTable({
                             onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = hoverBg; }}
                             onMouseLeave={(e) => {
                               (e.currentTarget as HTMLElement).style.backgroundColor =
-                                isSelected ? "#FEE2E2" : isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
+                                isSelected ? "#FEE2E2" : isNewRow ? "#FFFBEB" : isWipSkipped ? "#F3F4F6" : "#FFFFFF";
                             }}
                           >
                             {crudMode === "delete" && (
-                              <td className="px-1" style={{ height: 38, borderBottom: "1px solid #E5E7EB", borderRight: "1px solid #F3F4F6", textAlign: "center", verticalAlign: "middle" }}>
+                              <td className="px-1" style={{ height: 36, borderBottom: "1px solid #F0F2F5", borderRight: "1px solid #F0F2F5", textAlign: "center", verticalAlign: "middle" }}>
                                 <input type="checkbox" checked={isSelected} onChange={() => toggleSelectForDelete(batch.id)} className="rounded" style={{ width: 14, height: 14, accentColor: PRIMARY }} />
                               </td>
                             )}
@@ -532,9 +545,9 @@ export function SchedulingResultTable({
                                   key={col.key}
                                   className="px-3"
                                   style={{
-                                    height: 38,
-                                    borderBottom: "1px solid #E5E7EB",
-                                    borderRight: colIdx < COL_DEFS.length - 1 ? "1px solid #F3F4F6" : "none",
+                                    height: 36,
+                                    borderBottom: "1px solid #F0F2F5",
+                                    borderRight: colIdx < COL_DEFS.length - 1 ? "1px solid #F0F2F5" : "none",
                                     borderLeft: colIdx === 0 ? `3px solid ${statusColor}` : "none",
                                     verticalAlign: "middle",
                                     overflow: "hidden",
@@ -581,20 +594,27 @@ export function SchedulingResultTable({
                         );
                       })}
 
-                      {/* 규격 합계 행 */}
-                      <tr style={{ backgroundColor: "#FDF2F2" }}>
+                      {/* 규격 합계 행 — leftSpan: 소계 레이블, col8: 수량(M), col9~10: 빈칸, col11: 환산수량 */}
+                      <tr style={{ backgroundColor: "#F8FAFC" }}>
                         <td
-                          colSpan={colSpan - 1}
-                          className="px-3 py-1 text-[10px] font-semibold text-right"
-                          style={{ borderBottom: "2px solid #E5E7EB", color: "#7F1D1D" }}
+                          colSpan={leftSpan}
+                          className="px-3 py-1 text-[10px] font-medium text-right"
+                          style={{ borderBottom: "2px solid #D1D5DB", color: "#64748B" }}
                         >
-                          소계
+                          소계 {group.batches.length}건
                         </td>
                         <td
                           className="px-3 py-1 text-[10px] font-semibold text-right"
-                          style={{ borderBottom: "2px solid #E5E7EB", color: "#7F1D1D" }}
+                          style={{ borderBottom: "2px solid #D1D5DB", color: "#1E293B" }}
                         >
                           {groupTotal.toLocaleString()}m
+                        </td>
+                        <td colSpan={2} style={{ borderBottom: "2px solid #D1D5DB" }} />
+                        <td
+                          className="px-3 py-1 text-[10px] font-semibold text-right"
+                          style={{ borderBottom: "2px solid #D1D5DB", color: "#1E293B" }}
+                        >
+                          {groupConvertedTotal > 0 ? groupConvertedTotal.toLocaleString() : ""}
                         </td>
                       </tr>
                     </React.Fragment>

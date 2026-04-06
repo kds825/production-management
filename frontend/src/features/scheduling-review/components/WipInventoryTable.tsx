@@ -37,8 +37,8 @@ export function WipInventoryTable({
       </h4>
 
       <div
-        className="rounded-lg overflow-hidden"
-        style={{ border: "1px solid #E5E7EB" }}
+        className="overflow-hidden"
+        style={{ border: "1px solid #D1D5DB" }}
       >
         {items.length === 0 ? (
           <div
@@ -63,18 +63,18 @@ export function WipInventoryTable({
                 ))}
               </colgroup>
               <thead>
-                <tr style={{ backgroundColor: "#F9FAFB" }}>
+                <tr style={{ backgroundColor: "#F5F7FA" }}>
                   {COL_DEFS.map((col, i) => (
                     <th
                       key={col.key}
                       className="text-[10px] font-semibold px-2 py-2"
                       style={{
-                        color: "#6B7280",
+                        color: "#64748B",
                         textAlign: col.align as "left" | "right",
-                        borderBottom: "1px solid #E5E7EB",
+                        borderBottom: "2px solid #D1D5DB",
                         borderRight:
                           i < COL_DEFS.length - 1
-                            ? "1px solid #E5E7EB"
+                            ? "1px solid #E2E8F0"
                             : "none",
                         whiteSpace: "nowrap",
                       }}
@@ -99,7 +99,8 @@ export function WipInventoryTable({
                       data-wip-id={item.id}
                       onClick={() => {
                         if (hasMatch && onWipClick) {
-                          onWipClick(batchIds);
+                          // 이미 선택된 항목 재클릭 → 해제
+                          onWipClick(activeWipId === item.id ? [] : batchIds);
                         }
                       }}
                       style={{
@@ -134,10 +135,10 @@ export function WipInventoryTable({
                             className="px-2"
                             style={{
                               height: 34,
-                              borderBottom: "1px solid #E5E7EB",
+                              borderBottom: "1px solid #F0F2F5",
                               borderRight:
                                 colIdx < COL_DEFS.length - 1
-                                  ? "1px solid #F3F4F6"
+                                  ? "1px solid #F0F2F5"
                                   : "none",
                               verticalAlign: "middle",
                               overflow: "hidden",

@@ -521,8 +521,8 @@ export default function SchedulingReviewPage() {
               </div>
             )}
 
-            {/* Section 4: 계산 완료 후에만 표시 */}
-            {isCalculated && (
+            {/* Section 4: 배치 데이터 로드 후 항상 표시 */}
+            {isLoaded && totalBatches > 0 && (
               <div className="mb-6">
                 <h3
                   className="text-sm font-semibold mb-3"

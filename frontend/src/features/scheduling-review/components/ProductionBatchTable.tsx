@@ -43,10 +43,7 @@ const DEFAULT_HIDDEN_COLS: ColKey[] = ["processGroup"];
 
 type ColKey = (typeof COL_DEFS)[number]["key"];
 
-const BATCH_BG_EVEN = "#FFFFFF";
-const BATCH_BG_ODD = "#F7F8FA";
-const BATCH_BG_EVEN_HOVER = "#FEF9F9";
-const BATCH_BG_ODD_HOVER = "#FDF4F4";
+const ROW_HOVER_BG = "#F8F9FA";
 
 const EDITABLE_KEYS = new Set(["color", "unit_count", "length_per_unit_m", "notes"]);
 
@@ -74,12 +71,12 @@ function getCellValueStatic(
 }
 
 export function ProductionBatchTable({
-  title,
+  title: _title,
   batches,
-  processGroup,
+  processGroup: _processGroup,
   highlightedBatchIds,
   onBatchWipClick,
-  showProcessColumn,
+  showProcessColumn: _showProcessColumn,
 }: ProductionBatchTableProps) {
   const batchNumbers = useMemo(() => assignBatchNumbers(batches), [batches]);
   const sortedBatches = useMemo(
@@ -164,6 +161,21 @@ export function ProductionBatchTable({
       }),
     );
   }, [sortedBatches, colFilters, batchNumbers, hasActiveFilter]);
+
+  /** 배치(batch_group)별 그룹핑 — 순서 유지 */
+  const groupedBatches = useMemo(() => {
+    const groups: { key: string; label: string; batches: SchedulingBatch[] }[] = [];
+    const seen = new Map<string, number>();
+    for (const b of filteredBatches) {
+      const key = b.batch_group || `_${b.spec || b.product}`;
+      if (!seen.has(key)) {
+        seen.set(key, groups.length);
+        groups.push({ key, label: b.spec || b.batch_group || "", batches: [] });
+      }
+      groups[seen.get(key)!].batches.push(b);
+    }
+    return groups;
+  }, [filteredBatches]);
 
   /** 컬럼 필터 드롭다운 내 체크박스 토글 */
   const toggleFilterValue = useCallback((colKey: ColKey, value: string) => {
@@ -266,14 +278,6 @@ export function ProductionBatchTable({
     return { backgroundColor: "#FEF2F2", color: "#C41230" };   // 기본 빨강
   }
 
-  function getRowBg(b: SchedulingBatch) {
-    const num = batchNumbers.get(getBatchGroupKey(b)) ?? 1;
-    return num % 2 === 0 ? BATCH_BG_ODD : BATCH_BG_EVEN;
-  }
-  function getRowHoverBg(b: SchedulingBatch) {
-    const num = batchNumbers.get(getBatchGroupKey(b)) ?? 1;
-    return num % 2 === 0 ? BATCH_BG_ODD_HOVER : BATCH_BG_EVEN_HOVER;
-  }
   function getBatchLabel(b: SchedulingBatch) {
     const num = batchNumbers.get(getBatchGroupKey(b));
     return num != null ? `배치 ${num}` : "";
@@ -355,7 +359,7 @@ export function ProductionBatchTable({
       </div>
 
       {/* Table */}
-      <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #E5E7EB" }}>
+      <div className="overflow-hidden" style={{ border: "1px solid #D1D5DB" }}>
         {sortedBatches.length === 0 ? (
           <div className="flex items-center justify-center py-12 text-xs text-gray-400" style={{ backgroundColor: "#FAFAFA" }}>
             배치 데이터가 없습니다
@@ -367,7 +371,7 @@ export function ProductionBatchTable({
                 {visibleCols.map((col) => <col key={col.key} style={{ width: col.width }} />)}
               </colgroup>
               <thead>
-                <tr style={{ backgroundColor: "#F9FAFB" }}>
+                <tr style={{ backgroundColor: "#F5F7FA" }}>
                   {visibleCols.map((col, i) => {
                     const isFiltered = !!colFilters[col.key];
                     const isOpen = openFilterCol === col.key;
@@ -376,13 +380,13 @@ export function ProductionBatchTable({
                         key={col.key}
                         className="text-[10px] font-semibold px-3 py-2 select-none"
                         style={{
-                          color: isFiltered ? "#C41230" : "#6B7280",
+                          color: isFiltered ? "#C41230" : "#64748B",
                           textAlign: col.align as "left" | "right",
-                          borderBottom: "1px solid #E5E7EB",
-                          borderRight: i < visibleCols.length - 1 ? "1px solid #E5E7EB" : "none",
+                          borderBottom: "2px solid #D1D5DB",
+                          borderRight: i < visibleCols.length - 1 ? "1px solid #E2E8F0" : "none",
                           whiteSpace: "nowrap",
                           cursor: "pointer",
-                          backgroundColor: isOpen ? "#FEF2F2" : isFiltered ? "#FFF7F7" : undefined,
+                          backgroundColor: isOpen ? "#FEF2F2" : isFiltered ? "#FFF5F5" : undefined,
                           position: "relative",
                         }}
                         onClick={() => setOpenFilterCol(isOpen ? null : col.key)}
@@ -485,82 +489,154 @@ export function ProductionBatchTable({
                     </td>
                   </tr>
                 ) : (
-                  filteredBatches.map((batch) => {
-                    const isHighlighted = highlightedBatchIds?.has(batch.id) ?? false;
-                    const isWipSkipped = batch.notes.includes("재고 사용");
-                    const rowBg = isHighlighted ? "#FEF2F2" : isWipSkipped ? "#F3F4F6" : getRowBg(batch);
-                    const hoverBg = isHighlighted ? "#FEE2E2" : isWipSkipped ? "#E5E7EB" : getRowHoverBg(batch);
-                    const statusColor = PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
-                    const textColor = isWipSkipped ? "#9CA3AF" : undefined;
+                  groupedBatches.map((group) => {
+                    const groupTotal = group.batches.reduce((sum, b) => sum + (b.total_length_m || 0), 0);
+                    const groupConvertedTotal = group.batches.reduce((sum, b) => sum + (b.convertedQty || 0), 0);
+                    const firstBatch = group.batches[0];
+                    const batchNum = firstBatch ? batchNumbers.get(getBatchGroupKey(firstBatch)) : undefined;
 
                     return (
-                      <tr
-                        key={batch.id}
-                        data-batch-id={batch.id}
-                        style={{ backgroundColor: rowBg, transition: "background-color 300ms", outline: isHighlighted ? "2px solid #C41230" : "none", color: textColor }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = hoverBg; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = isHighlighted ? "#FEF2F2" : isWipSkipped ? "#F3F4F6" : getRowBg(batch); }}
-                      >
-                        {visibleCols.map((col, colIdx) => {
-                          const editable = EDITABLE_KEYS.has(col.key);
-                          const currentlyEditing = isCellEditing(batch.id, col.key);
-                          return (
-                            <td
-                              key={col.key}
-                              className="px-3"
-                              style={{
-                                height: 38,
-                                borderBottom: "1px solid #E5E7EB",
-                                borderRight: colIdx < visibleCols.length - 1 ? "1px solid #F3F4F6" : "none",
-                                borderLeft: colIdx === 0 ? `3px solid ${statusColor}` : "none",
-                                verticalAlign: "middle",
-                                overflow: "hidden",
-                                outline: currentlyEditing ? "2px solid #3B82F6" : "none",
-                                outlineOffset: -2,
-                                cursor: editable ? "text" : "default",
-                              }}
-                              onDoubleClick={() => {
-                                if (!editable) return;
-                                if (col.key === "notes" && batch.notes.includes("재고 사용")) return;
-                                const raw = batch[col.key as keyof SchedulingBatch];
-                                startEditing(batch.id, col.key, raw != null ? String(raw) : "");
-                              }}
-                            >
-                              {currentlyEditing ? (
-                                <input
-                                  ref={inputRef}
-                                  type={col.key === "unit_count" || col.key === "length_per_unit_m" ? "number" : "text"}
-                                  value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  onBlur={commitEdit}
-                                  onKeyDown={handleKeyDown}
-                                  className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
-                                  style={{ textAlign: col.align as "left" | "right", outline: "none", border: "1px solid #3B82F6" }}
-                                />
-                              ) : col.key === "batch_label" ? (
-                                <span className="block truncate text-[10px] font-medium" style={{ color: "#9CA3AF" }}>
-                                  {getBatchLabel(batch)}
-                                </span>
-                              ) : col.key === "notes" && batch.notes.includes("재고 사용") ? (
-                                <button
-                                  onClick={() => onBatchWipClick?.(batch.id)}
-                                  className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
-                                  style={{
-                                    ...getWipNoteStyle(batch.notes),
-                                    cursor: onBatchWipClick ? "pointer" : "default",
-                                  }}
-                                >
-                                  {batch.notes}
-                                </button>
-                              ) : (
-                                <span className="block truncate text-[11px]" style={{ textAlign: col.align as "left" | "right" }}>
-                                  {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
-                                </span>
+                      <React.Fragment key={group.key}>
+                        {/* 배치 그룹 헤더 행 */}
+                        <tr style={{ backgroundColor: "#EEF2F7" }}>
+                          <td
+                            colSpan={visibleCols.length}
+                            className="px-3"
+                            style={{
+                              paddingTop: 5,
+                              paddingBottom: 5,
+                              borderTop: "2px solid #CBD5E1",
+                              borderBottom: "1px solid #D1D5DB",
+                              color: "#334155",
+                            }}
+                          >
+                            <div className="flex items-center gap-2 text-[10px] font-semibold">
+                              {batchNum != null && (
+                                <span style={{ color: "#64748B" }}>배치 {batchNum}</span>
                               )}
-                            </td>
+                              {batchNum != null && (
+                                <span style={{ color: "#CBD5E1" }}>—</span>
+                              )}
+                              {group.label}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* 그룹 내 데이터 행 */}
+                        {group.batches.map((batch) => {
+                          const isHighlighted = highlightedBatchIds?.has(batch.id) ?? false;
+                          const isWipSkipped = batch.notes.includes("재고 사용");
+                          const rowBg = isHighlighted ? "#EFF6FF" : isWipSkipped ? "#F3F4F6" : "#FFFFFF";
+                          const hoverBg = isHighlighted ? "#DBEAFE" : isWipSkipped ? "#E5E7EB" : ROW_HOVER_BG;
+                          const statusColor = PROCESS_STATUS_COLORS[batch.processStatus] ?? "#E5E7EB";
+                          const textColor = isWipSkipped ? "#9CA3AF" : undefined;
+
+                          return (
+                            <tr
+                              key={batch.id}
+                              data-batch-id={batch.id}
+                              style={{ backgroundColor: rowBg, transition: "background-color 150ms", color: textColor }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = hoverBg; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = isHighlighted ? "#EFF6FF" : isWipSkipped ? "#F3F4F6" : "#FFFFFF"; }}
+                            >
+                              {visibleCols.map((col, colIdx) => {
+                                const editable = EDITABLE_KEYS.has(col.key);
+                                const currentlyEditing = isCellEditing(batch.id, col.key);
+                                return (
+                                  <td
+                                    key={col.key}
+                                    className="px-3"
+                                    style={{
+                                      height: 36,
+                                      borderBottom: "1px solid #F0F2F5",
+                                      borderRight: colIdx < visibleCols.length - 1 ? "1px solid #F0F2F5" : "none",
+                                      borderLeft: colIdx === 0 ? `3px solid ${statusColor}` : "none",
+                                      verticalAlign: "middle",
+                                      overflow: "hidden",
+                                      outline: currentlyEditing ? "2px solid #3B82F6" : "none",
+                                      outlineOffset: -2,
+                                      cursor: editable ? "text" : "default",
+                                    }}
+                                    onDoubleClick={() => {
+                                      if (!editable) return;
+                                      if (col.key === "notes" && batch.notes.includes("재고 사용")) return;
+                                      const raw = batch[col.key as keyof SchedulingBatch];
+                                      startEditing(batch.id, col.key, raw != null ? String(raw) : "");
+                                    }}
+                                  >
+                                    {currentlyEditing ? (
+                                      <input
+                                        ref={inputRef}
+                                        type={col.key === "unit_count" || col.key === "length_per_unit_m" ? "number" : "text"}
+                                        value={editValue}
+                                        onChange={(e) => setEditValue(e.target.value)}
+                                        onBlur={commitEdit}
+                                        onKeyDown={handleKeyDown}
+                                        className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
+                                        style={{ textAlign: col.align as "left" | "right", outline: "none", border: "1px solid #3B82F6" }}
+                                      />
+                                    ) : col.key === "batch_label" ? (
+                                      <span className="block truncate text-[10px] font-medium" style={{ color: "#9CA3AF" }}>
+                                        {getBatchLabel(batch)}
+                                      </span>
+                                    ) : col.key === "notes" && batch.notes.includes("재고 사용") ? (
+                                      <button
+                                        onClick={() => onBatchWipClick?.(batch.id)}
+                                        className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
+                                        style={{
+                                          ...getWipNoteStyle(batch.notes),
+                                          cursor: onBatchWipClick ? "pointer" : "default",
+                                        }}
+                                      >
+                                        {batch.notes}
+                                      </button>
+                                    ) : (
+                                      <span className="block truncate text-[11px]" style={{ textAlign: col.align as "left" | "right" }}>
+                                        {getCellValue(col, batch) || <span style={{ color: "#CBD5E1" }}>–</span>}
+                                      </span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
                           );
                         })}
-                      </tr>
+
+                        {/* 배치 소계 행 */}
+                        <tr style={{ backgroundColor: "#F8FAFC" }}>
+                          {visibleCols.map((col, colIdx) => {
+                            const isTotalLen = col.key === "total_length_m";
+                            const isConverted = col.key === "convertedQty";
+                            const isFirst = colIdx === 0;
+                            return (
+                              <td
+                                key={col.key}
+                                className="px-3 py-1"
+                                style={{
+                                  borderBottom: "2px solid #D1D5DB",
+                                  borderRight: colIdx < visibleCols.length - 1 ? "1px solid #E2E8F0" : "none",
+                                  verticalAlign: "middle",
+                                  textAlign: (isTotalLen || isConverted) ? "right" : isFirst ? "left" : undefined,
+                                }}
+                              >
+                                {isFirst ? (
+                                  <span className="text-[10px] font-medium" style={{ color: "#64748B" }}>
+                                    소계 {group.batches.length}건
+                                  </span>
+                                ) : isTotalLen ? (
+                                  <span className="text-[10px] font-semibold" style={{ color: "#1E293B" }}>
+                                    {groupTotal.toLocaleString()}m
+                                  </span>
+                                ) : isConverted ? (
+                                  <span className="text-[10px] font-semibold" style={{ color: "#1E293B" }}>
+                                    {groupConvertedTotal > 0 ? groupConvertedTotal.toLocaleString() : ""}
+                                  </span>
+                                ) : null}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </React.Fragment>
                     );
                   })
                 )}
