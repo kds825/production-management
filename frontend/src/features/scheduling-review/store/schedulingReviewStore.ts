@@ -101,11 +101,12 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     total_length_m: b.total_length_m,
     equipment_group: equipmentGroup,
     voltage_type: voltageType,
-    notes: b.wip_matched_id
-      ? b.wip_process_stage
-        ? `${b.wip_process_stage} ${Math.round(b.total_length_m).toLocaleString()}m`
-        : `재고 사용 ${Math.round(b.total_length_m).toLocaleString()}m`
-      : "",
+    notes:
+      b.wip_matched_id && !b.process_name.includes("시스")
+        ? b.wip_process_stage
+          ? `${b.wip_process_stage} ${Math.round(b.total_length_m).toLocaleString()}m`
+          : `재고 사용 ${Math.round(b.total_length_m).toLocaleString()}m`
+        : "",
     batch_remarks: b.remarks ?? "",
     classification_reason: (() => {
       const reasons: string[] = [];
@@ -129,7 +130,7 @@ function toBatch(b: ApiBatch): SchedulingBatch {
         ? b.wip_length_m * b.wip_count
         : (b.wip_length_m ?? null),
     wip_core_colors: b.wip_core_colors ?? null,
-    wip_matched_id: b.wip_matched_id,
+    wip_matched_id: b.process_name.includes("시스") ? null : b.wip_matched_id,
   };
 }
 
