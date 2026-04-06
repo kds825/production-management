@@ -534,19 +534,29 @@ def _write_subtotal(
 ) -> int:
     """SQ 그룹 소계 행을 쓰고 다음 row_num을 반환한다.
 
-    총길이(col H=8) 셀에 =SUM() 수식을 삽입한다.
+    연선 시트: WIP 재공 사용 행("재공매칭"="Y")을 제외한 SUMIF 수식 삽입.
+    기타 시트: 전체 SUM 수식.
     소계 폰트: 주황색 볼드 (RGB 255,102,0).
     """
     sq_label = int(sq) if sq == int(sq) else sq
     total_length_col = 8  # H열 = 총길이(m)
+    # "재공매칭" hidden 열 인덱스: VISIBLE_COLS(9) + HIDDEN_COLS 내 index 5 → col 15
+    wip_flag_col = len(VISIBLE_COLS) + HIDDEN_COLS.index("재공매칭") + 1
 
     unit = "틀" if is_stranding else "건"
     label_cell = ws.cell(row=row_num, column=1, value=f"{sq_label}SQ → {count}{unit}")
     label_cell.font = _SUBTOTAL_FONT
 
-    # 총길이(H열)에 SUM 수식 — 영문 함수명 사용 (openpyxl 요건)
-    col_letter = _col_letter(total_length_col)
-    sum_formula = f"=SUM({col_letter}{start_row}:{col_letter}{end_row})"
+    h_col = _col_letter(total_length_col)
+    w_col = _col_letter(wip_flag_col)
+    if is_stranding:
+        # 연선 시트: WIP 재공 사용 행 제외 (실제 연선 작업량만 합산)
+        sum_formula = (
+            f'=SUMIF({w_col}{start_row}:{w_col}{end_row},"<>Y",'
+            f'{h_col}{start_row}:{h_col}{end_row})'
+        )
+    else:
+        sum_formula = f"=SUM({h_col}{start_row}:{h_col}{end_row})"
     total_cell = ws.cell(row=row_num, column=total_length_col, value=sum_formula)
     total_cell.font = _SUBTOTAL_FONT
 

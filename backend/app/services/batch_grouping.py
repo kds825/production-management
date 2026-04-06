@@ -207,15 +207,21 @@ def create_batches(
         if gkey not in _strand_groups:
             _strand_groups[gkey] = {
                 "total_qty": 0.0,
+                "wip_strand_qty": 0.0,  # 연선재고 WIP 사용 수주 수량 합계 (틀 계산 제외)
                 "lot_size": lot_size,
                 "routing_code": routing_code_o,
                 "orders": [],
             }
         _strand_groups[gkey]["total_qty"] += order_qty
+        # 연선재고 WIP 사용 수주는 이미 연선이 완료된 재고 → 틀 계산 대상에서 차감
+        if getattr(order, "use_wip", False) and (getattr(order, "wip_type", "") or "") == "연선재고":
+            _strand_groups[gkey]["wip_strand_qty"] += order_qty
         _strand_groups[gkey]["orders"].append(order)
 
     for (sq, voltage_g, stranding_type_g), grp in _strand_groups.items():
         total_qty_g: float = grp["total_qty"]
+        wip_strand_qty_g: float = grp.get("wip_strand_qty", 0.0)
+        net_qty_g: float = max(total_qty_g - wip_strand_qty_g, 0.0)  # 실제 연선 작업량
         lot_size_g: float | None = grp["lot_size"]
         orders_g: list = sorted(
             grp["orders"],
@@ -223,12 +229,12 @@ def create_batches(
         )
 
         if lot_size_g and lot_size_g > 0:
-            lot_count_g = math.ceil(total_qty_g / lot_size_g)
+            lot_count_g = max(math.ceil(net_qty_g / lot_size_g), 1)
             work_qty_g = lot_count_g * lot_size_g
         else:
             lot_count_g = 1
-            lot_size_g = total_qty_g
-            work_qty_g = total_qty_g
+            lot_size_g = net_qty_g or total_qty_g
+            work_qty_g = lot_size_g
 
         routing_code_g = grp["routing_code"]
         is_61strand_g = sq >= 300
