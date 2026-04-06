@@ -258,9 +258,9 @@ def auto_schedule(
     # 저압절연 전체 중 가장 이른 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
     first_insul_output: datetime | None = None
 
-    # 61연선 코어(T6B0) 완료 시각 — main_sq → CORE 그룹 종료 시각
-    # "CORE-300-..." 완료 후 "ST-300-..." 시작 가능
-    core_end_by_main_sq: dict[int, datetime] = {}
+    # 61연선 코어(T6B0/AL6BO) 첫 드럼 출력 시각 — pipeline overlap 기준
+    # "CORE-300-..." 첫 드럼 완료 후 "ST-300-..." 시작 가능
+    core_first_drum_by_main_sq: dict[int, datetime] = {}
 
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
     from collections import OrderedDict
@@ -376,7 +376,7 @@ def auto_schedule(
                 predecessor_map=predecessor_map,
                 process_end_by_sq=process_end_by_sq,
                 process_first_output_by_sq=process_first_output_by_sq,
-                core_end_by_main_sq=core_end_by_main_sq,
+                core_first_drum_by_main_sq=core_first_drum_by_main_sq,
                 tasks_created=tasks_created,
                 result=result,
                 welding_min=welding_min,
@@ -494,17 +494,16 @@ def auto_schedule(
                 if first_insul_output and first_insul_output > earliest:
                     earliest = first_insul_output
 
-            # 61연선 ST- 그룹: 동일 SQ의 CORE/AL-CORE 완료 후 시작
-            # 예: "ST-633-..." 그룹 → core_end_by_main_sq[633] 완료 대기
-            # (CU CORE는 T6B0, AL CORE는 AL6BO — 둘 중 늦은 쪽 기준)
+            # 61연선 ST- 그룹: 동일 SQ의 CORE/AL-CORE 첫 드럼 출력 후 시작 (overlap)
+            # 예: "ST-633-..." 그룹 → core_first_drum_by_main_sq[633] 이후 시작
             if group_key.startswith("ST-") and rep.process_name == "연선":
                 try:
                     main_sq = int(group_key.split("-")[1])
                 except (IndexError, ValueError):
                     main_sq = sq_int
-                core_end = core_end_by_main_sq.get(main_sq)
-                if core_end and core_end > earliest:
-                    earliest = core_end
+                core_first = core_first_drum_by_main_sq.get(main_sq)
+                if core_first and core_first > earliest:
+                    earliest = core_first
 
             # 개별 수주 레벨 predecessor도 확인 (더 늦은 것 우선)
             # 시스 공정은 제외: 혼합 SQ 그룹에서 개별 predecessor를 모두 대기하면
@@ -583,16 +582,16 @@ def auto_schedule(
         ):
             process_first_output_by_sq[proc_sq_key] = first_output_dt
 
-        # 61연선 CORE-/AL-CORE- 그룹 완료 시각 기록
+        # 61연선 CORE-/AL-CORE- 그룹 첫 드럼 출력 시각 기록 — pipeline overlap
         # CU: "CORE-{main_sq}-...", AL: "AL-CORE-{main_sq}-..." 패턴
         if _is_core_group(group_key):
             main_sq = _extract_core_main_sq(group_key)
             if main_sq is not None:
                 if (
-                    main_sq not in core_end_by_main_sq
-                    or end_dt > core_end_by_main_sq[main_sq]
+                    main_sq not in core_first_drum_by_main_sq
+                    or first_output_dt < core_first_drum_by_main_sq[main_sq]
                 ):
-                    core_end_by_main_sq[main_sq] = end_dt
+                    core_first_drum_by_main_sq[main_sq] = first_output_dt
 
         # 저압절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
         if rep.process_name == "저압절연":
@@ -710,7 +709,7 @@ def _schedule_multi_equipment(
     predecessor_map: dict,
     process_end_by_sq: dict,
     process_first_output_by_sq: dict,
-    core_end_by_main_sq: dict,
+    core_first_drum_by_main_sq: dict,
     tasks_created: list,
     result: dict,
     welding_min: float,
@@ -760,15 +759,15 @@ def _schedule_multi_equipment(
         if pred_first and pred_first > earliest:
             earliest = pred_first
 
-    # 61연선 ST- 그룹: CORE 완료 대기
+    # 61연선 ST- 그룹: CORE 첫 드럼 출력 후 시작 (pipeline overlap)
     if group_key.startswith("ST-") and rep.process_name == "연선":
         try:
             main_sq = int(group_key.split("-")[1])
         except (IndexError, ValueError):
             main_sq = sq_int
-        core_end = core_end_by_main_sq.get(main_sq)
-        if core_end and core_end > earliest:
-            earliest = core_end
+        core_first = core_first_drum_by_main_sq.get(main_sq)
+        if core_first and core_first > earliest:
+            earliest = core_first
 
     # 개별 수주 predecessor 확인
     for b in group_batches:
