@@ -209,15 +209,15 @@ def get_system_batches(run_label):
 
 def compare_stranding(tobe_groups, system_batches):
     """연선 배치 비교"""
-    # Filter system batches for stranding (ST- and CORE- groups)
+    # Filter system batches for stranding (ST-, CORE-, AL-CORE- groups)
     sys_stranding = [b for b in system_batches if b.get("process_name") == "연선"]
 
-    # Group system batches by SQ (merge 압축+압축연선, exclude CORE)
+    # Group system batches by SQ (merge 압축+압축연선, exclude CORE/AL-CORE)
     sys_groups = defaultdict(list)
     for b in sys_stranding:
         bg = b.get("batch_group", "?")
-        if bg.startswith("CORE"):
-            continue  # CORE batches are internal, not in to-be
+        if bg.startswith("CORE") or bg.startswith("AL-CORE"):
+            continue  # CORE/AL-CORE batches are internal, not in to-be
         sq = b.get("sq_mm2", 0)
         voltage = b.get("voltage", "")
         key = f"ST-{int(sq)}-{voltage}"

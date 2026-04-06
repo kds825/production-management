@@ -443,6 +443,60 @@ def create_batches(
                 )
                 batches.append(core_batch)
 
+            # AL 61연선(633SQ 등) — AL 7연선 코어 선행 배치 (AL6BO 설비)
+            # 633SQ 고압 케이블은 CU 도체 + AL 시스 구조이므로,
+            # AL 시스용 7연선 코어를 AL6BO에서 별도 생산해야 한다.
+            if is_61strand_g and conductor_material_o == "AL" and not skip_strand_work:
+                # AL6BO speed_master가 없으면 T6B0 기준 fallback
+                al_core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
+                al_core_spd = (
+                    float(al_core_speed_o.line_speed_mpm)
+                    if al_core_speed_o and al_core_speed_o.line_speed_mpm
+                    else 25.0
+                )
+                al_core_setup = (
+                    float(al_core_speed_o.setup_spec_min)
+                    if al_core_speed_o and al_core_speed_o.setup_spec_min
+                    else 210.0
+                )
+                al_core_dur = order_qty_o / al_core_spd if al_core_spd > 0 else None
+                al_core_batch = ProductionBatch(
+                    run_label=run_label,
+                    sales_order_id=order.order_id,
+                    sales_order_line=order.order_line,
+                    item_code=item_o.item_code if item_o else None,
+                    routing_code=routing_code_g,
+                    process_name="연선",
+                    batch_seq=0,
+                    drum_length_m=float(order.ordered_qty_m or 0),
+                    drum_count=1,
+                    total_length_m=float(order.ordered_qty_m or 0),
+                    extra_length_m=0,
+                    sq_mm2=35,  # AL6BO SQ 범위(25~50) 매칭용
+                    core_count=int(order.core_count or 1),
+                    core_colors=order.core_colors,
+                    sheath_color=order.sheath_color,
+                    customer_name=order.customer_name,
+                    due_date=order.due_date,
+                    customer_priority=order.customer_priority or 99,
+                    line_speed_mpm=al_core_spd,
+                    setup_time_min=al_core_setup,
+                    estimated_duration_min=al_core_dur,
+                    status="planned",
+                    product_group=order.product_group,
+                    voltage=order.voltage,
+                    conductor_material="AL",  # AL6BO material_limit 매칭
+                    stranding_type="7연선코어",
+                    remarks=f"AL 61연선 코어 ({int(sq)}SQ용)",
+                    equipment_code=None,
+                    wip_matched_id=wip_id_o,
+                    spec_raw=order.spec_raw,
+                    # AL 7연선 코어 전용 그룹 — optimizer가 AL6BO에 배치
+                    # "AL-CORE-{main_sq}-{voltage}" 키로 ST-{sq} 선행관계 유지
+                    batch_group=f"AL-CORE-{int(sq)}-{voltage_g}",
+                )
+                batches.append(al_core_batch)
+
     # ── Phase 2: 수주별 배치 생성 (절연·시스 등 연선 외 공정) ──────────────────
 
     for order in orders:
@@ -665,17 +719,20 @@ def create_batches(
         sq_key = int(b.sq_mm2 or 0)
         group_key = f"{proc}_{sq_key}SQ"
 
-        # 시스: 색상 기준으로 묶음 — SQ가 달라도 동일 색상이면 같은 배치 블록
-        # (색상 전환이 설비 준비 시간을 결정하며, SQ 변경은 시스에서 부수적임)
-        # 저압시스는 A100/A120 설비 분리 추가 (원본 계획서 A100/A120 시트 구조)
+        # 시스: 설비(색상) + SQ 기준으로 묶음
+        # 저압시스를 SQ별로 분리하면 절연과 파이프라인 겹침(pipeline overlap)이 가능:
+        # 240SQ 절연 1드럼 완료 → 240SQ 시스 시작, 120SQ 절연 완료 → 120SQ 시스 시작
+        # 같은 설비(A100/A120) 위에서 SQ 그룹이 순차 큐잉된다.
+        # 고압시스는 단일 SQ(633)이므로 SQ 분리 불필요 — 색상만 사용.
         if proc in ("저압시스", "고압시스"):
             color = (b.sheath_color or "").strip()
             color_key = color.replace("/", "_") if color else "기타"
             if proc == "저압시스":
+                sq_suffix = f"_{int(sq_key)}SQ"
                 if color in ("흑", "청", "흑/적"):
-                    group_key = f"A120_{color_key}"
+                    group_key = f"A120_{color_key}{sq_suffix}"
                 else:
-                    group_key = f"A100_{color_key}"
+                    group_key = f"A100_{color_key}{sq_suffix}"
             else:
                 group_key = f"{proc}_{color_key}"
 
@@ -1128,7 +1185,7 @@ def _find_speed(
         "저압시스": ["SH-A100", "SH-A120"],
         "고압절연": ["EX-CV1", "EX-CV2"],
         "고압시스": ["SH-A150", "SH-B100"],
-        "연선": ["ST-T6B0", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
+        "연선": ["ST-T6B0", "ST-AL6BO", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
         "신선": ["WD-A100"],
         "연합": ["AS-A100"],
         "T/P": ["TP-2"],

@@ -78,6 +78,27 @@ PREDECESSOR_PROCESS: dict[str, str] = {
 }
 
 
+def _is_core_group(group_key: str) -> bool:
+    """CORE 또는 AL-CORE 그룹 키인지 판별 (CU/AL 공통)."""
+    return group_key.startswith("CORE-") or group_key.startswith("AL-CORE-")
+
+
+def _extract_core_main_sq(group_key: str) -> int | None:
+    """CORE/AL-CORE 그룹 키에서 main SQ를 추출한다.
+
+    "CORE-633-35kV" → 633, "AL-CORE-633-35kV" → 633
+    """
+    try:
+        parts = group_key.split("-")
+        if group_key.startswith("AL-CORE-"):
+            return int(parts[2])  # AL-CORE-{sq}-...
+        if group_key.startswith("CORE-"):
+            return int(parts[1])  # CORE-{sq}-...
+    except (IndexError, ValueError):
+        pass
+    return None
+
+
 def auto_schedule(
     run_label: str, db: Session, *, base_date: datetime | None = None
 ) -> dict:
@@ -249,11 +270,11 @@ def auto_schedule(
         key = batch.batch_group or f"_single_{batch.batch_id}"
         batch_groups.setdefault(key, []).append(batch)
 
-    # CORE- 그룹(7연선 코어)을 ST- 그룹보다 먼저 처리 — T6B0 선행 스케줄링 보장
+    # CORE-/AL-CORE- 그룹(7연선 코어)을 ST- 그룹보다 먼저 처리 — 선행 스케줄링 보장
     # Python sort는 stable하므로 동일 우선순위 내 삽입 순서 유지
     ordered_group_items = sorted(
         batch_groups.items(),
-        key=lambda kv: 0 if kv[0].startswith("CORE-") else 1,
+        key=lambda kv: 0 if _is_core_group(kv[0]) else 1,
     )
 
     for group_key, group_batches in ordered_group_items:
@@ -287,12 +308,12 @@ def auto_schedule(
             eligible = _narrow_by_stranding(rep, eligible)
 
         # ── 규칙 2: 같은 SQ → 같은 설비 (연선 공정만, 70SQ+) ─────────────
-        # CORE- 그룹은 제외: 61연선에서 CORE(T6BO)와 ST(54BO)는 서로 다른 설비를 타야 함
+        # CORE-/AL-CORE- 그룹 제외: 61연선에서 CORE와 ST는 서로 다른 설비를 타야 함
         if (
             is_stranding
             and sq >= 70
             and sq_key in sq_to_equip
-            and not group_key.startswith("CORE-")
+            and not _is_core_group(group_key)
         ):
             preferred_eq = sq_to_equip[sq_key]
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
@@ -300,11 +321,7 @@ def auto_schedule(
                 eligible = pref_match
 
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
-        if (
-            is_stranding
-            and sq_key not in sq_to_equip
-            and not group_key.startswith("CORE-")
-        ):
+        if is_stranding and sq_key not in sq_to_equip and not _is_core_group(group_key):
             wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
             if wire_d > 0:
                 same_wd_equips = set()
@@ -337,7 +354,7 @@ def auto_schedule(
         total_drums = int(header_batch_chk.drum_count or 0) if header_batch_chk else 0
         if (
             is_stranding
-            and not group_key.startswith("CORE-")
+            and not _is_core_group(group_key)
             and total_drums >= 2
             and len(eligible) >= 2
             # 같은 SQ가 이미 단일 설비에 고정된 경우 분배하지 않음 (규칙 2)
@@ -477,8 +494,9 @@ def auto_schedule(
                 if first_insul_output and first_insul_output > earliest:
                     earliest = first_insul_output
 
-            # 61연선 ST- 그룹: 동일 SQ의 CORE-(T6B0) 완료 후 시작
-            # 예: "ST-300-..." 그룹 → core_end_by_main_sq[300] 완료 대기
+            # 61연선 ST- 그룹: 동일 SQ의 CORE/AL-CORE 완료 후 시작
+            # 예: "ST-633-..." 그룹 → core_end_by_main_sq[633] 완료 대기
+            # (CU CORE는 T6B0, AL CORE는 AL6BO — 둘 중 늦은 쪽 기준)
             if group_key.startswith("ST-") and rep.process_name == "연선":
                 try:
                     main_sq = int(group_key.split("-")[1])
@@ -553,25 +571,24 @@ def auto_schedule(
         lot_count = max(int(rep.drum_count or 1), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
         first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
-        # CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
+        # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
         # (CORE 첫 드럼은 너무 이르므로 후행 공정 선행 제약으로 부적합)
-        if not group_key.startswith("CORE-") and (
+        if not _is_core_group(group_key) and (
             proc_sq_key not in process_first_output_by_sq
             or first_output_dt < process_first_output_by_sq[proc_sq_key]
         ):
             process_first_output_by_sq[proc_sq_key] = first_output_dt
 
-        # 61연선 CORE- 그룹 완료 시각 기록 — "CORE-{main_sq}-..." 패턴
-        if group_key.startswith("CORE-"):
-            try:
-                main_sq = int(group_key.split("-")[1])
+        # 61연선 CORE-/AL-CORE- 그룹 완료 시각 기록
+        # CU: "CORE-{main_sq}-...", AL: "AL-CORE-{main_sq}-..." 패턴
+        if _is_core_group(group_key):
+            main_sq = _extract_core_main_sq(group_key)
+            if main_sq is not None:
                 if (
                     main_sq not in core_end_by_main_sq
                     or end_dt > core_end_by_main_sq[main_sq]
                 ):
                     core_end_by_main_sq[main_sq] = end_dt
-            except (IndexError, ValueError):
-                pass
 
         # 저압절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
         if rep.process_name == "저압절연":
@@ -585,8 +602,8 @@ def auto_schedule(
             b.equipment_code = best_eq.equipment_code
             b.status = "scheduled"
 
-        # 규칙 2: SQ→설비 매핑 기록 (CORE- 그룹 제외 — 61연선은 ST 그룹만 ST설비에 고정)
-        if rep.process_name == "연선" and not group_key.startswith("CORE-"):
+        # 규칙 2: SQ→설비 매핑 기록 (CORE/AL-CORE 그룹 제외 — 코어는 ST설비 고정 대상 아님)
+        if rep.process_name == "연선" and not _is_core_group(group_key):
             sq_to_equip[sq_key] = best_eq.equipment_code
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신 (그룹의 마지막 배치)
@@ -932,7 +949,20 @@ def _narrow_by_stranding(
     sq_val = float(batch.sq_mm2 or 0)
 
     if batch_st == "7연선코어":
-        # T6BO 선호: stranding_method="7연선" 또는 코드에 "T6B" 포함
+        mat = (batch.conductor_material or "").upper()
+        if mat == "AL":
+            # AL 7연선코어 → AL6BO 선호 (material_limit="AL", stranding_method="7연선")
+            preferred = [
+                e
+                for e in eligible
+                if "AL6B" in (e.equipment_code or "").upper()
+                or (
+                    (e.stranding_method or "").strip() == "7연선"
+                    and (e.material_limit or "").upper() == "AL"
+                )
+            ]
+            return preferred if preferred else eligible
+        # CU 7연선코어 → T6BO 선호
         preferred = [
             e
             for e in eligible

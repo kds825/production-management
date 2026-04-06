@@ -82,17 +82,21 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
     )
 
     if not batches:
-        raise ValueError(f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다. Stage 1을 먼저 실행하세요.")
+        raise ValueError(
+            f"run_label='{run_label}'에 해당하는 배치 데이터가 없습니다. Stage 1을 먼저 실행하세요."
+        )
 
     # ── 신선·헤더 배치 제외 ───────────────────────────────────────────────
     # 신선(wire drawing)은 연선의 전처리 공정으로 현장 계획서에 표시하지 않는다.
     # batch_seq=-1 헤더 배치는 스케줄러 duration 전용 — 계획서 행으로 출력하지 않는다.
     all_count = len(batches)
     batches = [
-        b for b in batches
+        b
+        for b in batches
         if b.process_name != "신선"
         and b.batch_seq != -1
-        and b.stranding_type != "7연선코어"  # 61연선 CORE(T6BO) 배치는 엑셀 미출력
+        and b.stranding_type
+        != "7연선코어"  # 61연선 CORE(T6BO/AL6BO) 배치는 엑셀 미출력
     ]
     if not batches:
         raise ValueError(
@@ -174,7 +178,9 @@ def export_plan(run_label: str, db: Session) -> BytesIO:
         if sname not in sheet_data:
             continue
         ws = wb.create_sheet(title=sname)
-        _write_sheet(ws, sheet_data[sname], wip_stage_lookup, wip_total_len_lookup, sname)
+        _write_sheet(
+            ws, sheet_data[sname], wip_stage_lookup, wip_total_len_lookup, sname
+        )
 
     output = BytesIO()
     wb.save(output)
@@ -271,7 +277,7 @@ def _resolve_sheet_name(batch: ProductionBatch) -> str:
             return "TP"
         case _:
             # Excel 시트 이름 금지 문자 제거: / \ * ? [ ] :
-            safe = re.sub(r'[/\\*?\[\]:]', '_', proc)
+            safe = re.sub(r"[/\\*?\[\]:]", "_", proc)
             return safe[:31]  # Excel 시트명 최대 31자
 
 
@@ -313,7 +319,7 @@ def _write_sheet(
         is_first_group = False
 
         # 같은 규격(batch_group) 내 행을 품목(product_group) 기준 정렬
-        group_batches = sorted(group_batches, key=lambda b: (b.product_group or ""))
+        group_batches = sorted(group_batches, key=lambda b: b.product_group or "")
 
         group_start_row = row_num  # SUM 수식 범위 시작점
         group_drum_count_total: int = 0
@@ -325,7 +331,10 @@ def _write_sheet(
         while idx < len(group_batches):
             block_wip_id = group_batches[idx].wip_matched_id
             end_idx = idx + 1
-            while end_idx < len(group_batches) and group_batches[end_idx].wip_matched_id == block_wip_id:
+            while (
+                end_idx < len(group_batches)
+                and group_batches[end_idx].wip_matched_id == block_wip_id
+            ):
                 end_idx += 1
 
             block_first_row = row_num
@@ -438,7 +447,11 @@ def _build_remarks(
     wip_len_int = int(wip_len) if wip_len > 0 else 0
 
     if wip_stage:
-        return f"{wip_stage}{wip_len_int}m 사용" if wip_len_int > 0 else f"{wip_stage} 사용"
+        return (
+            f"{wip_stage}{wip_len_int}m 사용"
+            if wip_len_int > 0
+            else f"{wip_stage} 사용"
+        )
     return f"재공재고 {wip_len_int}m 사용" if wip_len_int > 0 else "재공재고 사용"
 
 
@@ -553,7 +566,7 @@ def _write_subtotal(
         # 연선 시트: WIP 재공 사용 행 제외 (실제 연선 작업량만 합산)
         sum_formula = (
             f'=SUMIF({w_col}{start_row}:{w_col}{end_row},"<>Y",'
-            f'{h_col}{start_row}:{h_col}{end_row})'
+            f"{h_col}{start_row}:{h_col}{end_row})"
         )
     else:
         sum_formula = f"=SUM({h_col}{start_row}:{h_col}{end_row})"
