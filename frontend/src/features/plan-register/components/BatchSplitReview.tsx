@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 const PRIMARY = "#C41230";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -32,7 +32,7 @@ interface Props {
   runLabel: string;
   gapDays: number;
   onGapDaysChange: (days: number) => void;
-  onSplitApplied: () => void; // Stage1 결과 새로고침 콜백
+  onSplitApplied: () => void;
 }
 
 /* ── Component ────────────────────────────────────────── */
@@ -87,6 +87,7 @@ export function BatchSplitReview({
           candidate={c}
           index={idx}
           runLabel={runLabel}
+          gapDays={gapDays}
           onSplitApplied={onSplitApplied}
         />
       ))}
@@ -100,19 +101,26 @@ function CandidateCard({
   candidate: c,
   index,
   runLabel,
+  gapDays,
   onSplitApplied,
 }: {
   candidate: SplitCandidate;
   index: number;
   runLabel: string;
+  gapDays: number;
   onSplitApplied: () => void;
 }) {
-  // 각 gap 위치에 분할선 활성화/비활성화 상태
-  const [cuts, setCuts] = useState<boolean[]>(
-    () => c.gaps_days.map((g) => g >= 3), // 기본: gap >= threshold면 활성화
+  const [cuts, setCuts] = useState<boolean[]>(() =>
+    c.gaps_days.map((g) => g >= gapDays),
   );
   const [applying, setApplying] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<"split" | "keep" | null>(null);
+
+  // gapDays 변경 시 가위 상태 재계산
+  useEffect(() => {
+    if (done) return;
+    setCuts(c.gaps_days.map((g) => g >= gapDays));
+  }, [gapDays, c.gaps_days, done]);
 
   const splitCount = cuts.filter(Boolean).length + 1;
 
@@ -131,8 +139,7 @@ function CandidateCard({
   const handleSplit = useCallback(async () => {
     if (applying || done) return;
 
-    // 활성화된 분할선 기준으로 청크들을 그룹으로 묶기
-    const groups: number[][] = []; // 각 그룹의 chunk indices
+    const groups: number[][] = [];
     let currentGroup: number[] = [0];
 
     for (let i = 0; i < cuts.length; i++) {
@@ -145,11 +152,10 @@ function CandidateCard({
     }
     groups.push(currentGroup);
 
-    if (groups.length <= 1) return; // 분할선 없으면 skip
+    if (groups.length <= 1) return;
 
     setApplying(true);
     try {
-      // 첫 번째 그룹은 원래 batch_group에 남기고, 나머지 그룹을 split
       for (let g = 1; g < groups.length; g++) {
         const chunkIndices = groups[g];
         const batchIds: number[] = [];
@@ -184,7 +190,7 @@ function CandidateCard({
           console.error("Split failed:", err);
         }
       }
-      setDone(true);
+      setDone("split");
       onSplitApplied();
     } catch (err) {
       console.error("Split error:", err);
@@ -194,21 +200,39 @@ function CandidateCard({
   }, [cuts, c, applying, done, onSplitApplied]);
 
   const handleKeep = useCallback(() => {
-    setDone(true);
+    setDone("keep");
   }, []);
 
+  const handleUndo = useCallback(() => {
+    setDone(null);
+    setCuts(c.gaps_days.map((g) => g >= gapDays));
+  }, [c.gaps_days, gapDays]);
+
   if (done) {
+    const msg =
+      done === "split" ? `${splitCount}개로 분할 완료` : "1개 배치 유지";
     return (
       <div
-        className="rounded-md p-3 text-xs"
+        className="rounded-md p-3 text-xs flex items-center justify-between"
         style={{
-          border: "1px solid #D1FAE5",
-          backgroundColor: "#ECFDF5",
-          color: "#065F46",
+          border: `1px solid ${done === "split" ? "#D1FAE5" : "#E5E7EB"}`,
+          backgroundColor: done === "split" ? "#ECFDF5" : "#F9FAFB",
+          color: done === "split" ? "#065F46" : "#6B7280",
         }}
       >
-        {c.sq_mm2}SQ 연선 —{" "}
-        {splitCount > 1 ? `${splitCount}개로 분할 완료` : "1개 배치 유지"}
+        <span>
+          {c.sq_mm2}SQ 연선 — {msg}
+        </span>
+        <button
+          onClick={handleUndo}
+          className="text-[10px] px-2 py-0.5 rounded transition-colors"
+          style={{
+            border: "1px solid #D1D5DB",
+            color: "#6B7280",
+          }}
+        >
+          되돌리기
+        </button>
       </div>
     );
   }
@@ -252,11 +276,10 @@ function CandidateCard({
         </span>
       </div>
 
-      {/* Timeline bar: chunks with cut toggles */}
+      {/* Timeline bar */}
       <div className="flex items-center gap-0 overflow-x-auto py-1">
         {c.proposed_splits.map((chunk, i) => (
           <div key={i} className="flex items-center">
-            {/* Chunk block */}
             <div
               className="rounded px-2 py-1.5 text-center min-w-[80px]"
               style={{
@@ -275,7 +298,6 @@ function CandidateCard({
               </div>
             </div>
 
-            {/* Gap / cut toggle between chunks */}
             {i < c.proposed_splits.length - 1 && (
               <button
                 onClick={() => toggleCut(i)}
