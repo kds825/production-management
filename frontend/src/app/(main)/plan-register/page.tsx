@@ -746,9 +746,8 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
                         runLabel={result.run_label}
                         gapDays={splitGapDays}
                         onGapDaysChange={setSplitGapDays}
-                        onSplitApplied={() => {
-                          setSplitModalOpen(false);
-                        }}
+                        onApplied={() => {}}
+                        onClose={() => setSplitModalOpen(false)}
                       />
                     </div>
                   </div>
