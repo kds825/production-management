@@ -230,19 +230,44 @@ def list_tasks(
 
     db_tasks = q.order_by(ScheduleTaskModel.start_datetime).all()
 
-    # batch_group별 합산 volume 계산 — 단일 그룹 쿼리로 N+1 해소
-    group_stats_rows = (
+    # batch_group별 volume 계산:
+    # 헤더(batch_seq=-1)가 있으면 헤더의 total_length_m = 실제 생산지시(틀단위) 수량
+    # 없으면 개별 수주(batch_seq>=0) 합산
+    header_volumes_rows = (
+        db.query(
+            ProductionBatchModel.batch_group,
+            ProductionBatchModel.total_length_m,
+        )
+        .filter(
+            ProductionBatchModel.batch_group.isnot(None),
+            ProductionBatchModel.batch_seq == -1,
+        )
+        .all()
+    )
+    header_volumes = {bg: float(vol or 0) for bg, vol in header_volumes_rows}
+
+    order_stats_rows = (
         db.query(
             ProductionBatchModel.batch_group,
             func.sum(ProductionBatchModel.total_length_m),
             func.count(ProductionBatchModel.batch_id),
         )
-        .filter(ProductionBatchModel.batch_group.isnot(None))
+        .filter(
+            ProductionBatchModel.batch_group.isnot(None),
+            ProductionBatchModel.batch_seq >= 0,
+        )
         .group_by(ProductionBatchModel.batch_group)
         .all()
     )
-    group_volumes = {bg: float(vol or 0) for bg, vol, _ in group_stats_rows}
-    group_counts = {bg: int(cnt or 1) for bg, _, cnt in group_stats_rows}
+    # 헤더가 있으면 헤더 값, 없으면 수주 합산
+    group_volumes = {
+        bg: header_volumes.get(bg, float(vol or 0)) for bg, vol, _ in order_stats_rows
+    }
+    # 헤더만 있고 order가 없는 그룹도 포함
+    for bg, vol in header_volumes.items():
+        if bg not in group_volumes:
+            group_volumes[bg] = vol
+    group_counts = {bg: int(cnt or 1) for bg, _, cnt in order_stats_rows}
 
     # 색상교체 시간 계산을 위해 같은 설비의 직전 배치 sheath_color 조회
     prev_colors: dict[str, str] = {}  # equipment_code → 직전 batch sheath_color
