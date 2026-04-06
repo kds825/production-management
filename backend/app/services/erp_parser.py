@@ -7,6 +7,7 @@ import xlrd
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.sales_order import SalesOrder
+from app.infrastructure.models.item_master import ItemMaster
 
 
 def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
@@ -35,6 +36,26 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
         "total": 0, "진행": 0, "대기": 0, "외주_제외": 0,
         "inserted": 0, "updated": 0, "warnings": [],
     }
+
+    # ── item_master 룩업: (product_group, voltage) → item_code ───────────────
+    # product_group + voltage 조합으로 먼저 시도, 없으면 product_group만으로 폴백.
+    items = db.query(ItemMaster).all()
+    _item_by_pg_volt: dict[tuple[str, str], str] = {}
+    _item_by_pg: dict[str, str] = {}
+    for it in items:
+        pg = (it.product_group or "").strip()
+        vt = (it.voltage or "").strip()
+        if pg and vt and (pg, vt) not in _item_by_pg_volt:
+            _item_by_pg_volt[(pg, vt)] = it.item_code
+        if pg and pg not in _item_by_pg:
+            _item_by_pg[pg] = it.item_code
+
+    def _resolve_item_code(product_group: str, voltage: str | None) -> str | None:
+        pg = (product_group or "").strip()
+        vt = (voltage or "").strip()
+        if not pg:
+            return None
+        return _item_by_pg_volt.get((pg, vt)) or _item_by_pg.get(pg)
 
     # ── 기존 레코드 로드 — (order_id, product_group, spec_raw, drum_length_m) 복합키 ──
     # 수주번호+제품군+규격+조장이 모두 같은 경우만 동일 행으로 간주
@@ -101,13 +122,17 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                 # ── UPSERT: (수주번호, 제품군, 규격, 조장) 복합키 기준 ──
                 upsert_key = (order_id, product_group, spec_raw, float(drum_length_m or 0))
 
+                voltage = _get_str(sheet, r, headers, "전압")
+                item_code = _resolve_item_code(product_group, voltage)
+
                 if upsert_key in existing_orders:
                     # 기존 레코드 UPDATE — order_line(PK)은 유지
                     existing = existing_orders[upsert_key]
                     existing.order_status = sheet_name
                     existing.run_label = run_label
                     existing.product_group = product_group
-                    existing.voltage = _get_str(sheet, r, headers, "전압")
+                    existing.voltage = voltage
+                    existing.item_code = item_code
                     existing.spec_raw = spec_raw
                     existing.customer_name = _get_str(sheet, r, headers, "거래처명")
                     existing.due_date = due_date
@@ -132,8 +157,9 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
                         order_id=order_id,
                         order_line=new_line_counter,
                         order_status=sheet_name,
+                        item_code=item_code,
                         product_group=product_group,
-                        voltage=_get_str(sheet, r, headers, "전압"),
+                        voltage=voltage,
                         spec_raw=spec_raw,
                         customer_name=_get_str(sheet, r, headers, "거래처명"),
                         due_date=due_date,
