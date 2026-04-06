@@ -12,6 +12,7 @@ class WipInventory(Base):
     material = Column(String(10))  # CU, AL
     product_name = Column(String(100))
     spec = Column(String(100))  # 200SQ, 50SQ, 1250kcmil
+    core = Column(String(20))  # CORE 수 (연합 재공용, 예: 3, 4, 7)
     cross_section = Column(Numeric)
     length_m = Column(Numeric)
     count = Column(Integer, default=1)

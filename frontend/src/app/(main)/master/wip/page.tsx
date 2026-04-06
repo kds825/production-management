@@ -11,6 +11,7 @@ interface WipRecord {
   material: string;
   product_name: string | null;
   spec: string;
+  core: string | null;
   cross_section: number | null;
   length_m: number | null;
   count: number | null;
@@ -27,6 +28,7 @@ const EMPTY_RECORD: Omit<WipRecord, "wip_id"> = {
   material: "CU",
   product_name: null,
   spec: "",
+  core: null,
   cross_section: null,
   length_m: null,
   count: 1,
@@ -166,6 +168,18 @@ export default function WipPage() {
               />
             </div>
             <div>
+              <label className="text-xs text-gray-500">CORE</label>
+              <input
+                type="text"
+                value={form.core || ""}
+                onChange={(e) =>
+                  setForm({ ...form, core: e.target.value || null })
+                }
+                className="w-full rounded border px-2 py-1.5 text-sm"
+                placeholder="3, 4, 7"
+              />
+            </div>
+            <div>
               <label className="text-xs text-gray-500">길이(M)</label>
               <input
                 type="number"
@@ -238,6 +252,7 @@ export default function WipPage() {
               <th className="px-3 py-2 text-left">전압</th>
               <th className="px-3 py-2 text-left">재질</th>
               <th className="px-3 py-2 text-left">규격</th>
+              <th className="px-3 py-2 text-center">CORE</th>
               <th className="px-3 py-2 text-right">길이(M)</th>
               <th className="px-3 py-2 text-right">개수</th>
               <th className="px-3 py-2 text-right">총량(M)</th>
@@ -248,7 +263,10 @@ export default function WipPage() {
           <tbody className="divide-y">
             {records.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
+                <td
+                  colSpan={10}
+                  className="px-3 py-8 text-center text-gray-400"
+                >
                   등록된 재공 재고가 없습니다. 위 버튼으로 추가하거나 파일을
                   업로드하세요.
                 </td>
@@ -260,6 +278,7 @@ export default function WipPage() {
                   <td className="px-3 py-2">{r.voltage_class}</td>
                   <td className="px-3 py-2">{r.material}</td>
                   <td className="px-3 py-2 font-medium">{r.spec}</td>
+                  <td className="px-3 py-2 text-center">{r.core || "-"}</td>
                   <td className="px-3 py-2 text-right">
                     {r.length_m?.toLocaleString()}
                   </td>

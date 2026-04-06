@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
-from app.services.batch_grouping import create_batches, format_spec_display
+from app.services.batch_grouping import (
+    create_batches,
+    detect_split_candidates,
+    format_spec_display,
+)
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
@@ -59,6 +63,9 @@ async def run_stage1(
     wip_file: UploadFile | None = File(None, description="재공 재고 파일 (선택)"),
     date_from: str | None = Form(None, description="납기 시작일 (YYYYMMDD)"),
     date_to: str | None = Form(None, description="납기 종료일 (YYYYMMDD)"),
+    split_gap_days: int = Form(
+        3, description="연선 그룹 분할 후보 납기 간격 임계값 (일)"
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     """Stage 1 파이프라인 실행:
@@ -66,9 +73,11 @@ async def run_stage1(
     1. ERP .xls 파일을 파싱하여 sales_order 테이블에 적재
     2. 재공(WIP) 매칭 — 기존 재고를 수주에 매칭하여 공정 생략
     3. 수주 데이터를 공정별 production_batch로 변환 (납기 범위 필터 가능)
+    4. 연선 그룹 분할 후보 감지 (split_gap_days 이상 납기 간격)
 
     Returns:
-        run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록
+        run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록,
+        split_candidates (분할 후보 연선 그룹 목록)
     """
     # ── 기존 실행 데이터 정리 (재실행 시 중복 방지) ─────────────────────────
     from app.infrastructure.models.schedule_task import ScheduleTask as ST
@@ -79,7 +88,11 @@ async def run_stage1(
     db.execute(text("DELETE FROM production_batch"))
     # sales_order.wip_id FK 참조 해제 후 wip_inventory 삭제
     # (sales_order 자체는 parse_erp_file에서 전체 삭제 후 재적재)
-    db.execute(text("UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, wip_type = NULL, actual_length_m = NULL"))
+    db.execute(
+        text(
+            "UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, wip_type = NULL, actual_length_m = NULL"
+        )
+    )
     db.execute(text("DELETE FROM wip_inventory"))
     db.commit()
 
@@ -149,6 +162,16 @@ async def run_stage1(
 
     db.commit()
 
+    # ── Step 5: 연선 그룹 분할 후보 감지 ──────────────────────────────────────
+    # commit 이후에 실행해야 flush된 배치가 쿼리에 반영된다.
+    try:
+        split_candidates = detect_split_candidates(
+            run_label, db, gap_days=split_gap_days
+        )
+    except Exception as exc:
+        logger.warning("[Stage1] 분할 후보 감지 실패 (계속 진행): %s", exc)
+        split_candidates = []
+
     warnings = (
         parse_result.get("warnings", [])
         + wip_warnings
@@ -162,6 +185,7 @@ async def run_stage1(
         "batches": batch_result,
         "warnings": warnings,
         "outsource_count": batch_result.get("outsource_count", 0),
+        "split_candidates": split_candidates,
     }
 
 
@@ -204,7 +228,10 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
         )
         .all()
     )
-    batches = [(b, os or "대기", wip_len_m, wip_cnt, wip_cc, wip_ps) for b, os, wip_len_m, wip_cnt, wip_cc, wip_ps in rows]
+    batches = [
+        (b, os or "대기", wip_len_m, wip_cnt, wip_cc, wip_ps)
+        for b, os, wip_len_m, wip_cnt, wip_cc, wip_ps in rows
+    ]
     if not batches:
         raise HTTPException(
             status_code=404,
@@ -242,7 +269,9 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
             "status": b.status,
             "order_status": order_status,
             "remarks": b.remarks,
-            "spec_raw": format_spec_display(getattr(b, "spec_raw", None), b.core_count or 1, float(b.sq_mm2 or 0)),
+            "spec_raw": format_spec_display(
+                getattr(b, "spec_raw", None), b.core_count or 1, float(b.sq_mm2 or 0)
+            ),
             "core_colors": b.core_colors or "",
             "voltage": b.voltage,
             "equipment_code": b.equipment_code,
@@ -326,10 +355,13 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
             "length_m": float(w.length_m) if w.length_m else 0,
             "count": w.count or 1,
             "total_length_m": float(w.total_length_m) if w.total_length_m else 0,
+            "core": w.core,
             "core_colors": w.core_colors or "",
             "status": w.status or "",
             "matched_batch_id": wip_match_map.get(w.wip_id, {}).get("matched_batch_id"),
-            "matched_batch_group": wip_match_map.get(w.wip_id, {}).get("matched_batch_group"),
+            "matched_batch_group": wip_match_map.get(w.wip_id, {}).get(
+                "matched_batch_group"
+            ),
         }
         for w in wip_rows
     ]
@@ -543,7 +575,9 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
                     ProductionBatch.sq_mm2 == header.sq_mm2,
                     ProductionBatch.batch_seq == 1,  # 개별 수주 배치만 (CORE=0 제외)
                 )
-                .order_by(ProductionBatch.due_date.asc(), ProductionBatch.sales_order_id.asc())
+                .order_by(
+                    ProductionBatch.due_date.asc(), ProductionBatch.sales_order_id.asc()
+                )
                 .all()
             )
             # 헤더 + 개별 수주 배치 (batch_id 기준 중복 제거)
@@ -728,7 +762,9 @@ def delete_run(run_label: str, db: Session = Depends(get_db)):
 
     db.commit()
     total = counts["wip_inventory"] + sum(
-        v for k, v in counts.items() if k not in ("wip_inventory", "wip_inventory_reset")
+        v
+        for k, v in counts.items()
+        if k not in ("wip_inventory", "wip_inventory_reset")
     )
     if total == 0 and counts.get("wip_inventory_reset", 0) == 0:
         raise HTTPException(status_code=404, detail=f"run_label '{run_label}' 없음")

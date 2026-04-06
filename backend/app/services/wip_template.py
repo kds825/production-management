@@ -14,6 +14,7 @@ COLUMNS = [
     "재질",
     "품명",
     "규격",
+    "CORE",
     "길이(M)",
     "개수",
     "총량(M)",
@@ -48,6 +49,7 @@ DROPDOWNS = {
         "1000kcmil",
         "1250kcmil",
     ],
+    "CORE": ["1", "2", "3", "4", "7"],
     "선심색상": ["흑", "갈", "회", "청", "녹/황", "흑/적", "흑/갈/회/청"],
     "상태": ["예상", "실적"],
 }
@@ -64,7 +66,7 @@ _THIN_BORDER = Border(
 _INPUT_FILL = PatternFill("solid", fgColor="FFFFCC")  # 연노랑 (입력 셀)
 _CENTER = Alignment(horizontal="center", vertical="center")
 
-COL_WIDTHS = [14, 12, 8, 16, 14, 12, 8, 12, 12, 10, 10, 8]
+COL_WIDTHS = [14, 12, 8, 16, 14, 8, 12, 8, 12, 12, 10, 10, 8]
 
 
 def generate_wip_template() -> BytesIO:
@@ -122,7 +124,9 @@ def generate_wip_template() -> BytesIO:
     len_col = get_column_letter(COLUMNS.index("길이(M)") + 1)
     cnt_col = get_column_letter(COLUMNS.index("개수") + 1)
     for r in range(2, max_row + 1):
-        ws.cell(row=r, column=total_col).value = (
+        ws.cell(
+            row=r, column=total_col
+        ).value = (
             f'=IF(AND({len_col}{r}<>"",{cnt_col}{r}<>""),{len_col}{r}*{cnt_col}{r},"")'
         )
 

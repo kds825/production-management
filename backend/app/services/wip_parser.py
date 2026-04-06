@@ -6,7 +6,9 @@ from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.wip_matching import _extract_sq
 
 
-def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = None) -> dict:
+def parse_wip_file(
+    file_content: bytes, db: Session, run_label: str | None = None
+) -> dict:
     """재공실사 Excel 파일을 파싱하여 wip_inventory 테이블에 INSERT.
 
     Args:
@@ -23,12 +25,14 @@ def parse_wip_file(file_content: bytes, db: Session, run_label: str | None = Non
     # .xlsx 시도 → 실패 시 .xls(xlrd)로 폴백
     try:
         from openpyxl import load_workbook
+
         wb = load_workbook(BytesIO(file_content), data_only=True)
         ws = wb.active
         _parse_openpyxl(ws, db, run_label, result)
     except Exception:
         try:
             import xlrd
+
             book = xlrd.open_workbook(file_contents=file_content)
             sheet = book.sheet_by_index(0)
             _parse_xlrd(sheet, db, run_label, result)
@@ -66,9 +70,12 @@ def _parse_openpyxl(ws, db: Session, run_label: str | None, result: dict) -> Non
         if not process:
             continue
         _add_wip(
-            db, run_label, result,
+            db,
+            run_label,
+            result,
             process=process,
             spec_raw=_get(ws, r, header_map, "규격") or "",
+            core=_get(ws, r, header_map, "CORE"),
             voltage_class=_get(ws, r, header_map, "전압구분"),
             material=_get(ws, r, header_map, "재질"),
             product_name=_get(ws, r, header_map, "품명"),
@@ -135,9 +142,12 @@ def _parse_xlrd(sheet, db: Session, run_label: str | None, result: dict) -> None
         if not process:
             continue
         _add_wip(
-            db, run_label, result,
+            db,
+            run_label,
+            result,
             process=process,
             spec_raw=xget(r, "규격") or "",
+            core=xget(r, "CORE"),
             voltage_class=xget(r, "전압구분"),
             material=xget(r, "재질"),
             product_name=xget(r, "품명"),
@@ -158,6 +168,7 @@ def _add_wip(
     result: dict,
     process: str,
     spec_raw: str,
+    core: str | None,
     voltage_class: str | None,
     material: str | None,
     product_name: str | None,
@@ -177,6 +188,7 @@ def _add_wip(
         material=material,
         product_name=product_name,
         spec=spec_raw,
+        core=core,
         cross_section=sq,
         length_m=length_m,
         count=count or 1,

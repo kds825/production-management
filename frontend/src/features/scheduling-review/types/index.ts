@@ -25,6 +25,7 @@ export interface WipItem {
   process_stage: string;
   product: string;
   spec: string;
+  core: string | null;
   color: string;
   /** wip_inventory.length_m — 1드럼 기준 길이 */
   stock: number;

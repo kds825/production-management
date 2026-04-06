@@ -31,8 +31,8 @@ interface ApiBatch {
   sales_order_id: string;
   wip_matched_id: number | null;
   wip_process_stage: string | null; // wip_inventory.process_stage (연선재고, 절연재고 등)
-  wip_length_m: number | null;   // wip_inventory.length_m — 1드럼 기준 길이
-  wip_count: number | null;      // wip_inventory.count — 드럼 수
+  wip_length_m: number | null; // wip_inventory.length_m — 1드럼 기준 길이
+  wip_count: number | null; // wip_inventory.count — 드럼 수
   wip_core_colors: string | null; // wip_inventory.core_colors
   status: string;
   order_status: string | null;
@@ -123,9 +123,10 @@ function toBatch(b: ApiBatch): SchedulingBatch {
       b.order_status === "진행" ? ("진행" as const) : ("대기" as const),
     convertedQty: calcConvertedQty(b.spec_raw, b.total_length_m),
     batch_group: b.batch_group || undefined,
-    wip_total_length_m: b.wip_length_m != null && b.wip_count != null
-      ? b.wip_length_m * b.wip_count
-      : b.wip_length_m ?? null,
+    wip_total_length_m:
+      b.wip_length_m != null && b.wip_count != null
+        ? b.wip_length_m * b.wip_count
+        : (b.wip_length_m ?? null),
     wip_core_colors: b.wip_core_colors ?? null,
     wip_matched_id: b.wip_matched_id,
   };
@@ -291,7 +292,6 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           state.calcError = null;
           state.aiSummary = null;
           state.aiAnalysisStatus = "idle";
-
         });
 
         // 외주 분류 수주 + WIP 재고 병렬 로드
@@ -322,6 +322,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           material: string;
           product_name: string;
           spec: string;
+          core: string | null;
           cross_section: number | null;
           length_m: number;
           count: number;
@@ -337,9 +338,10 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           const processGroup: import("@/shared/constants/processGroups").ProcessGroup =
             w.process_stage.includes("연선") ? "연선" : "절연";
 
-          const matchedBatchId = w.matched_batch_id != null
-            ? `batch-${w.matched_batch_id}`
-            : undefined;
+          const matchedBatchId =
+            w.matched_batch_id != null
+              ? `batch-${w.matched_batch_id}`
+              : undefined;
 
           return {
             id: `wip-${w.wip_id}`,
@@ -348,6 +350,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             processGroup,
             product: w.product_name,
             spec: w.spec,
+            core: w.core,
             color: w.core_colors,
             stock: w.length_m,
             count: w.count,
@@ -361,8 +364,12 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
         });
 
         set((state) => {
-          state.yeonaeoWip = wipItems.filter((w) => w.process_stage.includes("연선"));
-          state.insulationWip = wipItems.filter((w) => !w.process_stage.includes("연선"));
+          state.yeonaeoWip = wipItems.filter((w) =>
+            w.process_stage.includes("연선"),
+          );
+          state.insulationWip = wipItems.filter(
+            (w) => !w.process_stage.includes("연선"),
+          );
         });
       } catch {
         // WIP 로드 실패는 핵심 기능이 아니므로 무시
