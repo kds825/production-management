@@ -301,6 +301,7 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<Stage1Result | null>(null);
   const [splitGapDays, setSplitGapDays] = useState(3);
+  const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -690,18 +691,70 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
             </div>
           )}
 
-          {/* Batch split review */}
+          {/* Batch split review modal trigger */}
           {result.split_candidates && result.split_candidates.length > 0 && (
-            <BatchSplitReview
-              candidates={result.split_candidates}
-              runLabel={result.run_label}
-              gapDays={splitGapDays}
-              onGapDaysChange={setSplitGapDays}
-              onSplitApplied={() => {
-                // 분할 후 결과 새로고침은 향후 구현
-                // 지금은 사용자가 scheduling-review에서 확인
-              }}
-            />
+            <>
+              <button
+                onClick={() => setSplitModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors"
+                style={{
+                  border: "1px solid #BFDBFE",
+                  backgroundColor: "#F0F7FF",
+                  color: "#1E40AF",
+                }}
+              >
+                <span>✂️</span>
+                배치 분할 검토
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                  style={{ backgroundColor: "#DBEAFE", color: "#1E40AF" }}
+                >
+                  {result.split_candidates.length}
+                </span>
+              </button>
+
+              {/* Modal */}
+              {splitModalOpen && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center"
+                  style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+                  onClick={(e) => {
+                    if (e.target === e.currentTarget) setSplitModalOpen(false);
+                  }}
+                >
+                  <div
+                    className="relative rounded-xl shadow-2xl max-w-4xl w-full max-h-[85vh] overflow-y-auto"
+                    style={{ backgroundColor: "#FFFFFF" }}
+                  >
+                    <div
+                      className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 border-b"
+                      style={{ backgroundColor: "#F8FAFC" }}
+                    >
+                      <span className="text-sm font-semibold text-gray-800">
+                        ✂️ 배치 분할 검토
+                      </span>
+                      <button
+                        onClick={() => setSplitModalOpen(false)}
+                        className="text-gray-400 hover:text-gray-600 text-lg"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="p-5">
+                      <BatchSplitReview
+                        candidates={result.split_candidates}
+                        runLabel={result.run_label}
+                        gapDays={splitGapDays}
+                        onGapDaysChange={setSplitGapDays}
+                        onSplitApplied={() => {
+                          setSplitModalOpen(false);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* Link to scheduling-review */}
