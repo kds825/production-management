@@ -981,6 +981,9 @@ export default function SchedulerPage() {
                                   거래처
                                 </th>
                                 <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                  품명
+                                </th>
+                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
                                   규격
                                 </th>
                                 <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
@@ -1014,6 +1017,9 @@ export default function SchedulerPage() {
                                   </td>
                                   <td className="py-1 px-2 text-gray-700">
                                     {order.customer_name || "-"}
+                                  </td>
+                                  <td className="py-1 px-2 text-gray-600">
+                                    {order.product_group || "-"}
                                   </td>
                                   <td className="py-1 px-2 text-gray-600">
                                     {order.spec_raw}
@@ -1072,7 +1078,7 @@ export default function SchedulerPage() {
                                 }}
                               >
                                 <td
-                                  colSpan={5}
+                                  colSpan={6}
                                   className="py-1 px-2 font-semibold"
                                   style={{ color: "#C41230" }}
                                 >
