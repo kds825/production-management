@@ -318,8 +318,8 @@ def create_batches(
                 routing_code=routing_code_g,
                 process_name="연선",
                 batch_seq=1,
-                drum_length_m=float(order.ordered_qty_m or 0),
-                drum_count=1,
+                drum_length_m=float(order.drum_length_m or order.ordered_qty_m or 0),
+                drum_count=int(order.drum_count or 1),
                 total_length_m=float(order.ordered_qty_m or 0),
                 extra_length_m=0,
                 sq_mm2=sq,
@@ -451,8 +451,10 @@ def create_batches(
         # ── 불량 재작업 버퍼 가산 (7-1) ─────────────────────────────────────
         total_qty = total_qty * (1.0 + defect_buffer_pct)
 
-        drum_length: float = float(order.drum_length_m or total_qty)
         drum_count: int = int(order.drum_count or 1)
+        drum_length: float = float(order.drum_length_m or 0) or (
+            float(order.ordered_qty_m or 0) / drum_count
+        )
         core_count: int = int(order.core_count or 1)
 
         # 공정 목록 추출

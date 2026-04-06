@@ -197,10 +197,10 @@ def _get_cell(sheet, row: int, headers: dict[str, int], col_name: str):
     """
     col_idx = headers.get(col_name)
     if col_idx is None:
-        # 부분 일치 폴백 — 공백/줄바꿈 변형에 대응
-        norm = col_name.replace(" ", "").replace("\n", "")
+        # 부분 일치 폴백 — 공백/줄바꿈/대소문자 변형에 대응
+        norm = col_name.replace(" ", "").replace("\n", "").lower()
         for h, idx in headers.items():
-            h_norm = h.replace(" ", "").replace("\n", "")
+            h_norm = h.replace(" ", "").replace("\n", "").lower()
             if norm in h_norm or h_norm in norm:
                 col_idx = idx
                 break
