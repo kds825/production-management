@@ -198,6 +198,7 @@ def _merge_lot_splits(batches: list[ProductionBatch]) -> list[ProductionBatch]:
             b.sales_order_line,
             b.process_name,
             int(b.drum_count or 1),
+            b.stranding_type or "",  # 61연선 CORE("7연선코어")와 ST("61연선") 병합 방지
         )
         groups.setdefault(key, []).append(b)
 
