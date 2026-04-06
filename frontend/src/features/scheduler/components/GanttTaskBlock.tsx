@@ -233,6 +233,12 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   const volumeLabel = `${task.volume_m.toLocaleString()}m`;
 
+  // 연선 공정: notes(remarks)에서 틀 수 추출 — "연선그룹 20건 1틀 / ..." → "1틀"
+  const lotLabel = (() => {
+    const m = task.notes?.match(/\d+건\s+(\d+)틀/);
+    return m ? `${m[1]}틀` : null;
+  })();
+
   const isSelected = selectedTaskId === task.id;
 
   // --- 시간 구성 팝오버 (호버) ---
@@ -437,7 +443,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                       className="text-white/80 text-[9px] truncate leading-tight"
                       style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
                     >
-                      {volumeLabel}
+                      {lotLabel ? `${lotLabel} · ` : ""}{volumeLabel}
                     </span>
                   </>
                 ) : (
@@ -455,7 +461,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                     >
                       {task.color && `${task.color} `}
                       {task.core_count > 0 && `${task.core_count}C `}
-                      {volumeLabel}
+                      {lotLabel ? `${lotLabel} ` : ""}{volumeLabel}
                     </span>
                   </>
                 )}
@@ -524,6 +530,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               작업 시간 구성
             </div>
+            {lotLabel && (
+              <div style={{ marginBottom: 4, color: "#FCD34D", fontWeight: 600 }}>
+                작업지시: {lotLabel} ({task.volume_m.toLocaleString()}m)
+              </div>
+            )}
             <div>실제 작업: {timeBreakdown.actualWork.toFixed(1)}h</div>
             {setupMin > 0 && <div>규격 교체: {setupMin}분</div>}
             {colorChangeMin > 0 && <div>색상 교체: {colorChangeMin}분</div>}
