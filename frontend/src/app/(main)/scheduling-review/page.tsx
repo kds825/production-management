@@ -124,8 +124,11 @@ export default function SchedulingReviewPage() {
       if (res.ok) {
         const data: PipelineRun[] = await res.json();
         setRuns(data);
-        if (data.length > 0 && !selectedRun) {
-          setSelectedRun(data[0].run_label);
+        if (data.length > 0) {
+          // 현재 선택된 run_label이 목록에 없으면 최신(첫 번째) run_label로 교체
+          setSelectedRun((prev) =>
+            data.some((r) => r.run_label === prev) ? prev : data[0].run_label,
+          );
         }
       }
     } catch {
@@ -133,7 +136,7 @@ export default function SchedulingReviewPage() {
     } finally {
       setRunsLoading(false);
     }
-  }, [selectedRun]);
+  }, []);
 
   // Excel 다운로드
   const handleExcelDownload = useCallback(async () => {
