@@ -505,15 +505,19 @@ def download_wip_template() -> StreamingResponse:
 
 @router.get("/batch-group/{batch_group}/orders", summary="배치 그룹 내 수주 목록")
 def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
-    """지정한 batch_group에 속하는 모든 production_batch(수주) 목록을 반환한다.
+    """지정한 batch_group에 속하는 production_batch 목록을 반환한다.
 
-    간트 블록 클릭 시 해당 블록에 포함된 개별 수주 상세를 보여주기 위한 API.
-    SQ 내림차순, 시스색 순서로 정렬.
+    연선 그룹(ST- 접두사)은 batch_seq=-1 헤더와 batch_seq=1 개별 수주 배치로 구성된다.
+    헤더(batch_seq=-1)는 틀단위 집계 정보를 포함하며, 개별 배치는 수주 1:1 정보를 포함한다.
+    batch_seq 필드를 포함해 반환하므로 프론트엔드에서 헤더/수주 행을 구분할 수 있다.
+
+    폴백: 연선 그룹에서 개별 배치(batch_seq≥1)가 batch_group 미설정(구버전 데이터)인 경우,
+    헤더의 run_label + sq_mm2 + process_name 조건으로 개별 배치를 추가 조회한다.
     """
     batches = (
         db.query(ProductionBatch)
         .filter(ProductionBatch.batch_group == batch_group)
-        .order_by(ProductionBatch.sq_mm2.desc(), ProductionBatch.sheath_color)
+        .order_by(ProductionBatch.batch_seq.asc(), ProductionBatch.due_date.asc())
         .all()
     )
 
@@ -523,9 +527,32 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             detail=f"batch_group '{batch_group}'에 해당하는 배치가 없습니다.",
         )
 
-    return [
-        {
+    # 연선 그룹(ST-)에서 개별 수주 배치(batch_seq=1)가 없으면 폴백 조회
+    # (구버전 데이터: Phase 3가 batch_group을 덮어써서 개별 배치의 batch_group이 다른 값으로 저장된 경우)
+    is_stranding_group = batch_group.startswith("ST-")
+    has_order_batches = any(b.batch_seq is not None and b.batch_seq >= 1 for b in batches)
+
+    if is_stranding_group and not has_order_batches:
+        header = next((b for b in batches if (b.batch_seq or 0) < 0), None)
+        if header:
+            fallback = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == header.run_label,
+                    ProductionBatch.process_name == header.process_name,
+                    ProductionBatch.sq_mm2 == header.sq_mm2,
+                    ProductionBatch.batch_seq >= 1,
+                )
+                .order_by(ProductionBatch.due_date.asc(), ProductionBatch.sales_order_id.asc())
+                .all()
+            )
+            if fallback:
+                batches = [b for b in batches if (b.batch_seq or 0) < 0] + fallback
+
+    def _to_dict(b: ProductionBatch) -> dict:
+        return {
             "batch_id": b.batch_id,
+            "batch_seq": b.batch_seq,
             "sales_order_id": b.sales_order_id,
             "spec_raw": format_spec_display(getattr(b, "spec_raw", None), b.core_count or 1, float(b.sq_mm2 or 0)),
             "sheath_color": b.sheath_color or "",
@@ -538,8 +565,8 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             "product_group": b.product_group or "",
             "status": b.status or "",
         }
-        for b in batches
-    ]
+
+    return [_to_dict(b) for b in batches]
 
 
 @router.post("/batch-group/{batch_group}/split", summary="배치 그룹 분할")

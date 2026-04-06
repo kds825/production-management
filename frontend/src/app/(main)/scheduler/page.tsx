@@ -56,6 +56,8 @@ interface AuditExplanation {
 /** 배치 그룹 내 개별 수주 (GET /api/pipeline/batch-group/{batch_group}/orders) */
 interface BatchGroupOrder {
   batch_id: number;
+  /** -1: 그룹 헤더(틀단위 집계), 0: 61연선 코어, 1+: 개별 수주 배치 */
+  batch_seq: number;
   sales_order_id: string;
   spec_raw: string;
   sheath_color: string;
@@ -810,7 +812,8 @@ export default function SchedulerPage() {
                         className="text-[11px] font-semibold"
                         style={{ color: "#4A2C2A" }}
                       >
-                        {batchGroupOrders.length > 1
+                        {batchGroupOrders.filter((o) => o.batch_seq >= 1)
+                          .length > 1
                           ? "배치 그룹 수주 목록"
                           : "수주 상세 정보"}
                       </span>
@@ -948,8 +951,9 @@ export default function SchedulerPage() {
                             className="text-[11px] font-semibold"
                             style={{ color: "#C41230" }}
                           >
-                            {batchGroupOrders.length > 0
-                              ? `${batchGroupOrders.length}건`
+                            {batchGroupOrders.filter((o) => o.batch_seq >= 1)
+                              .length > 0
+                              ? `${batchGroupOrders.filter((o) => o.batch_seq >= 1).length}건`
                               : "-"}
                           </span>
                         </div>
@@ -965,153 +969,176 @@ export default function SchedulerPage() {
                           수주 목록 로드 중...
                         </div>
                       ) : batchGroupOrders.length > 0 ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-[11px]">
-                            <thead>
-                              <tr
-                                style={{
-                                  backgroundColor: "#F9FAFB",
-                                  borderBottom: "1px solid #E5E7EB",
-                                }}
-                              >
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  수주번호
-                                </th>
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  거래처
-                                </th>
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  품명
-                                </th>
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  규격
-                                </th>
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  색상
-                                </th>
-                                <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  납기
-                                </th>
-                                <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  드럼
-                                </th>
-                                <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  총 길이
-                                </th>
-                                <th className="text-center py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
-                                  WIP
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {batchGroupOrders.map((order) => (
-                                <tr
-                                  key={order.batch_id}
-                                  className="hover:bg-gray-50 transition-colors"
-                                  style={{
-                                    borderBottom: "1px solid #F3F4F6",
-                                  }}
-                                >
-                                  <td className="py-1 px-2 font-mono text-gray-700">
-                                    {order.sales_order_id || "-"}
-                                  </td>
-                                  <td className="py-1 px-2 text-gray-700">
-                                    {order.customer_name || "-"}
-                                  </td>
-                                  <td className="py-1 px-2 text-gray-600">
-                                    {order.product_group || "-"}
-                                  </td>
-                                  <td className="py-1 px-2 text-gray-600">
-                                    {order.spec_raw}
-                                  </td>
-                                  <td className="py-1 px-2 text-gray-600">
-                                    {order.sheath_color || "-"}
-                                  </td>
-                                  <td
-                                    className="py-1 px-2"
+                        (() => {
+                          // batch_seq=-1: 그룹 헤더(틀단위 집계), batch_seq>=1: 개별 수주
+                          const headerBatch = batchGroupOrders.find(
+                            (o) => o.batch_seq === -1,
+                          );
+                          const orderRows = batchGroupOrders.filter(
+                            (o) => o.batch_seq >= 1,
+                          );
+                          const displayRows =
+                            orderRows.length > 0 ? orderRows : batchGroupOrders;
+                          // 총 생산지시 틀 수: 헤더 있으면 헤더의 drum_count, 없으면 개별 합계
+                          const totalLots = headerBatch
+                            ? headerBatch.drum_count
+                            : displayRows.reduce((s, o) => s + o.drum_count, 0);
+                          const totalQty = displayRows.reduce(
+                            (s, o) => s + o.total_length_m,
+                            0,
+                          );
+                          const wipCount = displayRows.filter(
+                            (o) => o.wip_matched_id,
+                          ).length;
+                          return (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-[11px]">
+                                <thead>
+                                  <tr
                                     style={{
-                                      color:
-                                        order.due_date &&
-                                        new Date(order.due_date).getTime() <
-                                          Date.now()
-                                          ? "#DC2626"
-                                          : "#4B5563",
+                                      backgroundColor: "#F9FAFB",
+                                      borderBottom: "1px solid #E5E7EB",
                                     }}
                                   >
-                                    {order.due_date
-                                      ? new Date(
-                                          order.due_date,
-                                        ).toLocaleDateString("ko-KR")
-                                      : "-"}
-                                  </td>
-                                  <td className="py-1 px-2 text-right text-gray-600">
-                                    {order.drum_count} x{" "}
-                                    {order.drum_length_m.toLocaleString()}m
-                                  </td>
-                                  <td className="py-1 px-2 text-right font-medium text-gray-700">
-                                    {order.total_length_m.toLocaleString()}m
-                                  </td>
-                                  <td className="py-1 px-2 text-center">
-                                    {order.wip_matched_id ? (
-                                      <span
-                                        className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      수주번호
+                                    </th>
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      거래처
+                                    </th>
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      품명
+                                    </th>
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      규격
+                                    </th>
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      색상
+                                    </th>
+                                    <th className="text-left py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      납기
+                                    </th>
+                                    <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      드럼
+                                    </th>
+                                    <th className="text-right py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      총 길이
+                                    </th>
+                                    <th className="text-center py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider">
+                                      WIP
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayRows.map((order) => (
+                                    <tr
+                                      key={order.batch_id}
+                                      className="hover:bg-gray-50 transition-colors"
+                                      style={{
+                                        borderBottom: "1px solid #F3F4F6",
+                                      }}
+                                    >
+                                      <td className="py-1 px-2 font-mono text-gray-700">
+                                        {order.sales_order_id || "-"}
+                                      </td>
+                                      <td className="py-1 px-2 text-gray-700">
+                                        {order.customer_name || "-"}
+                                      </td>
+                                      <td className="py-1 px-2 text-gray-600">
+                                        {order.product_group || "-"}
+                                      </td>
+                                      <td className="py-1 px-2 text-gray-600">
+                                        {order.spec_raw}
+                                      </td>
+                                      <td className="py-1 px-2 text-gray-600">
+                                        {order.sheath_color || "-"}
+                                      </td>
+                                      <td
+                                        className="py-1 px-2"
                                         style={{
-                                          backgroundColor: "#DCFCE7",
-                                          color: "#16A34A",
+                                          color:
+                                            order.due_date &&
+                                            new Date(
+                                              order.due_date,
+                                            ).getTime() < Date.now()
+                                              ? "#DC2626"
+                                              : "#4B5563",
                                         }}
                                       >
-                                        매칭
-                                      </span>
-                                    ) : (
-                                      <span className="text-gray-300">-</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            {/* 합계 행 */}
-                            <tfoot>
-                              <tr
-                                style={{
-                                  borderTop: "2px solid #E5E7EB",
-                                  backgroundColor: "#FDF2F2",
-                                }}
-                              >
-                                <td
-                                  colSpan={6}
-                                  className="py-1 px-2 font-semibold"
-                                  style={{ color: "#C41230" }}
-                                >
-                                  합계 {batchGroupOrders.length}건
-                                </td>
-                                <td className="py-1 px-2 text-right font-medium text-gray-500">
-                                  {batchGroupOrders.reduce(
-                                    (s, o) => s + o.drum_count,
-                                    0,
-                                  )}{" "}
-                                  드럼
-                                </td>
-                                <td
-                                  className="py-1 px-2 text-right font-semibold"
-                                  style={{ color: "#C41230" }}
-                                >
-                                  {batchGroupOrders
-                                    .reduce((s, o) => s + o.total_length_m, 0)
-                                    .toLocaleString()}
-                                  m
-                                </td>
-                                <td className="py-1 px-2 text-center text-[10px] text-gray-400">
-                                  {
-                                    batchGroupOrders.filter(
-                                      (o) => o.wip_matched_id,
-                                    ).length
-                                  }
-                                  건
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
+                                        {order.due_date
+                                          ? new Date(
+                                              order.due_date,
+                                            ).toLocaleDateString("ko-KR")
+                                          : "-"}
+                                      </td>
+                                      <td className="py-1 px-2 text-right text-gray-600">
+                                        {order.drum_count} x{" "}
+                                        {order.drum_length_m.toLocaleString()}m
+                                      </td>
+                                      <td className="py-1 px-2 text-right font-medium text-gray-700">
+                                        {order.total_length_m.toLocaleString()}
+                                        m
+                                      </td>
+                                      <td className="py-1 px-2 text-center">
+                                        {order.wip_matched_id ? (
+                                          <span
+                                            className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                                            style={{
+                                              backgroundColor: "#DCFCE7",
+                                              color: "#16A34A",
+                                            }}
+                                          >
+                                            매칭
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-300">
+                                            -
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                {/* 합계 행 — 연선은 헤더의 lot_count(생산지시 틀 수) 표시 */}
+                                <tfoot>
+                                  <tr
+                                    style={{
+                                      borderTop: "2px solid #E5E7EB",
+                                      backgroundColor: "#FDF2F2",
+                                    }}
+                                  >
+                                    <td
+                                      colSpan={6}
+                                      className="py-1 px-2 font-semibold"
+                                      style={{ color: "#C41230" }}
+                                    >
+                                      합계 {displayRows.length}건
+                                      {headerBatch && (
+                                        <span className="ml-2 text-[10px] font-normal text-gray-500">
+                                          (생산지시 {totalLots}틀 /{" "}
+                                          {headerBatch.drum_length_m.toLocaleString()}
+                                          m×{totalLots})
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-1 px-2 text-right font-medium text-gray-500">
+                                      {totalLots}틀
+                                    </td>
+                                    <td
+                                      className="py-1 px-2 text-right font-semibold"
+                                      style={{ color: "#C41230" }}
+                                    >
+                                      {totalQty.toLocaleString()}m
+                                    </td>
+                                    <td className="py-1 px-2 text-center text-[10px] text-gray-400">
+                                      {wipCount}건
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          );
+                        })()
                       ) : (
                         /* batch_group가 없거나 API 실패 시 기존 단일 수주 정보 표시 */
                         <div className="grid grid-cols-6 gap-x-4 gap-y-1">

@@ -79,13 +79,13 @@ export function SchedulingResultTable({
   const router = useRouter();
   const updateBatch = useSchedulingReviewStore((s) => s.updateBatch);
 
-  const batchMap: Record<ProcessGroup, SchedulingBatch[]> = {
+  const batchMap: Partial<Record<ProcessGroup, SchedulingBatch[]>> = {
     연선: yeonseoBatches,
     절연: insulationBatches,
     시스: sheatBatches,
   };
 
-  const activeBatches = batchMap[activeTab];
+  const activeBatches = batchMap[activeTab] ?? [];
 
   const batchNumbers = useMemo(
     () => assignBatchNumbers(activeBatches),
