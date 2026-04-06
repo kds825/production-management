@@ -578,35 +578,12 @@ def _write_annotation(
 ) -> int:
     """SQ 그룹 주석 행을 쓰고 다음 row_num을 반환한다.
 
-    연선 시트: drum_count_total = lot_count (실제 작업지시 틀 수)
-    기타 시트: drum_count_total = 수주 drum_count 합산
-    포맷: 주황색 볼드 (RGB 255,102,0).
+    포맷: {SQ}SQ--->{틀수}틀
     """
     sq_label = int(sq) if sq == int(sq) else sq
-
-    # WIP 참조 텍스트 수집 — 그룹 내 WIP 매칭된 배치의 process_stage + wip_id
-    wip_refs: list[str] = []
-    for b in group_batches:
-        if b.wip_matched_id is not None:
-            stage = wip_stage_lookup.get(b.wip_matched_id, "")
-            # "절연재고" → "절연", "연선재고" → "연선" (접미사 제거)
-            stage_short = stage.replace("재고", "") if stage else ""
-            wip_refs.append(f"{stage_short}{b.wip_matched_id}")
-
-    if sheet_name == "연선":
-        # 연선 시트: 틀 수(drum count) 표시
-        annotation = f"{sq_label}SQ--->{drum_count_total}틀"
-        if wip_refs:
-            annotation += f"({', '.join(wip_refs)})"
-    else:
-        # 기타 시트: WIP 참조 정보만 표시 (없으면 틀 수만)
-        annotation = f"{sq_label}SQ--->{drum_count_total}틀"
-        if wip_refs:
-            annotation += f"({', '.join(wip_refs)})"
-
+    annotation = f"{sq_label}SQ--->{drum_count_total}틀"
     cell = ws.cell(row=row_num, column=1, value=annotation)
     cell.font = _SUBTOTAL_FONT
-
     return row_num + 1
 
 
