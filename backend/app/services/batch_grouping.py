@@ -193,12 +193,18 @@ def create_batches(
         if "TFR-GV" in (order.product_group or "").upper() and sq <= 25:
             continue
 
-        stranding_type_o = item_o.stranding_type if item_o and item_o.stranding_type else "압축"
+        stranding_type_o = (
+            item_o.stranding_type if item_o and item_o.stranding_type else "압축"
+        )
         voltage_o = order.voltage or ""
         gkey = (sq, voltage_o, stranding_type_o)
 
         lot_info = drum_lots.get(sq)
-        lot_size = float(lot_info.lot_stranding) if lot_info and lot_info.lot_stranding else None
+        lot_size = (
+            float(lot_info.lot_stranding)
+            if lot_info and lot_info.lot_stranding
+            else None
+        )
 
         order_qty = float(order.ordered_qty_m or 0) * (1.0 + defect_buffer_pct)
         if order_qty <= 0:
@@ -214,7 +220,10 @@ def create_batches(
             }
         _strand_groups[gkey]["total_qty"] += order_qty
         # 연선재고 WIP 사용 수주는 이미 연선이 완료된 재고 → 틀 계산 대상에서 차감
-        if getattr(order, "use_wip", False) and (getattr(order, "wip_type", "") or "") == "연선재고":
+        if (
+            getattr(order, "use_wip", False)
+            and (getattr(order, "wip_type", "") or "") == "연선재고"
+        ):
             _strand_groups[gkey]["wip_strand_qty"] += order_qty
         _strand_groups[gkey]["orders"].append(order)
 
@@ -249,8 +258,16 @@ def create_batches(
         # 그룹 대표 선속·준비시간 (첫 번째 수주 기준, 동일 SQ 그룹이므로 동일 선속)
         rep_order_g = orders_g[0]
         rep_speed_g = _find_speed(speed_lookup, "연선", rep_order_g, sq)
-        line_speed_g = float(rep_speed_g.line_speed_mpm) if rep_speed_g and rep_speed_g.line_speed_mpm else None
-        setup_time_g = float(rep_speed_g.setup_spec_min) if rep_speed_g and rep_speed_g.setup_spec_min else 0.0
+        line_speed_g = (
+            float(rep_speed_g.line_speed_mpm)
+            if rep_speed_g and rep_speed_g.line_speed_mpm
+            else None
+        )
+        setup_time_g = (
+            float(rep_speed_g.setup_spec_min)
+            if rep_speed_g and rep_speed_g.setup_spec_min
+            else 0.0
+        )
         rep_item_g = _find_item(rep_order_g, items)
         rep_material_g = _infer_material(rep_order_g)
         earliest_due_g = min((o.due_date for o in orders_g if o.due_date), default=None)
@@ -300,14 +317,26 @@ def create_batches(
         # scheduling-review·Excel 수주 단위 행 표시용.
         # estimated_duration_min=None — 스케줄러는 헤더 배치(seq=-1) duration 사용.
         for order in orders_g:
-            order_qty_o: float = float(order.ordered_qty_m or 0) * (1.0 + defect_buffer_pct)
+            order_qty_o: float = float(order.ordered_qty_m or 0) * (
+                1.0 + defect_buffer_pct
+            )
             item_o = _find_item(order, items)
             conductor_material_o = _infer_material(order)
             speed_o = _find_speed(speed_lookup, "연선", order, sq)
-            line_speed_o = float(speed_o.line_speed_mpm) if speed_o and speed_o.line_speed_mpm else None
-            setup_time_o = float(speed_o.setup_spec_min) if speed_o and speed_o.setup_spec_min else 0.0
+            line_speed_o = (
+                float(speed_o.line_speed_mpm)
+                if speed_o and speed_o.line_speed_mpm
+                else None
+            )
+            setup_time_o = (
+                float(speed_o.setup_spec_min)
+                if speed_o and speed_o.setup_spec_min
+                else 0.0
+            )
 
-            matched_wip_o = wip_by_order_line.get(f"{order.order_id}:{order.order_line}")
+            matched_wip_o = wip_by_order_line.get(
+                f"{order.order_id}:{order.order_line}"
+            )
             wip_id_o: int | None = matched_wip_o.wip_id if matched_wip_o else None
 
             strand_batch = ProductionBatch(
@@ -348,8 +377,16 @@ def create_batches(
             # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 수주 단위로 생성
             if is_61strand_g and conductor_material_o == "CU":
                 core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
-                core_spd = float(core_speed_o.line_speed_mpm) if core_speed_o and core_speed_o.line_speed_mpm else 25.0
-                core_setup = float(core_speed_o.setup_spec_min) if core_speed_o and core_speed_o.setup_spec_min else 210.0
+                core_spd = (
+                    float(core_speed_o.line_speed_mpm)
+                    if core_speed_o and core_speed_o.line_speed_mpm
+                    else 25.0
+                )
+                core_setup = (
+                    float(core_speed_o.setup_spec_min)
+                    if core_speed_o and core_speed_o.setup_spec_min
+                    else 210.0
+                )
                 core_dur = order_qty_o / core_spd if core_spd > 0 else None
                 core_batch = ProductionBatch(
                     run_label=run_label,
@@ -645,6 +682,257 @@ def create_batches(
     result["total_batches"] = len(batches)
 
     return result
+
+
+def detect_split_candidates(
+    run_label: str,
+    db: Session,
+    *,
+    gap_days: int = 3,
+) -> list[dict]:
+    """연선 배치 그룹 중 납기 간격이 큰 그룹을 분할 후보로 반환한다.
+
+    알고리즘:
+    1. run_label 기준으로 연선 배치를 조회한다.
+       - batch_seq == -1: 그룹 헤더 (drum_count, total_length_m, equipment_code 포함)
+       - batch_seq >= 1:  수주별 표시 배치 (due_date 포함)
+    2. 헤더의 drum_count > 1인 그룹에 대해서만 검사한다.
+    3. 수주별 배치를 due_date 오름차순으로 정렬한 뒤, DrumLotMaster.lot_stranding을
+       기준으로 수주들을 드럼에 탐욕적(greedy)으로 할당한다.
+    4. 드럼 N의 마지막 수주와 드럼 N+1의 첫 수주의 납기 간격이 gap_days 이상이면
+       해당 그룹을 분할 후보로 표시한다.
+    5. 같은 설비의 모든 연선 그룹의 estimated_duration_min 합계(설비 부하)도 함께 반환한다.
+
+    Returns:
+        [
+            {
+                "batch_group": str,
+                "equipment_code": str | None,
+                "sq_mm2": float,
+                "lot_count": int,
+                "total_length_m": float,
+                "proposed_splits": [
+                    {
+                        "lot_index": int,        # 1-based 드럼 번호
+                        "order_count": int,
+                        "total_m": float,
+                        "min_due": str,
+                        "max_due": str,
+                    },
+                    ...
+                ],
+                "gaps_days": [int, ...],         # splits[i]와 splits[i+1] 사이 간격
+                "equipment_load_hours": float | None,
+            },
+            ...
+        ]
+    """
+    from app.infrastructure.models.production_batch import ProductionBatch
+
+    # ── 연선 헤더 배치 로드 ────────────────────────────────────────────────────
+    headers = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.process_name == "연선",
+            ProductionBatch.batch_seq == -1,
+        )
+        .all()
+    )
+
+    if not headers:
+        return []
+
+    # ── drum_lot_master 일괄 로드 ─────────────────────────────────────────────
+    drum_lots: dict[float, DrumLotMaster] = {
+        float(d.cross_section): d
+        for d in db.query(DrumLotMaster).all()
+        if d.cross_section is not None
+    }
+
+    # ── 수주별 연선 배치 로드 (batch_seq >= 1) ────────────────────────────────
+    order_batches = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.process_name == "연선",
+            ProductionBatch.batch_seq >= 1,
+        )
+        .all()
+    )
+    # batch_group → 수주 배치 목록
+    group_order_map: dict[str, list[ProductionBatch]] = {}
+    for b in order_batches:
+        group_order_map.setdefault(b.batch_group or "", []).append(b)
+
+    # ── 설비 부하 계산 ────────────────────────────────────────────────────────
+    # 헤더 배치(batch_seq=-1) estimated_duration_min 합산 — 설비 코드별
+    equip_load: dict[str, float] = {}
+    for h in headers:
+        eq = h.equipment_code
+        if eq is not None and h.estimated_duration_min is not None:
+            equip_load[eq] = equip_load.get(eq, 0.0) + float(h.estimated_duration_min)
+
+    # ── 그룹별 분할 후보 검사 ─────────────────────────────────────────────────
+    candidates: list[dict] = []
+
+    for header in headers:
+        lot_count = int(header.drum_count or 1)
+        if lot_count <= 1:
+            # 단일 드럼 그룹은 분할 불필요
+            continue
+
+        bg = header.batch_group or ""
+        sq = float(header.sq_mm2 or 0)
+        lot_info = drum_lots.get(sq)
+        lot_stranding = (
+            float(lot_info.lot_stranding)
+            if lot_info and lot_info.lot_stranding
+            else None
+        )
+
+        if lot_stranding is None or lot_stranding <= 0:
+            # lot_stranding 정보 없으면 드럼 할당 불가 — 스킵
+            continue
+
+        order_rows = group_order_map.get(bg, [])
+        if not order_rows:
+            continue
+
+        # due_date 오름차순 정렬 — None은 끝으로
+        order_rows_sorted = sorted(
+            order_rows,
+            key=lambda b: (b.due_date or date.max, b.sales_order_id or ""),
+        )
+
+        # ── 탐욕적 드럼 할당 (용량 + 납기 경계 인식) ─────────────────────────
+        # 행 단위로 드럼을 채운다. 두 가지 조건으로 다음 드럼 전환:
+        #   1) 용량 초과: current_fill + order > lot_stranding
+        #   2) 납기 경계: 다른 수주번호로 넘어갈 때 납기 gap >= threshold이고
+        #      현재 드럼이 80% 이상 찼으면 새 드럼으로 (거의 찬 드럼에
+        #      여유 납기 수주를 억지로 넣지 않는다)
+        _FILL_RATIO_FOR_GAP_SPLIT = 0.8
+        drums: list[list[ProductionBatch]] = []
+        current_drum: list[ProductionBatch] = []
+        current_fill: float = 0.0
+
+        for idx, b in enumerate(order_rows_sorted):
+            order_len = float(b.total_length_m or 0)
+
+            # 조건 1: 용량 초과
+            if current_drum and current_fill + order_len > lot_stranding:
+                drums.append(current_drum)
+                current_drum = [b]
+                current_fill = order_len
+                continue
+
+            # 조건 2: 납기 경계 + 드럼 80%+ 충전
+            if (
+                current_drum
+                and idx > 0
+                and current_fill >= lot_stranding * _FILL_RATIO_FOR_GAP_SPLIT
+            ):
+                prev = order_rows_sorted[idx - 1]
+                if (
+                    (prev.sales_order_id or "") != (b.sales_order_id or "")
+                    and prev.due_date
+                    and b.due_date
+                    and (b.due_date - prev.due_date).days >= gap_days
+                ):
+                    drums.append(current_drum)
+                    current_drum = [b]
+                    current_fill = order_len
+                    continue
+
+            current_drum.append(b)
+            current_fill += order_len
+
+        if current_drum:
+            drums.append(current_drum)
+
+        if len(drums) <= 1:
+            # 실제로 드럼이 1개로 수렴하면 분할 불필요
+            continue
+
+        # ── 드럼 간 납기 간격 계산 ───────────────────────────────────────────
+        gaps: list[int] = []
+        for i in range(len(drums) - 1):
+            last_due_in_drum = max(
+                (b.due_date for b in drums[i] if b.due_date), default=None
+            )
+            first_due_next_drum = min(
+                (b.due_date for b in drums[i + 1] if b.due_date), default=None
+            )
+            if last_due_in_drum and first_due_next_drum:
+                gap = (first_due_next_drum - last_due_in_drum).days
+            else:
+                gap = 0
+            gaps.append(gap)
+
+        max_gap = max(gaps) if gaps else 0
+        if max_gap < gap_days:
+            continue
+
+        # ── gap=0 연속 드럼을 하나의 청크로 병합 ─────────────────────────────
+        # greedy 분할로 소량이 별도 드럼으로 넘어갈 수 있다 (예: 835m).
+        # gap=0이면 같은 납기 그룹이므로 하나의 제안 청크로 합산한다.
+        merged_chunks: list[list[ProductionBatch]] = [drums[0]]
+        merged_gaps: list[int] = []
+        for i, gap_val in enumerate(gaps):
+            if gap_val == 0:
+                # 이전 청크에 병합
+                merged_chunks[-1].extend(drums[i + 1])
+            else:
+                merged_gaps.append(gap_val)
+                merged_chunks.append(drums[i + 1])
+        gaps = merged_gaps
+        drums = merged_chunks
+
+        if len(drums) <= 1:
+            continue
+
+        # ── 분할 제안 구성 ────────────────────────────────────────────────────
+        proposed_splits = []
+        for i, drum in enumerate(drums, start=1):
+            dues = [b.due_date for b in drum if b.due_date]
+            batch_ids = [b.batch_id for b in drum if b.batch_id]
+            proposed_splits.append(
+                {
+                    "lot_index": i,
+                    "order_count": len(drum),
+                    "total_m": round(
+                        sum(float(b.total_length_m or 0) for b in drum), 1
+                    ),
+                    "min_due": str(min(dues)) if dues else None,
+                    "max_due": str(max(dues)) if dues else None,
+                    "order_ids": sorted(
+                        set(b.sales_order_id for b in drum if b.sales_order_id)
+                    ),
+                    "batch_ids": batch_ids,
+                }
+            )
+
+        eq_code = header.equipment_code
+        load_hours = (
+            round(equip_load[eq_code] / 60.0, 2)
+            if eq_code and eq_code in equip_load
+            else None
+        )
+
+        candidates.append(
+            {
+                "batch_group": bg,
+                "equipment_code": eq_code,
+                "sq_mm2": sq,
+                "lot_count": lot_count,
+                "total_length_m": float(header.total_length_m or 0),
+                "proposed_splits": proposed_splits,
+                "gaps_days": gaps,
+                "equipment_load_hours": load_hours,
+            }
+        )
+
+    return candidates
 
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────

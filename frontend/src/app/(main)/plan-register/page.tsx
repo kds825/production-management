@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { BatchSplitReview } from "@/features/plan-register/components/BatchSplitReview";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
 const PRIMARY = "#C41230";
@@ -45,11 +46,33 @@ interface ParsedBatch {
   total_quantity: number;
 }
 
+interface SplitChunk {
+  lot_index: number;
+  order_count: number;
+  total_m: number;
+  min_due: string;
+  max_due: string;
+  order_ids: string[];
+  batch_ids: number[];
+}
+
+interface SplitCandidate {
+  batch_group: string;
+  equipment_code: string | null;
+  sq: number;
+  lot_count: number;
+  total_length_m: number;
+  chunks: SplitChunk[];
+  gaps_days: number[];
+  equip_load_hours: number;
+}
+
 interface Stage1Result {
   run_label: string;
   parsed_orders: ParsedOrder[];
   batches: ParsedBatch[];
   warnings: string[];
+  split_candidates?: SplitCandidate[];
 }
 
 function WipUploadSection({
@@ -277,6 +300,7 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
   const [showDeleteHover, setShowDeleteHover] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<Stage1Result | null>(null);
+  const [splitGapDays, setSplitGapDays] = useState(3);
   const [apiError, setApiError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -339,6 +363,7 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
       if (wipFile?.file) {
         formData.append("wip_file", wipFile.file);
       }
+      formData.append("split_gap_days", String(splitGapDays));
 
       const res = await fetch(`${API}/pipeline/stage1`, {
         method: "POST",
@@ -371,7 +396,7 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
     } finally {
       setIsRunning(false);
     }
-  }, [erpFile, isRunning]);
+  }, [erpFile, isRunning, splitGapDays, wipFile]);
 
   const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
 
@@ -663,6 +688,20 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Batch split review */}
+          {result.split_candidates && result.split_candidates.length > 0 && (
+            <BatchSplitReview
+              candidates={result.split_candidates}
+              runLabel={result.run_label}
+              gapDays={splitGapDays}
+              onGapDaysChange={setSplitGapDays}
+              onSplitApplied={() => {
+                // 분할 후 결과 새로고침은 향후 구현
+                // 지금은 사용자가 scheduling-review에서 확인
+              }}
+            />
           )}
 
           {/* Link to scheduling-review */}
