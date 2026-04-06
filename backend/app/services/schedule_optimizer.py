@@ -393,9 +393,22 @@ def auto_schedule(
             }
             pred_proc = _PREDECESSOR_PROCESS.get(rep.process_name)
             if pred_proc:
-                # 시스처럼 색상 기준으로 그룹화된 경우 그룹 내 모든 SQ의 선행 제약 확인
                 all_sqs = {int(b.sq_mm2 or 0) for b in group_batches}
-                for sq_i in all_sqs:
+                if len(all_sqs) > 1:
+                    # 색상 기준 혼합 SQ 그룹(시스): 어느 SQ든 첫 드럼이 나오면 시작 가능
+                    # → 그룹 내 SQ 중 가장 이른 첫 출력 시각을 선행 제약으로 사용
+                    valid_firsts = [
+                        t for sq_i in all_sqs
+                        if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
+                        and t < datetime.max
+                    ]
+                    if valid_firsts:
+                        pred_min = min(valid_firsts)
+                        if pred_min > earliest:
+                            earliest = pred_min
+                else:
+                    # 단일 SQ 그룹: 해당 SQ의 선행 제약만 확인
+                    sq_i = next(iter(all_sqs))
                     pred_first = process_first_output_by_sq.get((pred_proc, sq_i))
                     if pred_first and pred_first > earliest:
                         earliest = pred_first
