@@ -108,14 +108,14 @@ def auto_schedule(
     )
     # Python 레벨 재정렬: batch_seq는 라우팅 내 공정 순서이지만,
     # batch_group 스케줄링: 공정 순서 최우선 (연선→절연→시스 파이프라인)
-    # 같은 공정 내에서 SQ 내림차순, 납기순 정렬
+    # 같은 공정 내에서 납기→우선순위→SQ 순으로 정렬 (실제 공장 스케줄링 기준)
     batches.sort(
         key=lambda b: (
             PROCESS_ORDER.get(b.process_name, 50),
             b.batch_seq or 0,  # 61연선 코어(seq=0)가 메인(seq=1)보다 먼저
-            -(float(b.sq_mm2 or 0)),
             b.due_date or date.max,
             b.customer_priority or 99,
+            -(float(b.sq_mm2 or 0)),
         )
     )
 
