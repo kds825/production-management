@@ -456,16 +456,27 @@ export function SchedulingResultTable({
                             color: "#334155",
                           }}
                         >
-                          <div className="flex items-center gap-2 text-[10px] font-semibold">
-                            {batchNum != null && (
-                              <span style={{ color: "#64748B" }}>
-                                배치 {batchNum}
+                          <div className="flex items-center justify-between text-[10px] font-semibold">
+                            <div className="flex items-center gap-2">
+                              {batchNum != null && (
+                                <span style={{ color: "#64748B" }}>
+                                  배치 {batchNum}
+                                </span>
+                              )}
+                              {batchNum != null && (
+                                <span style={{ color: "#CBD5E1" }}>—</span>
+                              )}
+                              {group.label}
+                            </div>
+                            {firstBatch?.batch_remarks && (
+                              <span
+                                className="text-[10px] font-medium truncate ml-4"
+                                style={{ color: "#475569", maxWidth: "60%" }}
+                                title={firstBatch.batch_remarks}
+                              >
+                                {firstBatch.batch_remarks}
                               </span>
                             )}
-                            {batchNum != null && (
-                              <span style={{ color: "#CBD5E1" }}>—</span>
-                            )}
-                            {group.label}
                           </div>
                         </td>
                       </tr>

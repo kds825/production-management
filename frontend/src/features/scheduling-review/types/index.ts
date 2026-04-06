@@ -14,6 +14,8 @@ export interface SchedulingBatch extends ProductionBatch {
   wip_core_colors?: string | null;
   /** 매칭된 WIP 재고 ID (wip_inventory.wip_id) — 다중 배치→WIP 연결에 사용 */
   wip_matched_id?: number | null;
+  /** 원본 비고(remarks) — 그룹 헤더에 표시용, 개별 행에서는 숨김 */
+  batch_remarks?: string;
 }
 
 export interface WipItem {

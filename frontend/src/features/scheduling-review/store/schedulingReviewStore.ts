@@ -105,7 +105,8 @@ function toBatch(b: ApiBatch): SchedulingBatch {
       ? b.wip_process_stage
         ? `${b.wip_process_stage} ${Math.round(b.total_length_m).toLocaleString()}m`
         : `재고 사용 ${Math.round(b.total_length_m).toLocaleString()}m`
-      : (b.remarks ?? ""),
+      : "",
+    batch_remarks: b.remarks ?? "",
     classification_reason: (() => {
       const reasons: string[] = [];
       const sq = Math.round(b.sq_mm2);
