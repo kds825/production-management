@@ -200,13 +200,16 @@ def list_tasks(
     # WIP 완료 배치는 간트에 미표시 — 재고로 대체된 공정이므로 스케줄 불필요
     q = q.filter(ProductionBatchModel.status != "wip_complete")
 
-    # 날짜 범위 필터 — 태스크가 윈도우와 겹치는 것만 포함
+    # 날짜 범위 필터 — 태스크 시간대가 윈도우와 겹치는 것 포함
+    # (start < window_end AND end > window_start 조건으로 부분 겹침도 포함)
     if date_from:
-        q = q.filter(
-            ScheduleTaskModel.start_datetime >= datetime.fromisoformat(date_from)
-        )
+        dt_from = datetime.fromisoformat(date_from)
+        q = q.filter(ScheduleTaskModel.end_datetime > dt_from)
     if date_to:
-        q = q.filter(ScheduleTaskModel.end_datetime <= datetime.fromisoformat(date_to))
+        # "YYYY-MM-DD" 형식이면 해당 날 끝까지 포함 (23:59:59)
+        dt_to_str = date_to if "T" in date_to else f"{date_to}T23:59:59"
+        dt_to = datetime.fromisoformat(dt_to_str)
+        q = q.filter(ScheduleTaskModel.start_datetime < dt_to)
 
     # 공정명 필터
     if process_type:

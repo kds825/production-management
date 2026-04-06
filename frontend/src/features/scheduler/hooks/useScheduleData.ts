@@ -26,18 +26,22 @@ function parseTask(raw: RawScheduleTask): ScheduleTask {
 }
 
 /**
- * 이번 주 월요일부터 +3주 금요일까지의 날짜 범위를 ISO 문자열로 반환한다.
- * 공장 수동 계획표 기준(3주 창)에 맞춰 조회 범위를 제한하여 불필요한 데이터를 줄인다.
+ * 계획 기준일(plan_base_date)로부터 +8주까지의 날짜 범위를 반환한다.
+ * 납기가 긴 대형 SQ 배치(300SQ+)가 뒤늦게 배치될 수 있으므로 충분히 넓게 잡는다.
  */
-function getThreeWeekWindow(): { dateFrom: string; dateTo: string } {
-  // 오늘부터 +4주까지 조회 — 계획 기준일이 오늘이면 반드시 포함
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const end = new Date(today);
-  end.setDate(today.getDate() + 28); // +4주
-  end.setHours(23, 59, 59, 999);
+function getFetchWindow(): { dateFrom: string; dateTo: string } {
+  const stored = typeof window !== "undefined" ? localStorage.getItem("plan_base_date") : null;
+  let base: Date;
+  if (stored && stored.length === 8) {
+    base = new Date(`${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`);
+  } else {
+    base = new Date();
+  }
+  base.setHours(0, 0, 0, 0);
+  const end = new Date(base);
+  end.setDate(base.getDate() + 56); // +8주
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  return { dateFrom: fmt(today), dateTo: fmt(end) };
+  return { dateFrom: fmt(base), dateTo: fmt(end) };
 }
 
 /**
@@ -61,7 +65,7 @@ export function useScheduleData() {
       setIsLoading(true);
       setError(null);
       try {
-        const { dateFrom, dateTo } = getThreeWeekWindow();
+        const { dateFrom, dateTo } = getFetchWindow();
         const tasksUrl = `/schedules/tasks?date_from=${dateFrom}&date_to=${dateTo}`;
 
         const [equipment, rawTasks, lineSpeeds] = await Promise.all([
@@ -86,10 +90,10 @@ export function useScheduleData() {
         // 계획 기준일자로 간트 뷰 자동 이동 — 가장 이른 task 시작 시각 기준
         if (tasks.length > 0) {
           const minStart = Math.min(...tasks.map((t) => t.start.getTime()));
-          const THREE_WEEKS_MS = 21 * 24 * 60 * 60 * 1000;
-          setRange({ start: minStart, end: minStart + THREE_WEEKS_MS });
+          const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000;
+          setRange({ start: minStart, end: minStart + FOUR_WEEKS_MS });
         } else {
-          setRange(getDefaultRange(7));
+          setRange(getDefaultRange(14));
         }
       } catch (err) {
         if (cancelled) return;
