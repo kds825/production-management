@@ -771,7 +771,7 @@ export function SchedulerView({
   const totalHeight = filteredEquipment.length * ROW_HEIGHT;
 
   // 패닝 훅 — overflow-auto 컨테이너에 연결
-  const scrollContainerRef = useTimelineNavigation();
+  const scrollContainerRef = useTimelineNavigation(dayWidth);
 
   // Issue 2: 범위 선택 상태를 SchedulerView 레벨에서 관리
   const [sharedSelection, setSharedSelection] =
