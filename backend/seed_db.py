@@ -610,7 +610,7 @@ def _calendars():
 
 
 # ---------------------------------------------------------------------------
-# 5. drum_lot_master (13 rows)
+# 5. drum_lot_master (14 rows)
 # ---------------------------------------------------------------------------
 def _drum_lots():
     return [
@@ -743,6 +743,19 @@ def _drum_lots():
             daily_production=10000,
             setup_time_min=180,
             drum_weight_ton=30,
+        ),
+        # 1250kcmil (633SQ) — 고압 35kV 압축연선, 소선경 1.2mm × 499본
+        # lot_stranding=1120m ≈ 드럼 1개 용량(1067m) + 트림 여유
+        # daily_production=8400m: 7.0 m/min × 60 × 20hr
+        DrumLotMaster(
+            cross_section=633,
+            wire_diameter=1.2,
+            wire_count=499,
+            lot_wire_drawing=5000,
+            lot_stranding=1120,
+            daily_production=8400,
+            setup_time_min=210,
+            drum_weight_ton=35,
         ),
     ]
 
@@ -951,12 +964,12 @@ def _speed_master():
     # 선속은 드럼 외경에 따라 달라지나 SQ 기준 근사값 사용. setup 180분(규격교체).
     tp_data = [
         # (cross_section, line_speed_mpm, setup_spec_min)
-        (16,  40, 180),
-        (25,  38, 180),
-        (35,  35, 180),
-        (50,  32, 180),
-        (70,  28, 180),
-        (95,  25, 180),
+        (16, 40, 180),
+        (25, 38, 180),
+        (35, 35, 180),
+        (50, 32, 180),
+        (70, 28, 180),
+        (95, 25, 180),
         (120, 22, 180),
         (150, 20, 180),
         (185, 18, 180),

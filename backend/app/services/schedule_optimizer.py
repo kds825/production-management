@@ -56,6 +56,7 @@ _SQ_TO_WIRE_DIAMETER: dict[int, float] = {
     240: 3.06,  # 37연선
     300: 2.60,
     400: 2.92,  # 61연선
+    633: 1.20,  # 1250kcmil 압축연선 499본
 }
 
 # 시스 재질 → 설비 라우팅 규칙 (10-3)
@@ -329,6 +330,42 @@ def auto_schedule(
             process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
             process_first_output_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
+
+        # ── 멀티설비 분배: 연선 공정에서 드럼 수 >= 2 이고 적격 설비 >= 2 일 때
+        #    드럼을 설비 수로 균등 분할하여 병렬 배치 ─────────────────────────
+        header_batch_chk = next((b for b in group_batches if b.batch_seq == -1), None)
+        total_drums = int(header_batch_chk.drum_count or 0) if header_batch_chk else 0
+        if (
+            is_stranding
+            and not group_key.startswith("CORE-")
+            and total_drums >= 2
+            and len(eligible) >= 2
+            # 같은 SQ가 이미 단일 설비에 고정된 경우 분배하지 않음 (규칙 2)
+            and sq_key not in sq_to_equip
+        ):
+            split_ok = _schedule_multi_equipment(
+                group_key=group_key,
+                group_batches=group_batches,
+                eligible=eligible,
+                total_drums=total_drums,
+                header_batch=header_batch_chk,
+                base_date=base_date,
+                run_label=run_label,
+                db=db,
+                speed_map=speed_map,
+                timeline=timeline,
+                last_batch_on_equip=last_batch_on_equip,
+                sq_to_equip=sq_to_equip,
+                predecessor_map=predecessor_map,
+                process_end_by_sq=process_end_by_sq,
+                process_first_output_by_sq=process_first_output_by_sq,
+                core_end_by_main_sq=core_end_by_main_sq,
+                tasks_created=tasks_created,
+                result=result,
+                welding_min=welding_min,
+            )
+            if split_ok:
+                continue
 
         # ── 그룹 전체 duration 계산 ──────────────────────────────────────────
         # batch_seq=-1 헤더 배치가 있으면 그 estimated_duration_min을 직접 사용.
@@ -632,6 +669,203 @@ def auto_schedule(
         result["total_tasks"] += 1
 
     return result
+
+
+# ── 멀티설비 분배 ────────────────────────────────────────────────────────────
+def _schedule_multi_equipment(
+    *,
+    group_key: str,
+    group_batches: list,
+    eligible: list,
+    total_drums: int,
+    header_batch,
+    base_date: datetime,
+    run_label: str,
+    db: "Session",
+    speed_map: dict,
+    timeline: dict,
+    last_batch_on_equip: dict,
+    sq_to_equip: dict,
+    predecessor_map: dict,
+    process_end_by_sq: dict,
+    process_first_output_by_sq: dict,
+    core_end_by_main_sq: dict,
+    tasks_created: list,
+    result: dict,
+    welding_min: float,
+) -> bool:
+    """연선 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
+
+    드럼 수를 설비 수로 나눠 각 설비에 proportional duration의 task를 생성한다.
+    process_end_by_sq / process_first_output_by_sq는 가장 이른 완료 기준으로 갱신.
+
+    Returns:
+        True면 분배 성공 (호출측에서 continue), False면 단일설비 경로로 폴백.
+    """
+
+    rep = group_batches[0]
+    sq = int(rep.sq_mm2 or 0)
+    sq_key = (rep.process_name, sq)
+
+    # 그룹 전체 duration 계산 (header 기준)
+    line_speed = float(rep.line_speed_mpm or 10)
+    if header_batch is not None:
+        hd = float(header_batch.estimated_duration_min or 0)
+        if hd <= 0:
+            total_len = float(header_batch.total_length_m or 0)
+            ls = float(header_batch.line_speed_mpm or 0) or line_speed
+            hd = total_len / ls if ls > 0 else 60
+        group_duration = hd
+    else:
+        return False  # 헤더 없으면 분배 불가
+
+    setup_min = float(rep.setup_time_min or 0)
+
+    # 드럼을 설비 수로 균등 분할
+    num_eq = len(eligible)
+    drums_per_eq = []
+    base_drums = total_drums // num_eq
+    remainder = total_drums % num_eq
+    for i in range(num_eq):
+        drums_per_eq.append(base_drums + (1 if i < remainder else 0))
+
+    # 선행공정 earliest 계산 (단일설비 경로와 동일 로직)
+    earliest = base_date
+    sq_int = sq
+
+    pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
+    if pred_proc:
+        pred_first = process_first_output_by_sq.get((pred_proc, sq_int))
+        if pred_first and pred_first > earliest:
+            earliest = pred_first
+
+    # 61연선 ST- 그룹: CORE 완료 대기
+    if group_key.startswith("ST-") and rep.process_name == "연선":
+        try:
+            main_sq = int(group_key.split("-")[1])
+        except (IndexError, ValueError):
+            main_sq = sq_int
+        core_end = core_end_by_main_sq.get(main_sq)
+        if core_end and core_end > earliest:
+            earliest = core_end
+
+    # 개별 수주 predecessor 확인
+    for b in group_batches:
+        pred_key = (b.sales_order_id, b.sales_order_line)
+        pred_tid = predecessor_map.get(pred_key)
+        if pred_tid:
+            pred_task = next((t for t in tasks_created if t.task_id == pred_tid), None)
+            if pred_task and pred_task.end_datetime > earliest:
+                earliest = pred_task.end_datetime
+
+    # 각 설비에 분배 task 생성
+    split_tasks = []
+    split_end_dts = []
+    split_first_outputs = []
+
+    for i, eq in enumerate(eligible):
+        eq_drums = drums_per_eq[i]
+        if eq_drums <= 0:
+            continue
+
+        eq_code = eq.equipment_code
+        # proportional duration
+        eq_duration = group_duration * (eq_drums / total_drums)
+
+        drum_winding_min = _get_drum_winding_min(eq_code, rep.sq_mm2, speed_map)
+
+        # 4-1: 동일SQ 셋업 스킵
+        prev_batch = last_batch_on_equip.get(eq_code)
+        actual_setup = setup_min
+        if prev_batch is not None:
+            same_sq = (
+                prev_batch.sq_mm2 is not None
+                and rep.sq_mm2 is not None
+                and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+            )
+            if same_sq:
+                actual_setup = 0.0
+
+        eq_total_duration = eq_duration + actual_setup + drum_winding_min
+
+        slots = timeline.get(eq_code, [])
+        slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
+        end_dt = calculate_end_datetime(slot_start, eq_total_duration, db)
+
+        # 시간 올림 — 간트 블록은 정각 단위
+        if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
+            end_dt = end_dt.replace(minute=0, second=0, microsecond=0) + timedelta(
+                hours=1
+            )
+
+        task = ScheduleTask(
+            batch_id=rep.batch_id,
+            equipment_code=eq_code,
+            start_datetime=slot_start,
+            end_datetime=end_dt,
+            setup_time_min=actual_setup,
+            status="scheduled",
+            run_label=run_label,
+            batch_group=group_key,
+        )
+        db.add(task)
+        db.flush()
+
+        timeline.setdefault(eq_code, []).append((slot_start, end_dt))
+        last_batch_on_equip[eq_code] = group_batches[-1]
+        split_tasks.append(task)
+        split_end_dts.append(end_dt)
+
+        # 첫 번째 드럼 출력 시각
+        first_drum_min = actual_setup + (eq_duration / eq_drums)
+        first_output_dt = calculate_end_datetime(slot_start, first_drum_min, db)
+        split_first_outputs.append(first_output_dt)
+
+        tasks_created.append(task)
+        result["total_tasks"] += 1
+
+    if not split_tasks:
+        return False
+
+    # 공정+SQ별 종료/첫출력 시각 — 가장 늦은 종료, 가장 이른 첫출력
+    proc_sq_key = (rep.process_name, sq_int)
+    latest_end = max(split_end_dts)
+    earliest_first = min(split_first_outputs)
+
+    if (
+        proc_sq_key not in process_end_by_sq
+        or latest_end > process_end_by_sq[proc_sq_key]
+    ):
+        process_end_by_sq[proc_sq_key] = latest_end
+
+    if (
+        proc_sq_key not in process_first_output_by_sq
+        or earliest_first < process_first_output_by_sq[proc_sq_key]
+    ):
+        process_first_output_by_sq[proc_sq_key] = earliest_first
+
+    # 그룹 내 배치 status + equipment 갱신 (첫 번째 설비를 대표로)
+    for b in group_batches:
+        pred_key = (b.sales_order_id, b.sales_order_line)
+        predecessor_map[pred_key] = split_tasks[0].task_id
+        b.equipment_code = split_tasks[0].equipment_code
+        b.status = "scheduled"
+
+    # 규칙 2 매핑은 기록하지 않음 — 분배된 그룹은 여러 설비를 사용하므로
+
+    # 납기 위반 체크
+    earliest_due = min((b.due_date for b in group_batches if b.due_date), default=None)
+    if earliest_due and latest_end.date() > earliest_due:
+        violation = {
+            "batch_id": rep.batch_id,
+            "task_id": split_tasks[0].task_id,
+            "type": "delivery",
+            "severity": "warning",
+            "detail": f"납기 {earliest_due} 초과 → 완료 예정 {latest_end.date()}",
+        }
+        result["violations"].append(violation)
+
+    return True
 
 
 def _find_eligible_equipment(
