@@ -516,24 +516,29 @@ def auto_schedule(
                     earliest = core_first
 
             # 개별 수주 레벨 predecessor — 절연/시스/연합/T/P는 first-drum overlap만 사용
-            # 절연: 연선 첫 드럼 나오면 시작 (process_first_output_by_sq)
-            # 시스: 절연 첫 드럼 나오면 시작 (위의 process-level first-drum overlap)
-            # 연합/T/P: 연선 첫 드럼 나오면 시작 (PREDECESSOR_PROCESS → 연선)
+            # ST-* 연선 그룹: CORE first-drum overlap 사용 → 개별 predecessor 스킵
             # 개별 predecessor end_datetime을 쓰면 전체 완료를 기다리게 되어 overlap 무효화
-            if rep.process_name not in (
-                "저압절연",
-                "고압절연",
-                "저압시스",
-                "고압시스",
-                "연합",
-                "T/P",
-            ):
+            _is_st_group = group_key.startswith("ST-") and rep.process_name == "연선"
+            _skip_individual = (
+                rep.process_name
+                in (
+                    "저압절연",
+                    "고압절연",
+                    "저압시스",
+                    "고압시스",
+                    "연합",
+                    "T/P",
+                )
+                or _is_st_group
+            )
+            if not _skip_individual:
                 for b in group_batches:
                     pred_key = (b.sales_order_id, b.sales_order_line)
                     pred_tid = predecessor_map.get(pred_key)
                     if pred_tid:
                         pred_task = next(
-                            (t for t in tasks_created if t.task_id == pred_tid), None
+                            (t for t in tasks_created if t.task_id == pred_tid),
+                            None,
                         )
                         if pred_task and pred_task.end_datetime > earliest:
                             earliest = pred_task.end_datetime
@@ -802,14 +807,21 @@ def _schedule_multi_equipment(
 
     # 개별 수주 predecessor 확인
     # 절연/시스/연합/T/P는 first-drum overlap만 사용 (단일설비 경로와 동일)
-    if rep.process_name not in (
-        "저압절연",
-        "고압절연",
-        "저압시스",
-        "고압시스",
-        "연합",
-        "T/P",
-    ):
+    # ST-* 연선 그룹: CORE first-drum overlap 사용 → 개별 predecessor 스킵
+    is_st_group = group_key.startswith("ST-") and rep.process_name == "연선"
+    skip_individual_pred = (
+        rep.process_name
+        in (
+            "저압절연",
+            "고압절연",
+            "저압시스",
+            "고압시스",
+            "연합",
+            "T/P",
+        )
+        or is_st_group
+    )
+    if not skip_individual_pred:
         for b in group_batches:
             pred_key = (b.sales_order_id, b.sales_order_line)
             pred_tid = predecessor_map.get(pred_key)
