@@ -73,6 +73,21 @@ interface Stage1Result {
   batches: ParsedBatch[];
   warnings: string[];
   split_candidates?: SplitCandidate[];
+  // incremental update 결과 요약 (stage1/update 응답에만 포함될 수 있음)
+  added_orders?: number;
+  created_batch_groups?: number;
+  preserved_batches?: number;
+}
+
+type UploadMode = "full" | "incremental";
+
+interface BatchStatusSummary {
+  total_batches: number;
+  completed: number;
+  in_progress: number;
+  planned: number;
+  frozen_wip_count: number;
+  available_wip_count: number;
 }
 
 function WipUploadSection({
@@ -293,7 +308,13 @@ function WipUploadSection({
 }
 
 // ERP 업로드 + Stage 1 트리거 섹션
-function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
+function ErpUploadSection({
+  wipFile,
+  onUploadModeChange,
+}: {
+  wipFile: WipFile | null;
+  onUploadModeChange?: (mode: UploadMode) => void;
+}) {
   const [erpFile, setErpFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -303,7 +324,24 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
   const [splitGapDays, setSplitGapDays] = useState(3);
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  // 업로드 모드: "full" = 전체 교체, "incremental" = 긴급수주 추가
+  const [uploadMode, setUploadMode] = useState<UploadMode>("full");
+  // 확인 모달 (Stage 1 실행 전 현황 확인)
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [batchSummary, setBatchSummary] = useState<BatchStatusSummary | null>(
+    null,
+  );
+  // 성공 토스트 메시지
+  const [successToast, setSuccessToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadModeChange = useCallback(
+    (mode: UploadMode) => {
+      setUploadMode(mode);
+      onUploadModeChange?.(mode);
+    },
+    [onUploadModeChange],
+  );
 
   const handleFile = useCallback((file: File) => {
     setValidationError(null);
@@ -351,55 +389,133 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
     setValidationError(null);
   }, []);
 
-  // POST to /api/pipeline/stage1 with the ERP file
+  // 에러 텍스트를 사용자 친화적 메시지로 변환
+  const parseApiError = useCallback(async (res: Response): Promise<string> => {
+    const errText = await res.text();
+    let userMsg = `서버 오류 (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      const detail = errJson.detail || "";
+      // 첫 줄만 추출 (SQL 쿼리/파라미터 제거)
+      userMsg =
+        typeof detail === "string" ? detail.split("\n")[0] : String(detail);
+      if (userMsg.length > 100) userMsg = userMsg.slice(0, 100) + "...";
+    } catch {
+      if (errText.length > 100) userMsg = errText.slice(0, 100) + "...";
+    }
+    return userMsg;
+  }, []);
+
+  // 실제 Stage 1 API 호출 (확인 모달 통과 후)
+  const executeStage1 = useCallback(
+    async (parentRunLabel?: string) => {
+      if (!erpFile || isRunning) return;
+      setConfirmModalOpen(false);
+      setIsRunning(true);
+      setApiError(null);
+      setResult(null);
+      setSuccessToast(null);
+
+      try {
+        const formData = new FormData();
+        formData.append("erp_file", erpFile);
+        if (wipFile?.file) {
+          formData.append("wip_file", wipFile.file);
+        }
+        formData.append("split_gap_days", String(splitGapDays));
+
+        let endpoint = `${API}/pipeline/stage1`;
+
+        // 기존 run이 있거나 명시적 모드가 지정된 경우 update 엔드포인트 사용
+        if (parentRunLabel) {
+          endpoint = `${API}/pipeline/stage1/update`;
+          formData.append("upload_mode", uploadMode);
+          formData.append("parent_run_label", parentRunLabel);
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          throw new Error(await parseApiError(res));
+        }
+
+        const data: Stage1Result = await res.json();
+        setResult(data);
+
+        // 업데이트 결과 요약 토스트 표시
+        if (parentRunLabel && data.added_orders !== undefined) {
+          const parts: string[] = [];
+          if (data.added_orders) parts.push(`${data.added_orders}건 추가`);
+          if (data.created_batch_groups)
+            parts.push(`${data.created_batch_groups}개 배치그룹 생성`);
+          if (data.preserved_batches)
+            parts.push(`${data.preserved_batches}개 보존`);
+          if (parts.length > 0) setSuccessToast(parts.join(", "));
+        }
+      } catch (err) {
+        setApiError(
+          err instanceof Error
+            ? err.message
+            : "알 수 없는 오류가 발생했습니다.",
+        );
+      } finally {
+        setIsRunning(false);
+      }
+    },
+    [erpFile, isRunning, splitGapDays, wipFile, uploadMode, parseApiError],
+  );
+
+  // Stage 1 실행 버튼 클릭 핸들러 — 기존 배치가 있으면 확인 모달 선표시
   const handleRunStage1 = useCallback(async () => {
     if (!erpFile || isRunning) return;
-    setIsRunning(true);
-    setApiError(null);
-    setResult(null);
 
+    // 1. 현재 배치 상태 조회
+    let summary: BatchStatusSummary | null = null;
     try {
-      const formData = new FormData();
-      formData.append("erp_file", erpFile);
-      if (wipFile?.file) {
-        formData.append("wip_file", wipFile.file);
+      const res = await fetch(`${API}/pipeline/batch-status-summary`);
+      if (res.ok) {
+        summary = await res.json();
       }
-      formData.append("split_gap_days", String(splitGapDays));
-
-      const res = await fetch(`${API}/pipeline/stage1`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        // 상세 SQL/파라미터 로그 제거 — 사용자에게 간결한 메시지만 표시
-        let userMsg = `서버 오류 (${res.status})`;
-        try {
-          const errJson = JSON.parse(errText);
-          const detail = errJson.detail || "";
-          // 첫 줄만 추출 (SQL 쿼리/파라미터 제거)
-          userMsg =
-            typeof detail === "string" ? detail.split("\n")[0] : String(detail);
-          if (userMsg.length > 100) userMsg = userMsg.slice(0, 100) + "...";
-        } catch {
-          if (errText.length > 100) userMsg = errText.slice(0, 100) + "...";
-        }
-        throw new Error(userMsg);
-      }
-
-      const data: Stage1Result = await res.json();
-      setResult(data);
-    } catch (err) {
-      setApiError(
-        err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.",
-      );
-    } finally {
-      setIsRunning(false);
+    } catch {
+      // 상태 조회 실패 시 조용히 무시하고 직접 실행
     }
-  }, [erpFile, isRunning, splitGapDays, wipFile]);
+
+    // 2. 기존 배치가 있으면 최신 run_label을 가져와 확인 모달 표시
+    if (summary && summary.total_batches > 0) {
+      setBatchSummary(summary);
+      setConfirmModalOpen(true);
+      return;
+    }
+
+    // 3. 기존 배치 없음 → 레거시 /stage1 직접 실행
+    await executeStage1();
+  }, [erpFile, isRunning, executeStage1]);
+
+  // 확인 모달에서 "업로드 진행" 클릭 시 — 최신 run_label을 받아 executeStage1 호출
+  const handleConfirmUpload = useCallback(async () => {
+    let parentRunLabel: string | undefined;
+    try {
+      const res = await fetch(`${API}/pipeline/runs`);
+      if (res.ok) {
+        const runs: Array<{ run_label: string }> = await res.json();
+        if (runs.length > 0) parentRunLabel = runs[0].run_label;
+      }
+    } catch {
+      // run_label 조회 실패 시 update 엔드포인트 없이 실행
+    }
+    await executeStage1(parentRunLabel);
+  }, [executeStage1]);
 
   const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
+
+  // 업로드 모드별 설명 텍스트
+  const modeDescription =
+    uploadMode === "full"
+      ? "ERP 전체 파일로 기존 계획을 교체합니다. 진행중/완료 배치는 보존됩니다."
+      : "긴급수주 파일의 주문만 기존 계획에 추가합니다.";
 
   return (
     <section className="mb-6">
@@ -410,6 +526,58 @@ function ErpUploadSection({ wipFile }: { wipFile: WipFile | null }) {
         ERP에서 추출한 작업지시서 파일(.xls)을 업로드하고 작업지시서를
         생성하세요
       </p>
+
+      {/* 업로드 모드 세그먼트 컨트롤 */}
+      <div className="mb-3">
+        <div
+          className="inline-flex rounded-lg overflow-hidden"
+          style={{ border: "1px solid #E5E7EB" }}
+        >
+          {(
+            [
+              { value: "full", label: "전체 교체" },
+              { value: "incremental", label: "긴급수주 추가" },
+            ] as const
+          ).map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => handleUploadModeChange(value)}
+              className="px-4 py-1.5 text-xs font-medium transition-colors"
+              style={{
+                backgroundColor: uploadMode === value ? PRIMARY : "#FFFFFF",
+                color: uploadMode === value ? "#FFFFFF" : "#4B5563",
+                borderRight: value === "full" ? "1px solid #E5E7EB" : undefined,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-500 mt-1.5">{modeDescription}</p>
+      </div>
+
+      {/* 성공 토스트 */}
+      {successToast && (
+        <div
+          className="mb-3 rounded-lg px-3 py-2 text-xs flex items-center justify-between"
+          style={{
+            backgroundColor: "#F0FDF4",
+            border: "1px solid #BBF7D0",
+            color: "#166534",
+          }}
+        >
+          <span>
+            <span className="font-semibold">업데이트 완료: </span>
+            {successToast}
+          </span>
+          <button
+            onClick={() => setSuccessToast(null)}
+            className="ml-3 text-green-400 hover:text-green-600 text-base leading-none"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* File upload area */}
       {!erpFile ? (
