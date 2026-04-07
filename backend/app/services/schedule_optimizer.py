@@ -359,9 +359,16 @@ def auto_schedule(
             # 고압절연 등 헤더 없는 공정: 그룹 내 배치 drum_count 합산
             total_drums = sum(int(b.drum_count or 0) for b in group_batches)
         is_high_insul = rep.process_name == "고압절연"
+        is_high_sheath = rep.process_name == "고압시스"
         multi_eligible = (
-            is_stranding and not _is_core_group(group_key) and sq_key not in sq_to_equip
-        ) or is_high_insul
+            (
+                is_stranding
+                and not _is_core_group(group_key)
+                and sq_key not in sq_to_equip
+            )
+            or is_high_insul
+            or is_high_sheath
+        )
         if multi_eligible and total_drums >= 2 and len(eligible) >= 2:
             split_ok = _schedule_multi_equipment(
                 group_key=group_key,
@@ -794,13 +801,24 @@ def _schedule_multi_equipment(
             earliest = core_first
 
     # 개별 수주 predecessor 확인
-    for b in group_batches:
-        pred_key = (b.sales_order_id, b.sales_order_line)
-        pred_tid = predecessor_map.get(pred_key)
-        if pred_tid:
-            pred_task = next((t for t in tasks_created if t.task_id == pred_tid), None)
-            if pred_task and pred_task.end_datetime > earliest:
-                earliest = pred_task.end_datetime
+    # 절연/시스/연합/T/P는 first-drum overlap만 사용 (단일설비 경로와 동일)
+    if rep.process_name not in (
+        "저압절연",
+        "고압절연",
+        "저압시스",
+        "고압시스",
+        "연합",
+        "T/P",
+    ):
+        for b in group_batches:
+            pred_key = (b.sales_order_id, b.sales_order_line)
+            pred_tid = predecessor_map.get(pred_key)
+            if pred_tid:
+                pred_task = next(
+                    (t for t in tasks_created if t.task_id == pred_tid), None
+                )
+                if pred_task and pred_task.end_datetime > earliest:
+                    earliest = pred_task.end_datetime
 
     # 각 설비에 분배 task 생성
     split_tasks = []
