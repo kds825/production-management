@@ -130,8 +130,9 @@ def create_batches(
     defect_params: dict = (
         defect_cfg.params_json if defect_cfg and defect_cfg.params_json else {}
     )
-    # defect_buffer_pct: 불량 재작업 대비 생산 길이 가산 비율, 기본값 5%
-    defect_buffer_pct: float = float(defect_params.get("defect_buffer_pct", 0.05))
+    # defect_buffer_pct: 불량 재작업 대비 생산 길이 가산 비율
+    # to-be 기준: 버퍼 미적용 (0%) — 틀수가 to-be와 일치하도록
+    defect_buffer_pct: float = float(defect_params.get("defect_buffer_pct", 0.0))
 
     # ── 잔량 흑색 소진 임계값 파라미터 로드 (3-4) ───────────────────────────
     remnant_cfg = (
@@ -226,6 +227,10 @@ def create_batches(
         if order_qty <= 0:
             continue
 
+        # 다심(multi-core) 케이블: 각 코어를 개별 연선하므로 작업량 = 수주량 × core_count
+        core_count_o = int(order.core_count or 1)
+        strand_qty = order_qty * core_count_o
+
         if gkey not in _strand_groups:
             _strand_groups[gkey] = {
                 "total_qty": 0.0,
@@ -235,13 +240,13 @@ def create_batches(
                 "stranding_type": stranding_type_o,
                 "orders": [],
             }
-        _strand_groups[gkey]["total_qty"] += order_qty
+        _strand_groups[gkey]["total_qty"] += strand_qty
         # 연선재고 WIP 사용 수주는 이미 연선이 완료된 재고 → 틀 계산 대상에서 차감
         if (
             getattr(order, "use_wip", False)
             and (getattr(order, "wip_type", "") or "") == "연선재고"
         ):
-            _strand_groups[gkey]["wip_strand_qty"] += order_qty
+            _strand_groups[gkey]["wip_strand_qty"] += strand_qty
         _strand_groups[gkey]["orders"].append(order)
 
     for (sq, voltage_g, stranding_type_g), grp in _strand_groups.items():
