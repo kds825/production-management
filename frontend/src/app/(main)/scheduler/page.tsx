@@ -1035,9 +1035,7 @@ export default function SchedulerPage() {
                             (p) => p.batch_group === currentBg,
                           );
                           const prev =
-                            currentIdx > 0
-                              ? processFlow[currentIdx - 1]
-                              : null;
+                            currentIdx > 0 ? processFlow[currentIdx - 1] : null;
                           const next =
                             currentIdx >= 0 &&
                             currentIdx < processFlow.length - 1
@@ -1052,7 +1050,10 @@ export default function SchedulerPage() {
                                   navigateToProcessBatch(prev.batch_group)
                                 }
                                 className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                                style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                                style={{
+                                  borderColor: "#D1D5DB",
+                                  color: "#4A2C2A",
+                                }}
                                 title={
                                   prev
                                     ? `${prev.process_name} (${prev.batch_group})`
@@ -1074,7 +1075,10 @@ export default function SchedulerPage() {
                                   navigateToProcessBatch(next.batch_group)
                                 }
                                 className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                                style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                                style={{
+                                  borderColor: "#D1D5DB",
+                                  color: "#4A2C2A",
+                                }}
                                 title={
                                   next
                                     ? `${next.process_name} (${next.batch_group})`
@@ -1089,12 +1093,13 @@ export default function SchedulerPage() {
                       <button
                         onClick={() => {
                           setAuditPanel((prev) => ({ ...prev, open: false }));
-                        selectTask(null);
-                      }}
-                      className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
-                    >
-                      ✕
-                    </button>
+                          selectTask(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
 
                   {/* 작업 요약 + 배치 그룹 수주 테이블 */}
