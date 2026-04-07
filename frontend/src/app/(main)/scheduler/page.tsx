@@ -451,15 +451,21 @@ export default function SchedulerPage() {
       const targetTask = tasks.find((t) => t.batch_group === targetBatchGroup);
       if (targetTask) {
         selectTask(targetTask.id);
-        // 간트 뷰를 해당 task의 시작 시간 근처로 스크롤
+        // 간트 뷰를 해당 task의 시작 시간 근처로 가로 스크롤
         const taskStart = new Date(targetTask.start).getTime();
         const range = useScheduleStore.getState().range;
         const span = range.end - range.start;
-        // task 시작 시간을 뷰의 20% 위치에 놓음
         const newStart = taskStart - span * 0.2;
         useScheduleStore.getState().setRange({
           start: newStart,
           end: newStart + span,
+        });
+        // 해당 task 블록으로 세로 스크롤 (설비 행 이동)
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            `[data-task-id="${targetTask.id}"]`,
+          );
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
         });
       } else {
         // 간트에 없는 경우(다른 공정 필터 등): 수주 목록만 갱신
