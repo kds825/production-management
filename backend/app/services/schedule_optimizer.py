@@ -75,6 +75,7 @@ PREDECESSOR_PROCESS: dict[str, str] = {
     "저압시스": "저압절연",
     "고압시스": "고압절연",
     "연합": "연선",
+    "T/P": "연선",
 }
 
 
@@ -348,18 +349,20 @@ def auto_schedule(
             process_first_output_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
 
-        # ── 멀티설비 분배: 연선 공정에서 드럼 수 >= 2 이고 적격 설비 >= 2 일 때
+        # ── 멀티설비 분배: 드럼 수 >= 2 이고 적격 설비 >= 2 일 때
         #    드럼을 설비 수로 균등 분할하여 병렬 배치 ─────────────────────────
+        #    대상: 연선(CORE 제외) + 고압절연(CV#1/CV#2 분배)
         header_batch_chk = next((b for b in group_batches if b.batch_seq == -1), None)
-        total_drums = int(header_batch_chk.drum_count or 0) if header_batch_chk else 0
-        if (
-            is_stranding
-            and not _is_core_group(group_key)
-            and total_drums >= 2
-            and len(eligible) >= 2
-            # 같은 SQ가 이미 단일 설비에 고정된 경우 분배하지 않음 (규칙 2)
-            and sq_key not in sq_to_equip
-        ):
+        if header_batch_chk:
+            total_drums = int(header_batch_chk.drum_count or 0)
+        else:
+            # 고압절연 등 헤더 없는 공정: 그룹 내 배치 drum_count 합산
+            total_drums = sum(int(b.drum_count or 0) for b in group_batches)
+        is_high_insul = rep.process_name == "고압절연"
+        multi_eligible = (
+            is_stranding and not _is_core_group(group_key) and sq_key not in sq_to_equip
+        ) or is_high_insul
+        if multi_eligible and total_drums >= 2 and len(eligible) >= 2:
             split_ok = _schedule_multi_equipment(
                 group_key=group_key,
                 group_batches=group_batches,
@@ -505,11 +508,19 @@ def auto_schedule(
                 if core_first and core_first > earliest:
                     earliest = core_first
 
-            # 개별 수주 레벨 predecessor — 절연/시스는 first-drum overlap만 사용
+            # 개별 수주 레벨 predecessor — 절연/시스/연합/T/P는 first-drum overlap만 사용
             # 절연: 연선 첫 드럼 나오면 시작 (process_first_output_by_sq)
             # 시스: 절연 첫 드럼 나오면 시작 (위의 process-level first-drum overlap)
+            # 연합/T/P: 연선 첫 드럼 나오면 시작 (PREDECESSOR_PROCESS → 연선)
             # 개별 predecessor end_datetime을 쓰면 전체 완료를 기다리게 되어 overlap 무효화
-            if rep.process_name not in ("저압절연", "고압절연", "저압시스", "고압시스"):
+            if rep.process_name not in (
+                "저압절연",
+                "고압절연",
+                "저압시스",
+                "고압시스",
+                "연합",
+                "T/P",
+            ):
                 for b in group_batches:
                     pred_key = (b.sales_order_id, b.sales_order_line)
                     pred_tid = predecessor_map.get(pred_key)
@@ -713,10 +724,13 @@ def _schedule_multi_equipment(
     result: dict,
     welding_min: float,
 ) -> bool:
-    """연선 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
+    """연선/고압절연 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
 
     드럼 수를 설비 수로 나눠 각 설비에 proportional duration의 task를 생성한다.
     process_end_by_sq / process_first_output_by_sq는 가장 이른 완료 기준으로 갱신.
+
+    - 연선: header_batch(seq=-1)의 duration 사용
+    - 고압절연: header 없음 → 그룹 내 배치 duration 합산
 
     Returns:
         True면 분배 성공 (호출측에서 continue), False면 단일설비 경로로 폴백.
@@ -726,9 +740,10 @@ def _schedule_multi_equipment(
     sq = int(rep.sq_mm2 or 0)
     sq_key = (rep.process_name, sq)
 
-    # 그룹 전체 duration 계산 (header 기준)
+    # 그룹 전체 duration 계산
     line_speed = float(rep.line_speed_mpm or 10)
     if header_batch is not None:
+        # 연선: header batch(seq=-1)의 estimated_duration_min 직접 사용
         hd = float(header_batch.estimated_duration_min or 0)
         if hd <= 0:
             total_len = float(header_batch.total_length_m or 0)
@@ -736,7 +751,17 @@ def _schedule_multi_equipment(
             hd = total_len / ls if ls > 0 else 60
         group_duration = hd
     else:
-        return False  # 헤더 없으면 분배 불가
+        # 고압절연 등 헤더 없는 공정: 각 배치 duration 합산
+        group_duration = 0.0
+        for b in group_batches:
+            d = float(b.estimated_duration_min or 0)
+            if d <= 0:
+                total_len = float(b.total_length_m or 0) + float(b.extra_length_m or 0)
+                ls = float(b.line_speed_mpm or 0) or line_speed
+                d = total_len / ls if ls > 0 else 60
+            group_duration += d
+        if group_duration <= 0:
+            return False  # duration 계산 불가 시 단일설비 폴백
 
     setup_min = float(rep.setup_time_min or 0)
 
