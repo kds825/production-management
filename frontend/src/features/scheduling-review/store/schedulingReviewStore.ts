@@ -103,9 +103,13 @@ function toBatch(b: ApiBatch): SchedulingBatch {
     voltage_type: voltageType,
     notes:
       b.wip_matched_id && !b.process_name.includes("시스")
-        ? b.wip_process_stage
-          ? `${b.wip_process_stage} ${Math.round(b.total_length_m).toLocaleString()}m`
-          : `재고 사용 ${Math.round(b.total_length_m).toLocaleString()}m`
+        ? (() => {
+            const conv = Math.round(
+              b.total_length_m * Math.max(b.core_count || 1, 1),
+            );
+            const label = b.wip_process_stage || "재고 사용";
+            return `${label} ${conv.toLocaleString()}m`;
+          })()
         : "",
     batch_remarks: b.remarks ?? "",
     classification_reason: (() => {

@@ -965,22 +965,21 @@ export function ProductionBatchTable({
                                     {(() => {
                                       const wipM: Record<string, number> = {};
                                       for (const b of group.batches) {
+                                        // 환산수량 = convertedQty (이미 total_length_m × core_count)
+                                        const conv =
+                                          b.convertedQty || b.total_length_m;
                                         if (b.notes.includes("연선재고"))
                                           wipM["연선재고"] =
-                                            (wipM["연선재고"] || 0) +
-                                            b.total_length_m;
+                                            (wipM["연선재고"] || 0) + conv;
                                         else if (b.notes.includes("절연재고"))
                                           wipM["절연재고"] =
-                                            (wipM["절연재고"] || 0) +
-                                            b.total_length_m;
+                                            (wipM["절연재고"] || 0) + conv;
                                         else if (b.notes.includes("연합재고"))
                                           wipM["연합재고"] =
-                                            (wipM["연합재고"] || 0) +
-                                            b.total_length_m;
+                                            (wipM["연합재고"] || 0) + conv;
                                         else if (b.notes.includes("시스재고"))
                                           wipM["시스재고"] =
-                                            (wipM["시스재고"] || 0) +
-                                            b.total_length_m;
+                                            (wipM["시스재고"] || 0) + conv;
                                       }
                                       return Object.entries(wipM)
                                         .map(
