@@ -930,11 +930,12 @@ def _find_eligible_equipment(
         if eq.range_unit == "mm":
             pass
         elif eq.range_unit == "Ø":
+            # 연합 설비: SQ 기준으로 직접 분류 (小4BO: ~25SQ, 4BO: 35SQ~)
             sq = float(batch.sq_mm2) if batch.sq_mm2 else None
-            if sq and eq.range_max:
-                approx_od = (sq**0.5) * 1.5 + 5
-                if approx_od > float(eq.range_max):
-                    continue
+            if sq and eq.range_min and sq < float(eq.range_min):
+                continue
+            if sq and eq.range_max and sq > float(eq.range_max):
+                continue
         else:
             sq = float(batch.sq_mm2) if batch.sq_mm2 else None
             if sq and eq.range_min and sq < float(eq.range_min):
