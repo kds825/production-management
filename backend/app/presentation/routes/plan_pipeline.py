@@ -289,6 +289,7 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
     - production_batch.wip_matched_id 로 어떤 배치에 매칭됐는지 batch_id / batch_group 포함
     """
     from app.infrastructure.models.wip_inventory import WipInventory
+    from app.infrastructure.models.sales_order import SalesOrder
     from sqlalchemy import or_
 
     # wip_inventory 전체 조회
@@ -343,6 +344,25 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
                 "matched_batch_group": row.batch_group,
             }
 
+    # wip_id별 실제 사용량(m) — 매칭된 수주의 ordered_qty_m 합산
+    from sqlalchemy import func as sqla_func
+
+    used_m_rows = (
+        db.query(
+            SalesOrder.wip_id,
+            sqla_func.sum(SalesOrder.ordered_qty_m),
+        )
+        .filter(
+            SalesOrder.run_label == run_label,
+            SalesOrder.wip_id.isnot(None),
+        )
+        .group_by(SalesOrder.wip_id)
+        .all()
+    )
+    wip_used_m: dict[int, float] = {
+        wid: float(total or 0) for wid, total in used_m_rows
+    }
+
     return [
         {
             "wip_id": w.wip_id,
@@ -358,6 +378,7 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
             "core": w.core,
             "core_colors": w.core_colors or "",
             "status": w.status or "",
+            "used_m": wip_used_m.get(w.wip_id, 0),
             "matched_batch_id": wip_match_map.get(w.wip_id, {}).get("matched_batch_id"),
             "matched_batch_group": wip_match_map.get(w.wip_id, {}).get(
                 "matched_batch_group"

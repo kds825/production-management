@@ -331,6 +331,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
           total_length_m: number;
           core_colors: string;
           status: string;
+          used_m: number;
           matched_batch_id: number | null;
           matched_batch_group: string | null;
         }[] = await res.json();
@@ -359,6 +360,7 @@ export const useSchedulingReviewStore = create<SchedulingReviewStore>()(
             total_length_m: w.total_length_m,
             convertedQty: calcConvertedQty(w.spec, w.total_length_m),
             status: w.status,
+            used_m: w.used_m || 0,
             voltage_class: w.voltage_class,
             matchedBatchId,
             matchedBatchGroup: w.matched_batch_group ?? undefined,

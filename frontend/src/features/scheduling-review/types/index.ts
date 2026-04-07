@@ -37,6 +37,8 @@ export interface WipItem {
   total_length_m: number;
   convertedQty: number;
   status: string;
+  /** 매칭된 수주의 ordered_qty_m 합산 — 실제 사용량(m) */
+  used_m: number;
   voltage_class: string;
   /** 매칭된 production_batch.batch_id (단일) */
   matchedBatchId?: string;

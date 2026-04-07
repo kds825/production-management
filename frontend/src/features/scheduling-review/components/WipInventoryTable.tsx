@@ -18,7 +18,8 @@ const BASE_COL_DEFS = [
   { key: "color", label: "선심색상", align: "left", width: 70 },
   { key: "stock", label: "조장(m)", align: "right", width: 65 },
   { key: "count", label: "드럼수", align: "right", width: 55 },
-  { key: "status", label: "상태", align: "center", width: 65 },
+  { key: "used_m", label: "사용(m)", align: "right", width: 70 },
+  { key: "remaining_m", label: "잔여(m)", align: "right", width: 70 },
 ] as const;
 
 const STAGE_COL = {
@@ -131,15 +132,37 @@ export function WipInventoryTable({
                       }}
                     >
                       {COL_DEFS.map((col, colIdx) => {
-                        const raw = item[col.key as keyof WipItem];
                         const isStageCol = col.key === "process_stage";
-                        const display = isStageCol
-                          ? String(raw ?? "").replace("재고", "")
-                          : typeof raw === "number"
-                            ? raw.toLocaleString()
-                            : String(raw ?? "");
-                        const isStatusCol = col.key === "status";
-                        const statusUsed = isStatusCol && raw === "사용완료";
+                        const isUsedCol = col.key === "used_m";
+                        const isRemainingCol = col.key === "remaining_m";
+
+                        let display: string;
+                        if (isStageCol) {
+                          display = String(item.process_stage ?? "").replace(
+                            "재고",
+                            "",
+                          );
+                        } else if (isUsedCol) {
+                          display =
+                            item.used_m > 0
+                              ? `${Math.round(item.used_m).toLocaleString()}`
+                              : "-";
+                        } else if (isRemainingCol) {
+                          const remaining = item.total_length_m - item.used_m;
+                          display =
+                            remaining > 0
+                              ? `${Math.round(remaining).toLocaleString()}`
+                              : remaining === 0 && item.used_m > 0
+                                ? "0"
+                                : "-";
+                        } else {
+                          const raw = item[col.key as keyof WipItem];
+                          display =
+                            typeof raw === "number"
+                              ? raw.toLocaleString()
+                              : String(raw ?? "");
+                        }
+
                         return (
                           <td
                             key={col.key}
@@ -163,7 +186,9 @@ export function WipInventoryTable({
                               <span
                                 className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
                                 style={
-                                  String(raw ?? "").includes("절연")
+                                  String(item.process_stage ?? "").includes(
+                                    "절연",
+                                  )
                                     ? {
                                         backgroundColor: "#EFF6FF",
                                         color: "#1D4ED8",
@@ -176,36 +201,28 @@ export function WipInventoryTable({
                               >
                                 {display}
                               </span>
-                            ) : isStatusCol ? (
-                              <div className="flex flex-col items-center gap-0.5">
-                                <span
-                                  className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
-                                  style={
-                                    statusUsed
-                                      ? {
-                                          backgroundColor: "#FEE2E2",
-                                          color: "#B91C1C",
-                                        }
-                                      : {
-                                          backgroundColor: "#DCFCE7",
-                                          color: "#15803D",
-                                        }
-                                  }
-                                >
-                                  {display || "–"}
-                                </span>
-                                {batchIds.length > 1 && (
-                                  <span
-                                    className="inline-block text-[8px] font-bold px-1 rounded"
-                                    style={{
-                                      backgroundColor: "#FEF3C7",
-                                      color: "#92400E",
-                                    }}
-                                  >
-                                    {batchIds.length}건
-                                  </span>
-                                )}
-                              </div>
+                            ) : isUsedCol ? (
+                              <span
+                                className="text-[11px] font-medium"
+                                style={{
+                                  color:
+                                    item.used_m > 0 ? "#B91C1C" : "#9CA3AF",
+                                }}
+                              >
+                                {display}
+                              </span>
+                            ) : isRemainingCol ? (
+                              <span
+                                className="text-[11px] font-medium"
+                                style={{
+                                  color:
+                                    item.total_length_m - item.used_m > 0
+                                      ? "#15803D"
+                                      : "#9CA3AF",
+                                }}
+                              >
+                                {display}
+                              </span>
                             ) : (
                               <span
                                 className="block truncate text-[11px]"
