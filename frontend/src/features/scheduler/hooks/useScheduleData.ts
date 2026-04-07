@@ -8,11 +8,12 @@ import { getDefaultRange } from "../utils/ganttUtils";
 
 interface RawScheduleTask extends Omit<
   ScheduleTask,
-  "start" | "end" | "delivery_date"
+  "start" | "end" | "delivery_date" | "created_at"
 > {
   start: string;
   end: string;
   delivery_date?: string;
+  created_at?: string;
 }
 
 /** ISO 문자열을 Date로 변환 */
@@ -22,6 +23,7 @@ function parseTask(raw: RawScheduleTask): ScheduleTask {
     start: new Date(raw.start),
     end: new Date(raw.end),
     delivery_date: raw.delivery_date ? new Date(raw.delivery_date) : undefined,
+    created_at: raw.created_at ? new Date(raw.created_at) : undefined,
   };
 }
 
@@ -30,10 +32,15 @@ function parseTask(raw: RawScheduleTask): ScheduleTask {
  * 납기가 긴 대형 SQ 배치(300SQ+)가 뒤늦게 배치될 수 있으므로 충분히 넓게 잡는다.
  */
 function getFetchWindow(): { dateFrom: string; dateTo: string } {
-  const stored = typeof window !== "undefined" ? localStorage.getItem("plan_base_date") : null;
+  const stored =
+    typeof window !== "undefined"
+      ? localStorage.getItem("plan_base_date")
+      : null;
   let base: Date;
   if (stored && stored.length === 8) {
-    base = new Date(`${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`);
+    base = new Date(
+      `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`,
+    );
   } else {
     base = new Date();
   }

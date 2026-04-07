@@ -43,6 +43,13 @@ interface GanttTaskBlockProps {
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
+const NEW_BATCH_WINDOW_MS = 5 * 60 * 1000; // 5분 이내 생성된 배치는 "신규"로 간주
+
+/** created_at이 현재 시각 기준 5분 이내이면 신규 배치로 판별 */
+function isNewBatch(createdAt: Date | undefined): boolean {
+  if (!createdAt) return false;
+  return Date.now() - createdAt.getTime() < NEW_BATCH_WINDOW_MS;
+}
 
 /**
  * 주말(토 00:00 ~ 월 00:00)을 건너뛰어 연속 평일 구간 배열을 반환한다.
@@ -300,6 +307,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   const isSelected = selectedTaskId === task.id;
 
+  // 증분 업데이트 후 신규 생성된 배치 여부 — created_at 기준 5분 이내
+  const isNew = isNewBatch(task.created_at);
+
   // --- 시간 구성 팝오버 (호버) ---
   const [showTimePopover, setShowTimePopover] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
@@ -365,6 +375,15 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
       onMouseEnter={() => setShowTimePopover(true)}
       onMouseLeave={() => setShowTimePopover(false)}
     >
+      {/* 신규 배치 글로우 애니메이션 keyframes — 컴포넌트당 한 번만 주입 */}
+      {isNew && (
+        <style>{`
+          @keyframes newBatchGlow {
+            0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+            50% { box-shadow: 0 0 8px 2px rgba(234, 179, 8, 0.6), 0 1px 3px rgba(0,0,0,0.15); }
+          }
+        `}</style>
+      )}
       {segments.map((seg, idx) => {
         const isFirst = idx === 0;
         const isLast = idx === segments.length - 1;
@@ -415,6 +434,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           // frozen 배치 좌측 강조 보더 — 첫 세그먼트만 적용
           ...(isFirst && frozenBorderColor
             ? { borderLeft: `3px solid ${frozenBorderColor}` }
+            : {}),
+          // 신규 배치 글로우 — 첫 세그먼트에만, 드래그 중에는 비활성
+          ...(isFirst && isNew && !isDragging
+            ? { animation: "newBatchGlow 1s ease-in-out 2" }
             : {}),
         };
 

@@ -1183,30 +1183,37 @@ def reschedule(
     """
     1-3: 긴급 변경 대응 — 기존 스케줄을 초기화하고 재스케줄링 수행.
 
-    기존 schedule_tasks를 모두 삭제하고, 관련 production_batch 상태를
-    'planned'으로 초기화한 뒤 auto_schedule을 재실행한다.
+    frozen 배치(in_progress/completed)의 schedule_tasks는 보존하고,
+    planned/scheduled 배치의 schedule_tasks만 삭제 후 auto_schedule을 재실행한다.
     Returns: auto_schedule과 동일한 결과 dict + "cleared_tasks" 수
     """
-    # 기존 스케줄 태스크 삭제
+    _FROZEN_STATUSES = {"in_progress", "completed"}
+
+    # frozen 배치의 batch_id 수집 — 해당 schedule_tasks는 삭제하지 않음
+    all_batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
+    )
+    frozen_batch_ids = {b.batch_id for b in all_batches if b.status in _FROZEN_STATUSES}
+
+    # frozen 배치에 속하지 않는 schedule_tasks만 삭제
     existing_tasks = (
         db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
     )
-    cleared_count = len(existing_tasks)
+    cleared_count = 0
     for task in existing_tasks:
-        db.delete(task)
+        if task.batch_id not in frozen_batch_ids:
+            db.delete(task)
+            cleared_count += 1
 
-    # 배치 상태 초기화 (planned으로 되돌림)
-    batches = (
-        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
-    )
-    for batch in batches:
+    # 배치 상태 초기화 — frozen 배치는 건드리지 않음
+    for batch in all_batches:
         if batch.status == "scheduled":
             batch.status = "planned"
             batch.equipment_code = None
 
     db.flush()  # 삭제 반영 후 재스케줄
 
-    # 재스케줄링 실행
+    # 재스케줄링 실행 — auto_schedule은 status='planned' 배치만 처리하므로 frozen 배치 안전
     result = auto_schedule(run_label, db, base_date=base_date)
     result["cleared_tasks"] = cleared_count
     return result

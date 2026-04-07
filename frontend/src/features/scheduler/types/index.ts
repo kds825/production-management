@@ -43,6 +43,8 @@ export interface ScheduleTask {
   material?: string;
   /** production_batch.batch_id — 상태 변경 API 호출에 필요 */
   batch_id?: number;
+  /** schedule_task 생성 시각 — 증분 업데이트 후 신규 배치 강조 표시에 사용 */
+  created_at?: Date;
 }
 
 export interface ConstraintViolation {
