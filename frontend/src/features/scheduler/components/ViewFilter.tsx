@@ -4,19 +4,24 @@ import { useMemo } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { ViewFilterType } from "../types";
 
-/** 저압 설비 — 수동 계획표(3.25계획) 기준 7종 */
+/** 저압 설비 — 저압 연선/절연/시스/연합/T·P */
 const LV_EQUIPMENT: string[] = [
   "ST-T6B0",
   "ST-54BO1",
   "CA-12BO",
   "CA-4BO",
+  "CA-LU",
   "EX-B100",
   "SH-A100",
   "SH-A120",
+  "TP-1",
+  "TP-2",
+  "TP-GD",
 ];
 
-/** 고압 설비 — CV절연/고압시스/T·P + 고압연선 */
+/** 고압 설비 — 고압 연선(AL6BO)/절연(CV)/시스(A150,B150) */
 const HV_EQUIPMENT: string[] = [
+  "ST-AL6BO",
   "ST-54BO2",
   "ST-54BO3",
   "ST-30BO",
