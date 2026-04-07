@@ -189,6 +189,264 @@ async def run_stage1(
     }
 
 
+@router.post("/stage1/update", summary="Stage 1 증분/전체 업데이트 (Freeze & Rebuild)")
+async def run_stage1_update(
+    erp_file: UploadFile = File(..., description="ERP 수주 파일 (.xls/.xlsx)"),
+    wip_file: UploadFile | None = File(None, description="재공 재고 파일 (선택)"),
+    upload_mode: str = Form(..., description="incremental 또는 full"),
+    parent_run_label: str = Form(..., description="기존 계획 실행의 run_label"),
+    split_gap_days: int = Form(
+        3, description="연선 그룹 분할 후보 납기 간격 임계값 (일)"
+    ),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Stage 1 증분/전체 업데이트 — Freeze & Rebuild.
+
+    완료/진행중 배치를 동결하고, planned 배치만 삭제 후 새 ERP 파일로 재계산한다.
+    run_label은 parent_run_label을 그대로 재사용하여 create_batches 필터링 호환성을 유지한다.
+
+    upload_mode:
+    - "incremental": 기존 수주를 유지하고 새 수주만 추가
+    - "full": 동결 수주 외 전부 삭제 후 새 파일로 교체
+    """
+    # ── 입력 검증 ─────────────────────────────────────────────────────────────
+    if upload_mode not in ("incremental", "full"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"upload_mode는 'incremental' 또는 'full'이어야 합니다: {upload_mode}",
+        )
+
+    # parent_run_label에 해당하는 배치가 존재하는지 확인
+    existing_count = (
+        db.query(func.count(ProductionBatch.batch_id))
+        .filter(ProductionBatch.run_label == parent_run_label)
+        .scalar()
+    )
+    if not existing_count:
+        raise HTTPException(
+            status_code=404,
+            detail=f"run_label '{parent_run_label}'에 해당하는 기존 계획이 없습니다.",
+        )
+
+    # run_label 재사용 — create_batches가 run_label로 필터링하므로 필수
+    run_label = parent_run_label
+
+    try:
+        # ── 1. Frozen 배치 식별 ───────────────────────────────────────────────
+        frozen = (
+            db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status.in_(["in_progress", "completed"]),
+            )
+            .all()
+        )
+        # frozen orders: batch_seq >= 1인 실제 수주 배치에서 추출
+        frozen_order_keys: set[tuple] = {
+            (b.sales_order_id, b.sales_order_line)
+            for b in frozen
+            if b.batch_seq is not None and b.batch_seq >= 1
+        }
+        frozen_wip_ids: set[int] = {
+            b.wip_matched_id for b in frozen if b.wip_matched_id is not None
+        }
+        frozen_batch_ids: set[int] = {b.batch_id for b in frozen}
+
+        # ── 1.5 Frozen orders의 모든 공정 배치도 보존 (F-4 fix) ───────────────
+        # 연선이 in_progress인데 절연/시스가 planned이면,
+        # 같은 order의 모든 공정 배치를 삭제 대상에서 제외해야 한다.
+        frozen_order_ids = {k[0] for k in frozen_order_keys}
+        if frozen_order_ids:
+            related_batches = (
+                db.query(ProductionBatch.batch_id)
+                .filter(
+                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.sales_order_id.in_(frozen_order_ids),
+                )
+                .all()
+            )
+            protected_batch_ids: set[int] = {b.batch_id for b in related_batches}
+        else:
+            protected_batch_ids = set()
+        # frozen 자체도 protected에 포함
+        protected_batch_ids |= frozen_batch_ids
+
+        # ── 2. Planned 배치/스케줄만 삭제 (FK 순서: audit_log → schedule_task → production_batch) ──
+        from app.infrastructure.models.audit_log import AuditLog
+        from app.infrastructure.models.schedule_task import ScheduleTask
+
+        # 삭제 대상: protected_batch_ids에 속하지 않는 planned 배치
+        planned_query = db.query(ProductionBatch.batch_id).filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.status == "planned",
+        )
+        if protected_batch_ids:
+            planned_query = planned_query.filter(
+                ProductionBatch.batch_id.notin_(protected_batch_ids)
+            )
+        unprotected_planned = planned_query.all()
+        delete_batch_ids = {b.batch_id for b in unprotected_planned}
+
+        deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
+        if delete_batch_ids:
+            # FK 순서 1: audit_log
+            deleted_counts["audit_log"] = (
+                db.query(AuditLog)
+                .filter(AuditLog.batch_id.in_(delete_batch_ids))
+                .delete(synchronize_session=False)
+            )
+            # FK 순서 2: schedule_task
+            deleted_counts["schedule_task"] = (
+                db.query(ScheduleTask)
+                .filter(ScheduleTask.batch_id.in_(delete_batch_ids))
+                .delete(synchronize_session=False)
+            )
+            # FK 순서 3: production_batch
+            deleted_counts["production_batch"] = (
+                db.query(ProductionBatch)
+                .filter(ProductionBatch.batch_id.in_(delete_batch_ids))
+                .delete(synchronize_session=False)
+            )
+
+        db.flush()
+
+        # ── 3. Sales Order 처리 ───────────────────────────────────────────────
+        erp_content = await erp_file.read()
+        if not erp_content:
+            raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
+
+        from app.infrastructure.models.sales_order import SalesOrder
+        from app.services.erp_parser import parse_erp_file_incremental
+
+        if upload_mode == "incremental":
+            # 기존 orders 유지 + 새 orders만 추가
+            parse_result = parse_erp_file_incremental(erp_content, run_label, db)
+        else:
+            # full: frozen orders의 SalesOrder는 보존, 나머지 삭제 후 새 파일로 교체
+            if frozen_order_keys:
+                # frozen orders 외의 SalesOrder만 삭제
+                # PostgreSQL: tuple_().in_() 사용 가능
+                from sqlalchemy import and_, or_
+
+                frozen_conditions = [
+                    and_(
+                        SalesOrder.order_id == oid,
+                        SalesOrder.order_line == oline,
+                    )
+                    for oid, oline in frozen_order_keys
+                ]
+                db.query(SalesOrder).filter(
+                    SalesOrder.run_label == run_label,
+                    ~or_(*frozen_conditions),
+                ).delete(synchronize_session=False)
+            else:
+                # frozen이 없으면 전체 삭제
+                db.query(SalesOrder).filter(
+                    SalesOrder.run_label == run_label,
+                ).delete(synchronize_session=False)
+
+            db.flush()
+            # 새 파일에서 파싱 — incremental 파서를 사용하여 frozen orders와의 중복 방지
+            parse_result = parse_erp_file_incremental(erp_content, run_label, db)
+
+        # ── 4. WIP 처리 ──────────────────────────────────────────────────────
+        wip_warnings: list[str] = []
+        if wip_file:
+            try:
+                from app.infrastructure.models.wip_inventory import WipInventory
+                from app.services.wip_parser import parse_wip_file
+
+                wip_content = await wip_file.read()
+                if wip_content:
+                    # frozen WIP를 제외한 기존 WIP 삭제
+                    wip_delete_query = db.query(WipInventory).filter(
+                        WipInventory.run_label == run_label,
+                    )
+                    if frozen_wip_ids:
+                        wip_delete_query = wip_delete_query.filter(
+                            WipInventory.wip_id.notin_(frozen_wip_ids)
+                        )
+                    wip_delete_query.delete(synchronize_session=False)
+                    db.flush()
+
+                    # 새 WIP 파싱
+                    wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
+                    wip_warnings.extend(wip_parse.get("warnings", []))
+                    if wip_parse["total"] > 0:
+                        wip_warnings.append(
+                            f"재공실사 {wip_parse['total']}건 등록 완료."
+                        )
+            except Exception as exc:
+                wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
+
+        # ── 5. WIP 매칭 — frozen WIP 제외 ─────────────────────────────────────
+        try:
+            wip_result = match_wip(
+                run_label,
+                db,
+                exclude_wip_ids=frozen_wip_ids if frozen_wip_ids else None,
+            )
+        except Exception as exc:
+            wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
+            wip_result = {"matched": 0, "skipped": 0, "details": []}
+
+        # ── 6. Batch Grouping — frozen orders 제외 ────────────────────────────
+        try:
+            batch_result = create_batches(
+                run_label,
+                db,
+                frozen_order_keys=frozen_order_keys if frozen_order_keys else None,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"배치 생성 실패: {exc}"
+            ) from exc
+
+        db.commit()
+
+        # ── 7. Split 감지 ────────────────────────────────────────────────────
+        try:
+            split_candidates = detect_split_candidates(
+                run_label, db, gap_days=split_gap_days
+            )
+        except Exception as exc:
+            logger.warning("[Stage1 Update] 분할 후보 감지 실패: %s", exc)
+            split_candidates = []
+
+        warnings = (
+            parse_result.get("warnings", [])
+            + wip_warnings
+            + batch_result.get("warnings", [])
+        )
+
+        return {
+            "run_label": run_label,
+            "upload_mode": upload_mode,
+            "frozen": {
+                "batch_count": len(frozen_batch_ids),
+                "order_count": len(frozen_order_keys),
+                "wip_count": len(frozen_wip_ids),
+                "protected_batch_count": len(protected_batch_ids),
+            },
+            "deleted": deleted_counts,
+            "parse": parse_result,
+            "wip": wip_result,
+            "batches": batch_result,
+            "warnings": warnings,
+            "split_candidates": split_candidates,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("[Stage1 Update] 실패 — 롤백 완료")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Stage 1 업데이트 실패 (롤백 완료): {exc}",
+        ) from exc
+
+
 @router.get("/stage1/{run_label}/batches", summary="배치 목록 JSON")
 def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     """지정한 run_label의 production_batch 데이터를 JSON으로 반환한다.
@@ -801,6 +1059,36 @@ def split_batch_group(
         "original_group": batch_group,
         "new_group": new_group,
         "moved_batches": updated,
+    }
+
+
+@router.patch("/batch/{batch_id}/status", summary="배치 상태 변경")
+def update_batch_status(batch_id: int, body: dict, db: Session = Depends(get_db)):
+    """배치 하나의 status를 변경한다 (planned / in_progress / completed).
+
+    간트 인라인 배지 클릭 및 컨텍스트 메뉴에서 호출된다.
+    동일 batch_group 내 헤더(batch_seq=-1)와 해당 배치만 변경한다.
+    """
+    new_status = body.get("status")
+    valid_statuses = {"planned", "in_progress", "completed"}
+    if new_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"유효하지 않은 status: {new_status}. 허용: {valid_statuses}",
+        )
+
+    batch = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_id == batch_id).first()
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"배치 {batch_id} 없음")
+
+    batch.status = new_status
+    db.commit()
+    return {
+        "batch_id": batch_id,
+        "status": new_status,
+        "batch_group": batch.batch_group,
     }
 
 

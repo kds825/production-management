@@ -38,6 +38,7 @@ def create_batches(
     *,
     date_from: date | None = None,
     date_to: date | None = None,
+    frozen_order_keys: set[tuple] | None = None,
 ) -> dict:
     """
     run_label에 해당하는 sales_order를 읽어서 production_batch를 생성한다.
@@ -46,6 +47,10 @@ def create_batches(
     (외주 플래그는 특정 공정 외주를 의미하며, 연선/절연/시스 계획 대상에서 제외하지 않는다.)
     코드 내 하드코딩된 설비 제약 조건(SQ≤10 등)에 의한 외주 분류만 적용한다.
     라우팅이 없거나 SQ 파싱에 실패하면 warnings에 기록 후 계속 진행한다.
+
+    Args:
+        frozen_order_keys: 증분 업데이트 시 동결된 수주 키 set. (order_id, order_line)
+            이 키에 해당하는 수주는 이미 배치가 존재하므로 배치 생성에서 제외한다.
 
     Returns:
         {
@@ -70,6 +75,17 @@ def create_batches(
     if date_to is not None:
         query = query.filter(SalesOrder.due_date <= date_to)
     orders = query.all()
+
+    # ── Frozen orders 제외 (증분 업데이트 시) ───────────────────────────────
+    # frozen_order_keys에 해당하는 수주는 이미 배치가 존재하므로 재생성하지 않는다.
+    if frozen_order_keys:
+        before_count = len(orders)
+        orders = [
+            o for o in orders if (o.order_id, o.order_line) not in frozen_order_keys
+        ]
+        excluded = before_count - len(orders)
+        if excluded > 0:
+            result["warnings"].append(f"동결 수주 {excluded}건 제외 (이미 배치 존재)")
 
     # ── WIP 매칭 룩업: "order_id:order_line" → WipInventory ───────────────
     # order.wip_id(FK)를 기준으로 구성 — 1개 WIP가 여러 수주에 매칭될 수 있으므로

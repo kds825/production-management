@@ -32,8 +32,12 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
     """
     workbook = xlrd.open_workbook(file_contents=file_content)
     result: dict = {
-        "total": 0, "진행": 0, "대기": 0, "외주_제외": 0,
-        "inserted": 0, "warnings": [],
+        "total": 0,
+        "진행": 0,
+        "대기": 0,
+        "외주_제외": 0,
+        "inserted": 0,
+        "warnings": [],
     }
 
     # ── 기존 sales_order 전체 삭제 ───────────────────────────────────────────
@@ -148,6 +152,387 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
 
     db.flush()
     return result
+
+
+def parse_erp_file_incremental(
+    file_content: bytes, run_label: str, db: Session
+) -> dict:
+    """ERP 파일을 증분(incremental) 파싱하여 기존 SalesOrder를 유지하고 새 수주만 추가.
+
+    기존 parse_erp_file()과의 차이:
+    - 기존 sales_order를 삭제하지 않음
+    - .xlsx(openpyxl) 우선, .xls(xlrd) 폴백
+    - 시트명 "진행"/"대기" 고정이 아닌, "수주번호" 헤더가 있는 모든 시트 자동 탐지
+    - 중복 감지는 order_id 기준 (order_line은 synthetic이므로 제외)
+    - line_counter는 기존 max(order_line) + 1부터 시작
+
+    Args:
+        file_content: .xlsx 또는 .xls 파일의 raw bytes
+        run_label:    계획 실행 식별자 (기존 run_label 재사용)
+        db:           SQLAlchemy 세션 (commit은 호출부 책임)
+
+    Returns:
+        {
+            "total": int, "inserted": int, "skipped_dup": int,
+            "외주_제외": int, "warnings": list[str],
+        }
+    """
+    from io import BytesIO
+
+    result: dict = {
+        "total": 0,
+        "inserted": 0,
+        "skipped_dup": 0,
+        "외주_제외": 0,
+        "warnings": [],
+    }
+
+    # ── 기존 order_id 집합 로드 (중복 감지용 — order_id 기준) ─────────────────
+    existing_order_ids: set[str] = {
+        oid
+        for (oid,) in db.query(SalesOrder.order_id)
+        .filter(SalesOrder.run_label == run_label)
+        .distinct()
+        .all()
+    }
+
+    # ── line_counter: 기존 max(order_line) + 1부터 시작 ───────────────────────
+    from sqlalchemy import func
+
+    max_line = (
+        db.query(func.max(SalesOrder.order_line))
+        .filter(SalesOrder.run_label == run_label)
+        .scalar()
+    )
+    line_counter = max_line or 0
+
+    # ── item_master 룩업: (product_group, voltage) → item_code ───────────────
+    items = db.query(ItemMaster).all()
+    _item_by_pg_volt: dict[tuple[str, str], str] = {}
+    _item_by_pg: dict[str, str] = {}
+    for it in items:
+        pg = (it.product_group or "").strip()
+        vt = (it.voltage or "").strip()
+        if pg and vt and (pg, vt) not in _item_by_pg_volt:
+            _item_by_pg_volt[(pg, vt)] = it.item_code
+        if pg and pg not in _item_by_pg:
+            _item_by_pg[pg] = it.item_code
+
+    def _resolve_item_code(product_group: str, voltage: str | None) -> str | None:
+        pg = (product_group or "").strip()
+        vt = (voltage or "").strip()
+        if not pg:
+            return None
+        return _item_by_pg_volt.get((pg, vt)) or _item_by_pg.get(pg)
+
+    # ── .xlsx 시도 (openpyxl) → 실패 시 .xls 폴백 (xlrd) ────────────────────
+    parsed = False
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(BytesIO(file_content), data_only=True)
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            header_row_idx = _find_header_row_openpyxl(
+                ws, keyword="수주번호", max_scan=25
+            )
+            if header_row_idx is None:
+                continue  # 이 시트에는 수주 데이터 없음
+
+            headers = _build_header_map_openpyxl(ws, header_row_idx)
+            order_id_col = headers.get("수주번호")
+
+            for r in range(header_row_idx + 1, ws.max_row + 1):
+                check_col = order_id_col if order_id_col is not None else 1
+                cell_val = ws.cell(r, check_col).value
+                if not str(cell_val or "").strip():
+                    continue
+
+                try:
+                    order_id = _get_str_openpyxl(ws, r, headers, "수주번호")
+                    if not order_id:
+                        continue
+
+                    # 중복 감지: order_id 기준 (F-5 fix)
+                    if order_id in existing_order_ids:
+                        result["skipped_dup"] += 1
+                        continue
+
+                    outsource_plan = _get_str_openpyxl(ws, r, headers, "외주계획") or ""
+                    is_outsourced = outsource_plan.strip().upper() == "Y"
+
+                    due_date_raw = _get_cell_openpyxl(ws, r, headers, "납품일")
+                    due_date = _parse_date_openpyxl(due_date_raw)
+
+                    spec_raw = _get_str_openpyxl(ws, r, headers, "규격") or ""
+                    core_count = _extract_core_count(spec_raw)
+
+                    drum_length_m = _get_num_openpyxl(ws, r, headers, "(수주)조장(M)")
+                    product_group = _get_str_openpyxl(ws, r, headers, "제품군") or ""
+                    voltage = _get_str_openpyxl(ws, r, headers, "전압")
+                    item_code = _resolve_item_code(product_group, voltage)
+
+                    line_counter += 1
+                    order = SalesOrder(
+                        order_id=order_id,
+                        order_line=line_counter,
+                        order_status=sheet_name,
+                        item_code=item_code,
+                        product_group=product_group,
+                        voltage=voltage,
+                        spec_raw=spec_raw,
+                        customer_name=_get_str_openpyxl(ws, r, headers, "거래처명"),
+                        due_date=due_date,
+                        due_type="출하기준",
+                        drum_length_m=drum_length_m,
+                        drum_count=_get_int_openpyxl(ws, r, headers, "(수주)개수(ea)"),
+                        ordered_qty_m=_get_num_openpyxl(
+                            ws, r, headers, "(수주)수량(M)"
+                        ),
+                        self_plan_qty_m=_get_num_openpyxl(ws, r, headers, "(자체)조장"),
+                        unit_price_krw=_get_num_openpyxl(ws, r, headers, "원화단가"),
+                        amount_krw=_get_num_openpyxl(ws, r, headers, "원화금액"),
+                        cu_weight_kg=_get_num_openpyxl(ws, r, headers, "CU량"),
+                        al_weight_kg=_get_num_openpyxl(ws, r, headers, "AL량"),
+                        core_count=core_count,
+                        core_colors=_get_str_openpyxl(ws, r, headers, "선심색상"),
+                        sheath_color=_get_str_openpyxl(ws, r, headers, "색상"),
+                        neutral_wire=_get_str_openpyxl(ws, r, headers, "중성선"),
+                        is_outsourced=is_outsourced,
+                        run_label=run_label,
+                    )
+                    db.add(order)
+                    existing_order_ids.add(order_id)  # 같은 파일 내 중복 방지
+                    result["inserted"] += 1
+
+                    if is_outsourced:
+                        result["외주_제외"] += 1
+
+                    result["total"] += 1
+
+                except Exception as e:
+                    result["warnings"].append(f"[{sheet_name}] 행 {r}: {e}")
+
+        parsed = True
+    except Exception:
+        pass  # .xlsx 파싱 실패 → .xls 폴백
+
+    if not parsed:
+        # .xls 폴백 (xlrd) — 기존 parse_erp_file과 동일한 xlrd 로직 사용
+        try:
+            workbook = xlrd.open_workbook(file_contents=file_content)
+        except Exception as exc:
+            raise ValueError(f"xlsx/xls 모두 파싱 실패: {exc}") from exc
+
+        for sheet_name in workbook.sheet_names():
+            sheet = workbook.sheet_by_name(sheet_name)
+            header_row_idx = _find_header_row(sheet, keyword="수주번호", max_scan=25)
+            if header_row_idx is None:
+                continue
+
+            headers = _build_header_map(sheet, header_row_idx)
+            order_id_col_idx = headers.get("수주번호")
+
+            for r in range(header_row_idx + 1, sheet.nrows):
+                check_col = order_id_col_idx if order_id_col_idx is not None else 0
+                if not str(sheet.cell_value(r, check_col)).strip():
+                    continue
+
+                try:
+                    order_id = _get_str(sheet, r, headers, "수주번호")
+                    if not order_id:
+                        continue
+
+                    if order_id in existing_order_ids:
+                        result["skipped_dup"] += 1
+                        continue
+
+                    outsource_plan = _get_str(sheet, r, headers, "외주계획") or ""
+                    is_outsourced = outsource_plan.strip().upper() == "Y"
+
+                    due_date_raw = _get_cell(sheet, r, headers, "납품일")
+                    due_date = _parse_date(due_date_raw, workbook.datemode)
+
+                    spec_raw = _get_str(sheet, r, headers, "규격") or ""
+                    core_count = _extract_core_count(spec_raw)
+
+                    drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
+                    product_group = _get_str(sheet, r, headers, "제품군") or ""
+                    voltage = _get_str(sheet, r, headers, "전압")
+                    item_code = _resolve_item_code(product_group, voltage)
+
+                    line_counter += 1
+                    order = SalesOrder(
+                        order_id=order_id,
+                        order_line=line_counter,
+                        order_status=sheet_name,
+                        item_code=item_code,
+                        product_group=product_group,
+                        voltage=voltage,
+                        spec_raw=spec_raw,
+                        customer_name=_get_str(sheet, r, headers, "거래처명"),
+                        due_date=due_date,
+                        due_type="출하기준",
+                        drum_length_m=drum_length_m,
+                        drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
+                        ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
+                        self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
+                        unit_price_krw=_get_num(sheet, r, headers, "원화단가"),
+                        amount_krw=_get_num(sheet, r, headers, "원화금액"),
+                        cu_weight_kg=_get_num(sheet, r, headers, "CU량"),
+                        al_weight_kg=_get_num(sheet, r, headers, "AL량"),
+                        core_count=core_count,
+                        core_colors=_get_str(sheet, r, headers, "선심색상"),
+                        sheath_color=_get_str(sheet, r, headers, "색상"),
+                        neutral_wire=_get_str(sheet, r, headers, "중성선"),
+                        is_outsourced=is_outsourced,
+                        run_label=run_label,
+                    )
+                    db.add(order)
+                    existing_order_ids.add(order_id)
+                    result["inserted"] += 1
+
+                    if is_outsourced:
+                        result["외주_제외"] += 1
+
+                    result["total"] += 1
+
+                except Exception as e:
+                    result["warnings"].append(f"[{sheet_name}] 행 {r + 1}: {e}")
+
+    if result["inserted"] == 0 and result["skipped_dup"] == 0:
+        result["warnings"].append(
+            "수주 데이터를 찾을 수 없습니다 — 수주번호 헤더가 있는 시트 없음"
+        )
+
+    db.flush()
+    return result
+
+
+# ── openpyxl 전용 헬퍼 (증분 파서용) ──────────────────────────────────────────
+
+
+def _find_header_row_openpyxl(ws, keyword: str, max_scan: int) -> int | None:
+    """openpyxl 워크시트에서 헤더 행을 탐지한다.
+
+    keyword를 포함하면서 다른 컬럼 키워드도 함께 있는 행을 찾는다.
+    반환값은 1-based 행 번호 (openpyxl 규약).
+    """
+    confirm_keywords = {"전압", "제품군", "규격", "거래처", "납품일"}
+    for r in range(1, min(max_scan + 1, ws.max_row + 1)):
+        row_texts = [
+            str(ws.cell(r, c).value or "").strip() for c in range(1, ws.max_column + 1)
+        ]
+        has_keyword = any(
+            keyword == t or keyword == t.rstrip(":").strip() for t in row_texts
+        )
+        if not has_keyword:
+            continue
+        confirm_count = sum(
+            1 for ck in confirm_keywords if any(ck in t for t in row_texts)
+        )
+        if confirm_count >= 2:
+            return r
+    return None
+
+
+def _build_header_map_openpyxl(ws, header_row: int) -> dict[str, int]:
+    """openpyxl 워크시트에서 {컬럼명: 열번호(1-based)} 딕셔너리를 반환."""
+    headers: dict[str, int] = {}
+    for c in range(1, ws.max_column + 1):
+        val = str(ws.cell(header_row, c).value or "").strip()
+        val = val.replace("\n", " ").replace("\r", " ").strip()
+        if val and val not in headers:
+            headers[val] = c
+    return headers
+
+
+def _get_cell_openpyxl(ws, row: int, headers: dict[str, int], col_name: str):
+    """openpyxl 워크시트에서 셀 값을 반환. 부분 일치 폴백 포함."""
+    col_idx = headers.get(col_name)
+    if col_idx is None:
+        norm = col_name.replace(" ", "").replace("\n", "").lower()
+        for h, idx in headers.items():
+            h_norm = h.replace(" ", "").replace("\n", "").lower()
+            if norm in h_norm or h_norm in norm:
+                col_idx = idx
+                break
+    if col_idx is None:
+        return None
+    return ws.cell(row, col_idx).value
+
+
+def _get_str_openpyxl(
+    ws, row: int, headers: dict[str, int], col_name: str
+) -> str | None:
+    """openpyxl 셀 값을 문자열로 반환."""
+    val = _get_cell_openpyxl(ws, row, headers, col_name)
+    if val is None:
+        return None
+    if isinstance(val, float) and val == int(val):
+        s = str(int(val))
+    else:
+        s = str(val).strip()
+    return s if s else None
+
+
+def _get_num_openpyxl(
+    ws, row: int, headers: dict[str, int], col_name: str
+) -> float | None:
+    """openpyxl 셀 값을 float으로 반환."""
+    val = _get_cell_openpyxl(ws, row, headers, col_name)
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _get_int_openpyxl(
+    ws, row: int, headers: dict[str, int], col_name: str
+) -> int | None:
+    """openpyxl 셀 값을 int로 반환."""
+    val = _get_num_openpyxl(ws, row, headers, col_name)
+    return int(val) if val is not None else None
+
+
+def _parse_date_openpyxl(val):
+    """openpyxl 날짜 값을 date로 변환.
+
+    openpyxl은 날짜 셀을 datetime 객체로 자동 변환하므로 xlrd와 다르게 처리한다.
+    """
+    if val is None or val == "":
+        return None
+
+    # openpyxl이 이미 datetime으로 변환한 경우
+    if isinstance(val, datetime):
+        return val.date()
+
+    # date 객체인 경우
+    from datetime import date as _date
+
+    if isinstance(val, _date):
+        return val
+
+    # 숫자형 (YYYYMMDD)
+    if isinstance(val, (int, float)):
+        int_val = int(val)
+        if 19000101 <= int_val <= 29991231:
+            try:
+                return datetime.strptime(str(int_val), "%Y%m%d").date()
+            except ValueError:
+                pass
+        return None
+
+    # 문자열형
+    s = str(val).strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────

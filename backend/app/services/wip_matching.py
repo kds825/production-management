@@ -19,8 +19,15 @@ _EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
 _DP_GRANULARITY_M = 1  # DP 이산화 단위 (1m — 정확한 매칭)
 
 
-def match_wip(run_label: str, db: Session) -> dict:
-    """재공 재고를 수주에 매칭. Returns: {"matched": int, "skipped": int, "details": list}"""
+def match_wip(
+    run_label: str, db: Session, *, exclude_wip_ids: set[int] | None = None
+) -> dict:
+    """재공 재고를 수주에 매칭. Returns: {"matched": int, "skipped": int, "details": list}
+
+    Args:
+        exclude_wip_ids: 증분 업데이트 시 동결된 배치에 매칭된 WIP ID set.
+            이 WIP들은 이미 사용 중이므로 매칭 풀에서 제외한다.
+    """
     result = {"matched": 0, "skipped": 0, "details": []}
 
     # 판단 기준 로드
@@ -31,12 +38,13 @@ def match_wip(run_label: str, db: Session) -> dict:
     shortage_tolerance = float(criteria.get("조장 부족 허용율", "5")) / 100
 
     # 사용 가능한 WIP 로드 (total_length_m 큰 순 — 큰 재고를 먼저 소진)
-    wip_items = (
-        db.query(WipInventory)
-        .filter(WipInventory.status == "사용가능")
-        .order_by(WipInventory.cross_section.desc(), WipInventory.total_length_m.desc())
-        .all()
-    )
+    wip_query = db.query(WipInventory).filter(WipInventory.status == "사용가능")
+    # 증분 업데이트 시 동결 배치에 매칭된 WIP는 풀에서 제외
+    if exclude_wip_ids:
+        wip_query = wip_query.filter(WipInventory.wip_id.notin_(exclude_wip_ids))
+    wip_items = wip_query.order_by(
+        WipInventory.cross_section.desc(), WipInventory.total_length_m.desc()
+    ).all()
     if not wip_items:
         return result
 
