@@ -178,7 +178,10 @@ def _find_best_combo(
     n > 22: DP (10m 단위 이산화, O(n × cap/gran))
     """
     n = len(candidates)
-    qtys = [float(o.ordered_qty_m or 0) for o in candidates]
+    # 다심 케이블(4C 등)은 환산수량(수량×코어수) 기준 — WIP는 연선(심선) 기준 재고
+    qtys = [
+        float(o.ordered_qty_m or 0) * max(int(o.core_count or 1), 1) for o in candidates
+    ]
 
     # WIP 총량은 고정 — tolerance는 개별 드럼 길이 비교(호출측)에서 이미 적용됨
     # 조합 합계가 WIP 총량을 초과할 수 없음
@@ -226,12 +229,15 @@ def _find_best_combo(
                 c -= qty_disc
 
         # 후검증: 이산화 오차로 실제 합계가 WIP 총량을 초과하면 가장 작은 수주부터 제거
-        actual_total = sum(float(o.ordered_qty_m or 0) for o in selected)
+        def _conv(o: SalesOrder) -> float:
+            return float(o.ordered_qty_m or 0) * max(int(o.core_count or 1), 1)
+
+        actual_total = sum(_conv(o) for o in selected)
         if actual_total > wip_total and selected:
-            selected.sort(key=lambda o: float(o.ordered_qty_m or 0))
+            selected.sort(key=_conv)
             while actual_total > wip_total and selected:
                 removed = selected.pop(0)
-                actual_total -= float(removed.ordered_qty_m or 0)
+                actual_total -= _conv(removed)
 
         return selected
 
