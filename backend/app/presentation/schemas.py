@@ -84,6 +84,9 @@ class ScheduleTaskResponse(BaseModel):
     customer: Optional[str] = None  # 거래처명 — production_batch.customer_name
     batch_group: Optional[str] = None  # 배치 그룹 식별자 — 간트 블록 1개 단위
     material: Optional[str] = None  # 도체 재질 — CU, AL
+    batch_id: Optional[int] = (
+        None  # production_batch.batch_id — 상태 변경 API 호출에 필요
+    )
 
 
 class ScheduleTaskCreate(BaseModel):

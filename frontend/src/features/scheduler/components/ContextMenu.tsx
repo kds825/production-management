@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
 
+const API_BASE = "http://localhost:8000/api";
+
 /** 컨텍스트 메뉴 — 빈 영역 또는 작업 바 우클릭 시 표시 */
 export function ContextMenu() {
   const contextMenu = useScheduleStore((s) => s.contextMenu);
@@ -10,6 +12,7 @@ export function ContextMenu() {
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   const openSplitModal = useScheduleStore((s) => s.openSplitModal);
   const deleteTask = useScheduleStore((s) => s.deleteTask);
+  const updateTask = useScheduleStore((s) => s.updateTask);
   const tasks = useScheduleStore((s) => s.tasks);
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -40,7 +43,8 @@ export function ContextMenu() {
 
   // 뷰포트 경계 보정 (메뉴가 화면 밖으로 나가지 않도록)
   const menuWidth = 160;
-  const menuHeight = contextMenu.type === "task" ? 120 : 88;
+  // task 메뉴: 기본 항목 + 상태 변경 섹션(최대 3항목 × 28px + 구분선 8px)
+  const menuHeight = contextMenu.type === "task" ? 220 : 88;
   const left = Math.min(contextMenu.x, window.innerWidth - menuWidth - 8);
   const top = Math.min(contextMenu.y, window.innerHeight - menuHeight - 8);
 
@@ -95,6 +99,30 @@ export function ContextMenu() {
     openSplitModal(selectedTask.batch_group, selectedTask.id);
   }
 
+  // 낙관적 상태 변경: 즉시 로컬 반영 → API 실패 시 롤백
+  async function handleStatusChange(newStatus: string) {
+    if (!selectedTask?.batch_id || !contextMenu?.taskId) return;
+    closeContextMenu();
+
+    const prevStatus = selectedTask.status;
+    updateTask(contextMenu.taskId, { status: newStatus });
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/pipeline/batch/${selectedTask.batch_id}/status`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      // 실패 시 롤백
+      updateTask(contextMenu.taskId, { status: prevStatus });
+    }
+  }
+
   const menuItemClass =
     "w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-red-50 hover:text-red-700 flex items-center gap-2 transition-colors";
 
@@ -139,6 +167,42 @@ export function ContextMenu() {
               <span style={{ color: "#C41230" }}>&#x2702;</span>
               배치 분할
             </button>
+          )}
+          {/* 상태 변경 섹션 — batch_id가 있는 DB 태스크만 표시 */}
+          {selectedTask?.batch_id != null && (
+            <>
+              <div className="border-t border-gray-100 my-1" />
+              <div className="px-3 py-1 text-[9px] text-gray-400 uppercase tracking-wide">
+                상태 변경
+              </div>
+              {selectedTask.status !== "in_progress" && (
+                <button
+                  className={menuItemClass}
+                  onClick={() => handleStatusChange("in_progress")}
+                >
+                  <span>▶</span>
+                  진행중으로 변경
+                </button>
+              )}
+              {selectedTask.status !== "completed" && (
+                <button
+                  className={menuItemClass}
+                  onClick={() => handleStatusChange("completed")}
+                >
+                  <span>✅</span>
+                  완료로 변경
+                </button>
+              )}
+              {selectedTask.status !== "planned" && (
+                <button
+                  className={menuItemClass}
+                  onClick={() => handleStatusChange("planned")}
+                >
+                  <span>↩️</span>
+                  계획으로 되돌리기
+                </button>
+              )}
+            </>
           )}
           <div className="border-t border-gray-100 my-1" />
           <button

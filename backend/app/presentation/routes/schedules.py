@@ -165,6 +165,7 @@ def _db_task_to_response(
         customer=batch.customer_name or "",
         batch_group=task.batch_group or "",
         material=batch.conductor_material or None,
+        batch_id=batch.batch_id,
     )
 
 

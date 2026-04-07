@@ -41,6 +41,8 @@ export interface ScheduleTask {
   batch_group?: string;
   /** 도체 재질 — CU, AL */
   material?: string;
+  /** production_batch.batch_id — 상태 변경 API 호출에 필요 */
+  batch_id?: number;
 }
 
 export interface ConstraintViolation {

@@ -12,6 +12,30 @@ import {
 } from "../utils/colorCoding";
 import { timeToX, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
 
+const API_BASE = "http://localhost:8000/api";
+
+/** 배치 상태 레이블 및 색상 */
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; bg: string; text: string }
+> = {
+  planned: { label: "계획", bg: "#6B7280", text: "#fff" },
+  in_progress: { label: "진행", bg: "#2563EB", text: "#fff" },
+  completed: { label: "완료", bg: "#059669", text: "#fff" },
+};
+
+/** 상태 순환: planned → in_progress → completed → planned */
+const STATUS_CYCLE: Record<string, string> = {
+  planned: "in_progress",
+  in_progress: "completed",
+  completed: "planned",
+};
+
+/** frozen 배치(진행중/완료)는 드래그 불가 */
+function isFrozenStatus(status: string): boolean {
+  return status === "in_progress" || status === "completed";
+}
+
 interface GanttTaskBlockProps {
   task: ScheduleTask;
   rangeStart: number;
@@ -136,11 +160,46 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     timeToX(endTs, rangeStart, dayWidth) -
     timeToX(startTs, rangeStart, dayWidth);
 
+  // frozen 배치(진행중/완료)는 드래그 불가
+  const isFrozen = isFrozenStatus(task.status);
+
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     data: { type: "task", task, equipmentId: task.equipment_id },
-    disabled: false,
+    disabled: isFrozen,
   });
+
+  // --- 인라인 상태 배지 클릭 핸들러 ---
+  // 낙관적 UI: 즉시 로컬 상태 변경 → API 실패 시 롤백
+  const handleStatusBadgeClick = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!task.batch_id) return;
+
+      const nextStatus = STATUS_CYCLE[task.status] ?? "planned";
+      const prevStatus = task.status;
+
+      // 낙관적 업데이트
+      updateTask(task.id, { status: nextStatus });
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/batch/${task.batch_id}/status`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus }),
+          },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch {
+        // 실패 시 롤백
+        updateTask(task.id, { status: prevStatus });
+      }
+    },
+    [task.id, task.batch_id, task.status, updateTask],
+  );
 
   // --- 리사이즈 ---
   const resizing = useRef<"left" | "right" | null>(null);
@@ -324,6 +383,15 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               ? "0 4px 4px 0"
               : 0;
 
+        // frozen 배치는 좌측 3px 컬러 보더로 구분
+        // completed: dark green (#065F46), in_progress: KBI red (#C41230)
+        const frozenBorderColor =
+          task.status === "completed"
+            ? "#065F46"
+            : task.status === "in_progress"
+              ? "#C41230"
+              : undefined;
+
         const segBarStyle: React.CSSProperties = {
           ...statusStyle,
           ...priorityStyle,
@@ -344,6 +412,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           alignItems: "stretch",
           outline: isSelected ? "2px solid #FBBF24" : "none",
           outlineOffset: 1,
+          // frozen 배치 좌측 강조 보더 — 첫 세그먼트만 적용
+          ...(isFirst && frozenBorderColor
+            ? { borderLeft: `3px solid ${frozenBorderColor}` }
+            : {}),
         };
 
         return (
@@ -415,7 +487,12 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   paddingLeft: 4,
                   paddingRight: 4,
                   gap: 1,
-                  cursor: isDragging ? "grabbing" : "grab",
+                  // frozen 배치는 드래그 불가 → default 커서
+                  cursor: isFrozen
+                    ? "default"
+                    : isDragging
+                      ? "grabbing"
+                      : "grab",
                 }}
               >
                 <span
@@ -431,7 +508,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                     className="text-white/80 text-[9px] truncate leading-tight"
                     style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
                   >
-                    {lotLabel ? `${lotLabel} · ` : ""}{volumeLabel}
+                    {lotLabel ? `${lotLabel} · ` : ""}
+                    {volumeLabel}
                   </span>
                 )}
               </div>
@@ -464,6 +542,33 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 style={{ lineHeight: "1.2", zIndex: 3 }}
               >
                 {task.priority === "critical" ? "긴급" : "우선"}
+              </div>
+            )}
+
+            {/* 상태 배지 — 첫 세그먼트, 블록 폭 60px 이상일 때만 표시 */}
+            {isFirst && segW >= 60 && task.batch_id != null && (
+              <div
+                onClick={handleStatusBadgeClick}
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  left: 2,
+                  zIndex: 4,
+                  padding: "1px 4px",
+                  borderRadius: 3,
+                  fontSize: 8,
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                  backgroundColor: STATUS_CONFIG[task.status]?.bg ?? "#6B7280",
+                  color: STATUS_CONFIG[task.status]?.text ?? "#fff",
+                  cursor: "pointer",
+                  userSelect: "none",
+                  pointerEvents: "auto",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
+                }}
+                title={`상태 클릭으로 변경: ${STATUS_CONFIG[task.status]?.label ?? task.status}`}
+              >
+                {STATUS_CONFIG[task.status]?.label ?? task.status}
               </div>
             )}
           </div>
@@ -500,7 +605,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               작업 시간 구성
             </div>
             {lotLabel && (
-              <div style={{ marginBottom: 4, color: "#FCD34D", fontWeight: 600 }}>
+              <div
+                style={{ marginBottom: 4, color: "#FCD34D", fontWeight: 600 }}
+              >
                 작업지시: {lotLabel} ({task.volume_m.toLocaleString()}m)
               </div>
             )}
