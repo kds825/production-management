@@ -954,6 +954,115 @@ function ErpUploadSection({
           </div>
         </div>
       )}
+      {/* 확인 모달 — Stage 1 실행 전 현재 배치 현황 표시 */}
+      {confirmModalOpen && batchSummary && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setConfirmModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+            style={{ backgroundColor: "#FFFFFF" }}
+          >
+            <div
+              className="px-5 py-3 border-b"
+              style={{ backgroundColor: "#F8FAFC" }}
+            >
+              <span className="text-sm font-semibold text-gray-800">
+                현재 생산 현황 확인
+              </span>
+            </div>
+            <div className="p-5 space-y-3">
+              {/* 상태별 배치 수 bar */}
+              <div className="space-y-2">
+                {batchSummary.completed > 0 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <div
+                      className="h-3 rounded"
+                      style={{
+                        width: `${Math.max(20, (batchSummary.completed / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
+                        backgroundColor: "#16A34A",
+                      }}
+                    />
+                    <span className="text-gray-700">
+                      완료: <b>{batchSummary.completed}개</b>{" "}
+                      <span className="text-gray-400">(동결)</span>
+                    </span>
+                  </div>
+                )}
+                {batchSummary.in_progress > 0 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <div
+                      className="h-3 rounded"
+                      style={{
+                        width: `${Math.max(20, (batchSummary.in_progress / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
+                        backgroundColor: "#2563EB",
+                      }}
+                    />
+                    <span className="text-gray-700">
+                      진행중: <b>{batchSummary.in_progress}개</b>{" "}
+                      <span className="text-gray-400">(동결)</span>
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 text-xs">
+                  <div
+                    className="h-3 rounded"
+                    style={{
+                      width: `${Math.max(20, (batchSummary.planned / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
+                      backgroundColor: "#D1D5DB",
+                    }}
+                  />
+                  <span className="text-gray-700">
+                    계획: <b>{batchSummary.planned}개</b>{" "}
+                    <span className="text-gray-400">(재계산 대상)</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* WIP 현황 */}
+              {(batchSummary.frozen_wip_count > 0 ||
+                batchSummary.available_wip_count > 0) && (
+                <div className="text-xs text-gray-500 pt-1 border-t">
+                  WIP: 사용중 {batchSummary.frozen_wip_count}건 (보존) / 가용{" "}
+                  {batchSummary.available_wip_count}건
+                </div>
+              )}
+
+              {/* 모드 설명 */}
+              <p className="text-xs text-gray-500 pt-1">
+                {uploadMode === "incremental"
+                  ? "긴급수주 파일의 주문이 기존 계획에 추가됩니다."
+                  : "기존 계획이 새 파일로 교체됩니다."}{" "}
+                동결된 배치는 보존됩니다.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t bg-gray-50">
+              <button
+                onClick={() => setConfirmModalOpen(false)}
+                className="px-4 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmModalOpen(false);
+                  handleConfirmUpload();
+                }}
+                className="px-4 py-1.5 text-xs font-medium text-white rounded-lg hover:opacity-90"
+                style={{ backgroundColor: PRIMARY }}
+              >
+                업로드 진행
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
