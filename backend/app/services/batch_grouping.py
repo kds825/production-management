@@ -182,7 +182,14 @@ def create_batches(
             continue
 
         item_o = _find_item(order, items)
-        routing_code_o = item_o.routing_code if item_o else _infer_routing(order)
+        # item_master의 core_count가 수주와 다르면 라우팅 추론으로 폴백
+        # (ERP에서 1C 아이템으로 잘못 매핑된 다심 수주 대응)
+        order_cores = int(order.core_count or 1)
+        item_cores = int(item_o.core_count or 1) if item_o else 1
+        if item_o and order_cores != item_cores:
+            routing_code_o = _infer_routing(order)
+        else:
+            routing_code_o = item_o.routing_code if item_o else _infer_routing(order)
         routing_o = routings.get(routing_code_o)
         if routing_o is None:
             continue
@@ -530,8 +537,14 @@ def create_batches(
             continue
 
         # 품목 마스터 매칭 → 라우팅 코드 결정
+        # item_master core_count ≠ 수주 core_count이면 라우팅 추론 폴백
         item = _find_item(order, items)
-        routing_code = item.routing_code if item else _infer_routing(order)
+        o_cores = int(order.core_count or 1)
+        i_cores = int(item.core_count or 1) if item else 1
+        if item and o_cores != i_cores:
+            routing_code = _infer_routing(order)
+        else:
+            routing_code = item.routing_code if item else _infer_routing(order)
 
         routing = routings.get(routing_code)
         if routing is None:
