@@ -161,7 +161,8 @@ def create_batches(
     # 수주 1:1 배치가 아니라 SQ 그룹 단위로 1개(또는 그 이상)의 배치를 만든다.
     batches: list[ProductionBatch] = []
 
-    # 그룹 키: (sq, voltage, stranding_type)
+    # 그룹 키: (sq, voltage) — 연선은 SQ+전압만으로 그루핑
+    # stranding_type은 제품별 속성이지 공정 구분이 아님
     # 값: {total_qty, lot_size, orders, routing_code, rep_item}
     _strand_groups: dict[tuple, dict] = {}
 
@@ -201,8 +202,15 @@ def create_batches(
         if "TFR-GV" in (order.product_group or "").upper() and sq <= 25:
             continue
 
+        stranding_type_raw = (
+            item_o.stranding_type if item_o and item_o.stranding_type else "압축연선"
+        )
+        # 5-2 정규화: "압축"과 "압축연선"은 같은 물리적 연선방식 → 통합
+        # "단선", "집합연선" 등 진짜 다른 방식만 분리
         stranding_type_o = (
-            item_o.stranding_type if item_o and item_o.stranding_type else "압축"
+            "압축연선"
+            if stranding_type_raw in ("압축", "압축연선")
+            else stranding_type_raw
         )
         voltage_o = order.voltage or ""
         gkey = (sq, voltage_o, stranding_type_o)
@@ -224,6 +232,7 @@ def create_batches(
                 "wip_strand_qty": 0.0,  # 연선재고 WIP 사용 수주 수량 합계 (틀 계산 제외)
                 "lot_size": lot_size,
                 "routing_code": routing_code_o,
+                "stranding_type": stranding_type_o,
                 "orders": [],
             }
         _strand_groups[gkey]["total_qty"] += order_qty
