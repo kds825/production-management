@@ -893,7 +893,16 @@ def detect_split_candidates(
     # ── 그룹별 분할 후보 검사 ─────────────────────────────────────────────────
     candidates: list[dict] = []
 
-    for header in headers:
+    # batch_group 이름 기준으로 중복 헤더 제거 (같은 그룹에 헤더가 2개 있을 수 있음)
+    seen_groups: set[str] = set()
+    unique_headers = []
+    for h in headers:
+        bg = h.batch_group or ""
+        if bg not in seen_groups:
+            seen_groups.add(bg)
+            unique_headers.append(h)
+
+    for header in unique_headers:
         lot_count = int(header.drum_count or 1)
         if lot_count <= 1:
             # 단일 드럼 그룹은 분할 불필요

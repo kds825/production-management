@@ -1058,12 +1058,32 @@ def split_batch_group(
         .update({ProductionBatch.batch_group: new_group}, synchronize_session=False)
     )
 
-    # 기존 batch_group의 schedule_task 삭제 (분할 후 재스케줄링 필요)
+    # FK 순서: audit_log(task_id FK) → schedule_task → production_batch
+    # 기존 batch_group의 audit_log 삭제 (schedule_task.task_id를 참조)
+    task_ids_old = [
+        t.task_id
+        for t in db.query(ScheduleTaskModel.task_id)
+        .filter(ScheduleTaskModel.batch_group == batch_group)
+        .all()
+    ]
+    task_ids_new = [
+        t.task_id
+        for t in db.query(ScheduleTaskModel.task_id)
+        .filter(ScheduleTaskModel.batch_group == new_group)
+        .all()
+    ]
+    all_task_ids = task_ids_old + task_ids_new
+    if all_task_ids:
+        db.execute(
+            text("DELETE FROM audit_log WHERE task_id IN :ids"),
+            {"ids": tuple(all_task_ids)},
+        )
+
+    # schedule_task 삭제 (분할 후 재스케줄링 필요)
     db.query(ScheduleTaskModel).filter(
         ScheduleTaskModel.batch_group == batch_group
     ).delete(synchronize_session=False)
 
-    # 새 batch_group의 schedule_task도 삭제 (혹시 존재하면)
     db.query(ScheduleTaskModel).filter(
         ScheduleTaskModel.batch_group == new_group
     ).delete(synchronize_session=False)
