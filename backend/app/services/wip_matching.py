@@ -16,7 +16,7 @@ from app.infrastructure.models.decision_criteria import DecisionCriteria
 from app.services.audit_logger import log_decision
 
 _EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
-_DP_GRANULARITY_M = 10  # DP 이산화 단위 (10m)
+_DP_GRANULARITY_M = 1  # DP 이산화 단위 (1m — 정확한 매칭)
 
 
 def match_wip(run_label: str, db: Session) -> dict:
@@ -224,6 +224,14 @@ def _find_best_combo(
                 selected.append(candidates[i])
                 qty_disc = max(1, round(qtys[i] / gran))
                 c -= qty_disc
+
+        # 후검증: 이산화 오차로 실제 합계가 WIP 총량을 초과하면 가장 작은 수주부터 제거
+        actual_total = sum(float(o.ordered_qty_m or 0) for o in selected)
+        if actual_total > wip_total and selected:
+            selected.sort(key=lambda o: float(o.ordered_qty_m or 0))
+            while actual_total > wip_total and selected:
+                removed = selected.pop(0)
+                actual_total -= float(removed.ordered_qty_m or 0)
 
         return selected
 
