@@ -180,8 +180,9 @@ def _find_best_combo(
     n = len(candidates)
     qtys = [float(o.ordered_qty_m or 0) for o in candidates]
 
-    # shortage_tolerance만큼 capacity를 늘려 마지막 수주 부분 충당 허용
-    effective_cap = wip_total / max(1 - shortage_tolerance, 0.01)
+    # WIP 총량은 고정 — tolerance는 개별 드럼 길이 비교(호출측)에서 이미 적용됨
+    # 조합 합계가 WIP 총량을 초과할 수 없음
+    effective_cap = wip_total
 
     best_used = 0.0
     best_mask: int = 0  # 선택된 후보 인덱스를 비트마스크로 표현
