@@ -426,11 +426,13 @@ function ErpUploadSection({
 
         let endpoint = `${API}/pipeline/stage1`;
 
-        // 기존 run이 있거나 명시적 모드가 지정된 경우 update 엔드포인트 사용
-        if (parentRunLabel) {
+        // 증분 모드이거나 기존 run이 있으면 update 엔드포인트 사용
+        if (uploadMode === "incremental" || parentRunLabel) {
           endpoint = `${API}/pipeline/stage1/update`;
           formData.append("upload_mode", uploadMode);
-          formData.append("parent_run_label", parentRunLabel);
+          if (parentRunLabel) {
+            formData.append("parent_run_label", parentRunLabel);
+          }
         }
 
         const res = await fetch(endpoint, {
@@ -483,14 +485,17 @@ function ErpUploadSection({
       // 상태 조회 실패 시 조용히 무시하고 직접 실행
     }
 
-    // 2. 기존 배치가 있으면 최신 run_label을 가져와 확인 모달 표시
-    if (summary && summary.total_batches > 0) {
+    // 2. 기존 배치가 있거나 증분 모드이면 확인 모달 표시
+    if (
+      summary &&
+      (summary.total_batches > 0 || uploadMode === "incremental")
+    ) {
       setBatchSummary(summary);
       setConfirmModalOpen(true);
       return;
     }
 
-    // 3. 기존 배치 없음 → 레거시 /stage1 직접 실행
+    // 3. 기존 배치 없음 + 전체 모드 → 레거시 /stage1 직접 실행
     await executeStage1();
   }, [erpFile, isRunning, executeStage1]);
 

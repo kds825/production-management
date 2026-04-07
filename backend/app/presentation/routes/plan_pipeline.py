@@ -194,7 +194,9 @@ async def run_stage1_update(
     erp_file: UploadFile = File(..., description="ERP 수주 파일 (.xls/.xlsx)"),
     wip_file: UploadFile | None = File(None, description="재공 재고 파일 (선택)"),
     upload_mode: str = Form(..., description="incremental 또는 full"),
-    parent_run_label: str = Form(..., description="기존 계획 실행의 run_label"),
+    parent_run_label: str | None = Form(
+        None, description="기존 계획 실행의 run_label (미지정 시 최신 run 자동 감지)"
+    ),
     split_gap_days: int = Form(
         3, description="연선 그룹 분할 후보 납기 간격 임계값 (일)"
     ),
@@ -216,16 +218,29 @@ async def run_stage1_update(
             detail=f"upload_mode는 'incremental' 또는 'full'이어야 합니다: {upload_mode}",
         )
 
+    # parent_run_label 자동 감지 — 미지정 시 최신 run_label 사용
+    if not parent_run_label:
+        latest = (
+            db.query(ProductionBatch.run_label)
+            .order_by(ProductionBatch.created_at.desc())
+            .first()
+        )
+        if latest:
+            parent_run_label = latest[0]
+        else:
+            # 기존 계획이 없으면 새로 생성 (레거시 모드처럼 동작)
+            parent_run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # parent_run_label에 해당하는 배치가 존재하는지 확인
     existing_count = (
         db.query(func.count(ProductionBatch.batch_id))
         .filter(ProductionBatch.run_label == parent_run_label)
         .scalar()
     )
-    if not existing_count:
+    if not existing_count and upload_mode == "incremental":
         raise HTTPException(
             status_code=404,
-            detail=f"run_label '{parent_run_label}'에 해당하는 기존 계획이 없습니다.",
+            detail="증분 업데이트할 기존 계획이 없습니다. 먼저 '전체 교체'로 초기 계획을 생성하세요.",
         )
 
     # run_label 재사용 — create_batches가 run_label로 필터링하므로 필수
