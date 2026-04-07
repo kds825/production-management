@@ -328,9 +328,7 @@ def _write_sheet(
 
         # 같은 규격(batch_group) 내 행 정렬:
         # 1) product_group — 품목 기준 정렬
-        # 2) wip_matched_id 유무 — WIP 사용 행끼리 모으기 (비사용 → 사용 순)
-        # 3) wip_matched_id 값 — 같은 WIP 재고를 사용하는 행끼리 연속 배치
-        #    → 셀병합 로직이 연속 구간만 병합하므로, 같은 WIP 행이 모여야 정상 동작
+        # 2) wip_matched_id 유무 — WIP 사용 행을 앞에 배치 (재공재고 → 신규 순)
         group_batches = sorted(
             group_batches,
             key=lambda b: (
@@ -342,66 +340,25 @@ def _write_sheet(
         group_start_row = row_num  # SUM 수식 범위 시작점
         group_drum_count_total: int = 0
 
-        remarks_col_idx = VISIBLE_COLS.index("비고") + 1  # Excel column index (1-based)
+        # WIP 매칭된 모든 행에 개별적으로 비고를 생성한다.
+        # 이전 로직은 같은 wip_matched_id 블록을 셀병합하고 첫 행에만 비고를 넣었으나,
+        # 색상 정렬 등으로 블록이 분리되면 비고가 누락되는 문제가 있었다.
+        # 셀병합 없이 각 행마다 _build_remarks()로 비고를 독립 생성한다.
+        for batch in group_batches:
+            color_label = batch.sheath_color or batch.core_colors or ""
+            length_m = float(batch.total_length_m or 0)
+            group_drum_count_total += int(batch.drum_count or 1)
 
-        # batch_group 안에서 wip_matched_id가 "연속으로 동일"한 구간만 병합
-        idx = 0
-        while idx < len(group_batches):
-            block_wip_id = group_batches[idx].wip_matched_id
-            end_idx = idx + 1
-            while (
-                end_idx < len(group_batches)
-                and group_batches[end_idx].wip_matched_id == block_wip_id
-            ):
-                end_idx += 1
-
-            block_first_row = row_num
-            block_first_remarks_override: str | None = None
-            if block_wip_id is not None and (end_idx - idx) > 1:
-                wip_stage = wip_stage_lookup.get(block_wip_id)
-                wip_total_len_m = wip_total_len_lookup.get(block_wip_id, 0.0)
-                block_first_remarks_override = _build_remarks(
-                    group_batches[idx],
-                    wip_stage=wip_stage,
-                    wip_total_len_m=wip_total_len_m,
-                )
-
-            for j in range(idx, end_idx):
-                batch = group_batches[j]
-                # 공정 시트는 sheath_color로 1행 표시 (원본 계획서와 동일)
-                # 다심 케이블(4C 등)도 sheath_color 기준 1행 — 심선색상 분리는 하지 않음
-                color_label = batch.sheath_color or batch.core_colors or ""
-                length_m = float(batch.total_length_m or 0)
-                group_drum_count_total += int(batch.drum_count or 1)
-
-                row_num = _write_data_row(
-                    ws,
-                    row_num,
-                    batch,
-                    all_cols,
-                    color_label,
-                    length_m,
-                    wip_stage_lookup,
-                    wip_total_len_lookup,
-                    remarks_override=(
-                        block_first_remarks_override
-                        if j == idx
-                        else ("" if (block_wip_id is not None and j > idx) else None)
-                    ),
-                )
-
-            block_last_row = row_num - 1
-
-            # wip_matched_id가 있는 구간에 대해서만 병합
-            if block_wip_id is not None and block_last_row > block_first_row:
-                ws.merge_cells(
-                    start_row=block_first_row,
-                    start_column=remarks_col_idx,
-                    end_row=block_last_row,
-                    end_column=remarks_col_idx,
-                )
-
-            idx = end_idx
+            row_num = _write_data_row(
+                ws,
+                row_num,
+                batch,
+                all_cols,
+                color_label,
+                length_m,
+                wip_stage_lookup,
+                wip_total_len_lookup,
+            )
 
         # batch_group에서 SQ 추출하여 소계 레이블 생성
         sq = (
