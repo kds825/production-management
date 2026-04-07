@@ -641,6 +641,97 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
     return [_to_dict(b) for b in batches]
 
 
+@router.get(
+    "/batch-group/{batch_group:path}/process-flow",
+    summary="배치 그룹의 연관 공정 흐름 조회",
+)
+def get_process_flow(batch_group: str, db: Session = Depends(get_db)):
+    """주어진 batch_group과 동일 수주를 공유하는 모든 batch_group을 공정 순서로 반환한다.
+
+    이전공정/다음공정 네비게이션에 사용된다.
+    예: 연선(ST-240) → 절연(저압절연_240SQ) → 시스(A120_흑_240SQ) 순서로 반환.
+    """
+    from sqlalchemy import tuple_
+
+    from app.domain.constants import PROCESS_ORDER
+    from app.infrastructure.models.schedule_task import (
+        ScheduleTask as ScheduleTaskModel,
+    )
+
+    # 1. 현재 batch_group의 run_label과 수주 키 조회
+    current_batches = (
+        db.query(
+            ProductionBatch.sales_order_id,
+            ProductionBatch.sales_order_line,
+            ProductionBatch.run_label,
+        )
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.batch_seq != -1,  # 헤더 제외
+        )
+        .all()
+    )
+
+    if not current_batches:
+        return []
+
+    order_keys = list({(b.sales_order_id, b.sales_order_line) for b in current_batches})
+    run_label = current_batches[0].run_label
+
+    # 2. 동일 run_label 내에서 동일 수주를 포함하는 모든 batch_group 조회
+    related = (
+        db.query(
+            ProductionBatch.batch_group,
+            ProductionBatch.process_name,
+        )
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.batch_seq != -1,
+            tuple_(
+                ProductionBatch.sales_order_id,
+                ProductionBatch.sales_order_line,
+            ).in_(order_keys),
+        )
+        .distinct()
+        .all()
+    )
+
+    # 3. batch_group별 공정 정보 집계
+    groups: dict[str, dict] = {}
+    for r in related:
+        bg = r.batch_group
+        if bg and bg not in groups:
+            groups[bg] = {
+                "batch_group": bg,
+                "process_name": r.process_name,
+                "order": PROCESS_ORDER.get(r.process_name, 50),
+            }
+
+    # 4. schedule_task에서 설비·시간 정보 보강
+    for bg_info in groups.values():
+        task = (
+            db.query(
+                ScheduleTaskModel.equipment_code,
+                ScheduleTaskModel.start_datetime,
+                ScheduleTaskModel.end_datetime,
+            )
+            .filter(ScheduleTaskModel.batch_group == bg_info["batch_group"])
+            .first()
+        )
+        if task:
+            bg_info["equipment_code"] = task.equipment_code
+            bg_info["start_datetime"] = (
+                task.start_datetime.isoformat() if task.start_datetime else None
+            )
+            bg_info["end_datetime"] = (
+                task.end_datetime.isoformat() if task.end_datetime else None
+            )
+
+    # 5. 공정 순서 → batch_group 이름 순으로 정렬
+    result = sorted(groups.values(), key=lambda x: (x["order"], x["batch_group"]))
+    return result
+
+
 @router.post("/batch-group/{batch_group:path}/split", summary="배치 그룹 분할")
 def split_batch_group(
     batch_group: str,

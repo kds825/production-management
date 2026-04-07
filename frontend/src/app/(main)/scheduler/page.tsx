@@ -32,7 +32,10 @@ import { ConflictResolutionModal } from "@/features/scheduler/components/Conflic
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
-import { xToTime, computeTimeBreakdown } from "@/features/scheduler/utils/ganttUtils";
+import {
+  xToTime,
+  computeTimeBreakdown,
+} from "@/features/scheduler/utils/ganttUtils";
 
 /** 드래그 중인 아이템 정보 */
 interface ActiveDragItem {
@@ -273,6 +276,16 @@ export default function SchedulerPage() {
   );
   const [batchGroupLoading, setBatchGroupLoading] = useState(false);
 
+  // ── 공정 흐름 네비게이션 상태 ──
+  const [processFlow, setProcessFlow] = useState<
+    Array<{
+      batch_group: string;
+      process_name: string;
+      equipment_code?: string;
+      order: number;
+    }>
+  >([]);
+
   // ── 감사 트레일 패널 상태 ──
   const [auditPanel, setAuditPanel] = useState<{
     open: boolean;
@@ -397,35 +410,69 @@ export default function SchedulerPage() {
     handleTaskClick(selectedTaskId);
   }, [selectedTaskId, handleTaskClick]);
 
-  // selectedTaskId 변경 시 batch_group 수주 목록 조회
+  // selectedTaskId 변경 시 batch_group 수주 목록 + 공정 흐름 조회
   useEffect(() => {
     if (!selectedTaskId) {
       setBatchGroupOrders([]);
+      setProcessFlow([]);
       return;
     }
     const selectedTask = tasks.find((t) => t.id === selectedTaskId);
     const bg = selectedTask?.batch_group;
     if (!bg) {
       setBatchGroupOrders([]);
+      setProcessFlow([]);
       return;
     }
     setBatchGroupLoading(true);
-    fetch(`${API_BASE}/pipeline/batch-group/${encodeURIComponent(bg)}/orders`)
-      .then(async (res) => {
-        if (res.ok) {
-          const data: BatchGroupOrder[] = await res.json();
-          setBatchGroupOrders(data);
-        } else {
-          setBatchGroupOrders([]);
-        }
-      })
-      .catch(() => {
-        setBatchGroupOrders([]);
-      })
-      .finally(() => {
-        setBatchGroupLoading(false);
-      });
+    const encodedBg = encodeURIComponent(bg);
+
+    // 수주 목록과 공정 흐름을 병렬 조회
+    Promise.all([
+      fetch(`${API_BASE}/pipeline/batch-group/${encodedBg}/orders`)
+        .then(async (res) =>
+          res.ok ? ((await res.json()) as BatchGroupOrder[]) : [],
+        )
+        .catch(() => [] as BatchGroupOrder[]),
+      fetch(`${API_BASE}/pipeline/batch-group/${encodedBg}/process-flow`)
+        .then(async (res) => (res.ok ? await res.json() : []))
+        .catch(() => []),
+    ]).then(([orders, flow]) => {
+      setBatchGroupOrders(orders);
+      setProcessFlow(flow);
+      setBatchGroupLoading(false);
+    });
   }, [selectedTaskId, tasks]);
+
+  // 공정 흐름 네비게이션 — 이전/다음 공정의 batch_group으로 이동
+  const navigateToProcessBatch = useCallback(
+    async (targetBatchGroup: string) => {
+      // 간트에 이미 로드된 task 중 해당 batch_group을 찾아 선택
+      const targetTask = tasks.find((t) => t.batch_group === targetBatchGroup);
+      if (targetTask) {
+        selectTask(targetTask.id);
+      } else {
+        // 간트에 없는 경우(다른 공정 필터 등): 수주 목록만 갱신
+        setBatchGroupLoading(true);
+        const encodedBg = encodeURIComponent(targetBatchGroup);
+        Promise.all([
+          fetch(`${API_BASE}/pipeline/batch-group/${encodedBg}/orders`)
+            .then(async (res) =>
+              res.ok ? ((await res.json()) as BatchGroupOrder[]) : [],
+            )
+            .catch(() => [] as BatchGroupOrder[]),
+          fetch(`${API_BASE}/pipeline/batch-group/${encodedBg}/process-flow`)
+            .then(async (res) => (res.ok ? await res.json() : []))
+            .catch(() => []),
+        ]).then(([orders, flow]) => {
+          setBatchGroupOrders(orders);
+          setProcessFlow(flow);
+          setBatchGroupLoading(false);
+        });
+      }
+    },
+    [tasks, selectTask],
+  );
 
   const [activeDrag, setActiveDrag] = useState<ActiveDragItem | null>(null);
 
@@ -977,9 +1024,71 @@ export default function SchedulerPage() {
                         </span>
                       )}
                     </div>
-                    <button
-                      onClick={() => {
-                        setAuditPanel((prev) => ({ ...prev, open: false }));
+                    <div className="flex items-center gap-2">
+                      {/* 공정 흐름 네비게이션 */}
+                      {processFlow.length > 1 &&
+                        (() => {
+                          const currentBg =
+                            selectedTask?.batch_group ??
+                            processFlow[0]?.batch_group;
+                          const currentIdx = processFlow.findIndex(
+                            (p) => p.batch_group === currentBg,
+                          );
+                          const prev =
+                            currentIdx > 0
+                              ? processFlow[currentIdx - 1]
+                              : null;
+                          const next =
+                            currentIdx >= 0 &&
+                            currentIdx < processFlow.length - 1
+                              ? processFlow[currentIdx + 1]
+                              : null;
+                          return (
+                            <div className="flex items-center gap-1">
+                              <button
+                                disabled={!prev}
+                                onClick={() =>
+                                  prev &&
+                                  navigateToProcessBatch(prev.batch_group)
+                                }
+                                className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                                style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                                title={
+                                  prev
+                                    ? `${prev.process_name} (${prev.batch_group})`
+                                    : "이전 공정 없음"
+                                }
+                              >
+                                &larr; 이전공정
+                              </button>
+                              <span
+                                className="text-[9px] px-1 font-mono"
+                                style={{ color: "#9CA3AF" }}
+                              >
+                                {currentIdx + 1}/{processFlow.length}
+                              </span>
+                              <button
+                                disabled={!next}
+                                onClick={() =>
+                                  next &&
+                                  navigateToProcessBatch(next.batch_group)
+                                }
+                                className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                                style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                                title={
+                                  next
+                                    ? `${next.process_name} (${next.batch_group})`
+                                    : "다음 공정 없음"
+                                }
+                              >
+                                다음공정 &rarr;
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      <button
+                        onClick={() => {
+                          setAuditPanel((prev) => ({ ...prev, open: false }));
                         selectTask(null);
                       }}
                       className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
@@ -1099,8 +1208,8 @@ export default function SchedulerPage() {
                             className="text-[11px] font-semibold"
                             style={{ color: "#C41230" }}
                           >
-                            {batchGroupOrders.filter((o) =>
-                              o.batch_seq == null || o.batch_seq >= 1,
+                            {batchGroupOrders.filter(
+                              (o) => o.batch_seq == null || o.batch_seq >= 1,
                             ).length > 0
                               ? `${batchGroupOrders.filter((o) => o.batch_seq == null || o.batch_seq >= 1).length}건`
                               : "-"}
@@ -1193,32 +1302,95 @@ export default function SchedulerPage() {
                   )}
 
                   {/* 작업 시간 구성 */}
-                  {selectedTask && (() => {
-                    const startTs = new Date(selectedTask.start).getTime();
-                    const endTs = new Date(selectedTask.end).getTime();
-                    const setupMin = (selectedTask as { setup_time_min?: number }).setup_time_min ?? selectedTask.changeover_min ?? 0;
-                    const colorChangeMin = (selectedTask as { color_change_min?: number }).color_change_min ?? 0;
-                    const tb = computeTimeBreakdown(startTs, endTs, setupMin + colorChangeMin);
-                    const totalHrs = ((endTs - startTs) / (60 * 60 * 1000)).toFixed(1);
-                    return (
-                      <div className="px-4 py-2 border-t" style={{ borderColor: "#F3F4F6" }}>
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <svg width="10" height="10" viewBox="0 0 16 16" fill="#9CA3AF">
-                            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
-                          </svg>
-                          <span className="text-[10px] font-medium text-gray-400">작업 시간 구성</span>
+                  {selectedTask &&
+                    (() => {
+                      const startTs = new Date(selectedTask.start).getTime();
+                      const endTs = new Date(selectedTask.end).getTime();
+                      const setupMin =
+                        (selectedTask as { setup_time_min?: number })
+                          .setup_time_min ??
+                        selectedTask.changeover_min ??
+                        0;
+                      const colorChangeMin =
+                        (selectedTask as { color_change_min?: number })
+                          .color_change_min ?? 0;
+                      const tb = computeTimeBreakdown(
+                        startTs,
+                        endTs,
+                        setupMin + colorChangeMin,
+                      );
+                      const totalHrs = (
+                        (endTs - startTs) /
+                        (60 * 60 * 1000)
+                      ).toFixed(1);
+                      return (
+                        <div
+                          className="px-4 py-2 border-t"
+                          style={{ borderColor: "#F3F4F6" }}
+                        >
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 16 16"
+                              fill="#9CA3AF"
+                            >
+                              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
+                            </svg>
+                            <span className="text-[10px] font-medium text-gray-400">
+                              작업 시간 구성
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+                            <span>
+                              <span className="text-gray-400">총 기간</span>{" "}
+                              <span className="font-medium text-gray-700">
+                                {totalHrs}h
+                              </span>
+                            </span>
+                            <span>
+                              <span className="text-gray-400">실제 작업</span>{" "}
+                              <span
+                                className="font-medium"
+                                style={{ color: "#C41230" }}
+                              >
+                                {tb.actualWork.toFixed(1)}h
+                              </span>
+                            </span>
+                            {tb.weekendHrs > 0 && (
+                              <span>
+                                <span className="text-gray-400">주말 휴무</span>{" "}
+                                <span className="text-gray-600">
+                                  {tb.weekendHrs}h
+                                </span>
+                              </span>
+                            )}
+                            <span>
+                              <span className="text-gray-400">일일 부동</span>{" "}
+                              <span className="text-gray-600">
+                                {tb.dailyIdleHrs}h
+                              </span>
+                            </span>
+                            {setupMin > 0 && (
+                              <span>
+                                <span className="text-gray-400">규격교체</span>{" "}
+                                <span className="text-gray-600">
+                                  {setupMin}분
+                                </span>
+                              </span>
+                            )}
+                            {colorChangeMin > 0 && (
+                              <span>
+                                <span className="text-gray-400">색상교체</span>{" "}
+                                <span className="text-gray-600">
+                                  {colorChangeMin}분
+                                </span>
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-                          <span><span className="text-gray-400">총 기간</span> <span className="font-medium text-gray-700">{totalHrs}h</span></span>
-                          <span><span className="text-gray-400">실제 작업</span> <span className="font-medium" style={{ color: "#C41230" }}>{tb.actualWork.toFixed(1)}h</span></span>
-                          {tb.weekendHrs > 0 && <span><span className="text-gray-400">주말 휴무</span> <span className="text-gray-600">{tb.weekendHrs}h</span></span>}
-                          <span><span className="text-gray-400">일일 부동</span> <span className="text-gray-600">{tb.dailyIdleHrs}h</span></span>
-                          {setupMin > 0 && <span><span className="text-gray-400">규격교체</span> <span className="text-gray-600">{setupMin}분</span></span>}
-                          {colorChangeMin > 0 && <span><span className="text-gray-400">색상교체</span> <span className="text-gray-600">{colorChangeMin}분</span></span>}
-                        </div>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
 
                   {/* AI 스케줄링 근거 */}
                   <div className="px-4 py-2">
