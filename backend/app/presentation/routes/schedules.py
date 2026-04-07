@@ -166,6 +166,7 @@ def _db_task_to_response(
         batch_group=task.batch_group or "",
         material=batch.conductor_material or None,
         batch_id=batch.batch_id,
+        created_at=task.created_at,
     )
 
 

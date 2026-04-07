@@ -87,6 +87,7 @@ class ScheduleTaskResponse(BaseModel):
     batch_id: Optional[int] = (
         None  # production_batch.batch_id — 상태 변경 API 호출에 필요
     )
+    created_at: Optional[datetime] = None  # schedule_task.created_at — 생성 시각
 
 
 class ScheduleTaskCreate(BaseModel):

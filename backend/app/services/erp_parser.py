@@ -163,7 +163,7 @@ def parse_erp_file_incremental(
     - 기존 sales_order를 삭제하지 않음
     - .xlsx(openpyxl) 우선, .xls(xlrd) 폴백
     - 시트명 "진행"/"대기" 고정이 아닌, "수주번호" 헤더가 있는 모든 시트 자동 탐지
-    - 중복 감지는 order_id 기준 (order_line은 synthetic이므로 제외)
+    - 중복 감지는 (order_id, drum_length_m) 쌍 기준 — 같은 수주번호의 다른 드럼은 별도 행으로 삽입
     - line_counter는 기존 max(order_line) + 1부터 시작
 
     Args:
@@ -187,12 +187,14 @@ def parse_erp_file_incremental(
         "warnings": [],
     }
 
-    # ── 기존 order_id 집합 로드 (중복 감지용 — order_id 기준) ─────────────────
-    existing_order_ids: set[str] = {
-        oid
-        for (oid,) in db.query(SalesOrder.order_id)
+    # ── 기존 DB의 (order_id, drum_length_m) 쌍 로드 (DB 중복 감지용) ────────
+    # 같은 order_id라도 규격/길이가 다르면 별개 수주이므로 (order_id, drum_length_m) 쌍으로 비교.
+    # DB에 이미 존재하는 쌍만 스킵하고, 파일 내 동일 쌍은 모두 삽입한다
+    # (같은 order_id + 같은 길이의 서로 다른 드럼은 별도 order_line으로 삽입됨).
+    existing_pairs: set[tuple[str, float | None]] = {
+        (oid, float(length) if length is not None else None)
+        for (oid, length) in db.query(SalesOrder.order_id, SalesOrder.drum_length_m)
         .filter(SalesOrder.run_label == run_label)
-        .distinct()
         .all()
     }
 
@@ -253,11 +255,6 @@ def parse_erp_file_incremental(
                     if not order_id:
                         continue
 
-                    # 중복 감지: order_id 기준 (F-5 fix)
-                    if order_id in existing_order_ids:
-                        result["skipped_dup"] += 1
-                        continue
-
                     outsource_plan = _get_str_openpyxl(ws, r, headers, "외주계획") or ""
                     is_outsourced = outsource_plan.strip().upper() == "Y"
 
@@ -271,6 +268,14 @@ def parse_erp_file_incremental(
                     product_group = _get_str_openpyxl(ws, r, headers, "제품군") or ""
                     voltage = _get_str_openpyxl(ws, r, headers, "전압")
                     item_code = _resolve_item_code(product_group, voltage)
+
+                    # 중복 감지: DB에 이미 존재하는 (order_id, drum_length_m) 쌍이면 건너뜀.
+                    # 같은 order_id라도 길이/규격이 다르면 별개 수주이므로 삽입.
+                    # 파일 내 동일 order_id+길이 행은 별개 드럼이므로 모두 삽입.
+                    pair = (order_id, drum_length_m)
+                    if pair in existing_pairs:
+                        result["skipped_dup"] += 1
+                        continue
 
                     line_counter += 1
                     order = SalesOrder(
@@ -302,7 +307,6 @@ def parse_erp_file_incremental(
                         run_label=run_label,
                     )
                     db.add(order)
-                    existing_order_ids.add(order_id)  # 같은 파일 내 중복 방지
                     result["inserted"] += 1
 
                     if is_outsourced:
@@ -343,10 +347,6 @@ def parse_erp_file_incremental(
                     if not order_id:
                         continue
 
-                    if order_id in existing_order_ids:
-                        result["skipped_dup"] += 1
-                        continue
-
                     outsource_plan = _get_str(sheet, r, headers, "외주계획") or ""
                     is_outsourced = outsource_plan.strip().upper() == "Y"
 
@@ -360,6 +360,12 @@ def parse_erp_file_incremental(
                     product_group = _get_str(sheet, r, headers, "제품군") or ""
                     voltage = _get_str(sheet, r, headers, "전압")
                     item_code = _resolve_item_code(product_group, voltage)
+
+                    # 중복 감지: DB에 이미 존재하는 (order_id, drum_length_m) 쌍이면 건너뜀
+                    pair = (order_id, drum_length_m)
+                    if pair in existing_pairs:
+                        result["skipped_dup"] += 1
+                        continue
 
                     line_counter += 1
                     order = SalesOrder(
@@ -389,7 +395,6 @@ def parse_erp_file_incremental(
                         run_label=run_label,
                     )
                     db.add(order)
-                    existing_order_ids.add(order_id)
                     result["inserted"] += 1
 
                     if is_outsourced:

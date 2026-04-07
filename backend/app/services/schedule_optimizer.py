@@ -398,7 +398,15 @@ def auto_schedule(
         # batch_seq=-1 헤더 배치가 있으면 그 estimated_duration_min을 직접 사용.
         # (연선 그룹: 실제 작업량 work_qty_g / 선속 — 수주 건수와 무관)
         # 헤더 없으면 기존 방식으로 각 배치 duration 합산.
-        line_speed = float(rep.line_speed_mpm or 10)
+        rep_speed = float(rep.line_speed_mpm or 0)
+        if rep_speed <= 0:
+            # SpeedMaster에서 해당 설비+SQ 조합의 line_speed 조회
+            for eq in eligible:
+                sm = speed_map.get((eq.equipment_code, float(rep.sq_mm2 or 0)))
+                if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
+                    rep_speed = float(sm.line_speed_mpm)
+                    break
+        line_speed = rep_speed if rep_speed > 0 else 10
         header_batch = next((b for b in group_batches if b.batch_seq == -1), None)
         if header_batch is not None:
             hd = float(header_batch.estimated_duration_min or 0)
@@ -753,7 +761,17 @@ def _schedule_multi_equipment(
     sq_key = (rep.process_name, sq)
 
     # 그룹 전체 duration 계산
-    line_speed = float(rep.line_speed_mpm or 10)
+    # line_speed fallback: rep에 없으면 speed_map에서 설비별 기본값 조회
+    rep_speed = float(rep.line_speed_mpm or 0)
+    if rep_speed <= 0:
+        # SpeedMaster에서 해당 설비+SQ 조합의 line_speed 조회
+        for eq in eligible:
+            sm = speed_map.get((eq.equipment_code, float(rep.sq_mm2 or 0)))
+            if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
+                rep_speed = float(sm.line_speed_mpm)
+                break
+    line_speed = rep_speed if rep_speed > 0 else 10  # 최종 fallback 10 mpm
+
     if header_batch is not None:
         # 연선: header batch(seq=-1)의 estimated_duration_min 직접 사용
         hd = float(header_batch.estimated_duration_min or 0)
@@ -785,15 +803,34 @@ def _schedule_multi_equipment(
     for i in range(num_eq):
         drums_per_eq.append(base_drums + (1 if i < remainder else 0))
 
-    # 선행공정 earliest 계산 (단일설비 경로와 동일 로직)
+    # 선행공정 earliest 계산 — 단일설비 경로와 동일하되,
+    # 혼합 SQ 그룹(고압시스_흑_적 등)은 모든 SQ의 predecessor를 확인
     earliest = base_date
     sq_int = sq
 
     pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
     if pred_proc:
-        pred_first = process_first_output_by_sq.get((pred_proc, sq_int))
-        if pred_first and pred_first > earliest:
-            earliest = pred_first
+        # 혼합 SQ 그룹: 그룹 내 모든 SQ의 predecessor 중 가장 이른 first output
+        all_sqs = {int(b.sq_mm2 or 0) for b in group_batches}
+        if len(all_sqs) > 1:
+            valid_firsts = [
+                t
+                for sq_i in all_sqs
+                if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
+                and t < datetime.max
+            ]
+            if valid_firsts:
+                pred_min = min(valid_firsts)
+                if pred_min > earliest:
+                    earliest = pred_min
+        else:
+            pred_first = process_first_output_by_sq.get((pred_proc, sq_int))
+            if pred_first and pred_first > earliest:
+                earliest = pred_first
+
+        # 고압시스: 절연 경화 대기 시간 20h (단일설비 경로와 동일)
+        if rep.process_name == "고압시스":
+            earliest += timedelta(hours=20)
 
     # 61연선 ST- 그룹: CORE 첫 드럼 출력 후 시작 (pipeline overlap)
     if group_key.startswith("ST-") and rep.process_name == "연선":
@@ -1051,12 +1088,21 @@ def _narrow_by_stranding(
 def _find_available_slot(
     earliest: datetime, duration_min: float, occupied_slots: list, db=None
 ) -> datetime:
-    """설비에서 가용한 첫 번째 슬롯 찾기"""
+    """설비에서 가용한 첫 번째 슬롯 찾기.
+
+    근무시간(08~22시) 기반 캘린더를 사용하여 실제 종료 시각을 계산한다.
+    단순 timedelta 덧셈은 야간/주말을 무시하여 슬롯 겹침을 유발할 수 있다.
+    """
     candidate = earliest
     sorted_slots = sorted(occupied_slots, key=lambda s: s[0])
 
     for slot_start, slot_end in sorted_slots:
-        if candidate + timedelta(minutes=duration_min) <= slot_start:
+        # 캘린더 기반 종료 시각으로 슬롯 겹침 판단
+        if db is not None:
+            candidate_end = calculate_end_datetime(candidate, duration_min, db)
+        else:
+            candidate_end = candidate + timedelta(minutes=duration_min)
+        if candidate_end <= slot_start:
             # Fits before this slot
             return candidate
         if candidate < slot_end:
@@ -1187,13 +1233,17 @@ def reschedule(
     planned/scheduled 배치의 schedule_tasks만 삭제 후 auto_schedule을 재실행한다.
     Returns: auto_schedule과 동일한 결과 dict + "cleared_tasks" 수
     """
-    _FROZEN_STATUSES = {"in_progress", "completed"}
+    # run_stage1_update()와 동일하게 status != "planned"인 배치를 보호
+    # wip_complete: WIP 소진 완료 배치 — 재스케줄 시에도 반드시 보존
+    # in_progress/completed: 사용자 수동 설정 — 반드시 보존
+    # scheduled: 기존 스케줄 결과 — 재스케줄 대상이므로 planned으로 초기화
+    _ALWAYS_FROZEN = {"in_progress", "completed", "wip_complete"}
 
     # frozen 배치의 batch_id 수집 — 해당 schedule_tasks는 삭제하지 않음
     all_batches = (
         db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
     )
-    frozen_batch_ids = {b.batch_id for b in all_batches if b.status in _FROZEN_STATUSES}
+    frozen_batch_ids = {b.batch_id for b in all_batches if b.status in _ALWAYS_FROZEN}
 
     # frozen 배치에 속하지 않는 schedule_tasks만 삭제
     existing_tasks = (
@@ -1206,6 +1256,7 @@ def reschedule(
             cleared_count += 1
 
     # 배치 상태 초기화 — frozen 배치는 건드리지 않음
+    # scheduled → planned (재스케줄 대상), wip_complete/in_progress/completed 유지
     for batch in all_batches:
         if batch.status == "scheduled":
             batch.status = "planned"

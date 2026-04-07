@@ -27,7 +27,9 @@ class TaskPriority(str, Enum):
 
 class TaskStatus(str, Enum):
     PLANNED = "planned"
+    SCHEDULED = "scheduled"
     IN_PROGRESS = "in_progress"
+    WIP_COMPLETE = "wip_complete"
     COMPLETED = "completed"
     DELAYED = "delayed"
 

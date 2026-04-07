@@ -1120,6 +1120,20 @@ def update_batch_status(batch_id: int, body: dict, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail=f"배치 {batch_id} 없음")
 
     batch.status = new_status
+
+    # 동일 batch_group 의 헤더(batch_seq=-1)도 함께 갱신한다.
+    # 헤더는 그룹 전체의 대표 상태를 나타내므로 개별 배치 변경 시 동기화가 필요하다.
+    header = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch.batch_group,
+            ProductionBatch.batch_seq == -1,
+        )
+        .first()
+    )
+    if header:
+        header.status = new_status
+
     db.commit()
     return {
         "batch_id": batch_id,

@@ -410,8 +410,9 @@ function ErpUploadSection({
   }, []);
 
   // 실제 Stage 1 API 호출 (확인 모달 통과 후)
+  // fromConfirmModal=true 이면 배치가 존재하는 상태에서 확인 모달을 통과한 경로임을 의미한다.
   const executeStage1 = useCallback(
-    async (parentRunLabel?: string) => {
+    async (parentRunLabel?: string, fromConfirmModal = false) => {
       if (!erpFile || isRunning) return;
       setConfirmModalOpen(false);
       setIsRunning(true);
@@ -429,8 +430,17 @@ function ErpUploadSection({
 
         let endpoint = `${API}/pipeline/stage1`;
 
-        // 증분 모드이거나 기존 run이 있으면 update 엔드포인트 사용
-        if (uploadMode === "incremental" || parentRunLabel) {
+        // 증분 모드이거나 기존 run이 있으면 update 엔드포인트를 사용한다.
+        // full 모드에서 확인 모달을 통과한 경우(fromConfirmModal=true)에도 반드시
+        // update 엔드포인트를 사용해야 한다. 레거시 /stage1 은 frozen 배치를 포함한
+        // 모든 데이터를 삭제하므로, /pipeline/runs 조회가 실패해 parentRunLabel이
+        // undefined 인 상황에서도 /stage1/update 를 호출해야 데이터 손실을 막는다.
+        // 백엔드는 parent_run_label 미전달 시 최신 run_label 을 자동으로 탐지한다.
+        if (
+          uploadMode === "incremental" ||
+          fromConfirmModal ||
+          parentRunLabel
+        ) {
           endpoint = `${API}/pipeline/stage1/update`;
           formData.append("upload_mode", uploadMode);
           if (parentRunLabel) {
@@ -503,6 +513,7 @@ function ErpUploadSection({
   }, [erpFile, isRunning, executeStage1]);
 
   // 확인 모달에서 "업로드 진행" 클릭 시 — 최신 run_label을 받아 executeStage1 호출
+  // fromConfirmModal=true 를 항상 전달해 full 모드에서도 /stage1/update 를 보장한다.
   const handleConfirmUpload = useCallback(async () => {
     let parentRunLabel: string | undefined;
     try {
@@ -512,9 +523,9 @@ function ErpUploadSection({
         if (runs.length > 0) parentRunLabel = runs[0].run_label;
       }
     } catch {
-      // run_label 조회 실패 시 update 엔드포인트 없이 실행
+      // run_label 조회 실패해도 fromConfirmModal=true 덕분에 /stage1/update 가 사용된다
     }
-    await executeStage1(parentRunLabel);
+    await executeStage1(parentRunLabel, true);
   }, [executeStage1]);
 
   const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
@@ -1093,6 +1104,8 @@ function getKstToday(): string {
 export default function PlanRegisterPage() {
   const [baseDate, setBaseDate] = useState(getKstToday());
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
+  // incremental 모드 선택 시 WIP 섹션을 흐리게 처리하기 위해 모드를 상위에서 관리
+  const [erpUploadMode, setErpUploadMode] = useState<UploadMode>("full");
 
   // localStorage에서 기존 기준일자 복원, 없으면 오늘로 초기화 후 저장
   useEffect(() => {
@@ -1165,8 +1178,20 @@ export default function PlanRegisterPage() {
           />
         </section>
 
-        <WipUploadSection wipFile={wipFile} setWipFile={setWipFile} />
-        <ErpUploadSection wipFile={wipFile} />
+        {/* incremental 모드에서는 WIP 섹션을 반투명하게 처리해 비활성 상태를 시각화 */}
+        <div
+          style={{
+            opacity: erpUploadMode === "incremental" ? 0.5 : 1,
+            transition: "opacity 150ms ease",
+            pointerEvents: erpUploadMode === "incremental" ? "none" : undefined,
+          }}
+        >
+          <WipUploadSection wipFile={wipFile} setWipFile={setWipFile} />
+        </div>
+        <ErpUploadSection
+          wipFile={wipFile}
+          onUploadModeChange={setErpUploadMode}
+        />
       </div>
     </div>
   );
