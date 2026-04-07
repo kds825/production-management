@@ -188,7 +188,7 @@ export function ProductionBatchTable({
     );
   }, [sortedBatches, colFilters, batchNumbers, hasActiveFilter]);
 
-  /** 배치(batch_group)별 그룹핑 — 순서 유지 */
+  /** 배치(batch_group)별 그룹핑 — 순서 유지, 분할 그룹에 차수 라벨 추가 */
   const groupedBatches = useMemo(() => {
     const groups: { key: string; label: string; batches: SchedulingBatch[] }[] =
       [];
@@ -201,6 +201,21 @@ export function ProductionBatchTable({
       }
       groups[seen.get(key)!].batches.push(b);
     }
+
+    // 같은 spec에 여러 그룹이 있으면 분할된 것 → 1차/2차 라벨 추가
+    const specCount = new Map<string, number>();
+    for (const g of groups) {
+      specCount.set(g.label, (specCount.get(g.label) || 0) + 1);
+    }
+    const specIdx = new Map<string, number>();
+    for (const g of groups) {
+      if ((specCount.get(g.label) || 0) > 1) {
+        const idx = (specIdx.get(g.label) || 0) + 1;
+        specIdx.set(g.label, idx);
+        g.label = `${g.label} (${idx}차)`;
+      }
+    }
+
     return groups;
   }, [filteredBatches]);
 
