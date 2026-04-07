@@ -344,13 +344,17 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
                 "matched_batch_group": row.batch_group,
             }
 
-    # wip_id별 실제 사용량(m) — 매칭된 수주의 ordered_qty_m 합산
-    from sqlalchemy import func as sqla_func
+    # wip_id별 실제 사용량(m) — 환산수량(ordered_qty_m × core_count) 합산
+    # 4C 케이블은 심선 4가닥 소비하므로 WIP 드럼에서 ×4 차감
+    from sqlalchemy import func as sqla_func, case
 
     used_m_rows = (
         db.query(
             SalesOrder.wip_id,
-            sqla_func.sum(SalesOrder.ordered_qty_m),
+            sqla_func.sum(
+                SalesOrder.ordered_qty_m
+                * case((SalesOrder.core_count > 0, SalesOrder.core_count), else_=1)
+            ),
         )
         .filter(
             SalesOrder.run_label == run_label,

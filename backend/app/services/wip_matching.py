@@ -60,39 +60,78 @@ def match_wip(run_label: str, db: Session) -> dict:
         )
     )
 
+    # ── 같은 규격의 WIP을 풀(pool)로 묶기 ──
+    # 연선재고: (SQ, process_stage, voltage_class) — 색상 무관
+    # 절연재고: (SQ, process_stage, voltage_class, core_colors, product_name) — 색상+제품 구분
+    from collections import OrderedDict
+
+    wip_pools: OrderedDict[tuple, dict] = OrderedDict()
     for wip in wip_items:
         wip_sq = float(wip.cross_section) if wip.cross_section else None
-        wip_drum_length = float(wip.length_m or 0)  # 드럼 1개 기준 길이
-        wip_total = float(wip.total_length_m or 0)  # 전체 재고 (length_m × count)
-        if not wip_sq or wip_total <= 0 or wip_drum_length <= 0:
+        wip_total = float(wip.total_length_m or 0)
+        wip_drum = float(wip.length_m or 0)
+        if not wip_sq or wip_total <= 0 or wip_drum <= 0:
             continue
+        stage = wip.process_stage or ""
+        if "절연" in stage:
+            # 절연재고: 색상+제품별 분리
+            key = (
+                wip_sq,
+                stage,
+                wip.voltage_class or "",
+                wip.core_colors or "",
+                wip.product_name or "",
+            )
+        else:
+            # 연선재고: SQ만으로 풀링
+            key = (wip_sq, stage, wip.voltage_class or "", "", "")
+        if key not in wip_pools:
+            wip_pools[key] = {"wips": [], "pool_total": 0.0, "max_drum": 0.0}
+        wip_pools[key]["wips"].append(wip)
+        wip_pools[key]["pool_total"] += wip_total
+        wip_pools[key]["max_drum"] = max(wip_pools[key]["max_drum"], wip_drum)
 
-        # ── 이 WIP에 매칭 가능한 후보 수주 필터링 ──────────────────────────
+    for pool_key, pool in wip_pools.items():
+        pool_sq, pool_stage, pool_volt = pool_key[0], pool_key[1], pool_key[2]
+        pool_wips: list = pool["wips"]
+        pool_total: float = pool["pool_total"]
+        max_drum: float = pool["max_drum"]
+
+        # ── 후보 수주 필터링 (풀 단위) ──────────────────────────
         candidates: list[SalesOrder] = []
         for order in orders:
             if order.use_wip:
                 continue
 
             order_sq = _extract_sq(order.spec_raw)
-            if order_sq is None or abs(order_sq - wip_sq) > 0.01:
+            if order_sq is None or abs(order_sq - pool_sq) > 0.01:
                 continue
 
-            if wip.process_stage == "절연재고":
-                if not _product_group_matches(wip.product_name, order.product_group):
+            if "절연" in pool_stage:
+                # 절연재고: product_group 호환성 + 색상 매칭
+                if not _product_group_matches(
+                    pool_wips[0].product_name, order.product_group
+                ):
                     continue
+                # 색상이 있는 풀이면 수주 core_colors에 해당 색상 포함 여부 확인
+                pool_color = pool_key[3] if len(pool_key) > 3 else ""
+                if pool_color:
+                    order_colors = order.core_colors or ""
+                    if pool_color not in order_colors:
+                        continue
 
-            if wip.voltage_class and order.voltage:
+            if pool_volt and order.voltage:
                 order_volt = (
                     "저압"
                     if "0.6" in (order.voltage or "") or "1kV" in (order.voltage or "")
                     else "고압"
                 )
-                if wip.voltage_class != order_volt:
+                if pool_volt != order_volt:
                     continue
 
             order_drum_length = float(order.drum_length_m or order.ordered_qty_m or 0)
             if order_drum_length > 0:
-                if wip_drum_length < order_drum_length * (1 - loss_limit):
+                if max_drum < order_drum_length * (1 - loss_limit):
                     continue
 
             order_qty = float(order.ordered_qty_m or 0)
@@ -104,34 +143,59 @@ def match_wip(run_label: str, db: Session) -> dict:
         if not candidates:
             continue
 
-        # ── 최적 조합 탐색: WIP 잔여량 최소화 ──────────────────────────────
-        matched_orders = _find_best_combo(candidates, wip_total, shortage_tolerance)
+        # ── 풀 합산 총량으로 최적 조합 탐색 ──────────────────────────────
+        matched_orders = _find_best_combo(candidates, pool_total, shortage_tolerance)
 
         if not matched_orders:
             continue
 
-        # ── WIP 상태 갱신 ──
-        wip.status = "사용완료"
-        wip.matched_order_id = (
-            f"{matched_orders[0].order_id}:{matched_orders[0].order_line}"
+        # ── 매칭된 수주를 WIP 드럼에 순차 배분 ──
+        # 큰 드럼부터 채우기 (잔여량 최소화)
+        pool_wips_sorted = sorted(
+            pool_wips, key=lambda w: float(w.total_length_m or 0), reverse=True
+        )
+        # 수주를 환산수량 내림차순으로 정렬 (큰 수주부터 큰 드럼에 배정)
+        matched_orders.sort(
+            key=lambda o: float(o.ordered_qty_m or 0) * max(int(o.core_count or 1), 1),
+            reverse=True,
         )
 
-        # ── 수주별 매칭 정보 설정 ──
+        wip_remaining = {
+            w.wip_id: float(w.total_length_m or 0) for w in pool_wips_sorted
+        }
+
         for order in matched_orders:
+            conv_qty = float(order.ordered_qty_m or 0) * max(
+                int(order.core_count or 1), 1
+            )
+            # 잔여량이 충분한 첫 번째 드럼에 배정
+            assigned_wip = None
+            for w in pool_wips_sorted:
+                if wip_remaining[w.wip_id] >= conv_qty:
+                    assigned_wip = w
+                    break
+            # 충분한 드럼이 없으면 가장 잔여량 큰 드럼에 배정
+            if assigned_wip is None:
+                assigned_wip = max(
+                    pool_wips_sorted, key=lambda w: wip_remaining[w.wip_id]
+                )
+
+            wip_remaining[assigned_wip.wip_id] -= conv_qty
+
             order.use_wip = True
-            order.wip_type = wip.process_stage
+            order.wip_type = pool_stage
             order.actual_length_m = float(order.ordered_qty_m or 0)
-            order.wip_id = wip.wip_id
+            order.wip_id = assigned_wip.wip_id
 
             result["matched"] += 1
             result["details"].append(
                 {
                     "order_id": order.order_id,
                     "order_line": order.order_line,
-                    "wip_id": wip.wip_id,
-                    "wip_process": wip.process_stage,
-                    "wip_sq": wip_sq,
-                    "wip_total_m": wip_total,
+                    "wip_id": assigned_wip.wip_id,
+                    "wip_process": pool_stage,
+                    "wip_sq": pool_sq,
+                    "wip_total_m": pool_total,
                     "order_qty_m": float(order.ordered_qty_m or 0),
                 }
             )
@@ -147,17 +211,31 @@ def match_wip(run_label: str, db: Session) -> dict:
                         "name": "재공 활용",
                         "result": "pass",
                         "detail": (
-                            f"WIP {wip.wip_id}({wip.process_stage} {wip_sq}SQ "
-                            f"총{wip_total}m) → 수주 {order.order_id}:{order.order_line} "
-                            f"({float(order.ordered_qty_m or 0)}m)"
+                            f"WIP풀 {pool_sq}SQ {pool_stage} "
+                            f"총{pool_total}m → 수주 {order.order_id}:{order.order_line} "
+                            f"({float(order.ordered_qty_m or 0)}m, 환산{conv_qty}m)"
                         ),
                     }
                 ],
                 reason=(
-                    f"재공 매칭: {wip.process_stage} {wip_sq}SQ 총{wip_total}m → "
+                    f"재공 매칭: {pool_stage} {pool_sq}SQ 풀{pool_total}m → "
                     f"{order.order_id}:{order.order_line}"
                 ),
             )
+
+        # ── WIP 상태 갱신 ──
+        for w in pool_wips_sorted:
+            used = float(w.total_length_m or 0) - wip_remaining[w.wip_id]
+            if used > 0:
+                w.status = "사용완료"
+                # 대표 수주 ID 기록
+                first_matched = next(
+                    (o for o in matched_orders if o.wip_id == w.wip_id), None
+                )
+                if first_matched:
+                    w.matched_order_id = (
+                        f"{first_matched.order_id}:{first_matched.order_line}"
+                    )
 
     db.flush()
     return result
