@@ -248,11 +248,12 @@ async def run_stage1_update(
 
     try:
         # ── 1. Frozen 배치 식별 ───────────────────────────────────────────────
+        # planned 외 모든 상태를 보호: scheduled, wip_complete, in_progress, completed
         frozen = (
             db.query(ProductionBatch)
             .filter(
                 ProductionBatch.run_label == run_label,
-                ProductionBatch.status.in_(["in_progress", "completed"]),
+                ProductionBatch.status != "planned",
             )
             .all()
         )
@@ -1226,16 +1227,17 @@ def get_batch_status_summary(db: Session = Depends(get_db)):
         .group_by(ProductionBatch.status)
         .all()
     )
-    summary = {"planned": 0, "in_progress": 0, "completed": 0}
+    summary: dict[str, int] = {}
     for status, count in status_counts:
-        if status in summary:
-            summary[status] = count
+        summary[status] = count
+    planned = summary.get("planned", 0)
+    non_planned = sum(c for s, c in summary.items() if s != "planned")
 
-    # frozen 배치에 매칭된 WIP 수
+    # frozen 배치에 매칭된 WIP 수 (planned 외 모든 상태)
     frozen_wip_count = (
         db.query(func.count(ProductionBatch.wip_matched_id))
         .filter(
-            ProductionBatch.status.in_(["in_progress", "completed"]),
+            ProductionBatch.status != "planned",
             ProductionBatch.wip_matched_id.isnot(None),
         )
         .scalar()
@@ -1254,9 +1256,13 @@ def get_batch_status_summary(db: Session = Depends(get_db)):
     total_orders = db.query(func.count(SalesOrder.order_id)).scalar() or 0
 
     return {
-        **summary,
-        "total_batches": sum(summary.values()),
-        "frozen_count": summary["in_progress"] + summary["completed"],
+        "planned": planned,
+        "scheduled": summary.get("scheduled", 0),
+        "wip_complete": summary.get("wip_complete", 0),
+        "in_progress": summary.get("in_progress", 0),
+        "completed": summary.get("completed", 0),
+        "total_batches": planned + non_planned,
+        "frozen_count": non_planned,
         "frozen_wip_count": frozen_wip_count,
         "available_wip_count": available_wip_count,
         "total_orders": total_orders,

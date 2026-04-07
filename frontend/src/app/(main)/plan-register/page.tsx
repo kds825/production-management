@@ -85,7 +85,10 @@ interface BatchStatusSummary {
   total_batches: number;
   completed: number;
   in_progress: number;
+  scheduled: number;
+  wip_complete: number;
   planned: number;
+  frozen_count: number;
   frozen_wip_count: number;
   available_wip_count: number;
 }
@@ -980,49 +983,59 @@ function ErpUploadSection({
             <div className="p-5 space-y-3">
               {/* 상태별 배치 수 bar */}
               <div className="space-y-2">
-                {batchSummary.completed > 0 && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <div
-                      className="h-3 rounded"
-                      style={{
-                        width: `${Math.max(20, (batchSummary.completed / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
-                        backgroundColor: "#16A34A",
-                      }}
-                    />
-                    <span className="text-gray-700">
-                      완료: <b>{batchSummary.completed}개</b>{" "}
-                      <span className="text-gray-400">(동결)</span>
-                    </span>
-                  </div>
-                )}
-                {batchSummary.in_progress > 0 && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <div
-                      className="h-3 rounded"
-                      style={{
-                        width: `${Math.max(20, (batchSummary.in_progress / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
-                        backgroundColor: "#2563EB",
-                      }}
-                    />
-                    <span className="text-gray-700">
-                      진행중: <b>{batchSummary.in_progress}개</b>{" "}
-                      <span className="text-gray-400">(동결)</span>
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-xs">
-                  <div
-                    className="h-3 rounded"
-                    style={{
-                      width: `${Math.max(20, (batchSummary.planned / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
-                      backgroundColor: "#D1D5DB",
-                    }}
-                  />
-                  <span className="text-gray-700">
-                    계획: <b>{batchSummary.planned}개</b>{" "}
-                    <span className="text-gray-400">(재계산 대상)</span>
-                  </span>
-                </div>
+                {[
+                  {
+                    key: "completed",
+                    label: "완료",
+                    color: "#16A34A",
+                    frozen: true,
+                  },
+                  {
+                    key: "in_progress",
+                    label: "진행중",
+                    color: "#2563EB",
+                    frozen: true,
+                  },
+                  {
+                    key: "scheduled",
+                    label: "스케줄링 완료",
+                    color: "#8B5CF6",
+                    frozen: true,
+                  },
+                  {
+                    key: "wip_complete",
+                    label: "WIP 매칭 완료",
+                    color: "#F59E0B",
+                    frozen: true,
+                  },
+                  {
+                    key: "planned",
+                    label: "계획",
+                    color: "#D1D5DB",
+                    frozen: false,
+                  },
+                ].map(({ key, label, color, frozen }) => {
+                  const count =
+                    (batchSummary as Record<string, number>)[key] ?? 0;
+                  if (count === 0) return null;
+                  return (
+                    <div key={key} className="flex items-center gap-2 text-xs">
+                      <div
+                        className="h-3 rounded"
+                        style={{
+                          width: `${Math.max(20, (count / Math.max(batchSummary.total_batches, 1)) * 200)}px`,
+                          backgroundColor: color,
+                        }}
+                      />
+                      <span className="text-gray-700">
+                        {label}: <b>{count}개</b>{" "}
+                        <span className="text-gray-400">
+                          ({frozen ? "동결" : "재계산 대상"})
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* WIP 현황 */}
