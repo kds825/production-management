@@ -545,7 +545,7 @@ def cp_sat_schedule(
         log_decision(
             db=db,
             run_label=run_label,
-            stage="stage2_cpsat",
+            stage="stage2",
             action_type="auto_assign",
             batch_id=rep.batch_id,
             task_id=task.task_id,
