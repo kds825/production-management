@@ -434,6 +434,7 @@ def auto_schedule(
                 tasks_created=tasks_created,
                 result=result,
                 welding_min=welding_min,
+                sq_to_wire_d=sq_to_wire_d,
             )
             if split_ok:
                 continue
@@ -486,17 +487,30 @@ def auto_schedule(
 
             eq_total_duration = total_duration
 
-            # 4-1: 동일SQ 셋업 스킵
+            # 4-1: 연선 셋업 3-tier (동일SQ=0 / 동일소선경=선재교체 / 다른소선경=규격교체)
             prev_batch = last_batch_on_equip.get(eq_code)
-            actual_setup = setup_min
-            if prev_batch is not None:
-                same_sq = (
-                    prev_batch.sq_mm2 is not None
-                    and rep.sq_mm2 is not None
-                    and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+            if prev_batch is not None and rep.process_name == "연선":
+                compound_min = float(
+                    speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
+                    speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
                 )
-                if same_sq:
-                    actual_setup = 0.0
+                actual_setup = _get_stranding_setup_min(
+                    float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
+                    float(rep.sq_mm2) if rep.sq_mm2 else None,
+                    sq_to_wire_d,
+                    spec_min=setup_min,
+                    compound_min=compound_min,
+                )
+            else:
+                actual_setup = setup_min
+                if prev_batch is not None:
+                    same_sq = (
+                        prev_batch.sq_mm2 is not None
+                        and rep.sq_mm2 is not None
+                        and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+                    )
+                    if same_sq:
+                        actual_setup = 0.0
             eq_total_duration = eq_total_duration - setup_min + actual_setup
 
             # 4-2: 색상교체 시간 — 그룹 간 변경 시 (SpeedMaster 조회)
@@ -791,6 +805,7 @@ def _schedule_multi_equipment(
     tasks_created: list,
     result: dict,
     welding_min: float,
+    sq_to_wire_d: dict | None = None,
 ) -> bool:
     """연선/고압절연 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
 
@@ -970,17 +985,30 @@ def _schedule_multi_equipment(
 
         drum_winding_min = _get_drum_winding_min(eq_code, rep.sq_mm2, speed_map)
 
-        # 4-1: 동일SQ 셋업 스킵
+        # 4-1: 연선 셋업 3-tier (동일SQ=0 / 동일소선경=선재교체 / 다른소선경=규격교체)
         prev_batch = last_batch_on_equip.get(eq_code)
-        actual_setup = setup_min
-        if prev_batch is not None:
-            same_sq = (
-                prev_batch.sq_mm2 is not None
-                and rep.sq_mm2 is not None
-                and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+        if prev_batch is not None and rep.process_name == "연선" and sq_to_wire_d:
+            compound_min = float(
+                speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
+                speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
             )
-            if same_sq:
-                actual_setup = 0.0
+            actual_setup = _get_stranding_setup_min(
+                float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
+                float(rep.sq_mm2) if rep.sq_mm2 else None,
+                sq_to_wire_d,
+                spec_min=setup_min,
+                compound_min=compound_min,
+            )
+        else:
+            actual_setup = setup_min
+            if prev_batch is not None:
+                same_sq = (
+                    prev_batch.sq_mm2 is not None
+                    and rep.sq_mm2 is not None
+                    and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+                )
+                if same_sq:
+                    actual_setup = 0.0
 
         eq_total_duration = eq_duration + actual_setup + drum_winding_min
 
@@ -1227,6 +1255,30 @@ def _get_drum_winding_min(
     if record is None:
         return 0.0
     return float(record.setup_start_min or 0)
+
+
+def _get_stranding_setup_min(
+    prev_sq: float | None,
+    curr_sq: float | None,
+    sq_to_wire_d: dict,
+    spec_min: float,
+    compound_min: float,
+) -> float:
+    """연선 공정 셋업 시간 결정 (3-tier).
+
+    동일 SQ          → 0분 (교체 없음)
+    다른 SQ, 동일 소선경 → compound_min (선재교체만, 기본 120분)
+    다른 SQ, 다른 소선경 → spec_min     (규격교체만, 기본 240분)
+    """
+    if prev_sq is None or curr_sq is None:
+        return spec_min
+    if prev_sq == curr_sq:
+        return 0.0
+    prev_wd = sq_to_wire_d.get(int(prev_sq), None)
+    curr_wd = sq_to_wire_d.get(int(curr_sq), None)
+    if prev_wd and curr_wd and prev_wd == curr_wd:
+        return compound_min  # 동일 소선경: 선재교체만
+    return spec_min  # 다른 소선경: 규격교체만
 
 
 def _get_tp_line_speed(

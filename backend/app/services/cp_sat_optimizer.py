@@ -46,6 +46,7 @@ from app.services.schedule_optimizer import (
     _find_available_slot,
     _find_eligible_equipment,
     _get_drum_winding_min,
+    _get_stranding_setup_min,
     _is_core_group,
     _narrow_by_stranding,
     _schedule_multi_equipment,
@@ -244,6 +245,13 @@ def cp_sat_schedule(
     welding_min = _DEFAULT_WELDING_MIN
     if welding_cfg and welding_cfg.params_json:
         welding_min = float(welding_cfg.params_json.get("welding_min", _DEFAULT_WELDING_MIN))
+
+    # SQ → 소선경 매핑 (연선 셋업 3-tier 계산용)
+    sq_to_wire_d: dict[int, float] = {
+        int(d.cross_section): float(d.wire_diameter)
+        for d in db.query(DrumLotMaster).all()
+        if d.wire_diameter is not None
+    }
 
     # ── 4. 그루핑 ─────────────────────────────────────────────────────────
     batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
@@ -484,6 +492,7 @@ def cp_sat_schedule(
                 tasks_created=tasks_created,
                 result=result,
                 welding_min=welding_min,
+                sq_to_wire_d=sq_to_wire_d,
             )
             if split_ok:
                 result["total_tasks"] += 1
@@ -493,10 +502,22 @@ def cp_sat_schedule(
         # ── 단일설비 배치 ─────────────────────────────────────────────────
         eligible = meta["eligible"]
 
-        # 동일 SQ 셋업 스킵
+        # 연선 셋업 3-tier / 그 외 동일SQ 스킵
         actual_setup = meta["setup_min"]
         prev_batch = last_batch_on_equip.get(chosen_eq_code)
-        if prev_batch and prev_batch.sq_mm2 and rep.sq_mm2:
+        if prev_batch and rep.process_name == "연선":
+            compound_min = float(
+                speed_map.get((chosen_eq_code, float(rep.sq_mm2 or 0)), None) and
+                speed_map[(chosen_eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
+            )
+            actual_setup = _get_stranding_setup_min(
+                float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
+                float(rep.sq_mm2) if rep.sq_mm2 else None,
+                sq_to_wire_d,
+                spec_min=meta["setup_min"],
+                compound_min=compound_min,
+            )
+        elif prev_batch and prev_batch.sq_mm2 and rep.sq_mm2:
             if float(prev_batch.sq_mm2) == float(rep.sq_mm2):
                 actual_setup = 0.0
 
