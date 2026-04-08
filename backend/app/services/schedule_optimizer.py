@@ -845,52 +845,11 @@ def _schedule_multi_equipment(
 
     # 드럼을 설비 수로 균등 분할
     num_eq = len(eligible)
-    drums_per_eq_base = []
+    drums_per_eq = []
     base_drums = total_drums // num_eq
     remainder = total_drums % num_eq
     for i in range(num_eq):
-        drums_per_eq_base.append(base_drums + (1 if i < remainder else 0))
-
-    # ── 설비 우선순위: 가장 일찍 가동 가능한 설비를 먼저 배정 ────────────────
-    # 각 설비의 예상 최초 가용 시각을 빠르게 계산하여 정렬
-    one_drum_dur = (group_duration / max(total_drums, 1)) + setup_min
-    machine_est_starts = []
-    for eq in eligible:
-        slots = timeline.get(eq.equipment_code, [])
-        est_start = _find_available_slot(earliest, one_drum_dur, slots, db)
-        machine_est_starts.append((est_start, eq))
-    # 가장 빨리 시작 가능한 설비 순으로 정렬
-    machine_est_starts.sort(key=lambda x: x[0])
-    sorted_eligible = [eq for _, eq in machine_est_starts]
-
-    # 드럼 배분량도 정렬된 순서로 재매핑
-    drums_per_eq = drums_per_eq_base  # 균등 분할량은 동일, 설비 순서만 변경
-
-    # ── 수주 → 설비 납기 우선 배정 ────────────────────────────────────────────
-    # 개별 수주(seq >= 1)를 납기 오름차순으로 정렬 → 급한 수주를 가장 빠른 설비에 배정
-    order_batches_sorted = sorted(
-        [b for b in group_batches if (b.batch_seq or 0) >= 1],
-        key=lambda b: (b.due_date or date.max, b.customer_priority or 99),
-    )
-    # 설비별 배정된 수주 목록 (납기 우선)
-    machine_order_assignments: list[list] = [[] for _ in range(num_eq)]
-    order_cursor = 0
-    for i in range(num_eq):
-        drums_left = drums_per_eq[i]
-        while drums_left > 0 and order_cursor < len(order_batches_sorted):
-            b = order_batches_sorted[order_cursor]
-            machine_order_assignments[i].append(b)
-            drums_left -= int(b.drum_count or 1)
-            order_cursor += 1
-    # 미처리 수주는 마지막 설비에 추가
-    if order_cursor < len(order_batches_sorted):
-        machine_order_assignments[-1].extend(order_batches_sorted[order_cursor:])
-
-    # 설비별 서브배치의 납기: 해당 설비에 배정된 수주 중 가장 이른 납기
-    sub_due_dates: list[date | None] = [
-        min((b.due_date for b in orders if b.due_date), default=None)
-        for orders in machine_order_assignments
-    ]
+        drums_per_eq.append(base_drums + (1 if i < remainder else 0))
 
     # 선행공정 earliest 계산 — 단일설비 경로와 동일하되,
     # 혼합 SQ 그룹(고압시스_흑_적 등)은 모든 SQ의 predecessor를 확인
@@ -957,6 +916,42 @@ def _schedule_multi_equipment(
                 )
                 if pred_task and pred_task.end_datetime > earliest:
                     earliest = pred_task.end_datetime
+
+    # ── earliest 확정 후: 설비 우선순위 정렬 + 수주 납기 우선 배정 ───────────
+    # 각 설비의 예상 최초 가용 시각 계산 (earliest 반영)
+    one_drum_dur = (group_duration / max(total_drums, 1)) + setup_min
+    machine_est_starts = []
+    for eq in eligible:
+        slots = timeline.get(eq.equipment_code, [])
+        est_start = _find_available_slot(earliest, one_drum_dur, slots, db)
+        machine_est_starts.append((est_start, eq))
+    # 가장 빨리 시작 가능한 설비 순으로 정렬
+    machine_est_starts.sort(key=lambda x: x[0])
+    sorted_eligible = [eq for _, eq in machine_est_starts]
+
+    # 개별 수주(seq >= 1)를 납기 오름차순으로 정렬 → 급한 수주를 빠른 설비에 배정
+    order_batches_sorted = sorted(
+        [b for b in group_batches if (b.batch_seq or 0) >= 1],
+        key=lambda b: (b.due_date or date.max, b.customer_priority or 99),
+    )
+    machine_order_assignments: list[list] = [[] for _ in range(num_eq)]
+    order_cursor = 0
+    for i in range(num_eq):
+        drums_left = drums_per_eq[i]
+        while drums_left > 0 and order_cursor < len(order_batches_sorted):
+            b = order_batches_sorted[order_cursor]
+            machine_order_assignments[i].append(b)
+            drums_left -= int(b.drum_count or 1)
+            order_cursor += 1
+    # 미처리 수주는 마지막 설비에 추가
+    if order_cursor < len(order_batches_sorted):
+        machine_order_assignments[-1].extend(order_batches_sorted[order_cursor:])
+
+    # 설비별 서브배치의 납기: 해당 설비에 배정된 수주 중 가장 이른 납기
+    sub_due_dates: list[date | None] = [
+        min((b.due_date for b in orders if b.due_date), default=None)
+        for orders in machine_order_assignments
+    ]
 
     # 각 설비에 분배 task 생성 (납기 우선 배정된 sorted_eligible 순서)
     split_tasks = []
