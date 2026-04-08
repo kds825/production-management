@@ -433,12 +433,30 @@ def cp_sat_schedule(
             interval_vars[(gk, eq_code)] = itv
 
     # 설비별 no_overlap
+    # ── 5-b 멀티설비 선처리로 이미 점유된 슬롯을 fixed interval로 모델에 등록 ──
+    # CP-SAT는 _schedule_multi_equipment가 배치한 태스크를 모르므로,
+    # timeline의 기존 슬롯을 고정 구간으로 추가해야 CP-SAT 배치와 겹침을 방지한다.
+    fixed_intervals_by_eq: dict[str, list] = {}
+    for eq_code, slots in timeline.items():
+        fixed_intervals_by_eq[eq_code] = []
+        for slot_start_dt, slot_end_dt in slots:
+            slot_s = _minutes_from_base(slot_start_dt, base_date)
+            slot_e = _minutes_from_base(slot_end_dt, base_date)
+            slot_dur = max(slot_e - slot_s, 1)
+            fixed_itv = model.new_fixed_size_interval_var(
+                slot_s, slot_dur, f"fixed_{eq_code}_{slot_s}"
+            )
+            fixed_intervals_by_eq[eq_code].append(fixed_itv)
+
     for eq_code in all_equip_codes:
         intervals_for_eq = [
             interval_vars[(gk, eq_code)]
             for gk in groups
             if eq_code in equip_vars.get(gk, {})
         ]
+        # 기존 점유 슬롯(멀티설비 선처리 결과) 추가
+        intervals_for_eq.extend(fixed_intervals_by_eq.get(eq_code, []))
+
         if len(intervals_for_eq) >= 2:
             model.add_no_overlap(intervals_for_eq)
 
