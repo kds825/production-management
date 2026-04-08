@@ -450,8 +450,10 @@ def create_batches(
                     routing_code=routing_code_g,
                     process_name="연선",
                     batch_seq=0,
-                    drum_length_m=float(order.ordered_qty_m or 0),
-                    drum_count=1,
+                    drum_count=int(order.drum_count or 1),
+                    drum_length_m=float(order.drum_length_m or 0) or (
+                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
+                    ),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # T6BO SQ 범위(≤35) 매칭용 — 실제 선심 소선경 기준
@@ -505,8 +507,10 @@ def create_batches(
                     routing_code=routing_code_g,
                     process_name="연선",
                     batch_seq=0,
-                    drum_length_m=float(order.ordered_qty_m or 0),
-                    drum_count=1,
+                    drum_count=int(order.drum_count or 1),
+                    drum_length_m=float(order.drum_length_m or 0) or (
+                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
+                    ),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # AL6BO SQ 범위(25~50) 매칭용

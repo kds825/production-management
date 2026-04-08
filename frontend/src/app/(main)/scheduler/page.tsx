@@ -77,14 +77,15 @@ interface BatchGroupOrder {
 /** 배치 그룹 수주 목록 테이블
  *
  * batch_seq == -1 → 연선 그룹 헤더(틀단위 집계): 총 생산지시 틀 수 표시에 사용
+ * batch_seq == 0  → CORE 배치(61연선 코어): 수주 1건씩, 헤더 없음
  * batch_seq == 1  → 개별 수주 배치: 수주 1건씩 행으로 표시
  * batch_seq == null/undefined → 헤더 없는 그룹(절연·시스 등): 모두 표시
  */
 function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
   const headerBatch = orders.find((o) => o.batch_seq === -1);
-  // 개별 수주 행: batch_seq >= 1 이거나 batch_seq 없는 경우(비연선 그룹)
+  // 개별 수주 행: batch_seq >= 0(CORE 포함) 이거나 batch_seq 없는 경우(비연선 그룹)
   const orderRows = orders.filter(
-    (o) => o.batch_seq == null || o.batch_seq >= 1,
+    (o) => o.batch_seq == null || o.batch_seq >= 0,
   );
   // 실제 표시 행: 개별 수주 행이 있으면 그것만, 없으면 전체(폴백)
   const displayRows = orderRows.length > 0 ? orderRows : orders;
@@ -1023,7 +1024,7 @@ export default function SchedulerPage() {
                         style={{ color: "#4A2C2A" }}
                       >
                         {batchGroupOrders.filter(
-                          (o) => o.batch_seq == null || o.batch_seq >= 1,
+                          (o) => o.batch_seq == null || o.batch_seq >= 0,
                         ).length > 1
                           ? "배치 그룹 수주 목록"
                           : "수주 상세 정보"}
@@ -1230,9 +1231,9 @@ export default function SchedulerPage() {
                             style={{ color: "#C41230" }}
                           >
                             {batchGroupOrders.filter(
-                              (o) => o.batch_seq == null || o.batch_seq >= 1,
+                              (o) => o.batch_seq == null || o.batch_seq >= 0,
                             ).length > 0
-                              ? `${batchGroupOrders.filter((o) => o.batch_seq == null || o.batch_seq >= 1).length}건`
+                              ? `${batchGroupOrders.filter((o) => o.batch_seq == null || o.batch_seq >= 0).length}건`
                               : "-"}
                           </span>
                         </div>

@@ -603,10 +603,14 @@ def auto_schedule(
             process_end_by_sq[proc_sq_key] = end_dt
 
         # ── 파이프라인 겹침: 첫 번째 드럼 출력 시각 계산 ────────────────────
-        # 연선: 헤더 배치(seq=-1)의 drum_count = 실제 틀 수
+        # 연선 ST-: 헤더 배치(seq=-1)의 drum_count = 실제 틀 수
+        # CORE-/AL-CORE-: drum_count 합산 — 드럼 하나씩 완료될 때마다 ST 시작 가능
+        #   (AL6BO에서 한 드럼 완료 → 54BO 즉시 시작하는 파이프라인)
         # 절연/시스 등: 헤더 없으므로 그룹 내 배치 수 = 순차 처리 단위 수
         if header_batch is not None:
             lot_count = max(int(header_batch.drum_count or 1), 1)
+        elif _is_core_group(group_key):
+            lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
         else:
             lot_count = max(len(group_batches), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
