@@ -427,18 +427,46 @@ def cp_sat_schedule(
     # 처리 순서: CP-SAT start_vars 값 오름차순
     #   → 납기 빠른 그룹이 앞에 오도록 솔버가 결정한 순서
     # 처리 순서: 공정 선후관계 → 납기일 오름차순(EDD) → 고객 우선순위
-    # CP-SAT start_vars는 기계 배정(어떤 설비)에만 활용하고,
-    # 실행 순서는 EDD 규칙으로 명시적으로 결정한다.
-    # 이렇게 해야 "납기 빠른 수주를 먼저 처리" 원칙이 보장된다.
-    solved_order = sorted(
-        groups,
-        key=lambda gk: (
-            PROCESS_ORDER.get(group_meta[gk]["rep"].process_name, 50),  # 공정 선후 유지
-            group_meta[gk]["earliest_due"] or date.max,                   # EDD 최우선
-            group_meta[gk]["rep"].customer_priority or 99,                # 고객 우선순위
-            solver.value(start_vars[gk]),                                  # CP-SAT 동점 처리
-        ),
-    )
+    # ── 소선경 클러스터별 최초 납기 계산 (ST- 연선 그룹 연속 배치용) ─────────
+    # schedule_optimizer의 wire_d_earliest와 동일한 로직
+    wire_d_earliest: dict[float, date] = {}
+    for gk in groups:
+        if gk.startswith("ST-"):
+            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
+            if wd > 0:
+                ed = group_meta[gk]["earliest_due"]
+                if ed and (wd not in wire_d_earliest or ed < wire_d_earliest[wd]):
+                    wire_d_earliest[wd] = ed
+
+    # 처리 순서 결정:
+    #   ST- 연선: 공정순 → 소선경 클러스터 최초납기 → 소선경값 → 그룹 EDD
+    #     (같은 소선경 그룹을 연속 배치 → 선재교체 비용 최소화)
+    #   그 외 공정: 공정순 → EDD → 고객 우선순위
+    # CP-SAT start_vars는 기계 배정에만 활용, 실행 순서는 이 정렬로 결정
+    def _solved_order_key(gk: str):
+        meta = group_meta[gk]
+        proc_level = PROCESS_ORDER.get(meta["rep"].process_name, 50)
+        if gk.startswith("ST-") and meta["rep"].process_name == "연선":
+            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
+            cluster_due = wire_d_earliest.get(wd, date.max)
+            return (
+                proc_level,
+                cluster_due,        # 소선경 클러스터 최초 납기 (클러스터 우선순위)
+                wd,                  # 소선경값 (같은 클러스터 내 안정 정렬 → 연속 배치)
+                meta["earliest_due"] or date.max,  # 그룹 자체 EDD
+                meta["rep"].customer_priority or 99,
+                solver.value(start_vars[gk]),
+            )
+        return (
+            proc_level,
+            date.max,               # ST- 아니면 클러스터 정렬 패딩
+            0.0,
+            meta["earliest_due"] or date.max,
+            meta["rep"].customer_priority or 99,
+            solver.value(start_vars[gk]),
+        )
+
+    solved_order = sorted(groups, key=_solved_order_key)
 
     # CP-SAT가 선택한 설비
     cpsat_eq: dict[str, str] = {
