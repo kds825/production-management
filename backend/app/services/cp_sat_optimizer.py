@@ -1,28 +1,26 @@
 """CP-SAT 기반 스케줄 최적화 엔진
 
-Google OR-Tools CP-SAT 솔버를 사용하여 납기 초과를 최소화하는 생산 배치를 결정한다.
-
 ── 설계 방침 ───────────────────────────────────────────────────────────────
-1. CP-SAT 담당 범위:
-   - 각 배치 그룹의 설비 배정 + 시작 시각 결정
-   - 목적함수: 납기 초과 총 가중 일수(weighted tardiness) 최소화
-   - 제약: 설비 충돌 없음, 공정 선후관계, CORE 선행, 소선경 클러스터 연속성
+CP-SAT 담당: 모든 배치 그룹의 처리 순서 결정 + 납기 초과 최소화
+  - 목적함수: customer_priority 가중 납기 초과 근무일 합산 최소화
+  - Hard 제약: 설비 충돌 없음, 공정 선후관계(연선→절연→시스), CORE 선행
 
-2. 기존 그리디 로직 재사용:
-   - duration 계산(_compute_group_duration)
-   - 설비 적격성 필터(_find_eligible_equipment, _narrow_by_stranding 등)
-   - 파이프라인 겹침(CORE→ST first-drum overlap)은 CP-SAT 선후관계 제약으로 표현
-   - ScheduleTask DB 저장, predecessor_map, audit log 등 후처리
+실제 배치(캘린더): CP-SAT가 결정한 순서대로 그리디 캘린더 엔진 수행
+  - 멀티설비 그룹 → _schedule_multi_equipment
+  - 단일설비 그룹 → _find_available_slot + calculate_end_datetime
+  - 실제 시작/종료는 항상 08~22시 근무 캘린더 기준
 
-3. 시간 단위: CP-SAT 변수는 분(minute) 정수, base_date 기준 상대 오프셋
-   - 최대 계획 기간: 90일 (=129,600분)
+CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
+  - 캘린더와 직접 1:1 대응은 불가하지만 근무일 단위로 근사하여
+    납기 제약의 방향성(어떤 그룹을 먼저 처리할지)을 올바르게 결정
 
-4. 폴백: CP-SAT 실패(INFEASIBLE / 타임아웃) 시 기존 그리디로 자동 전환
+폴백: CP-SAT 실패(INFEASIBLE / 타임아웃) 시 기존 그리디로 자동 전환
 """
 
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -48,31 +46,26 @@ from app.services.schedule_optimizer import (
     _find_available_slot,
     _find_eligible_equipment,
     _get_drum_winding_min,
-    _group_earliest_due,
     _is_core_group,
     _narrow_by_stranding,
     _schedule_multi_equipment,
     _st_sq,
 )
 
-# 근무 시간 기준 하루 근무 분 (08:00~22:00)
-_WORK_HOURS_PER_DAY = 14
-_WORK_MIN_PER_DAY = _WORK_HOURS_PER_DAY * 60  # 840분
+# 하루 근무 시간(분): 08:00~22:00
+_WORK_MIN_PER_DAY = 14 * 60  # 840분
 
-# 최대 계획 기간(근무 분) — 90 근무일
+# CP-SAT 최대 계획 기간(근무 분) — 90 근무일
 _MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY
 
-# CP-SAT 솔버 시간 제한(초) — 이 안에 최적해 또는 최량 feasible해 반환
+# CP-SAT 솔버 시간 제한(초)
 _SOLVER_TIME_LIMIT_SEC = 30
 
-# 납기 초과 가중치: 우선순위 customer_priority → weight 배율
-# 낮을수록 긴급 (priority ≤ 3 → critical)
-_TARDINESS_WEIGHT = {
-    "critical": 100,
-    "urgent": 10,
-    "normal": 1,
-}
+# 납기 초과 가중치
+_TARDINESS_WEIGHT = {"critical": 100, "urgent": 10, "normal": 1}
 
+
+# ── 헬퍼 ──────────────────────────────────────────────────────────────────
 
 def _priority_label(customer_priority: int | None) -> str:
     cp = customer_priority or 99
@@ -83,38 +76,21 @@ def _priority_label(customer_priority: int | None) -> str:
     return "normal"
 
 
-def _calendar_days_between(d1: date, d2: date) -> int:
-    """d1 ~ d2 사이의 근무일 수 (토·일 제외)."""
+def _work_days_between(d1: date, d2: date) -> int:
+    """d1(포함) ~ d2(미포함) 사이의 근무일 수(토·일 제외)."""
     days = 0
     cur = d1
     while cur < d2:
-        if cur.weekday() < 5:  # 월~금
+        if cur.weekday() < 5:
             days += 1
         cur += timedelta(days=1)
     return days
 
 
-def _work_minutes_from_base(dt: datetime, base: datetime) -> int:
-    """base_date 기준 근무 분 오프셋.
-    실제 캘린더(08~22시, 월~금)를 반영하여 CP-SAT 내부 시간 단위를 현실화한다.
-    음수 → 0으로 클램프.
-    """
-    if dt <= base:
-        return 0
-    work_days = _calendar_days_between(base.date(), dt.date())
-    # 당일 근무 시간 내 위치
-    day_start_min = max(0, (dt.hour * 60 + dt.minute) - 8 * 60)  # 08:00 기준
-    day_work_min = min(day_start_min, _WORK_MIN_PER_DAY)
-    return work_days * _WORK_MIN_PER_DAY + day_work_min
-
-
-def _minutes_from_base(dt: datetime, base: datetime) -> int:
-    """하위 호환 — 근무 분 오프셋 반환."""
-    return _work_minutes_from_base(dt, base)
-
-
-def _dt_from_minutes(minutes: int, base: datetime) -> datetime:
-    return base + timedelta(minutes=minutes)
+def _due_work_min(due: date, base: datetime) -> int:
+    """납기일까지 남은 근무 분(CP-SAT 내부 단위)."""
+    wd = _work_days_between(base.date(), due)
+    return wd * _WORK_MIN_PER_DAY
 
 
 def _compute_group_duration(
@@ -122,7 +98,7 @@ def _compute_group_duration(
     eligible: list[EquipmentMaster],
     speed_map: dict,
 ) -> float:
-    """배치 그룹의 순수 작업 duration(분) 계산. 설업 시간 제외."""
+    """배치 그룹의 순수 작업 duration(분, 설업 제외)."""
     rep = group_batches[0]
     rep_speed = float(rep.line_speed_mpm or 0)
     if rep_speed <= 0:
@@ -133,25 +109,47 @@ def _compute_group_duration(
                 break
     line_speed = rep_speed if rep_speed > 0 else 10
 
-    header_batch = next((b for b in group_batches if b.batch_seq == -1), None)
-    if header_batch is not None:
-        hd = float(header_batch.estimated_duration_min or 0)
+    header = next((b for b in group_batches if b.batch_seq == -1), None)
+    if header is not None:
+        hd = float(header.estimated_duration_min or 0)
         if hd <= 0:
-            total = float(header_batch.total_length_m or 0)
-            ls = float(header_batch.line_speed_mpm or 0) or line_speed
-            hd = total / ls if ls > 0 else 60
+            ls = float(header.line_speed_mpm or 0) or line_speed
+            hd = float(header.total_length_m or 0) / ls if ls > 0 else 60
         return hd
-    else:
-        total_dur = 0.0
-        for b in group_batches:
-            d = float(b.estimated_duration_min or 0)
-            if d <= 0:
-                total = float(b.total_length_m or 0) + float(b.extra_length_m or 0)
-                ls = float(b.line_speed_mpm or 0) or line_speed
-                d = total / ls if ls > 0 else 60
-            total_dur += d
-        return total_dur
 
+    total = 0.0
+    for b in group_batches:
+        d = float(b.estimated_duration_min or 0)
+        if d <= 0:
+            ls = float(b.line_speed_mpm or 0) or line_speed
+            d = (float(b.total_length_m or 0) + float(b.extra_length_m or 0)) / ls if ls > 0 else 60
+        total += d
+    return total
+
+
+def _is_multi_equip_group(
+    gk: str,
+    gb: list[ProductionBatch],
+    eligible: list[EquipmentMaster],
+    sq_to_equip: dict,
+) -> tuple[bool, int]:
+    """멀티설비 분배 대상 여부와 총 드럼 수 반환."""
+    rep = gb[0]
+    is_stranding = rep.process_name == "연선"
+    sq_key = (rep.process_name, int(rep.sq_mm2 or 0))
+
+    header = next((b for b in gb if b.batch_seq == -1), None)
+    total_drums = int(header.drum_count or 0) if header else sum(int(b.drum_count or 0) for b in gb)
+
+    multi_eligible = (
+        (is_stranding and not _is_core_group(gk) and sq_key not in sq_to_equip)
+        or rep.process_name == "고압절연"
+        or rep.process_name == "고압시스"
+    )
+    return (multi_eligible and total_drums >= 2 and len(eligible) >= 2), total_drums
+
+
+# ── 메인 함수 ─────────────────────────────────────────────────────────────
 
 def cp_sat_schedule(
     run_label: str,
@@ -162,9 +160,11 @@ def cp_sat_schedule(
     """
     CP-SAT 기반 자동 배치.
 
+    CP-SAT → 전체 그룹의 처리 순서 결정
+    캘린더 그리디 → 그 순서대로 실제 시작/종료 시각 계산 및 DB 저장
+
     Returns:
-        {"total_tasks": int, "violations": list, "warnings": list,
-         "solver_status": str, "objective_value": int}
+        {"total_tasks", "violations", "warnings", "solver_status", "objective_value"}
     """
     result: dict[str, Any] = {
         "total_tasks": 0,
@@ -174,13 +174,10 @@ def cp_sat_schedule(
         "objective_value": 0,
     }
 
-    # ── 1. 배치 로드 + WIP 스킵 (그리디와 동일) ───────────────────────────────
+    # ── 1. 배치 로드 ──────────────────────────────────────────────────────
     batches = (
         db.query(ProductionBatch)
-        .filter(
-            ProductionBatch.run_label == run_label,
-            ProductionBatch.status == "planned",
-        )
+        .filter(ProductionBatch.run_label == run_label, ProductionBatch.status == "planned")
         .order_by(
             ProductionBatch.due_date.asc(),
             ProductionBatch.customer_priority.asc(),
@@ -188,97 +185,86 @@ def cp_sat_schedule(
         )
         .all()
     )
-    batches.sort(
-        key=lambda b: (
-            PROCESS_ORDER.get(b.process_name, 50),
-            b.batch_seq or 0,
-            b.due_date or date.max,
-            b.customer_priority or 99,
-            -(float(b.sq_mm2 or 0)),
-        )
-    )
+    batches.sort(key=lambda b: (
+        PROCESS_ORDER.get(b.process_name, 50),
+        b.batch_seq or 0,
+        b.due_date or date.max,
+        b.customer_priority or 99,
+        -(float(b.sq_mm2 or 0)),
+    ))
 
     if not batches:
         result["warnings"].append("배치 없음 — Stage 1을 먼저 실행하세요")
         return result
 
-    wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id is not None}
+    # WIP 스킵
+    wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id}
     wip_stage_map: dict[int, str] = {}
     if wip_ids:
+        from app.infrastructure.models.wip_inventory import WipInventory
         wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
         wip_stage_map = {w.wip_id: w.process_stage or "" for w in wips}
 
     schedulable: list[ProductionBatch] = []
     wip_skipped = 0
-    for batch in batches:
-        if batch.wip_matched_id and batch.wip_matched_id in wip_stage_map:
-            skip_set = _WIP_SKIP_PROCESSES.get(wip_stage_map[batch.wip_matched_id], set())
-            if batch.process_name in skip_set:
-                batch.status = "wip_complete"
+    for b in batches:
+        if b.wip_matched_id and b.wip_matched_id in wip_stage_map:
+            skip_set = _WIP_SKIP_PROCESSES.get(wip_stage_map[b.wip_matched_id], set())
+            if b.process_name in skip_set:
+                b.status = "wip_complete"
                 wip_skipped += 1
                 continue
-        schedulable.append(batch)
-
+        schedulable.append(b)
     batches = schedulable
     if wip_skipped:
         result["wip_skipped"] = wip_skipped
 
-    # ── 2. 기준일시 설정 ──────────────────────────────────────────────────────
+    # ── 2. 기준일시 ───────────────────────────────────────────────────────
     if base_date is None:
         try:
-            date_part = run_label.split("_")[0]
-            base_date = datetime(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:8]), 8, 0, 0)
+            dp = run_label.split("_")[0]
+            base_date = datetime(int(dp[:4]), int(dp[4:6]), int(dp[6:8]), 8, 0, 0)
         except Exception:
             from zoneinfo import ZoneInfo
-            kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
-            base_date = kst_now.replace(hour=8, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+            kst = datetime.now(ZoneInfo("Asia/Seoul"))
+            base_date = kst.replace(hour=8, minute=0, second=0, microsecond=0).replace(tzinfo=None)
 
-    # ── 3. 마스터 데이터 로드 ─────────────────────────────────────────────────
+    # ── 3. 마스터 데이터 로드 ─────────────────────────────────────────────
     equipment_list = db.query(EquipmentMaster).all()
     equipment_by_process: dict[str, list[EquipmentMaster]] = {}
     for eq in equipment_list:
         equipment_by_process.setdefault(eq.process_name, []).append(eq)
 
-    speed_records = db.query(SpeedMaster).all()
     speed_map: dict[tuple, SpeedMaster] = {
-        (sr.equipment_code, float(sr.cross_section or 0)): sr for sr in speed_records
+        (sr.equipment_code, float(sr.cross_section or 0)): sr
+        for sr in db.query(SpeedMaster).all()
     }
 
-    welding_cfg = (
-        db.query(ConstraintConfig).filter(ConstraintConfig.constraint_id == "4-4").first()
-    )
+    welding_cfg = db.query(ConstraintConfig).filter(ConstraintConfig.constraint_id == "4-4").first()
     welding_min = _DEFAULT_WELDING_MIN
     if welding_cfg and welding_cfg.params_json:
         welding_min = float(welding_cfg.params_json.get("welding_min", _DEFAULT_WELDING_MIN))
 
-    sq_to_wire_d: dict[int, float] = {
-        int(d.cross_section): float(d.wire_diameter)
-        for d in db.query(DrumLotMaster).all()
-        if d.wire_diameter is not None
-    }
-
-    # ── 4. batch_group 단위 그루핑 ───────────────────────────────────────────
-    from collections import OrderedDict
+    # ── 4. 그루핑 ─────────────────────────────────────────────────────────
     batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
-    for batch in batches:
-        key = batch.batch_group or f"_single_{batch.batch_id}"
-        batch_groups.setdefault(key, []).append(batch)
+    for b in batches:
+        key = b.batch_group or f"_single_{b.batch_id}"
+        batch_groups.setdefault(key, []).append(b)
 
-    # ── 5. 그룹별 메타 계산 (eligible 설비, duration, 납기 등) ──────────────
+    # ── 5. 그룹별 메타 계산 ───────────────────────────────────────────────
     group_meta: dict[str, dict] = {}
     for gk, gb in batch_groups.items():
         rep = gb[0]
-        candidate_equip = equipment_by_process.get(rep.process_name, [])
+        candidate = equipment_by_process.get(rep.process_name, [])
 
-        # 시스 라우팅
         if rep.process_name in ("고압시스", "저압시스"):
-            candidate_equip = _filter_by_sheath_routing(rep, candidate_equip)
+            candidate = _filter_by_sheath_routing(rep, candidate)
         if gk.startswith("A120_"):
-            candidate_equip = [e for e in candidate_equip if e.equipment_code == "SH-A120"]
+            candidate = [e for e in candidate if e.equipment_code == "SH-A120"]
         elif gk.startswith("A100_"):
-            candidate_equip = [e for e in candidate_equip if e.equipment_code == "SH-A100"]
+            candidate = [e for e in candidate if e.equipment_code == "SH-A100"]
 
-        eligible = _find_eligible_equipment(rep, candidate_equip)
+        eligible = _find_eligible_equipment(rep, candidate)
         if rep.process_name == "연선":
             eligible = _narrow_by_stranding(rep, eligible)
 
@@ -291,22 +277,12 @@ def cp_sat_schedule(
         work_dur = _compute_group_duration(gb, eligible, speed_map)
         setup_min = float(rep.setup_time_min or 0)
         drum_wind = _get_drum_winding_min(eligible[0].equipment_code, rep.sq_mm2, speed_map)
-        # CP-SAT 내부 시간 단위 = 근무 분(working minutes).
-        # work_dur은 순수 기계 작업 분이므로 그대로 사용.
-        # 단, 하루 14근무시간 기준으로 환산하면 캘린더 효과를 근사할 수 있다.
-        # 여기서는 총 작업 분을 그대로 사용하되, horizon/due_offset을 동일 단위로 맞춘다.
-        total_dur = math.ceil(work_dur + setup_min + drum_wind)
+        # CP-SAT 내부 duration: 근무 분 단위 근사
+        # 하루 840 근무 분 기준으로 환산하되 최소 1분 보장
+        cpsat_dur = max(1, math.ceil((work_dur + setup_min + drum_wind) / _WORK_MIN_PER_DAY * _WORK_MIN_PER_DAY))
 
         earliest_due = min((b.due_date for b in gb if b.due_date), default=None)
-        if earliest_due:
-            # 납기일까지의 근무 분 오프셋 (토·일 제외, 하루 840 근무 분)
-            due_work_days = _calendar_days_between(base_date.date(), earliest_due)
-            due_offset = due_work_days * _WORK_MIN_PER_DAY
-        else:
-            due_offset = _MAX_HORIZON_MIN
-
-        priority_lbl = _priority_label(rep.customer_priority)
-        weight = _TARDINESS_WEIGHT[priority_lbl]
+        due_wmin = _due_work_min(earliest_due, base_date) if earliest_due else _MAX_HORIZON_MIN
 
         group_meta[gk] = {
             "rep": rep,
@@ -315,13 +291,10 @@ def cp_sat_schedule(
             "work_dur": work_dur,
             "setup_min": setup_min,
             "drum_wind": drum_wind,
-            "total_dur": total_dur,
-            "due_offset": due_offset,
-            "weight": weight,
-            "priority": priority_lbl,
+            "cpsat_dur": cpsat_dur,
+            "due_wmin": due_wmin,
+            "weight": _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)],
             "earliest_due": earliest_due,
-            "is_stranding": rep.process_name == "연선",
-            "is_core": _is_core_group(gk),
             "sq": int(rep.sq_mm2 or 0),
         }
 
@@ -329,11 +302,131 @@ def cp_sat_schedule(
         result["warnings"].append("스케줄링 가능한 배치 그룹 없음")
         return result
 
-    # ── 5-b. 멀티설비 분배 선처리 ────────────────────────────────────────────
-    # 드럼 수 >= 2 이고 eligible 설비 >= 2인 연선(CORE 제외)/고압절연/고압시스 그룹은
-    # CP-SAT 단일설비 배정 모델로 처리하기 어려우므로, 기존 _schedule_multi_equipment로
-    # 먼저 처리하고 CP-SAT 대상에서 제외한다.
-    # 이 단계는 CP-SAT 전에 실행되어야 하므로 타임라인/상태 추적 딕셔너리를 미리 생성.
+    # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────
+    model = cp_model.CpModel()
+    groups = list(group_meta.keys())
+
+    # 6-a. 설비 유니버스
+    all_eq_codes = sorted({
+        e.equipment_code
+        for eqs in equipment_by_process.values()
+        for e in eqs
+    })
+
+    # 6-b. 결정변수: start / end / equip_bool / tardiness
+    start_vars: dict[str, cp_model.IntVar] = {}
+    end_vars: dict[str, cp_model.IntVar] = {}
+    equip_vars: dict[str, dict[str, cp_model.IntVar]] = {}
+    tardiness_vars: dict[str, cp_model.IntVar] = {}
+
+    for gk in groups:
+        meta = group_meta[gk]
+        dur = meta["cpsat_dur"]
+
+        s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"s_{gk}")
+        e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"e_{gk}")
+        model.add(e == s + dur)
+        start_vars[gk] = s
+        end_vars[gk] = e
+
+        tard = model.new_int_var(0, _MAX_HORIZON_MIN, f"t_{gk}")
+        # tardiness = max(0, end - due)
+        model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
+        tardiness_vars[gk] = tard
+
+        eq_bools: dict[str, cp_model.IntVar] = {}
+        for eq in meta["eligible"]:
+            eq_bools[eq.equipment_code] = model.new_bool_var(f"eq_{gk}_{eq.equipment_code}")
+        equip_vars[gk] = eq_bools
+        model.add_exactly_one(eq_bools.values())
+
+    # 6-c. 설비 충돌 방지 (no_overlap)
+    itv_vars: dict[tuple[str, str], Any] = {}
+    for gk in groups:
+        dur = group_meta[gk]["cpsat_dur"]
+        for eq_code, bv in equip_vars[gk].items():
+            itv = model.new_optional_interval_var(
+                start_vars[gk], dur, end_vars[gk], bv, f"itv_{gk}_{eq_code}"
+            )
+            itv_vars[(gk, eq_code)] = itv
+
+    for eq_code in all_eq_codes:
+        itvs = [itv_vars[(gk, eq_code)] for gk in groups if eq_code in equip_vars.get(gk, {})]
+        if len(itvs) >= 2:
+            model.add_no_overlap(itvs)
+
+    # 6-d. 공정 선후관계: 앞 공정 첫 드럼 완료 후 뒤 공정 시작
+    proc_groups_by_sq: dict[tuple[str, int], list[str]] = {}
+    for gk in groups:
+        meta = group_meta[gk]
+        proc_groups_by_sq.setdefault((meta["rep"].process_name, meta["sq"]), []).append(gk)
+
+    for gk in groups:
+        meta = group_meta[gk]
+        pred_proc = PREDECESSOR_PROCESS.get(meta["rep"].process_name)
+        if not pred_proc:
+            continue
+        for pred_gk in proc_groups_by_sq.get((pred_proc, meta["sq"]), []):
+            pred_meta = group_meta[pred_gk]
+            pred_header = next((b for b in pred_meta["batches"] if b.batch_seq == -1), None)
+            if pred_header:
+                lot_count = max(int(pred_header.drum_count or 1), 1)
+            elif _is_core_group(pred_gk):
+                lot_count = max(sum(int(b.drum_count or 1) for b in pred_meta["batches"]), 1)
+            else:
+                lot_count = max(len(pred_meta["batches"]), 1)
+            first_drum = max(1, math.ceil(pred_meta["cpsat_dur"] / lot_count))
+            model.add(start_vars[gk] >= start_vars[pred_gk] + first_drum)
+
+    # 6-e. CORE → ST 선행 (AL6BO 첫 드럼 → 54BO 시작)
+    for core_gk in [gk for gk in groups if _is_core_group(gk)]:
+        main_sq = _extract_core_main_sq(core_gk)
+        if main_sq is None:
+            continue
+        core_meta = group_meta[core_gk]
+        lot_c = max(sum(int(b.drum_count or 1) for b in core_meta["batches"]), 1)
+        first_drum = max(1, math.ceil(core_meta["cpsat_dur"] / lot_c))
+        for st_gk in [gk for gk in groups if gk.startswith("ST-") and _st_sq(gk) == main_sq]:
+            model.add(start_vars[st_gk] >= start_vars[core_gk] + first_drum)
+
+    # 6-f. 목적함수: 가중 납기 초과 최소화
+    model.minimize(sum(meta["weight"] * tardiness_vars[gk] for gk, meta in group_meta.items()))
+
+    # ── 7. 솔버 실행 ──────────────────────────────────────────────────────
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = _SOLVER_TIME_LIMIT_SEC
+    solver.parameters.num_search_workers = 4
+    solver.parameters.log_search_progress = False
+
+    status = solver.solve(model)
+    status_name = solver.status_name(status)
+    result["solver_status"] = status_name
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        result["warnings"].append(
+            f"CP-SAT 솔버 실패 ({status_name}) — 그리디 폴백으로 전환합니다"
+        )
+        return result
+
+    result["objective_value"] = int(solver.objective_value)
+
+    # ── 8. CP-SAT 순서대로 캘린더 그리디로 실제 배치 ─────────────────────
+    #
+    # CP-SAT는 "어떤 순서로, 어떤 설비에" 처리할지만 결정한다.
+    # 실제 시작/종료 시각은 항상 캘린더 인식 엔진(_find_available_slot +
+    # calculate_end_datetime)으로 계산하므로 겹침이 발생하지 않는다.
+    #
+    # 처리 순서: CP-SAT start_vars 값 오름차순
+    #   → 납기 빠른 그룹이 앞에 오도록 솔버가 결정한 순서
+    solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
+
+    # CP-SAT가 선택한 설비
+    cpsat_eq: dict[str, str] = {
+        gk: next(ec for ec, bv in equip_vars[gk].items() if solver.value(bv) == 1)
+        for gk in groups
+    }
+
+    # 상태 추적 딕셔너리 (모든 그룹을 이 엔진이 처음부터 처리)
     timeline: dict[str, list] = {}
     predecessor_map: dict[tuple, int] = {}
     tasks_created: list[ScheduleTask] = []
@@ -344,39 +437,27 @@ def cp_sat_schedule(
     core_first_drum_by_main_sq: dict[int, datetime] = {}
     first_insul_output: datetime | None = None
 
-    multi_handled: set[str] = set()
-
-    for gk in list(group_meta.keys()):
+    for gk in solved_order:
         meta = group_meta[gk]
         rep = meta["rep"]
         gb = meta["batches"]
-        eligible = meta["eligible"]
-        sq = meta["sq"]
-        sq_key = (rep.process_name, sq)
+        chosen_eq_code = cpsat_eq[gk]
+        sq_int = meta["sq"]
+        sq_key = (rep.process_name, sq_int)
 
-        is_stranding = meta["is_stranding"]
-        is_high_insul = rep.process_name == "고압절연"
-        is_high_sheath = rep.process_name == "고압시스"
+        # 이 그룹이 멀티설비 분배 대상인지 판단
+        # (sq_to_equip은 이미 배치된 SQ→설비 매핑을 반영하므로 순서 의존적으로 정확함)
+        is_multi, total_drums = _is_multi_equip_group(gk, gb, meta["eligible"], sq_to_equip)
 
-        header_batch_chk = next((b for b in gb if b.batch_seq == -1), None)
-        if header_batch_chk:
-            total_drums = int(header_batch_chk.drum_count or 0)
-        else:
-            total_drums = sum(int(b.drum_count or 0) for b in gb)
-
-        multi_eligible = (
-            (is_stranding and not _is_core_group(gk) and sq_key not in sq_to_equip)
-            or is_high_insul
-            or is_high_sheath
-        )
-
-        if multi_eligible and total_drums >= 2 and len(eligible) >= 2:
+        if is_multi:
+            # ── 멀티설비: _schedule_multi_equipment에 위임 ────────────────
+            header_batch = next((b for b in gb if b.batch_seq == -1), None)
             split_ok = _schedule_multi_equipment(
                 group_key=gk,
                 group_batches=gb,
-                eligible=eligible,
+                eligible=meta["eligible"],
                 total_drums=total_drums,
-                header_batch=header_batch_chk,
+                header_batch=header_batch,
                 base_date=base_date,
                 run_label=run_label,
                 db=db,
@@ -393,270 +474,54 @@ def cp_sat_schedule(
                 welding_min=welding_min,
             )
             if split_ok:
-                multi_handled.add(gk)
                 result["total_tasks"] += 1
                 continue
+            # split 실패 시 단일설비로 폴백 (아래 로직 계속)
 
-    # CP-SAT 대상: 멀티설비로 처리된 그룹 제외
-    for gk in multi_handled:
-        group_meta.pop(gk, None)
+        # ── 단일설비 배치 ─────────────────────────────────────────────────
+        eligible = meta["eligible"]
 
-    if not group_meta:
-        # 모든 그룹이 멀티설비로 처리됨
-        return result
-
-    # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────────
-    model = cp_model.CpModel()
-    groups = list(group_meta.keys())
-
-    # 6-a. 설비별 고유 ID 매핑
-    all_equip_codes = sorted({e.equipment_code for eqs in equipment_by_process.values() for e in eqs})
-    equip_id = {code: i for i, code in enumerate(all_equip_codes)}
-
-    # 6-b. 결정 변수 생성
-    # start[gk]: 그룹 시작 시각 (분 오프셋, 0 ~ MAX_HORIZON)
-    # equip_choice[gk][eq_code]: 해당 설비에 배정되면 1
-    # tardiness[gk]: 납기 초과 분 (0 이상)
-    start_vars: dict[str, cp_model.IntVar] = {}
-    end_vars: dict[str, cp_model.IntVar] = {}
-    equip_vars: dict[str, dict[str, cp_model.IntVar]] = {}  # gk → {eq_code → BoolVar}
-    tardiness_vars: dict[str, cp_model.IntVar] = {}
-
-    for gk in groups:
-        meta = group_meta[gk]
-        dur = meta["total_dur"]
-
-        s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"start_{gk}")
-        e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"end_{gk}")
-        model.add(e == s + dur)
-        start_vars[gk] = s
-        end_vars[gk] = e
-
-        # 납기 초과: max(0, end - due_offset)
-        tard = model.new_int_var(0, _MAX_HORIZON_MIN, f"tard_{gk}")
-        model.add_max_equality(tard, [e - meta["due_offset"], model.new_constant(0)])
-        tardiness_vars[gk] = tard
-
-        # 설비 선택 변수 (eligible 설비 중 하나)
-        eq_bools: dict[str, cp_model.IntVar] = {}
-        for eq in meta["eligible"]:
-            bv = model.new_bool_var(f"eq_{gk}_{eq.equipment_code}")
-            eq_bools[eq.equipment_code] = bv
-        equip_vars[gk] = eq_bools
-
-        # 반드시 하나의 설비를 선택
-        model.add_exactly_one(eq_bools.values())
-
-    # 6-c. 설비 충돌 방지 (같은 설비에 배치된 두 그룹은 겹치면 안 됨)
-    # interval variable + no_overlap 제약 사용
-    interval_vars: dict[tuple[str, str], Any] = {}  # (gk, eq_code) → IntervalVar
-
-    for gk in groups:
-        meta = group_meta[gk]
-        dur = meta["total_dur"]
-        for eq in meta["eligible"]:
-            eq_code = eq.equipment_code
-            assigned = equip_vars[gk][eq_code]
-            # optional interval: 해당 설비가 선택된 경우에만 활성화
-            itv = model.new_optional_interval_var(
-                start_vars[gk], dur, end_vars[gk], assigned, f"itv_{gk}_{eq_code}"
-            )
-            interval_vars[(gk, eq_code)] = itv
-
-    # 설비별 no_overlap
-    # ── 5-b 멀티설비 선처리로 이미 점유된 슬롯을 fixed interval로 모델에 등록 ──
-    # CP-SAT는 _schedule_multi_equipment가 배치한 태스크를 모르므로,
-    # timeline의 기존 슬롯을 고정 구간으로 추가해야 CP-SAT 배치와 겹침을 방지한다.
-    fixed_intervals_by_eq: dict[str, list] = {}
-    for eq_code, slots in timeline.items():
-        fixed_intervals_by_eq[eq_code] = []
-        for slot_start_dt, slot_end_dt in slots:
-            slot_s = _minutes_from_base(slot_start_dt, base_date)
-            slot_e = _minutes_from_base(slot_end_dt, base_date)
-            slot_dur = max(slot_e - slot_s, 1)
-            fixed_itv = model.new_fixed_size_interval_var(
-                slot_s, slot_dur, f"fixed_{eq_code}_{slot_s}"
-            )
-            fixed_intervals_by_eq[eq_code].append(fixed_itv)
-
-    for eq_code in all_equip_codes:
-        intervals_for_eq = [
-            interval_vars[(gk, eq_code)]
-            for gk in groups
-            if eq_code in equip_vars.get(gk, {})
-        ]
-        # 기존 점유 슬롯(멀티설비 선처리 결과) 추가
-        intervals_for_eq.extend(fixed_intervals_by_eq.get(eq_code, []))
-
-        if len(intervals_for_eq) >= 2:
-            model.add_no_overlap(intervals_for_eq)
-
-    # 6-d. 공정 선후관계 제약 ─────────────────────────────────────────────────
-    # 같은 SQ의 (연선 → 절연), (절연 → 시스) 등
-    # "앞 공정 end ≤ 뒤 공정 start" (first-drum overlap 근사: 1/lot_count 비율로 완화)
-
-    # SQ별 공정 그룹키 인덱스
-    proc_groups_by_sq: dict[tuple[str, int], list[str]] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        key = (meta["rep"].process_name, meta["sq"])
-        proc_groups_by_sq.setdefault(key, []).append(gk)
-
-    for gk in groups:
-        meta = group_meta[gk]
-        rep = meta["rep"]
-        pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
-        if not pred_proc:
-            continue
-        sq_i = meta["sq"]
-        pred_gks = proc_groups_by_sq.get((pred_proc, sq_i), [])
-        for pred_gk in pred_gks:
-            pred_meta = group_meta[pred_gk]
-            # 파이프라인 겹침: 앞 공정의 첫 드럼 완료 후 시작 가능
-            # 첫 드럼 완료 ≈ pred.start + setup + work_dur / lot_count
-            pred_header = next((b for b in pred_meta["batches"] if b.batch_seq == -1), None)
-            if pred_header:
-                lot_count = max(int(pred_header.drum_count or 1), 1)
-            elif _is_core_group(pred_gk):
-                lot_count = max(sum(int(b.drum_count or 1) for b in pred_meta["batches"]), 1)
-            else:
-                lot_count = max(len(pred_meta["batches"]), 1)
-
-            first_drum_min = math.ceil(
-                pred_meta["setup_min"] + pred_meta["work_dur"] / lot_count
-            )
-            # start[cur] >= start[pred] + first_drum_min
-            model.add(start_vars[gk] >= start_vars[pred_gk] + first_drum_min)
-
-    # 6-e. CORE → ST 선행 제약 (AL6BO 첫 드럼 → 54BO 시작)
-    core_groups = [gk for gk in groups if _is_core_group(gk)]
-    st_groups = [gk for gk in groups if gk.startswith("ST-")]
-    for core_gk in core_groups:
-        main_sq = _extract_core_main_sq(core_gk)
-        if main_sq is None:
-            continue
-        core_meta = group_meta[core_gk]
-        lot_count_core = max(
-            sum(int(b.drum_count or 1) for b in core_meta["batches"]), 1
-        )
-        first_drum_core = math.ceil(
-            core_meta["setup_min"] + core_meta["work_dur"] / lot_count_core
-        )
-        for st_gk in st_groups:
-            if _st_sq(st_gk) == main_sq:
-                model.add(start_vars[st_gk] >= start_vars[core_gk] + first_drum_core)
-
-    # 6-f. 소선경 클러스터 연속성 — 소프트 제약으로 표현
-    # 같은 wire_diameter 클러스터 내 연선 그룹이 다른 설비에 흩어지지 않도록
-    # "같은 클러스터의 그룹은 같은 설비 선호" → 별도 penalty 대신 설비 선택 연동 제약
-    # (같은 wd 클러스터 그룹이 eligible 설비를 공유하면 같은 설비 배정 시 bonus)
-    # → 너무 복잡해지므로 CP-SAT에서는 하드 제약으로 표현하지 않고
-    #   그룹 순서(납기 기반)에 의해 자연스럽게 클러스터링 유도
-
-    # 6-g. 목적함수: 가중 납기 초과 최소화
-    objective_terms = []
-    for gk in groups:
-        meta = group_meta[gk]
-        objective_terms.append(meta["weight"] * tardiness_vars[gk])
-    model.minimize(sum(objective_terms))
-
-    # ── 7. 솔버 실행 ──────────────────────────────────────────────────────────
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = _SOLVER_TIME_LIMIT_SEC
-    solver.parameters.num_search_workers = 4  # 멀티스레드 탐색
-    solver.parameters.log_search_progress = False
-
-    status = solver.solve(model)
-    status_name = solver.status_name(status)
-    result["solver_status"] = status_name
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        result["warnings"].append(
-            f"CP-SAT 솔버 실패 ({status_name}) — 그리디 폴백으로 전환합니다"
-        )
-        return result  # 호출자가 폴백 처리
-
-    result["objective_value"] = int(solver.objective_value)
-
-    # ── 8. 솔버 결과를 DB에 저장 ──────────────────────────────────────────────
-    # ★ 핵심 설계: CP-SAT의 start_vars는 "순서 결정"에만 사용한다.
-    #   CP-SAT 내부 시간 단위(분)와 실제 캘린더(08~22시 근무, 주말 제외)는 1:1 대응이
-    #   되지 않으므로 CP-SAT 시작 시각을 그대로 쓰면 겹침이 발생한다.
-    #   CP-SAT가 결정한 (설비 배정 + 그룹 처리 순서)를 가져온 뒤,
-    #   실제 시작 시각은 _find_available_slot + calculate_end_datetime으로 재계산한다.
-    #
-    # predecessor_map / tasks_created / last_batch_on_equip / sq_to_equip 은
-    # 5-b 멀티설비 선처리 단계에서 이미 초기화됨 — 여기서 재선언하지 않음
-
-    # CP-SAT 결과: 설비 배정 추출
-    cpsat_assignment: dict[str, str] = {}  # gk → eq_code
-    for gk in groups:
-        chosen_eq_code = next(
-            ec for ec in equip_vars[gk] if solver.value(equip_vars[gk][ec]) == 1
-        )
-        cpsat_assignment[gk] = chosen_eq_code
-
-    # CP-SAT 결과: 설비 배정 기준 처리 순서 (CP-SAT start_vars 값으로 정렬)
-    solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
-
-    # ★ process_first_output_by_sq / core_first_drum_by_main_sq / first_insul_output 은
-    #   5-b 멀티설비 선처리(_schedule_multi_equipment)에서 이미 채워진 상태이므로
-    #   절대 재초기화하지 않는다.
-    #   절연·시스 등 후공정은 이 값을 earliest 기준으로 사용하여
-    #   연선 첫 드럼 완료 이후에 배치된다.
-
-    for gk in solved_order:
-        meta = group_meta[gk]
-        rep = meta["rep"]
-        gb = meta["batches"]
-        chosen_eq_code = cpsat_assignment[gk]
-        chosen_eq = next(e for e in meta["eligible"] if e.equipment_code == chosen_eq_code)
-        sq_int = meta["sq"]
-
-        # ── 동일 SQ 셋업 스킵 / 색상 교체 시간 계산 ────────────────────────
+        # 동일 SQ 셋업 스킵
         actual_setup = meta["setup_min"]
         prev_batch = last_batch_on_equip.get(chosen_eq_code)
-        if prev_batch is not None and prev_batch.sq_mm2 and rep.sq_mm2:
+        if prev_batch and prev_batch.sq_mm2 and rep.sq_mm2:
             if float(prev_batch.sq_mm2) == float(rep.sq_mm2):
                 actual_setup = 0.0
 
+        # 색상 교체
         color_change_min = 0.0
-        if prev_batch is not None and rep.process_name in ("저압시스", "고압시스", "HFCO시스"):
-            prev_color = (prev_batch.sheath_color or "").strip()
-            curr_color = (rep.sheath_color or "").strip()
-            if prev_color and curr_color and prev_color != curr_color:
-                sm_color = (
-                    db.query(SpeedMaster.setup_color_min)
-                    .filter(SpeedMaster.equipment_code == chosen_eq_code)
-                    .first()
-                )
-                color_change_min = float(sm_color[0] or 120.0) if sm_color else 120.0
+        if prev_batch and rep.process_name in ("저압시스", "고압시스", "HFCO시스"):
+            pc = (prev_batch.sheath_color or "").strip()
+            cc = (rep.sheath_color or "").strip()
+            if pc and cc and pc != cc:
+                sm_c = db.query(SpeedMaster.setup_color_min).filter(
+                    SpeedMaster.equipment_code == chosen_eq_code
+                ).first()
+                color_change_min = float(sm_c[0] or 120.0) if sm_c else 120.0
 
         total_dur = meta["work_dur"] + actual_setup + meta["drum_wind"] + color_change_min
 
-        # ── 선행 공정 earliest 계산 (그리디와 동일한 로직) ──────────────────
+        # 공정 선후관계 earliest 계산
         earliest = base_date
-
         pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
         if pred_proc:
             all_sqs = {int(b.sq_mm2 or 0) for b in gb}
             if len(all_sqs) > 1:
-                valid_firsts = [
+                valid = [
                     t for sq_i in all_sqs
                     if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
                     and t < datetime.max
                 ]
-                if valid_firsts:
-                    earliest = max(earliest, min(valid_firsts))
+                if valid:
+                    earliest = max(earliest, min(valid))
             else:
-                sq_i = next(iter(all_sqs))
-                pred_first = process_first_output_by_sq.get((pred_proc, sq_i))
-                if pred_first and pred_first > earliest:
-                    earliest = pred_first
+                pf = process_first_output_by_sq.get((pred_proc, next(iter(all_sqs))))
+                if pf and pf > earliest:
+                    earliest = pf
             if rep.process_name == "고압시스":
                 earliest += timedelta(hours=20)
 
-        if gk.startswith("A100_") or gk.startswith("A120_"):
+        if gk.startswith(("A100_", "A120_")):
             if first_insul_output and first_insul_output > earliest:
                 earliest = first_insul_output
 
@@ -665,32 +530,28 @@ def cp_sat_schedule(
                 main_sq = int(gk.split("-")[1])
             except (IndexError, ValueError):
                 main_sq = sq_int
-            core_first = core_first_drum_by_main_sq.get(main_sq)
-            if core_first and core_first > earliest:
-                earliest = core_first
+            cf = core_first_drum_by_main_sq.get(main_sq)
+            if cf and cf > earliest:
+                earliest = cf
 
-        # 개별 수주 predecessor
-        _is_st_group = gk.startswith("ST-") and rep.process_name == "연선"
-        _skip_individual = rep.process_name in (
+        _is_st = gk.startswith("ST-") and rep.process_name == "연선"
+        _skip_ind = rep.process_name in (
             "저압절연", "고압절연", "저압시스", "고압시스", "연합", "T/P"
-        ) or _is_st_group
-        if not _skip_individual:
+        ) or _is_st
+        if not _skip_ind:
             for b in gb:
-                pred_key = (b.sales_order_id, b.sales_order_line)
-                pred_tid = predecessor_map.get(pred_key)
-                if pred_tid:
-                    pred_task = next(
-                        (t for t in tasks_created if t.task_id == pred_tid), None
-                    )
-                    if pred_task and pred_task.end_datetime > earliest:
-                        earliest = pred_task.end_datetime
+                pt = predecessor_map.get((b.sales_order_id, b.sales_order_line))
+                if pt:
+                    ptask = next((t for t in tasks_created if t.task_id == pt), None)
+                    if ptask and ptask.end_datetime > earliest:
+                        earliest = ptask.end_datetime
 
-        # ── 실제 캘린더 기반 슬롯 탐색 (겹침 방지의 핵심) ───────────────────
+        # 캘린더 인식 슬롯 탐색 — 겹침 완전 방지
         slots = timeline.get(chosen_eq_code, [])
         best_start = _find_available_slot(earliest, total_dur, slots, db)
         end_dt = calculate_end_datetime(best_start, total_dur, db)
 
-        # 정각 단위 올림
+        # 정각 올림
         if end_dt.minute > 0 or end_dt.second > 0:
             end_dt = end_dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
@@ -707,12 +568,12 @@ def cp_sat_schedule(
         db.add(task)
         db.flush()
 
-        # timeline 갱신 — 이후 그룹이 이 슬롯을 피할 수 있도록
+        # timeline 갱신 (이후 그룹이 이 슬롯을 피할 수 있도록)
         timeline.setdefault(chosen_eq_code, []).append((best_start, end_dt))
 
-        # 파이프라인 겹침: 첫 드럼 출력 시각 갱신
+        # 파이프라인 첫 드럼 출력 시각 갱신
         header_batch = next((b for b in gb if b.batch_seq == -1), None)
-        if header_batch is not None:
+        if header_batch:
             lot_count = max(int(header_batch.drum_count or 1), 1)
         elif _is_core_group(gk):
             lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
@@ -725,42 +586,40 @@ def cp_sat_schedule(
         if not _is_core_group(gk):
             if proc_sq_key not in process_first_output_by_sq or first_output_dt < process_first_output_by_sq[proc_sq_key]:
                 process_first_output_by_sq[proc_sq_key] = first_output_dt
-
-        if _is_core_group(gk):
-            main_sq = _extract_core_main_sq(gk)
-            if main_sq is not None:
-                if main_sq not in core_first_drum_by_main_sq or first_output_dt < core_first_drum_by_main_sq[main_sq]:
-                    core_first_drum_by_main_sq[main_sq] = first_output_dt
+        else:
+            msq = _extract_core_main_sq(gk)
+            if msq and (msq not in core_first_drum_by_main_sq or first_output_dt < core_first_drum_by_main_sq[msq]):
+                core_first_drum_by_main_sq[msq] = first_output_dt
 
         if rep.process_name == "저압절연":
             if first_insul_output is None or first_output_dt < first_insul_output:
                 first_insul_output = first_output_dt
 
-        # predecessor_map 갱신
+        if proc_sq_key not in process_end_by_sq or end_dt > process_end_by_sq[proc_sq_key]:
+            process_end_by_sq[proc_sq_key] = end_dt
+
         for b in gb:
             predecessor_map[(b.sales_order_id, b.sales_order_line)] = task.task_id
             b.equipment_code = chosen_eq_code
             b.status = "scheduled"
 
         if rep.process_name == "연선" and not _is_core_group(gk):
-            sq_to_equip[(rep.process_name, sq_int)] = chosen_eq_code
+            sq_to_equip[sq_key] = chosen_eq_code
 
         last_batch_on_equip[chosen_eq_code] = gb[-1]
         tasks_created.append(task)
 
         # 납기 위반 기록
-        earliest_due = meta["earliest_due"]
-        if earliest_due and end_dt.date() > earliest_due:
-            late_days = (end_dt.date() - earliest_due).days
+        if meta["earliest_due"] and end_dt.date() > meta["earliest_due"]:
+            late_days = (end_dt.date() - meta["earliest_due"]).days
             result["violations"].append({
                 "batch_id": rep.batch_id,
                 "task_id": task.task_id,
                 "type": "delivery",
                 "severity": "warning",
-                "detail": f"납기 {earliest_due} 초과 → 완료 예정 {end_dt.date()} (+{late_days}일)",
+                "detail": f"납기 {meta['earliest_due']} 초과 → 완료 {end_dt.date()} (+{late_days}일)",
             })
 
-        # Audit log
         log_decision(
             db=db,
             run_label=run_label,
@@ -768,9 +627,8 @@ def cp_sat_schedule(
             action_type="auto_assign",
             batch_id=rep.batch_id,
             task_id=task.task_id,
-            reason=f"CP-SAT 배치 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
+            reason=f"CP-SAT 순서 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
         )
+        result["total_tasks"] += 1
 
-    # total_tasks: 5-b 멀티설비 건(이미 += 됨) + CP-SAT 단일설비 건
-    result["total_tasks"] += len([t for t in tasks_created if t.batch_group not in multi_handled])
     return result
