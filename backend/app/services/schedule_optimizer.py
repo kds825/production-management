@@ -299,7 +299,8 @@ def auto_schedule(
     #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
     #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
     #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
-    #   2 = 그 외 공정(절연·시스 등): 납기 순 자연 정렬 유지
+    #   2 = 그 외 공정(절연·시스 등): 납기 오름차순(EDD) 최우선
+    #       동일 납기 내에서는 PROCESS_ORDER(절연 < 시스)로 공정 순서 보장
     ordered_group_items = sorted(
         batch_groups.items(),
         key=lambda kv: (
@@ -311,8 +312,12 @@ def auto_schedule(
             # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
             sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
             if kv[0].startswith("ST-") else 0.0,
-            # 그룹 자체 최초 납기
+            # 그룹 자체 최초 납기 (EDD)
             _group_earliest_due(kv[1]),
+            # 동일 납기 내 공정 순서 보장 (절연→시스 등)
+            PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
+            # 고객 우선순위
+            kv[1][0].customer_priority or 99 if kv[1] else 99,
         ),
     )
 
@@ -429,6 +434,7 @@ def auto_schedule(
                 tasks_created=tasks_created,
                 result=result,
                 welding_min=welding_min,
+                sq_to_wire_d=sq_to_wire_d,
             )
             if split_ok:
                 continue
@@ -481,17 +487,30 @@ def auto_schedule(
 
             eq_total_duration = total_duration
 
-            # 4-1: 동일SQ 셋업 스킵
+            # 4-1: 연선 셋업 3-tier (동일SQ=0 / 동일소선경=선재교체 / 다른소선경=규격교체)
             prev_batch = last_batch_on_equip.get(eq_code)
-            actual_setup = setup_min
-            if prev_batch is not None:
-                same_sq = (
-                    prev_batch.sq_mm2 is not None
-                    and rep.sq_mm2 is not None
-                    and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+            if prev_batch is not None and rep.process_name == "연선":
+                compound_min = float(
+                    speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
+                    speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
                 )
-                if same_sq:
-                    actual_setup = 0.0
+                actual_setup = _get_stranding_setup_min(
+                    float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
+                    float(rep.sq_mm2) if rep.sq_mm2 else None,
+                    sq_to_wire_d,
+                    spec_min=setup_min,
+                    compound_min=compound_min,
+                )
+            else:
+                actual_setup = setup_min
+                if prev_batch is not None:
+                    same_sq = (
+                        prev_batch.sq_mm2 is not None
+                        and rep.sq_mm2 is not None
+                        and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+                    )
+                    if same_sq:
+                        actual_setup = 0.0
             eq_total_duration = eq_total_duration - setup_min + actual_setup
 
             # 4-2: 색상교체 시간 — 그룹 간 변경 시 (SpeedMaster 조회)
@@ -786,6 +805,7 @@ def _schedule_multi_equipment(
     tasks_created: list,
     result: dict,
     welding_min: float,
+    sq_to_wire_d: dict | None = None,
 ) -> bool:
     """연선/고압절연 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
 
@@ -912,33 +932,83 @@ def _schedule_multi_equipment(
                 if pred_task and pred_task.end_datetime > earliest:
                     earliest = pred_task.end_datetime
 
-    # 각 설비에 분배 task 생성
+    # ── earliest 확정 후: 설비 우선순위 정렬 + 수주 납기 우선 배정 ───────────
+    # 각 설비의 예상 최초 가용 시각 계산 (earliest 반영)
+    one_drum_dur = (group_duration / max(total_drums, 1)) + setup_min
+    machine_est_starts = []
+    for eq in eligible:
+        slots = timeline.get(eq.equipment_code, [])
+        est_start = _find_available_slot(earliest, one_drum_dur, slots, db)
+        machine_est_starts.append((est_start, eq))
+    # 가장 빨리 시작 가능한 설비 순으로 정렬
+    machine_est_starts.sort(key=lambda x: x[0])
+    sorted_eligible = [eq for _, eq in machine_est_starts]
+
+    # 개별 수주(seq >= 1)를 납기 오름차순으로 정렬 → 급한 수주를 빠른 설비에 배정
+    order_batches_sorted = sorted(
+        [b for b in group_batches if (b.batch_seq or 0) >= 1],
+        key=lambda b: (b.due_date or date.max, b.customer_priority or 99),
+    )
+    machine_order_assignments: list[list] = [[] for _ in range(num_eq)]
+    order_cursor = 0
+    for i in range(num_eq):
+        drums_left = drums_per_eq[i]
+        while drums_left > 0 and order_cursor < len(order_batches_sorted):
+            b = order_batches_sorted[order_cursor]
+            machine_order_assignments[i].append(b)
+            drums_left -= int(b.drum_count or 1)
+            order_cursor += 1
+    # 미처리 수주는 마지막 설비에 추가
+    if order_cursor < len(order_batches_sorted):
+        machine_order_assignments[-1].extend(order_batches_sorted[order_cursor:])
+
+    # 설비별 서브배치의 납기: 해당 설비에 배정된 수주 중 가장 이른 납기
+    sub_due_dates: list[date | None] = [
+        min((b.due_date for b in orders if b.due_date), default=None)
+        for orders in machine_order_assignments
+    ]
+
+    # 각 설비에 분배 task 생성 (납기 우선 배정된 sorted_eligible 순서)
     split_tasks = []
     split_end_dts = []
     split_first_outputs = []
+    split_sub_dues: list[date | None] = []
 
-    for i, eq in enumerate(eligible):
+    for i, eq in enumerate(sorted_eligible):
         eq_drums = drums_per_eq[i]
         if eq_drums <= 0:
             continue
 
         eq_code = eq.equipment_code
-        # proportional duration
+        # proportional duration (배정된 드럼 수 기반)
         eq_duration = group_duration * (eq_drums / total_drums)
 
         drum_winding_min = _get_drum_winding_min(eq_code, rep.sq_mm2, speed_map)
 
-        # 4-1: 동일SQ 셋업 스킵
+        # 4-1: 연선 셋업 3-tier (동일SQ=0 / 동일소선경=선재교체 / 다른소선경=규격교체)
         prev_batch = last_batch_on_equip.get(eq_code)
-        actual_setup = setup_min
-        if prev_batch is not None:
-            same_sq = (
-                prev_batch.sq_mm2 is not None
-                and rep.sq_mm2 is not None
-                and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+        if prev_batch is not None and rep.process_name == "연선" and sq_to_wire_d:
+            compound_min = float(
+                speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
+                speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
             )
-            if same_sq:
-                actual_setup = 0.0
+            actual_setup = _get_stranding_setup_min(
+                float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
+                float(rep.sq_mm2) if rep.sq_mm2 else None,
+                sq_to_wire_d,
+                spec_min=setup_min,
+                compound_min=compound_min,
+            )
+        else:
+            actual_setup = setup_min
+            if prev_batch is not None:
+                same_sq = (
+                    prev_batch.sq_mm2 is not None
+                    and rep.sq_mm2 is not None
+                    and float(prev_batch.sq_mm2) == float(rep.sq_mm2)
+                )
+                if same_sq:
+                    actual_setup = 0.0
 
         eq_total_duration = eq_duration + actual_setup + drum_winding_min
 
@@ -969,6 +1039,7 @@ def _schedule_multi_equipment(
         last_batch_on_equip[eq_code] = group_batches[-1]
         split_tasks.append(task)
         split_end_dts.append(end_dt)
+        split_sub_dues.append(sub_due_dates[i] if i < len(sub_due_dates) else None)
 
         # 첫 번째 드럼 출력 시각
         first_drum_min = actual_setup + (eq_duration / eq_drums)
@@ -1007,17 +1078,21 @@ def _schedule_multi_equipment(
 
     # 규칙 2 매핑은 기록하지 않음 — 분배된 그룹은 여러 설비를 사용하므로
 
-    # 납기 위반 체크
-    earliest_due = min((b.due_date for b in group_batches if b.due_date), default=None)
-    if earliest_due and latest_end.date() > earliest_due:
-        violation = {
-            "batch_id": rep.batch_id,
-            "task_id": split_tasks[0].task_id,
-            "type": "delivery",
-            "severity": "warning",
-            "detail": f"납기 {earliest_due} 초과 → 완료 예정 {latest_end.date()}",
-        }
-        result["violations"].append(violation)
+    # ── 납기 위반 체크: 서브배치별 독립 검사 ─────────────────────────────────
+    # 각 설비 서브배치는 자신에게 배정된 수주의 가장 이른 납기를 기준으로 위반 여부 판정
+    for j, (task_j, end_j, due_j) in enumerate(zip(split_tasks, split_end_dts, split_sub_dues)):
+        if due_j and end_j.date() > due_j:
+            late_days = (end_j.date() - due_j).days
+            result["violations"].append({
+                "batch_id": rep.batch_id,
+                "task_id": task_j.task_id,
+                "type": "delivery",
+                "severity": "warning",
+                "detail": (
+                    f"[분할배치 {j+1}/{len(split_tasks)}] 납기 {due_j} 초과 "
+                    f"→ 완료 {end_j.date()} (+{late_days}일)"
+                ),
+            })
 
     return True
 
@@ -1180,6 +1255,30 @@ def _get_drum_winding_min(
     if record is None:
         return 0.0
     return float(record.setup_start_min or 0)
+
+
+def _get_stranding_setup_min(
+    prev_sq: float | None,
+    curr_sq: float | None,
+    sq_to_wire_d: dict,
+    spec_min: float,
+    compound_min: float,
+) -> float:
+    """연선 공정 셋업 시간 결정 (3-tier).
+
+    동일 SQ          → 0분 (교체 없음)
+    다른 SQ, 동일 소선경 → compound_min (선재교체만, 기본 120분)
+    다른 SQ, 다른 소선경 → spec_min     (규격교체만, 기본 240분)
+    """
+    if prev_sq is None or curr_sq is None:
+        return spec_min
+    if prev_sq == curr_sq:
+        return 0.0
+    prev_wd = sq_to_wire_d.get(int(prev_sq), None)
+    curr_wd = sq_to_wire_d.get(int(curr_sq), None)
+    if prev_wd and curr_wd and prev_wd == curr_wd:
+        return compound_min  # 동일 소선경: 선재교체만
+    return spec_min  # 다른 소선경: 규격교체만
 
 
 def _get_tp_line_speed(
