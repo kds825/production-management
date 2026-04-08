@@ -10,6 +10,7 @@ import {
   getPriorityStyle,
   getStatusStyle,
 } from "../utils/colorCoding";
+import { getSqColor } from "@/shared/constants/brand";
 import { timeToX, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
 
 const API_BASE = "http://localhost:8000/api";
@@ -137,9 +138,13 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   rangeStart,
   dayWidth,
 }: GanttTaskBlockProps) {
-  // 시스 공정이면 sheath_color(task.color) 기반 색상 사용, 아니면 제품 그룹 색상
+  // 색상 우선순위:
+  //   1. 시스 공정(SH-A100/SH-A120): sheath_color 기반 고정색
+  //   2. sq_mm2 있으면 SQ별 색상 (공정 흐름 추적용)
+  //   3. 제품 그룹 해시 색상 (폴백)
   const sheathOverride = getSheathColor(task.equipment_id, task.color);
-  const baseColor = sheathOverride ?? getTaskColor(task.product);
+  const sqColor = !sheathOverride ? getSqColor(task.sq_mm2) : null;
+  const baseColor = sheathOverride ?? sqColor ?? getTaskColor(task.product);
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   const openContextMenu = useScheduleStore((s) => s.openContextMenu);
   const updateTask = useScheduleStore((s) => s.updateTask);

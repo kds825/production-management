@@ -167,6 +167,7 @@ def _db_task_to_response(
         material=batch.conductor_material or None,
         batch_id=batch.batch_id,
         created_at=task.created_at,
+        sq_mm2=sq_mm2 if sq_mm2 else None,
     )
 
 

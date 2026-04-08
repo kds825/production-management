@@ -45,6 +45,8 @@ export interface ScheduleTask {
   batch_id?: number;
   /** schedule_task 생성 시각 — 증분 업데이트 후 신규 배치 강조 표시에 사용 */
   created_at?: Date;
+  /** 도체 단면적 mm² — SQ별 색상 구분용 */
+  sq_mm2?: number;
 }
 
 export interface ConstraintViolation {

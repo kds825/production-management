@@ -88,6 +88,7 @@ class ScheduleTaskResponse(BaseModel):
         None  # production_batch.batch_id — 상태 변경 API 호출에 필요
     )
     created_at: Optional[datetime] = None  # schedule_task.created_at — 생성 시각
+    sq_mm2: Optional[float] = None  # 도체 단면적 (mm²) — SQ별 색상 구분용
 
 
 class ScheduleTaskCreate(BaseModel):

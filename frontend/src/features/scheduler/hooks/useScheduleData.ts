@@ -14,6 +14,7 @@ interface RawScheduleTask extends Omit<
   end: string;
   delivery_date?: string;
   created_at?: string;
+  sq_mm2?: number;
 }
 
 /** ISO 문자열을 Date로 변환 */

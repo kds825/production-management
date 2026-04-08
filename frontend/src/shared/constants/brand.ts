@@ -41,6 +41,50 @@ const KNOWN_TASK_COLORS: Record<string, string> = {
 };
 
 /**
+ * SQ(mm²) → 배경색 매핑
+ * 소선경(wire_diameter) 클러스터별로 같은 계열 색상 사용:
+ *   2.21mm: 16SQ·25SQ·70SQ  → 청록 계열
+ *   2.64mm: 35SQ·95SQ·185SQ·300SQ → 파랑 계열
+ *   2.92mm: 120SQ·400SQ     → 보라 계열
+ *   3.02mm: 50SQ·240SQ      → 초록 계열
+ *   기타: 150SQ·200SQ·633SQ → 개별 색상
+ */
+const SQ_COLORS: Record<number, string> = {
+  // wire_diameter 2.21mm 클러스터 (청록)
+  16:  "#0E7490",
+  25:  "#0891B2",
+  70:  "#06B6D4",
+  // wire_diameter 2.64mm 클러스터 (파랑)
+  35:  "#1D4ED8",
+  95:  "#2563EB",
+  185: "#3B82F6",
+  300: "#60A5FA",
+  // wire_diameter 2.92mm 클러스터 (보라)
+  120: "#7C3AED",
+  400: "#8B5CF6",
+  // wire_diameter 3.02mm 클러스터 (초록)
+  50:  "#15803D",
+  240: "#16A34A",
+  // 기타
+  150: "#D97706",  // 황갈
+  200: "#B45309",  // 갈
+  633: "#C41230",  // 고압 대단면 → KBI 레드
+};
+
+/** SQ 값으로 색상 반환. 미등록 SQ는 해시 폴백. */
+export function getSqColor(sq: number | undefined): string | null {
+  if (!sq) return null;
+  // 정확한 매칭 우선
+  if (SQ_COLORS[sq]) return SQ_COLORS[sq];
+  // 가장 가까운 SQ로 매핑
+  const keys = Object.keys(SQ_COLORS).map(Number);
+  const closest = keys.reduce((a, b) =>
+    Math.abs(b - sq) < Math.abs(a - sq) ? b : a,
+  );
+  return SQ_COLORS[closest];
+}
+
+/**
  * 문자열 해시를 이용해 미등록 제품 그룹에 일관된 색상을 생성한다.
  * 동일한 문자열은 항상 동일한 색상을 반환하므로 렌더링이 안정적이다.
  */
