@@ -299,7 +299,8 @@ def auto_schedule(
     #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
     #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
     #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
-    #   2 = 그 외 공정(절연·시스 등): 납기 순 자연 정렬 유지
+    #   2 = 그 외 공정(절연·시스 등): 납기 오름차순(EDD) 최우선
+    #       동일 납기 내에서는 PROCESS_ORDER(절연 < 시스)로 공정 순서 보장
     ordered_group_items = sorted(
         batch_groups.items(),
         key=lambda kv: (
@@ -311,8 +312,12 @@ def auto_schedule(
             # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
             sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
             if kv[0].startswith("ST-") else 0.0,
-            # 그룹 자체 최초 납기
+            # 그룹 자체 최초 납기 (EDD)
             _group_earliest_due(kv[1]),
+            # 동일 납기 내 공정 순서 보장 (절연→시스 등)
+            PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
+            # 고객 우선순위
+            kv[1][0].customer_priority or 99 if kv[1] else 99,
         ),
     )
 

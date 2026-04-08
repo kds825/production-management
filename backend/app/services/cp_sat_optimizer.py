@@ -277,9 +277,9 @@ def cp_sat_schedule(
         work_dur = _compute_group_duration(gb, eligible, speed_map)
         setup_min = float(rep.setup_time_min or 0)
         drum_wind = _get_drum_winding_min(eligible[0].equipment_code, rep.sq_mm2, speed_map)
-        # CP-SAT 내부 duration: 근무 분 단위 근사
-        # 하루 840 근무 분 기준으로 환산하되 최소 1분 보장
-        cpsat_dur = max(1, math.ceil((work_dur + setup_min + drum_wind) / _WORK_MIN_PER_DAY * _WORK_MIN_PER_DAY))
+        # CP-SAT 내부 duration: 실제 근무 분 그대로 사용 (최소 1분)
+        # 종전 840분 단위 올림은 모든 작업이 같은 크기로 보여 EDD 정렬이 불가능했음
+        cpsat_dur = max(1, int(math.ceil(work_dur + setup_min + drum_wind)))
 
         earliest_due = min((b.due_date for b in gb if b.due_date), default=None)
         due_wmin = _due_work_min(earliest_due, base_date) if earliest_due else _MAX_HORIZON_MIN
@@ -418,7 +418,19 @@ def cp_sat_schedule(
     #
     # 처리 순서: CP-SAT start_vars 값 오름차순
     #   → 납기 빠른 그룹이 앞에 오도록 솔버가 결정한 순서
-    solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
+    # 처리 순서: 공정 선후관계 → 납기일 오름차순(EDD) → 고객 우선순위
+    # CP-SAT start_vars는 기계 배정(어떤 설비)에만 활용하고,
+    # 실행 순서는 EDD 규칙으로 명시적으로 결정한다.
+    # 이렇게 해야 "납기 빠른 수주를 먼저 처리" 원칙이 보장된다.
+    solved_order = sorted(
+        groups,
+        key=lambda gk: (
+            PROCESS_ORDER.get(group_meta[gk]["rep"].process_name, 50),  # 공정 선후 유지
+            group_meta[gk]["earliest_due"] or date.max,                   # EDD 최우선
+            group_meta[gk]["rep"].customer_priority or 99,                # 고객 우선순위
+            solver.value(start_vars[gk]),                                  # CP-SAT 동점 처리
+        ),
+    )
 
     # CP-SAT가 선택한 설비
     cpsat_eq: dict[str, str] = {
