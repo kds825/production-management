@@ -298,6 +298,82 @@ def cp_sat_schedule(
         result["warnings"].append("스케줄링 가능한 배치 그룹 없음")
         return result
 
+    # ── 5-b. 멀티설비 분배 선처리 ────────────────────────────────────────────
+    # 드럼 수 >= 2 이고 eligible 설비 >= 2인 연선(CORE 제외)/고압절연/고압시스 그룹은
+    # CP-SAT 단일설비 배정 모델로 처리하기 어려우므로, 기존 _schedule_multi_equipment로
+    # 먼저 처리하고 CP-SAT 대상에서 제외한다.
+    # 이 단계는 CP-SAT 전에 실행되어야 하므로 타임라인/상태 추적 딕셔너리를 미리 생성.
+    timeline: dict[str, list] = {}
+    predecessor_map: dict[tuple, int] = {}
+    tasks_created: list[ScheduleTask] = []
+    last_batch_on_equip: dict[str, ProductionBatch] = {}
+    sq_to_equip: dict[tuple[str, int], str] = {}
+    process_end_by_sq: dict[tuple[str, int], datetime] = {}
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
+    core_first_drum_by_main_sq: dict[int, datetime] = {}
+    first_insul_output: datetime | None = None
+
+    multi_handled: set[str] = set()
+
+    for gk in list(group_meta.keys()):
+        meta = group_meta[gk]
+        rep = meta["rep"]
+        gb = meta["batches"]
+        eligible = meta["eligible"]
+        sq = meta["sq"]
+        sq_key = (rep.process_name, sq)
+
+        is_stranding = meta["is_stranding"]
+        is_high_insul = rep.process_name == "고압절연"
+        is_high_sheath = rep.process_name == "고압시스"
+
+        header_batch_chk = next((b for b in gb if b.batch_seq == -1), None)
+        if header_batch_chk:
+            total_drums = int(header_batch_chk.drum_count or 0)
+        else:
+            total_drums = sum(int(b.drum_count or 0) for b in gb)
+
+        multi_eligible = (
+            (is_stranding and not _is_core_group(gk) and sq_key not in sq_to_equip)
+            or is_high_insul
+            or is_high_sheath
+        )
+
+        if multi_eligible and total_drums >= 2 and len(eligible) >= 2:
+            split_ok = _schedule_multi_equipment(
+                group_key=gk,
+                group_batches=gb,
+                eligible=eligible,
+                total_drums=total_drums,
+                header_batch=header_batch_chk,
+                base_date=base_date,
+                run_label=run_label,
+                db=db,
+                speed_map=speed_map,
+                timeline=timeline,
+                last_batch_on_equip=last_batch_on_equip,
+                sq_to_equip=sq_to_equip,
+                predecessor_map=predecessor_map,
+                process_end_by_sq=process_end_by_sq,
+                process_first_output_by_sq=process_first_output_by_sq,
+                core_first_drum_by_main_sq=core_first_drum_by_main_sq,
+                tasks_created=tasks_created,
+                result=result,
+                welding_min=welding_min,
+            )
+            if split_ok:
+                multi_handled.add(gk)
+                result["total_tasks"] += 1
+                continue
+
+    # CP-SAT 대상: 멀티설비로 처리된 그룹 제외
+    for gk in multi_handled:
+        group_meta.pop(gk, None)
+
+    if not group_meta:
+        # 모든 그룹이 멀티설비로 처리됨
+        return result
+
     # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────────
     model = cp_model.CpModel()
     groups = list(group_meta.keys())
@@ -454,11 +530,8 @@ def cp_sat_schedule(
     result["objective_value"] = int(solver.objective_value)
 
     # ── 8. 솔버 결과를 DB에 저장 ──────────────────────────────────────────────
-    # 그리디와 동일한 후처리: ScheduleTask 생성, predecessor_map, audit log 등
-    predecessor_map: dict[tuple, int] = {}
-    tasks_created: list[ScheduleTask] = []
-    last_batch_on_equip: dict[str, ProductionBatch] = {}
-    sq_to_equip: dict[tuple[str, int], str] = {}
+    # predecessor_map / tasks_created / last_batch_on_equip / sq_to_equip 은
+    # 5-b 멀티설비 선처리 단계에서 이미 초기화됨 — 여기서 재선언하지 않음
 
     # CP-SAT 결과를 처리 순서(시작 시각 순)로 정렬
     solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
@@ -552,5 +625,6 @@ def cp_sat_schedule(
             reason=f"CP-SAT 배치 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
         )
 
-    result["total_tasks"] = len(tasks_created)
+    # total_tasks: 5-b 멀티설비 건(이미 += 됨) + CP-SAT 단일설비 건
+    result["total_tasks"] += len([t for t in tasks_created if t.batch_group not in multi_handled])
     return result
