@@ -283,6 +283,30 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     [openContextMenu, task.id],
   );
 
+  // 납기 초과 여부: 배치 종료 시각이 납기일(자정)을 넘으면 지연
+  const isLate = (() => {
+    if (!task.delivery_date) return false;
+    const dd =
+      task.delivery_date instanceof Date
+        ? task.delivery_date
+        : new Date(task.delivery_date);
+    const dueMidnight = new Date(dd);
+    dueMidnight.setHours(23, 59, 59, 999);
+    return endTs > dueMidnight.getTime();
+  })();
+  const lateDays = isLate && task.delivery_date
+    ? Math.ceil(
+        (endTs - (() => {
+          const dd =
+            task.delivery_date instanceof Date
+              ? task.delivery_date
+              : new Date(task.delivery_date!);
+          const m = new Date(dd); m.setHours(23, 59, 59, 999); return m.getTime();
+        })()) /
+        (24 * 60 * 60 * 1000),
+      )
+    : 0;
+
   const priorityStyle = getPriorityStyle(task.priority);
   const statusStyle = getStatusStyle(task.status, baseColor);
   const HANDLE_W = 6;
@@ -435,6 +459,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           ...(isFirst && frozenBorderColor
             ? { borderLeft: `3px solid ${frozenBorderColor}` }
             : {}),
+          // 납기 초과 배치 — 하단 빨간 테두리로 강조
+          ...(isLate ? { borderBottom: "3px solid #FF0000" } : {}),
           // 신규 배치 글로우 — 첫 세그먼트에만, 드래그 중에는 비활성
           ...(isFirst && isNew && !isDragging
             ? { animation: "newBatchGlow 1s ease-in-out 2" }
@@ -558,6 +584,29 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
+            {/* 납기 초과 배지 — 마지막 세그먼트, 블록 폭 30px 이상 */}
+            {isLast && isLate && segW >= 30 && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 2,
+                  right: isLast && isEditMode ? HANDLE_W + 2 : 2,
+                  zIndex: 5,
+                  padding: "1px 3px",
+                  borderRadius: 3,
+                  fontSize: 8,
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                  backgroundColor: "#FF0000",
+                  color: "#fff",
+                  whiteSpace: "nowrap",
+                  pointerEvents: "none",
+                }}
+              >
+                {segW >= 60 ? `+${lateDays}일 지연` : "지연"}
+              </div>
+            )}
+
             {/* 우선순위 배지 — 첫 세그먼트만 */}
             {isFirst && task.priority !== "normal" && (
               <div
@@ -627,6 +676,24 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               작업 시간 구성
             </div>
+            {isLate && (
+              <div
+                style={{
+                  marginBottom: 6,
+                  padding: "3px 6px",
+                  borderRadius: 4,
+                  backgroundColor: "#7F1D1D",
+                  color: "#FCA5A5",
+                  fontWeight: 700,
+                  fontSize: 10,
+                }}
+              >
+                납기 초과 +{lateDays}일 — 납기:{" "}
+                {task.delivery_date instanceof Date
+                  ? task.delivery_date.toLocaleDateString("ko-KR")
+                  : new Date(task.delivery_date!).toLocaleDateString("ko-KR")}
+              </div>
+            )}
             {lotLabel && (
               <div
                 style={{ marginBottom: 4, color: "#FCD34D", fontWeight: 600 }}

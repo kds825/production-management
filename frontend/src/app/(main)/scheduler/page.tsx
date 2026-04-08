@@ -296,6 +296,39 @@ export default function SchedulerPage() {
     error: string | null;
   }>({ open: false, batchId: null, data: null, loading: false, error: null });
 
+  // ── 납기 초과 패널 상태 ──
+  const [showLatePanel, setShowLatePanel] = useState(false);
+
+  // 납기 초과 태스크: 배치 종료 시각 > 납기일 자정
+  const lateTasks = useMemo(() => {
+    return tasks
+      .filter((t) => {
+        if (!t.delivery_date) return false;
+        const dd =
+          t.delivery_date instanceof Date
+            ? t.delivery_date
+            : new Date(t.delivery_date);
+        const due = new Date(dd);
+        due.setHours(23, 59, 59, 999);
+        const endTs =
+          t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
+        return endTs > due.getTime();
+      })
+      .map((t) => {
+        const dd =
+          t.delivery_date instanceof Date
+            ? t.delivery_date
+            : new Date(t.delivery_date!);
+        const due = new Date(dd);
+        due.setHours(23, 59, 59, 999);
+        const endTs =
+          t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
+        const lateDays = Math.ceil((endTs - due.getTime()) / (24 * 60 * 60 * 1000));
+        return { task: t, lateDays };
+      })
+      .sort((a, b) => b.lateDays - a.lateDays);
+  }, [tasks]);
+
   // 자동배열 실행 — 최신 런 라벨을 먼저 조회한 뒤 stage2 호출
   const handleAutoSchedule = useCallback(async () => {
     setAutoScheduleLoading(true);
@@ -834,6 +867,35 @@ export default function SchedulerPage() {
             자동배열
           </button>
         </div>
+        {/* 납기 초과 현황 버튼 */}
+        <div className="px-3 py-2 shrink-0 border-l border-gray-200">
+          <button
+            onClick={() => setShowLatePanel((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors"
+            style={{
+              backgroundColor: lateTasks.length > 0
+                ? (showLatePanel ? "#7F1D1D" : "#FEE2E2")
+                : "#F3F4F6",
+              color: lateTasks.length > 0 ? (showLatePanel ? "#FCA5A5" : "#B91C1C") : "#6B7280",
+              border: `1px solid ${lateTasks.length > 0 ? "#FECACA" : "#E5E7EB"}`,
+            }}
+            title="납기를 초과한 배치 목록 보기"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 3.5v4.25l3 1.73-.75 1.3L7.25 9.5V4.5h1.5z" />
+            </svg>
+            납기 초과
+            {lateTasks.length > 0 && (
+              <span
+                className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                {lateTasks.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* SM재고 실적 버튼 — 편집모드일 때만 표시 */}
         {isEditMode && (
           <div className="px-3 py-2 shrink-0 border-l border-gray-200">
@@ -887,6 +949,100 @@ export default function SchedulerPage() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* 납기 초과 패널 */}
+      {showLatePanel && (
+        <div
+          className="shrink-0 border-b overflow-auto"
+          style={{ maxHeight: 220, backgroundColor: "#FFF7F7", borderColor: "#FECACA" }}
+        >
+          <div
+            className="flex items-center justify-between px-4 py-2 sticky top-0 border-b"
+            style={{ backgroundColor: "#FEF2F2", borderColor: "#FECACA" }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold" style={{ color: "#991B1B" }}>
+                납기 초과 배치
+              </span>
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                {lateTasks.length}건
+              </span>
+              <span className="text-[10px] text-gray-400">
+                — 배치 종료 시각이 납기일을 초과한 수주 목록
+              </span>
+            </div>
+            <button
+              onClick={() => setShowLatePanel(false)}
+              className="text-gray-400 hover:text-gray-600 text-xs"
+            >
+              ✕
+            </button>
+          </div>
+          {lateTasks.length === 0 ? (
+            <div className="px-4 py-3 text-[11px] text-gray-400">
+              납기 초과 배치가 없습니다.
+            </div>
+          ) : (
+            <table className="w-full text-[11px] border-collapse">
+              <thead>
+                <tr style={{ backgroundColor: "#FEE2E2" }}>
+                  {["지연", "설비", "규격", "거래처", "납기일", "배치완료", "배치그룹"].map((h) => (
+                    <th
+                      key={h}
+                      className="px-3 py-1.5 text-left font-semibold border-b"
+                      style={{ color: "#7F1D1D", borderColor: "#FECACA", whiteSpace: "nowrap" }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lateTasks.map(({ task: t, lateDays }) => (
+                  <tr
+                    key={t.id}
+                    className="hover:bg-red-50 cursor-pointer border-b"
+                    style={{ borderColor: "#FEE2E2" }}
+                    onClick={() => {
+                      // 해당 배치 블록 선택 및 스크롤
+                      const store = useScheduleStore.getState();
+                      store.selectTask(t.id);
+                      setShowLatePanel(false);
+                    }}
+                  >
+                    <td className="px-3 py-1.5 font-bold" style={{ color: "#DC2626", whiteSpace: "nowrap" }}>
+                      +{lateDays}일
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600" style={{ whiteSpace: "nowrap" }}>
+                      {t.equipment_id}
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-700 max-w-[160px] truncate">
+                      {t.spec || t.product}
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600" style={{ whiteSpace: "nowrap" }}>
+                      {t.customer ?? "-"}
+                    </td>
+                    <td className="px-3 py-1.5 font-medium" style={{ color: "#B91C1C", whiteSpace: "nowrap" }}>
+                      {t.delivery_date instanceof Date
+                        ? t.delivery_date.toLocaleDateString("ko-KR")
+                        : new Date(t.delivery_date!).toLocaleDateString("ko-KR")}
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-500" style={{ whiteSpace: "nowrap" }}>
+                      {(t.end instanceof Date ? t.end : new Date(t.end)).toLocaleDateString("ko-KR")}
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-gray-400 text-[10px]" style={{ whiteSpace: "nowrap" }}>
+                      {t.batch_group ?? "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
