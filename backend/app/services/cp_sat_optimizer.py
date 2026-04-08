@@ -55,8 +55,12 @@ from app.services.schedule_optimizer import (
     _st_sq,
 )
 
-# 최대 계획 기간(분) — 90일
-_MAX_HORIZON_MIN = 90 * 24 * 60
+# 근무 시간 기준 하루 근무 분 (08:00~22:00)
+_WORK_HOURS_PER_DAY = 14
+_WORK_MIN_PER_DAY = _WORK_HOURS_PER_DAY * 60  # 840분
+
+# 최대 계획 기간(근무 분) — 90 근무일
+_MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY
 
 # CP-SAT 솔버 시간 제한(초) — 이 안에 최적해 또는 최량 feasible해 반환
 _SOLVER_TIME_LIMIT_SEC = 30
@@ -79,10 +83,34 @@ def _priority_label(customer_priority: int | None) -> str:
     return "normal"
 
 
+def _calendar_days_between(d1: date, d2: date) -> int:
+    """d1 ~ d2 사이의 근무일 수 (토·일 제외)."""
+    days = 0
+    cur = d1
+    while cur < d2:
+        if cur.weekday() < 5:  # 월~금
+            days += 1
+        cur += timedelta(days=1)
+    return days
+
+
+def _work_minutes_from_base(dt: datetime, base: datetime) -> int:
+    """base_date 기준 근무 분 오프셋.
+    실제 캘린더(08~22시, 월~금)를 반영하여 CP-SAT 내부 시간 단위를 현실화한다.
+    음수 → 0으로 클램프.
+    """
+    if dt <= base:
+        return 0
+    work_days = _calendar_days_between(base.date(), dt.date())
+    # 당일 근무 시간 내 위치
+    day_start_min = max(0, (dt.hour * 60 + dt.minute) - 8 * 60)  # 08:00 기준
+    day_work_min = min(day_start_min, _WORK_MIN_PER_DAY)
+    return work_days * _WORK_MIN_PER_DAY + day_work_min
+
+
 def _minutes_from_base(dt: datetime, base: datetime) -> int:
-    """base_date 기준 분 오프셋 (음수 → 0으로 클램프)."""
-    delta = (dt - base).total_seconds() / 60
-    return max(0, int(delta))
+    """하위 호환 — 근무 분 오프셋 반환."""
+    return _work_minutes_from_base(dt, base)
 
 
 def _dt_from_minutes(minutes: int, base: datetime) -> datetime:
@@ -263,16 +291,19 @@ def cp_sat_schedule(
         work_dur = _compute_group_duration(gb, eligible, speed_map)
         setup_min = float(rep.setup_time_min or 0)
         drum_wind = _get_drum_winding_min(eligible[0].equipment_code, rep.sq_mm2, speed_map)
+        # CP-SAT 내부 시간 단위 = 근무 분(working minutes).
+        # work_dur은 순수 기계 작업 분이므로 그대로 사용.
+        # 단, 하루 14근무시간 기준으로 환산하면 캘린더 효과를 근사할 수 있다.
+        # 여기서는 총 작업 분을 그대로 사용하되, horizon/due_offset을 동일 단위로 맞춘다.
         total_dur = math.ceil(work_dur + setup_min + drum_wind)
 
         earliest_due = min((b.due_date for b in gb if b.due_date), default=None)
-        due_offset = (
-            _minutes_from_base(
-                datetime(earliest_due.year, earliest_due.month, earliest_due.day, 22, 0, 0),
-                base_date,
-            )
-            if earliest_due else _MAX_HORIZON_MIN
-        )
+        if earliest_due:
+            # 납기일까지의 근무 분 오프셋 (토·일 제외, 하루 840 근무 분)
+            due_work_days = _calendar_days_between(base_date.date(), earliest_due)
+            due_offset = due_work_days * _WORK_MIN_PER_DAY
+        else:
+            due_offset = _MAX_HORIZON_MIN
 
         priority_lbl = _priority_label(rep.customer_priority)
         weight = _TARDINESS_WEIGHT[priority_lbl]
@@ -568,10 +599,11 @@ def cp_sat_schedule(
     # CP-SAT 결과: 설비 배정 기준 처리 순서 (CP-SAT start_vars 값으로 정렬)
     solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
 
-    # 공정 선후관계 추적 (전체 공정 파이프라인 — 멀티설비 이미 반영된 값에서 이어서 추적)
-    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
-    core_first_drum_by_main_sq: dict[int, datetime] = {}
-    first_insul_output: datetime | None = None
+    # ★ process_first_output_by_sq / core_first_drum_by_main_sq / first_insul_output 은
+    #   5-b 멀티설비 선처리(_schedule_multi_equipment)에서 이미 채워진 상태이므로
+    #   절대 재초기화하지 않는다.
+    #   절연·시스 등 후공정은 이 값을 earliest 기준으로 사용하여
+    #   연선 첫 드럼 완료 이후에 배치된다.
 
     for gk in solved_order:
         meta = group_meta[gk]
