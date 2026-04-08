@@ -20,6 +20,7 @@ from app.services.constraint_checker import validate_all  # noqa: F401 — used 
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
+from app.services.cp_sat_optimizer import cp_sat_schedule  # CP-SAT 최적화 엔진
 from app.services.wip_matching import match_wip
 
 logger = logging.getLogger(__name__)
@@ -769,8 +770,27 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
                 detail=f"base_date 형식 오류: {base_date_str} (YYYYMMDD)",
             )
 
+    optimizer = body.get("optimizer", "cpsat")  # "cpsat" | "greedy"
+
     try:
-        schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
+        if optimizer == "greedy":
+            schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
+            schedule_result["engine"] = "greedy"
+        else:
+            # CP-SAT 시도 → 실패(INFEASIBLE / 타임아웃) 시 그리디 폴백
+            schedule_result = cp_sat_schedule(run_label, db, base_date=base_date_dt)
+            schedule_result["engine"] = "cpsat"
+            if schedule_result["solver_status"] not in ("OPTIMAL", "FEASIBLE"):
+                schedule_result["warnings"].append(
+                    "CP-SAT 솔버 미해결 — 그리디 방식으로 재시도합니다"
+                )
+                # 이미 wip_complete 처리된 배치가 있으므로 그리디를 그대로 이어 실행
+                fallback = auto_schedule(run_label, db, base_date=base_date_dt)
+                fallback["engine"] = "greedy_fallback"
+                fallback["warnings"] = (
+                    schedule_result["warnings"] + fallback.get("warnings", [])
+                )
+                schedule_result = fallback
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"스케줄링 실패: {exc}") from exc
 
