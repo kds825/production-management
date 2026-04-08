@@ -548,28 +548,40 @@ def cp_sat_schedule(
     result["objective_value"] = int(solver.objective_value)
 
     # ── 8. 솔버 결과를 DB에 저장 ──────────────────────────────────────────────
+    # ★ 핵심 설계: CP-SAT의 start_vars는 "순서 결정"에만 사용한다.
+    #   CP-SAT 내부 시간 단위(분)와 실제 캘린더(08~22시 근무, 주말 제외)는 1:1 대응이
+    #   되지 않으므로 CP-SAT 시작 시각을 그대로 쓰면 겹침이 발생한다.
+    #   CP-SAT가 결정한 (설비 배정 + 그룹 처리 순서)를 가져온 뒤,
+    #   실제 시작 시각은 _find_available_slot + calculate_end_datetime으로 재계산한다.
+    #
     # predecessor_map / tasks_created / last_batch_on_equip / sq_to_equip 은
     # 5-b 멀티설비 선처리 단계에서 이미 초기화됨 — 여기서 재선언하지 않음
 
-    # CP-SAT 결과를 처리 순서(시작 시각 순)로 정렬
+    # CP-SAT 결과: 설비 배정 추출
+    cpsat_assignment: dict[str, str] = {}  # gk → eq_code
+    for gk in groups:
+        chosen_eq_code = next(
+            ec for ec in equip_vars[gk] if solver.value(equip_vars[gk][ec]) == 1
+        )
+        cpsat_assignment[gk] = chosen_eq_code
+
+    # CP-SAT 결과: 설비 배정 기준 처리 순서 (CP-SAT start_vars 값으로 정렬)
     solved_order = sorted(groups, key=lambda gk: solver.value(start_vars[gk]))
+
+    # 공정 선후관계 추적 (전체 공정 파이프라인 — 멀티설비 이미 반영된 값에서 이어서 추적)
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
+    core_first_drum_by_main_sq: dict[int, datetime] = {}
+    first_insul_output: datetime | None = None
 
     for gk in solved_order:
         meta = group_meta[gk]
         rep = meta["rep"]
         gb = meta["batches"]
-
-        # 배정된 설비
-        chosen_eq_code = next(
-            ec for ec in equip_vars[gk] if solver.value(equip_vars[gk][ec]) == 1
-        )
+        chosen_eq_code = cpsat_assignment[gk]
         chosen_eq = next(e for e in meta["eligible"] if e.equipment_code == chosen_eq_code)
+        sq_int = meta["sq"]
 
-        # CP-SAT 시작 시각 → datetime 변환
-        start_min = solver.value(start_vars[gk])
-        best_start = _dt_from_minutes(start_min, base_date)
-
-        # 실제 설비 duration 재계산 (동일 SQ 셋업 스킵, 색상 교체 등)
+        # ── 동일 SQ 셋업 스킵 / 색상 교체 시간 계산 ────────────────────────
         actual_setup = meta["setup_min"]
         prev_batch = last_batch_on_equip.get(chosen_eq_code)
         if prev_batch is not None and prev_batch.sq_mm2 and rep.sq_mm2:
@@ -589,6 +601,61 @@ def cp_sat_schedule(
                 color_change_min = float(sm_color[0] or 120.0) if sm_color else 120.0
 
         total_dur = meta["work_dur"] + actual_setup + meta["drum_wind"] + color_change_min
+
+        # ── 선행 공정 earliest 계산 (그리디와 동일한 로직) ──────────────────
+        earliest = base_date
+
+        pred_proc = PREDECESSOR_PROCESS.get(rep.process_name)
+        if pred_proc:
+            all_sqs = {int(b.sq_mm2 or 0) for b in gb}
+            if len(all_sqs) > 1:
+                valid_firsts = [
+                    t for sq_i in all_sqs
+                    if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
+                    and t < datetime.max
+                ]
+                if valid_firsts:
+                    earliest = max(earliest, min(valid_firsts))
+            else:
+                sq_i = next(iter(all_sqs))
+                pred_first = process_first_output_by_sq.get((pred_proc, sq_i))
+                if pred_first and pred_first > earliest:
+                    earliest = pred_first
+            if rep.process_name == "고압시스":
+                earliest += timedelta(hours=20)
+
+        if gk.startswith("A100_") or gk.startswith("A120_"):
+            if first_insul_output and first_insul_output > earliest:
+                earliest = first_insul_output
+
+        if gk.startswith("ST-") and rep.process_name == "연선":
+            try:
+                main_sq = int(gk.split("-")[1])
+            except (IndexError, ValueError):
+                main_sq = sq_int
+            core_first = core_first_drum_by_main_sq.get(main_sq)
+            if core_first and core_first > earliest:
+                earliest = core_first
+
+        # 개별 수주 predecessor
+        _is_st_group = gk.startswith("ST-") and rep.process_name == "연선"
+        _skip_individual = rep.process_name in (
+            "저압절연", "고압절연", "저압시스", "고압시스", "연합", "T/P"
+        ) or _is_st_group
+        if not _skip_individual:
+            for b in gb:
+                pred_key = (b.sales_order_id, b.sales_order_line)
+                pred_tid = predecessor_map.get(pred_key)
+                if pred_tid:
+                    pred_task = next(
+                        (t for t in tasks_created if t.task_id == pred_tid), None
+                    )
+                    if pred_task and pred_task.end_datetime > earliest:
+                        earliest = pred_task.end_datetime
+
+        # ── 실제 캘린더 기반 슬롯 탐색 (겹침 방지의 핵심) ───────────────────
+        slots = timeline.get(chosen_eq_code, [])
+        best_start = _find_available_slot(earliest, total_dur, slots, db)
         end_dt = calculate_end_datetime(best_start, total_dur, db)
 
         # 정각 단위 올림
@@ -608,6 +675,35 @@ def cp_sat_schedule(
         db.add(task)
         db.flush()
 
+        # timeline 갱신 — 이후 그룹이 이 슬롯을 피할 수 있도록
+        timeline.setdefault(chosen_eq_code, []).append((best_start, end_dt))
+
+        # 파이프라인 겹침: 첫 드럼 출력 시각 갱신
+        header_batch = next((b for b in gb if b.batch_seq == -1), None)
+        if header_batch is not None:
+            lot_count = max(int(header_batch.drum_count or 1), 1)
+        elif _is_core_group(gk):
+            lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
+        else:
+            lot_count = max(len(gb), 1)
+        first_drum_min = actual_setup + (meta["work_dur"] / lot_count)
+        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
+
+        proc_sq_key = (rep.process_name, sq_int)
+        if not _is_core_group(gk):
+            if proc_sq_key not in process_first_output_by_sq or first_output_dt < process_first_output_by_sq[proc_sq_key]:
+                process_first_output_by_sq[proc_sq_key] = first_output_dt
+
+        if _is_core_group(gk):
+            main_sq = _extract_core_main_sq(gk)
+            if main_sq is not None:
+                if main_sq not in core_first_drum_by_main_sq or first_output_dt < core_first_drum_by_main_sq[main_sq]:
+                    core_first_drum_by_main_sq[main_sq] = first_output_dt
+
+        if rep.process_name == "저압절연":
+            if first_insul_output is None or first_output_dt < first_insul_output:
+                first_insul_output = first_output_dt
+
         # predecessor_map 갱신
         for b in gb:
             predecessor_map[(b.sales_order_id, b.sales_order_line)] = task.task_id
@@ -615,7 +711,7 @@ def cp_sat_schedule(
             b.status = "scheduled"
 
         if rep.process_name == "연선" and not _is_core_group(gk):
-            sq_to_equip[(rep.process_name, meta["sq"])] = chosen_eq_code
+            sq_to_equip[(rep.process_name, sq_int)] = chosen_eq_code
 
         last_batch_on_equip[chosen_eq_code] = gb[-1]
         tasks_created.append(task)
