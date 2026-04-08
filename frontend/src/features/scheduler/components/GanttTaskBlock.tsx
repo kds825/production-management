@@ -334,6 +334,22 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     return m ? `${m[1]}틀` : null;
   })();
 
+  // 블록 상단 규격 라벨:
+  //   시스 설비(SH-A100/A120): 색상(흑/갈/회…)
+  //   1코어: "50SQ"
+  //   다심(2코어 이상): "4C × 50SQ"
+  //   SQ 정보 없으면: spec → product 순 폴백
+  const specLabel = (() => {
+    if (SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color) {
+      return task.color;
+    }
+    if (task.sq_mm2) {
+      const sqStr = `${task.sq_mm2}SQ`;
+      return task.core_count > 1 ? `${task.core_count}C × ${sqStr}` : sqStr;
+    }
+    return task.spec || task.product;
+  })();
+
   const isSelected = selectedTaskId === task.id;
 
   // 증분 업데이트 후 신규 생성된 배치 여부 — created_at 기준 5분 이내
@@ -553,9 +569,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   className="text-white text-[10px] font-semibold truncate leading-tight"
                   style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
                 >
-                  {SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color
-                    ? task.color
-                    : task.spec || task.product}
+                  {specLabel}
                 </span>
                 {segW >= 40 && (
                   <span
@@ -622,13 +636,14 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
-            {/* 상태 배지 — 첫 세그먼트, 블록 폭 60px 이상일 때만 표시 */}
+            {/* 상태 배지 — 첫 세그먼트, 블록 폭 60px 이상일 때만 표시
+                위치: 하단 좌측 (규격 텍스트를 가리지 않도록 상단에서 이동) */}
             {isFirst && segW >= 60 && task.batch_id != null && (
               <div
                 onClick={handleStatusBadgeClick}
                 style={{
                   position: "absolute",
-                  top: 2,
+                  bottom: isLate ? 16 : 2,
                   left: 2,
                   zIndex: 4,
                   padding: "1px 4px",
