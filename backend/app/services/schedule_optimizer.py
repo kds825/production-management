@@ -26,6 +26,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.constraint_config import ConstraintConfig
+from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.domain.constants import PROCESS_ORDER
 from app.services.calendar_engine import calculate_end_datetime
 from app.services.audit_logger import log_decision
@@ -40,24 +41,6 @@ _WIP_SKIP_PROCESSES: dict[str, set[str]] = {
 
 # 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용
 _DEFAULT_WELDING_MIN = 30
-
-# ── 연선 설비 배정 규칙 (KBI 공정설비 규격 정리 기준) ──────────────────────
-# SQ → 소선경(mm) 매핑 — 같은 소선경 SQ를 같은 설비에 연속 배치 (규칙 3)
-_SQ_TO_WIRE_DIAMETER: dict[int, float] = {
-    16: 1.75,
-    25: 2.21,
-    35: 2.64,
-    50: 3.06,  # 7연선
-    70: 2.21,
-    95: 2.64,
-    120: 2.92,  # 19연선
-    150: 2.34,
-    185: 2.60,
-    240: 3.06,  # 37연선
-    300: 2.60,
-    400: 2.92,  # 61연선
-    633: 1.20,  # 1250kcmil 압축연선 499본
-}
 
 # 시스 재질 → 설비 라우팅 규칙 (10-3)
 # 값은 equipment_code prefix 또는 특수 라우팅 키
@@ -89,6 +72,20 @@ PREDECESSOR_PROCESS: dict[str, str] = {
 def _is_core_group(group_key: str) -> bool:
     """CORE 또는 AL-CORE 그룹 키인지 판별 (CU/AL 공통)."""
     return group_key.startswith("CORE-") or group_key.startswith("AL-CORE-")
+
+
+def _st_sq(group_key: str) -> int:
+    """ST-{sq}-... 그룹 키에서 SQ 정수를 추출한다. 실패 시 0."""
+    try:
+        return int(group_key.split("-")[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def _group_earliest_due(batches: list) -> date:
+    """배치 목록에서 가장 이른 납기일을 반환한다. 납기 없으면 date.max."""
+    dates = [b.due_date for b in batches if b.due_date is not None]
+    return min(dates) if dates else date.max
 
 
 def _extract_core_main_sq(group_key: str) -> int | None:
@@ -278,11 +275,45 @@ def auto_schedule(
         key = batch.batch_group or f"_single_{batch.batch_id}"
         batch_groups.setdefault(key, []).append(batch)
 
-    # CORE-/AL-CORE- 그룹(7연선 코어)을 ST- 그룹보다 먼저 처리 — 선행 스케줄링 보장
-    # Python sort는 stable하므로 동일 우선순위 내 삽입 순서 유지
+    # ── drum_lot_master에서 SQ별 소선경(wire_diameter) 로드 ──────────────────
+    # ST- 연선 그룹 정렬 시 동일 소선경 그룹이 연속 배치되도록 하기 위해 사용
+    sq_to_wire_d: dict[int, float] = {
+        int(d.cross_section): float(d.wire_diameter)
+        for d in db.query(DrumLotMaster).all()
+        if d.wire_diameter is not None
+    }
+
+    # 소선경 클러스터별 최초 납기: wire_diameter → min(due_date of all ST- groups in cluster)
+    # 가장 급한 소선경 클러스터를 먼저 처리하기 위해 사용
+    wire_d_earliest: dict[float, date] = {}
+    for gk, gb in batch_groups.items():
+        if gk.startswith("ST-"):
+            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
+            if wd > 0:
+                ed = _group_earliest_due(gb)
+                if wd not in wire_d_earliest or ed < wire_d_earliest[wd]:
+                    wire_d_earliest[wd] = ed
+
+    # ── 그룹 처리 순서 결정 ──────────────────────────────────────────────────
+    # 우선순위:
+    #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
+    #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
+    #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
+    #   2 = 그 외 공정(절연·시스 등): 납기 순 자연 정렬 유지
     ordered_group_items = sorted(
         batch_groups.items(),
-        key=lambda kv: 0 if _is_core_group(kv[0]) else 1,
+        key=lambda kv: (
+            0 if _is_core_group(kv[0])
+            else (1 if kv[0].startswith("ST-") else 2),
+            # ST- 그룹: 소선경 클러스터 최초 납기(클러스터 우선순위)
+            wire_d_earliest.get(sq_to_wire_d.get(_st_sq(kv[0]), 0.0), date.max)
+            if kv[0].startswith("ST-") else date.max,
+            # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
+            sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
+            if kv[0].startswith("ST-") else 0.0,
+            # 그룹 자체 최초 납기
+            _group_earliest_due(kv[1]),
+        ),
     )
 
     for group_key, group_batches in ordered_group_items:
@@ -329,12 +360,13 @@ def auto_schedule(
                 eligible = pref_match
 
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
+        # drum_lot_master.wire_diameter 기준 — 동일 소선경 SQ는 같은 설비 선호
         if is_stranding and sq_key not in sq_to_equip and not _is_core_group(group_key):
-            wire_d = _SQ_TO_WIRE_DIAMETER.get(sq, 0)
+            wire_d = sq_to_wire_d.get(sq, 0.0)
             if wire_d > 0:
                 same_wd_equips = set()
                 for (proc, s), eq_code in sq_to_equip.items():
-                    if proc == "연선" and _SQ_TO_WIRE_DIAMETER.get(s, -1) == wire_d:
+                    if proc == "연선" and sq_to_wire_d.get(s, -1.0) == wire_d:
                         same_wd_equips.add(eq_code)
                 if same_wd_equips:
                     wd_match = [
