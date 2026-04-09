@@ -329,6 +329,14 @@ function ErpUploadSection({
   const [apiError, setApiError] = useState<string | null>(null);
   // 업로드 모드: "full" = 전체 교체, "incremental" = 긴급수주 추가
   const [uploadMode, setUploadMode] = useState<UploadMode>("full");
+  // 긴급수주 추가 기준일자 (incremental 모드 전용)
+  const [baseDate, setBaseDate] = useState<string>(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    const d = String(today.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
   // 확인 모달 (Stage 1 실행 전 현황 확인)
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [batchSummary, setBatchSummary] = useState<BatchStatusSummary | null>(
@@ -446,6 +454,10 @@ function ErpUploadSection({
           if (parentRunLabel) {
             formData.append("parent_run_label", parentRunLabel);
           }
+          // 기준일자: incremental 모드에서만 전송
+          if (uploadMode === "incremental" && baseDate) {
+            formData.append("base_date", baseDate);
+          }
         }
 
         const res = await fetch(endpoint, {
@@ -480,7 +492,7 @@ function ErpUploadSection({
         setIsRunning(false);
       }
     },
-    [erpFile, isRunning, splitGapDays, wipFile, uploadMode, parseApiError],
+    [erpFile, isRunning, splitGapDays, wipFile, uploadMode, baseDate, parseApiError],
   );
 
   // Stage 1 실행 버튼 클릭 핸들러 — 기존 배치가 있으면 확인 모달 선표시
@@ -573,6 +585,21 @@ function ErpUploadSection({
           ))}
         </div>
         <p className="text-[11px] text-gray-500 mt-1.5">{modeDescription}</p>
+        {uploadMode === "incremental" && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-600 font-medium">기준일자</span>
+            <input
+              type="date"
+              value={baseDate}
+              onChange={(e) => setBaseDate(e.target.value)}
+              className="text-xs px-2 py-1 rounded-md"
+              style={{ border: "1px solid #D1D5DB", color: "#111827" }}
+            />
+            <span className="text-[11px] text-gray-400">
+              이전 배치 고정 · 이후 배치는 긴급수주와 합산 재생성
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 성공 토스트 */}
@@ -1027,7 +1054,7 @@ function ErpUploadSection({
                   },
                 ].map(({ key, label, color, frozen }) => {
                   const count =
-                    (batchSummary as Record<string, number>)[key] ?? 0;
+                    (batchSummary as unknown as Record<string, number>)[key] ?? 0;
                   if (count === 0) return null;
                   return (
                     <div key={key} className="flex items-center gap-2 text-xs">
