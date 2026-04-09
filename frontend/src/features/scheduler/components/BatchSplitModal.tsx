@@ -125,20 +125,49 @@ export function BatchSplitModal() {
       }
 
       const data = await res.json();
-      setResult(
-        `분할 완료: ${data.moved_batches}건이 "${data.new_group}" 그룹으로 이동되었습니다. 자동배열을 다시 실행하세요.`,
-      );
+      const remainingPlanned: number = data.original_remaining_planned ?? -1;
 
-      // 프론트 간트에서 해당 태스크 제거 (백엔드에서 schedule_task 삭제됨)
+      // 분할 후 자동으로 Stage 2 재실행 — schedule_task가 삭제되었으므로 재생성 필요
+      let stage2Ok = false;
+      try {
+        // 최신 run_label 조회
+        const runsRes = await fetch(`${API}/pipeline/runs`);
+        if (runsRes.ok) {
+          const runs: Array<{ run_label: string }> = await runsRes.json();
+          if (runs.length > 0) {
+            const runLabel = runs[0].run_label;
+            const s2Res = await fetch(`${API}/pipeline/stage2`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ run_label: runLabel }),
+            });
+            stage2Ok = s2Res.ok;
+          }
+        }
+      } catch {
+        // Stage 2 실패해도 새로고침은 진행
+      }
+
+      // 결과 메시지: 원본 그룹의 잔여 작업량에 따라 분기
+      const newGroupMsg = `"${data.new_group}" 그룹 생성`;
+      let resultMsg: string;
+      if (remainingPlanned === 0) {
+        resultMsg = `분할 완료: ${newGroupMsg}. 원본 그룹의 남은 수주는 WIP 재고로 전량 충당되어 간트에서 표시되지 않습니다.`;
+      } else {
+        resultMsg = `분할 완료: ${newGroupMsg}. ${stage2Ok ? "자동배열 완료." : "자동배열 재실행 필요."}`;
+      }
+      setResult(resultMsg);
+
+      // 프론트 간트에서 해당 태스크 제거
       if (taskId) {
         deleteTask(taskId);
       }
 
-      // 2초 후 모달 닫기 + 페이지 새로고침으로 최신 상태 반영
+      // 모달 닫기 + 페이지 새로고침 (WIP 충당 안내 메시지는 더 오래 표시)
       setTimeout(() => {
         closeSplitModal();
         window.location.reload();
-      }, 2000);
+      }, remainingPlanned === 0 ? 3000 : 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "분할 실패");
     } finally {

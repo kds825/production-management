@@ -32,11 +32,13 @@ from app.services.calendar_engine import calculate_end_datetime
 from app.services.audit_logger import log_decision
 
 # WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
-# 절연재고: 신선/연선/절연까지 이미 완료 → 해당 공정 스케줄 불필요
-# 연선재고: 신선/연선까지 이미 완료
+# batch_grouping._WIP_COVERED_PROCESSES와 동일한 기준 — Phase 2에서 대부분 걸러지지만
+# 증분 업데이트 등으로 잔존 배치가 있을 경우의 안전망으로 유지한다.
 _WIP_SKIP_PROCESSES: dict[str, set[str]] = {
-    "절연재고": {"신선", "연선", "저압절연", "고압절연"},
     "연선재고": {"신선", "연선"},
+    "절연재고": {"신선", "연선", "저압절연", "고압절연"},
+    "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
+    "완제품":   {"신선", "연선", "저압절연", "고압절연", "연합", "T/P", "저압시스", "고압시스"},
 }
 
 # 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용

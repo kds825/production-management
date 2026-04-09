@@ -36,6 +36,7 @@ import {
   xToTime,
   computeTimeBreakdown,
 } from "@/features/scheduler/utils/ganttUtils";
+import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
 /** 드래그 중인 아이템 정보 */
 interface ActiveDragItem {
@@ -76,6 +77,7 @@ interface BatchGroupOrder {
   wip_matched_id: number | null;
   product_group: string;
   status: string;
+  core_count: number;
 }
 
 /** 배치 그룹 수주 목록 테이블
@@ -124,6 +126,7 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
                 ["납기", "left"],
                 ["드럼", "right"],
                 ["총 길이", "right"],
+                ["환산수량", "right"],
                 ["WIP", "center"],
               ] as [string, string][]
             ).map(([label, align]) => (
@@ -187,6 +190,17 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
                   (order.net_length_m ?? order.total_length_m).toLocaleString() + "m"
                 )}
               </td>
+              <td className="py-1 px-2 text-right text-gray-600">
+                {(() => {
+                  const base = order.net_length_m ?? order.total_length_m;
+                  const conv = calcConvertedQty(order.spec_raw || "", base);
+                  return (
+                    <span title={`${order.core_count}C × ${base.toLocaleString()}m`}>
+                      {conv.toLocaleString()}m
+                    </span>
+                  );
+                })()}
+              </td>
               <td className="py-1 px-2 text-center">
                 {order.wip_matched_id ? (
                   <span
@@ -232,6 +246,16 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
             >
               {totalQty.toLocaleString()}m
             </td>
+            <td
+              className="py-1 px-2 text-right font-semibold"
+              style={{ color: "#C41230" }}
+              title="다심 케이블 환산수량 합계 (단심은 —)"
+            >
+              {displayRows.reduce((s, o) => {
+                const base = o.net_length_m ?? o.total_length_m;
+                return s + calcConvertedQty(o.spec_raw || "", base);
+              }, 0).toLocaleString()}m
+            </td>
             <td className="py-1 px-2 text-center text-[10px] text-gray-400">
               {wipCount > 0 ? `재고 ${wipCount}건` : "-"}
             </td>
@@ -245,8 +269,10 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
 export default function SchedulerPage() {
   const { isLoading, error } = useScheduleData();
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
+  const updateTask = useScheduleStore((s) => s.updateTask);
   const isEditMode = useScheduleStore((s) => s.isEditMode);
   const toggleEditMode = useScheduleStore((s) => s.toggleEditMode);
+  const discardEdits = useScheduleStore((s) => s.discardEdits);
   const saveVersion = useScheduleStore((s) => s.saveVersion);
   const showSavedToast = useScheduleStore((s) => s.showSavedToast);
   const assignOrder = useScheduleStore((s) => s.assignOrder);
@@ -847,6 +873,7 @@ export default function SchedulerPage() {
         onAddTask={handleAddTask}
         isEditMode={isEditMode}
         onToggleEditMode={handleToggleEditMode}
+        onDiscardEdits={discardEdits}
       />
 
       {/* 뷰 필터 + 동기화 + 줌 컨트롤 + 자동배열 */}
@@ -1302,7 +1329,7 @@ export default function SchedulerPage() {
                       style={{ borderColor: "#F3F4F6" }}
                     >
                       {/* 작업 요약 1행 */}
-                      <div className="grid grid-cols-7 gap-x-4 gap-y-1 mb-2">
+                      <div className="grid grid-cols-8 gap-x-4 gap-y-1 mb-2">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
                             규격
@@ -1398,6 +1425,68 @@ export default function SchedulerPage() {
                                 : "일반"}
                           </span>
                         </div>
+                        {/* 배치 상태 — 클릭으로 순환 변경 */}
+                        {(() => {
+                          const STATUS_CYCLE: Record<string, string> = {
+                            planned: "in_progress",
+                            in_progress: "completed",
+                            completed: "planned",
+                          };
+                          const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
+                            planned:     { label: "계획",  bg: "#6B7280", text: "#fff" },
+                            in_progress: { label: "진행",  bg: "#2563EB", text: "#fff" },
+                            completed:   { label: "완료",  bg: "#059669", text: "#fff" },
+                          };
+                          const cfg = STATUS_CONFIG[selectedTask.status] ?? STATUS_CONFIG.planned;
+                          const handleStatusClick = async () => {
+                            if (!selectedTask.batch_id) return;
+                            const nextStatus = STATUS_CYCLE[selectedTask.status] ?? "planned";
+                            const prevStatus = selectedTask.status;
+                            updateTask(selectedTask.id, { status: nextStatus });
+                            try {
+                              const res = await fetch(
+                                `${API_BASE}/pipeline/batch/${selectedTask.batch_id}/status`,
+                                { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: nextStatus }) },
+                              );
+                              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                            } catch {
+                              updateTask(selectedTask.id, { status: prevStatus });
+                            }
+                          };
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                배치 상태
+                              </span>
+                              <button
+                                onClick={handleStatusClick}
+                                disabled={!selectedTask.batch_id}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 3,
+                                  padding: "2px 7px",
+                                  borderRadius: 4,
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  backgroundColor: cfg.bg,
+                                  color: cfg.text,
+                                  border: "none",
+                                  cursor: selectedTask.batch_id ? "pointer" : "default",
+                                  lineHeight: 1.5,
+                                  width: "fit-content",
+                                }}
+                                title="클릭하여 상태 변경"
+                              >
+                                {cfg.label}
+                                {selectedTask.batch_id && (
+                                  <span style={{ fontSize: 8, opacity: 0.75 }}>▾</span>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })()}
+
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
                             수주 건수
