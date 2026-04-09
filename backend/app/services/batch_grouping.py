@@ -31,6 +31,18 @@ from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.customer_master import CustomerMaster
 from app.infrastructure.models.wip_inventory import WipInventory
 
+# WIP 재고 종류별로 해당 재고가 "이미 완료된" 공정 집합
+# 절연재고: 연선+절연까지 완료 → 절연 이전 공정 배치 생성 불필요
+# 연선재고: 연선까지 완료 → 연선 이전 공정만 제외, 절연부터는 작업 필요
+# 연합재고: 연선+절연+연합까지 완료
+# 완제품:  모든 공정 완료
+_WIP_COVERED_PROCESSES: dict[str, set[str]] = {
+    "연선재고": {"신선", "연선"},
+    "절연재고": {"신선", "연선", "저압절연", "고압절연"},
+    "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
+    "완제품":   {"신선", "연선", "저압절연", "고압절연", "연합", "T/P", "저압시스", "고압시스"},
+}
+
 
 def create_batches(
     run_label: str,
@@ -652,6 +664,11 @@ def create_batches(
         # (Phase 2에서는 연선 배치를 생성하지 않으므로 직접 사용되지 않음)
         is_61strand = sq >= 300 and conductor_material == "CU"  # noqa: F841
 
+        # WIP process_stage 조회 — Phase 2 배치 생략 판단에 사용
+        wip_stage: str = ""
+        if matched_wip:
+            wip_stage = getattr(matched_wip, "process_stage", "") or ""
+
         # 공정별 배치 생성 — 절연·시스 등 연선 외 공정만 (수주 1:1)
         # 연선 공정은 Phase 1에서 SQ 그룹 단위로 틀단위 작업지시로 이미 생성됨
         for batch_seq, process_name in enumerate(processes, start=1):
@@ -660,6 +677,10 @@ def create_batches(
             if process_name == "연선":
                 continue  # Phase 1(연선 그룹 배치)에서 처리
             if skip_stranding and process_name == "연선":
+                continue
+            # WIP 재고가 이 공정을 이미 커버하면 배치 생성 불필요
+            # 예: 절연재고 → 절연 공정 배치 생략 / 연선재고 → 절연은 그대로 생성
+            if wip_stage and process_name in _WIP_COVERED_PROCESSES.get(wip_stage, set()):
                 continue
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
