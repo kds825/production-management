@@ -328,20 +328,44 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   const volumeLabel = `${task.volume_m.toLocaleString()}m`;
 
-  // 연선 공정: notes(remarks)에서 틀 수 추출 — "연선그룹 20건 1틀 / ..." → "1틀"
+  const isKcmil = /KCMIL/i.test(task.spec ?? "");
+
+  // 연선 공정 틀 수: 헤더 배치의 drum_count(lot_count)를 직접 사용
+  // 고압 연선(KCMIL 규격)은 틀 단위 없이 m만 표시
   const lotLabel = (() => {
+    if (isKcmil) return null;
+    if (task.lot_count != null && task.lot_count > 0) return `${task.lot_count}틀`;
+    // 폴백: notes에서 추출
     const m = task.notes?.match(/\d+건\s+(\d+)틀/);
     return m ? `${m[1]}틀` : null;
   })();
 
   // 블록 상단 규격 라벨:
   //   시스 설비(SH-A100/A120): 색상(흑/갈/회…)
+  //   고압 제품(spec에 KCMIL 포함): "500KCMIL" / "1C × 500KCMIL"
+  //   CORE/AL-CORE 배치(T6BO 중심선): spec에서 원본 SQ 추출 (sq_mm2=35 무시)
   //   1코어: "50SQ"
   //   다심(2코어 이상): "4C × 50SQ"
   //   SQ 정보 없으면: spec → product 순 폴백
   const specLabel = (() => {
     if (SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color) {
       return task.color;
+    }
+    if (isKcmil && task.spec) {
+      const m = task.spec.match(/(\d+(?:\.\d+)?)\s*KCMIL/i);
+      if (m) {
+        const kcmilStr = `${m[1]}KCMIL`;
+        return task.core_count > 1 ? `${task.core_count}C × ${kcmilStr}` : kcmilStr;
+      }
+    }
+    // CORE/AL-CORE 배치(T6BO 중심선): sq_mm2=35(설비 매칭용)이므로 spec에서 원본 SQ 추출
+    const isCoreGroup = task.batch_group?.startsWith("CORE-") || task.batch_group?.startsWith("AL-CORE-");
+    if (isCoreGroup && task.spec) {
+      const m = task.spec.match(/(\d+(?:\.\d+)?)\s*SQ/i);
+      if (m) {
+        const sqStr = `${parseInt(m[1])}SQ`;
+        return task.core_count > 1 ? `${task.core_count}C × ${sqStr}` : sqStr;
+      }
     }
     if (task.sq_mm2) {
       const sqStr = `${task.sq_mm2}SQ`;
@@ -637,14 +661,14 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             )}
 
             {/* 상태 배지 — 첫 세그먼트, 블록 폭 60px 이상일 때만 표시
-                위치: 하단 좌측 (규격 텍스트를 가리지 않도록 상단에서 이동) */}
+                위치: 우측상단 (우선순위 배지가 있으면 그 왼쪽에 배치) */}
             {isFirst && segW >= 60 && task.batch_id != null && (
               <div
                 onClick={handleStatusBadgeClick}
                 style={{
                   position: "absolute",
-                  bottom: isLate ? 16 : 2,
-                  left: 2,
+                  top: 2,
+                  right: task.priority !== "normal" ? 30 : 2,
                   zIndex: 4,
                   padding: "1px 4px",
                   borderRadius: 3,

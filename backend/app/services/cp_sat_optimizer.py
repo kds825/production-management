@@ -446,6 +446,16 @@ def cp_sat_schedule(
     def _solved_order_key(gk: str):
         meta = group_meta[gk]
         proc_level = PROCESS_ORDER.get(meta["rep"].process_name, 50)
+        # CORE/AL-CORE: ST- 선행 공정이므로 반드시 먼저 실행 (date.min으로 최우선)
+        if _is_core_group(gk):
+            return (
+                proc_level,
+                date.min,           # ST- 그룹보다 항상 앞에 오도록
+                -1.0,
+                meta["earliest_due"] or date.max,
+                meta["rep"].customer_priority or 99,
+                solver.value(start_vars[gk]),
+            )
         if gk.startswith("ST-") and meta["rep"].process_name == "연선":
             wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
             cluster_due = wire_d_earliest.get(wd, date.max)

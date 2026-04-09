@@ -259,9 +259,9 @@ def create_batches(
         _strand_groups[gkey]["total_qty"] += strand_qty
         # WIP 사용 수주: 연선이 이미 완료된 재고 → 틀 계산 대상에서 차감
         # 연선재고: 연선 완료 / 절연재고: 연선+절연 완료 → 둘 다 연선 작업 불요
-        if getattr(order, "use_wip", False) and (
-            getattr(order, "wip_type", "") or ""
-        ) in ("연선재고", "절연재고"):
+        # wip_type: "연선" 또는 "연선재고" → 연선 작업 불필요, 틀 계산 제외
+        _wip_type = (getattr(order, "wip_type", "") or "").replace("재고", "")
+        if getattr(order, "use_wip", False) and _wip_type in ("연선", "절연"):
             _strand_groups[gkey]["wip_strand_qty"] += strand_qty
         _strand_groups[gkey]["orders"].append(order)
 

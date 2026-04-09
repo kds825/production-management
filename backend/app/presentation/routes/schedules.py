@@ -98,6 +98,7 @@ def _db_task_to_response(
     group_volume_m: float | None = None,
     group_order_count: int = 1,
     color_change_min: int = 0,
+    lot_count: int | None = None,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
@@ -168,6 +169,7 @@ def _db_task_to_response(
         batch_id=batch.batch_id,
         created_at=task.created_at,
         sq_mm2=sq_mm2 if sq_mm2 else None,
+        lot_count=lot_count,
     )
 
 
@@ -236,10 +238,11 @@ def list_tasks(
     # batch_group별 volume 계산:
     # 헤더(batch_seq=-1)가 있으면 헤더의 total_length_m = 실제 생산지시(틀단위) 수량
     # 없으면 개별 수주(batch_seq>=0) 합산
-    header_volumes_rows = (
+    header_rows = (
         db.query(
             ProductionBatchModel.batch_group,
             ProductionBatchModel.total_length_m,
+            ProductionBatchModel.drum_count,
         )
         .filter(
             ProductionBatchModel.batch_group.isnot(None),
@@ -247,7 +250,8 @@ def list_tasks(
         )
         .all()
     )
-    header_volumes = {bg: float(vol or 0) for bg, vol in header_volumes_rows}
+    header_volumes = {bg: float(vol or 0) for bg, vol, _ in header_rows}
+    header_drum_counts: dict[str, int] = {bg: int(dc or 1) for bg, _, dc in header_rows}
 
     order_stats_rows = (
         db.query(
@@ -293,6 +297,7 @@ def list_tasks(
             group_volume_m=group_volumes.get(task.batch_group),
             group_order_count=group_counts.get(task.batch_group, 1),
             color_change_min=color_change_map.get(task.task_id, 0),
+            lot_count=header_drum_counts.get(task.batch_group),
         )
         for task, batch in db_tasks
     ]

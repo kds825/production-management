@@ -47,6 +47,8 @@ export interface ScheduleTask {
   created_at?: Date;
   /** 도체 단면적 mm² — SQ별 색상 구분용 */
   sq_mm2?: number;
+  /** 헤더 배치 drum_count — 틀 수 표시용 */
+  lot_count?: number;
 }
 
 export interface ConstraintViolation {
