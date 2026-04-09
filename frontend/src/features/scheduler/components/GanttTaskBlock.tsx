@@ -13,24 +13,7 @@ import {
 import { getSqColor } from "@/shared/constants/brand";
 import { timeToX, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
 
-const API_BASE = "http://localhost:8000/api";
 
-/** 배치 상태 레이블 및 색상 */
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; bg: string; text: string }
-> = {
-  planned: { label: "계획", bg: "#6B7280", text: "#fff" },
-  in_progress: { label: "진행", bg: "#2563EB", text: "#fff" },
-  completed: { label: "완료", bg: "#059669", text: "#fff" },
-};
-
-/** 상태 순환: planned → in_progress → completed → planned */
-const STATUS_CYCLE: Record<string, string> = {
-  planned: "in_progress",
-  in_progress: "completed",
-  completed: "planned",
-};
 
 /** frozen 배치(진행중/완료)는 드래그 불가 */
 function isFrozenStatus(status: string): boolean {
@@ -178,40 +161,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     data: { type: "task", task, equipmentId: task.equipment_id },
-    disabled: isFrozen,
+    disabled: isFrozen || !isEditMode,
   });
-
-  // --- 인라인 상태 배지 클릭 핸들러 ---
-  // 낙관적 UI: 즉시 로컬 상태 변경 → API 실패 시 롤백
-  const handleStatusBadgeClick = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation();
-      e.preventDefault();
-      if (!task.batch_id) return;
-
-      const nextStatus = STATUS_CYCLE[task.status] ?? "planned";
-      const prevStatus = task.status;
-
-      // 낙관적 업데이트
-      updateTask(task.id, { status: nextStatus });
-
-      try {
-        const res = await fetch(
-          `${API_BASE}/pipeline/batch/${task.batch_id}/status`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: nextStatus }),
-          },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      } catch {
-        // 실패 시 롤백
-        updateTask(task.id, { status: prevStatus });
-      }
-    },
-    [task.id, task.batch_id, task.status, updateTask],
-  );
 
   // --- 리사이즈 ---
   const resizing = useRef<"left" | "right" | null>(null);
@@ -437,6 +388,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         height: ROW_HEIGHT - 8,
         zIndex: isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
+        cursor: !isEditMode || isFrozen
+          ? "default"
+          : isDragging
+            ? "grabbing"
+            : "grab",
       }}
       onClick={handleBlockClick}
       onDoubleClick={handleDoubleClick}
@@ -581,12 +537,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   paddingLeft: 4,
                   paddingRight: 4,
                   gap: 1,
-                  // frozen 배치는 드래그 불가 → default 커서
-                  cursor: isFrozen
-                    ? "default"
-                    : isDragging
-                      ? "grabbing"
-                      : "grab",
+                  cursor: "inherit",
                 }}
               >
                 <span
@@ -627,7 +578,21 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
-            {/* 납기 초과 배지 — 마지막 세그먼트, 블록 폭 30px 이상 */}
+            {/* 납기 초과 오버레이 — 블록 전체에 반투명 붉은색 */}
+            {isLate && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundColor: "rgba(220,38,38,0.14)",
+                  borderRadius: "inherit",
+                  pointerEvents: "none",
+                  zIndex: 1,
+                }}
+              />
+            )}
+
+          {/* 납기 초과 배지 — 마지막 세그먼트, 블록 폭 30px 이상 */}
             {isLast && isLate && segW >= 30 && (
               <div
                 style={{
@@ -660,33 +625,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
-            {/* 상태 배지 — 첫 세그먼트, 블록 폭 60px 이상일 때만 표시
-                위치: 우측상단 (우선순위 배지가 있으면 그 왼쪽에 배치) */}
-            {isFirst && segW >= 60 && task.batch_id != null && (
-              <div
-                onClick={handleStatusBadgeClick}
-                style={{
-                  position: "absolute",
-                  top: 2,
-                  right: task.priority !== "normal" ? 30 : 2,
-                  zIndex: 4,
-                  padding: "1px 4px",
-                  borderRadius: 3,
-                  fontSize: 8,
-                  fontWeight: 700,
-                  lineHeight: 1.4,
-                  backgroundColor: STATUS_CONFIG[task.status]?.bg ?? "#6B7280",
-                  color: STATUS_CONFIG[task.status]?.text ?? "#fff",
-                  cursor: "pointer",
-                  userSelect: "none",
-                  pointerEvents: "auto",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
-                }}
-                title={`상태 클릭으로 변경: ${STATUS_CONFIG[task.status]?.label ?? task.status}`}
-              >
-                {STATUS_CONFIG[task.status]?.label ?? task.status}
-              </div>
-            )}
           </div>
         );
       })}

@@ -147,6 +147,9 @@ interface ScheduleState {
   // 편집 모드 — 기본은 읽기 전용(false)
   isEditMode: boolean;
 
+  // 수정 모드 진입 시 저장된 tasks 스냅샷 — 취소 시 복원용
+  editSnapshot: ScheduleTask[] | null;
+
   // 버전 히스토리
   savedVersions: ScheduleVersion[];
 
@@ -214,6 +217,9 @@ interface ScheduleActions {
   // 편집 모드 토글
   toggleEditMode: () => void;
 
+  // 수정 내용을 버리고 수정 모드 종료 (스냅샷으로 복원)
+  discardEdits: () => void;
+
   // 현재 스케줄을 버전으로 저장
   saveVersion: (label?: string) => Promise<void>;
 
@@ -279,6 +285,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     range: getDefaultRange(7), // day 줌: ±7일 = 2주 뷰
     dayWidthScale: 1.0,
     isEditMode: false,
+    editSnapshot: null,
     savedVersions: [],
     showSavedToast: false,
     previewOffsets: {},
@@ -516,7 +523,24 @@ export const useScheduleStore = create<ScheduleStore>()(
     // 편집 모드 토글 — 읽기 전용 ↔ 수정 모드
     toggleEditMode: () => {
       set((state) => {
+        if (!state.isEditMode) {
+          // 수정 모드 진입: 현재 tasks 스냅샷 저장
+          state.editSnapshot = state.tasks.map((t) => ({ ...t }));
+        } else {
+          // 수정 모드 종료(저장): 스냅샷 폐기
+          state.editSnapshot = null;
+        }
         state.isEditMode = !state.isEditMode;
+      });
+    },
+
+    discardEdits: () => {
+      set((state) => {
+        if (state.editSnapshot) {
+          state.tasks = state.editSnapshot;
+          state.editSnapshot = null;
+        }
+        state.isEditMode = false;
       });
     },
 

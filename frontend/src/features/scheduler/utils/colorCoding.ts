@@ -17,10 +17,7 @@ export function getTaskColor(product: string): string {
 export function getPriorityStyle(priority: string): CSSProperties {
   switch (priority) {
     case "critical":
-      return {
-        backgroundColor: KBI_BRAND.colors.error,
-        animation: "pulse 1.5s ease-in-out infinite",
-      };
+      return {};
     case "urgent":
       return {
         outline: `2px solid ${KBI_BRAND.colors.error}`,

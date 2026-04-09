@@ -445,6 +445,29 @@ function DateHeader({
         {days.map((day, idx) => {
           const left = timeToX(day.timestamp, rangeStart, dayWidth);
           const weekend = isWeekend(day.date);
+          const dow = day.date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
+          const DOW_KO = ["일", "월", "화", "수", "목", "금", "토"];
+          const dowLabel = DOW_KO[dow];
+          // ISO 주차: 월요일 기준
+          const isMonday = dow === 1;
+          const weekNumber = isMonday
+            ? (() => {
+                const d = new Date(day.date);
+                d.setHours(0, 0, 0, 0);
+                d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+                const week1 = new Date(d.getFullYear(), 0, 4);
+                return (
+                  1 +
+                  Math.round(
+                    ((d.getTime() - week1.getTime()) / 86400000 -
+                      3 +
+                      ((week1.getDay() + 6) % 7)) /
+                      7,
+                  )
+                );
+              })()
+            : null;
+
           return (
             <div
               key={idx}
@@ -454,17 +477,46 @@ function DateHeader({
                 top: 0,
                 bottom: 0,
                 display: "flex",
-                alignItems: "center",
+                flexDirection: "column",
+                justifyContent: "center",
                 paddingLeft: 4,
                 borderLeft: "1px solid #E5E7EB",
                 width: dayWidth,
+                // 주말 헤더 셀에 빗금 패턴 적용
+                ...(weekend
+                  ? {
+                      backgroundColor: "rgba(200,200,200,0.15)",
+                      backgroundImage:
+                        "repeating-linear-gradient(135deg,rgba(160,160,160,0.2) 0px,rgba(160,160,160,0.2) 1.5px,transparent 1.5px,transparent 9px)",
+                    }
+                  : {}),
               }}
             >
+              {/* 날짜 + 주차 (월요일에만) */}
               <span
-                className="text-[10px] font-medium"
-                style={{ color: weekend ? "#C41230" : "#4B5563" }}
+                className="text-[10px] font-semibold leading-tight"
+                style={{ color: weekend ? "#C41230" : "#374151" }}
               >
                 {day.date.getMonth() + 1}/{day.date.getDate()}
+                {weekNumber !== null && dayWidth >= 32 && (
+                  <span
+                    style={{
+                      marginLeft: 3,
+                      fontSize: 8,
+                      fontWeight: 500,
+                      color: "#9CA3AF",
+                    }}
+                  >
+                    W{weekNumber}
+                  </span>
+                )}
+              </span>
+              {/* 요일 */}
+              <span
+                className="text-[9px] leading-tight"
+                style={{ color: weekend ? "#E57373" : "#9CA3AF" }}
+              >
+                {dowLabel}
               </span>
             </div>
           );
@@ -535,7 +587,16 @@ function WeekendOverlay({
             left: col.left,
             width: col.width,
             height: totalHeight,
-            backgroundColor: "rgba(173, 216, 230, 0.35)",
+            // 연한 회색 베이스 + 대각선 빗금 — "비가동 구간" 표현
+            backgroundColor: "rgba(200, 200, 200, 0.18)",
+            backgroundImage:
+              "repeating-linear-gradient(" +
+              "135deg," +
+              "rgba(160,160,160,0.22) 0px," +
+              "rgba(160,160,160,0.22) 1.5px," +
+              "transparent 1.5px," +
+              "transparent 9px" +
+              ")",
             pointerEvents: "none",
             zIndex: 0,
           }}
@@ -739,6 +800,30 @@ export function SchedulerView({
     viewFilter.filterValue,
   );
 
+  // 빈 설비(배치 없는 행) 숨김 상태
+  const [hideEmpty, setHideEmpty] = useState(true);
+  const [showHiddenList, setShowHiddenList] = useState(false);
+
+  // 태스크가 있는 설비 ID 집합
+  const equipmentWithTasks = useMemo(
+    () => new Set(tasks.map((t) => t.equipment_id)),
+    [tasks],
+  );
+
+  const visibleEquipment = useMemo(
+    () => hideEmpty
+      ? filteredEquipment.filter((eq) => equipmentWithTasks.has(eq.id))
+      : filteredEquipment,
+    [filteredEquipment, hideEmpty, equipmentWithTasks],
+  );
+
+  const hiddenEquipment = useMemo(
+    () => hideEmpty
+      ? filteredEquipment.filter((eq) => !equipmentWithTasks.has(eq.id))
+      : [],
+    [filteredEquipment, hideEmpty, equipmentWithTasks],
+  );
+
   // store.range 사용
   const rangeStart = range.start;
   const rangeEnd = range.end;
@@ -768,7 +853,7 @@ export function SchedulerView({
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
   // 전체 높이 (설비 수 * 행 높이)
-  const totalHeight = filteredEquipment.length * ROW_HEIGHT;
+  const totalHeight = visibleEquipment.length * ROW_HEIGHT;
 
   // 패닝 훅 — overflow-auto 컨테이너에 연결
   const scrollContainerRef = useTimelineNavigation(dayWidth);
@@ -856,7 +941,7 @@ export function SchedulerView({
 
           {/* 설비 행 */}
           <div style={{ position: "relative", zIndex: 1 }}>
-            {filteredEquipment.map((eq) => (
+            {visibleEquipment.map((eq) => (
               <GanttRow
                 key={eq.id}
                 equipment={eq}
@@ -875,7 +960,7 @@ export function SchedulerView({
               />
             ))}
 
-            {filteredEquipment.length === 0 && (
+            {visibleEquipment.length === 0 && (
               <div className="flex items-center justify-center h-32 text-sm text-gray-400">
                 {equipment.length === 0
                   ? "설비 데이터를 불러오는 중..."
@@ -886,6 +971,53 @@ export function SchedulerView({
         </div>
         </div> {/* totalContentWidth wrapper */}
       </div>
+
+      {/* 숨김 설비 토글 바 */}
+      {filteredEquipment.length > 0 && (
+        <div
+          className="flex items-center gap-2 px-3 py-1.5 mt-1 rounded-md flex-wrap"
+          style={{ backgroundColor: "#F3F4F6", border: "1px solid #E5E7EB" }}
+        >
+          <button
+            onClick={() => { setHideEmpty((v) => !v); setShowHiddenList(false); }}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <span>{hideEmpty ? "▶" : "▼"}</span>
+            <span>
+              {hideEmpty
+                ? `빈 설비 ${hiddenEquipment.length}개 숨김`
+                : "빈 설비 표시 중"}
+            </span>
+          </button>
+
+          {hideEmpty && hiddenEquipment.length > 0 && (
+            <>
+              <span className="text-gray-300 select-none">|</span>
+              <button
+                onClick={() => setShowHiddenList((v) => !v)}
+                className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors"
+              >
+                {showHiddenList ? "목록 닫기" : "목록 보기"}
+              </button>
+            </>
+          )}
+
+          {hideEmpty && showHiddenList && hiddenEquipment.length > 0 && (
+            <div className="flex flex-wrap gap-1 ml-1">
+              {hiddenEquipment.map((eq) => (
+                <span
+                  key={eq.id}
+                  className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ backgroundColor: "#E5E7EB", color: "#6B7280" }}
+                  title={eq.process_type}
+                >
+                  {eq.name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

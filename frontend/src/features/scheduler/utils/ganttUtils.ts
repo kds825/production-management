@@ -11,7 +11,7 @@ import type { ZoomLevel } from "../types";
 
 export const SIDEBAR_WIDTH = 160; // px
 export const ROW_HEIGHT = 44; // px
-export const DATE_HEADER_HEIGHT = 32; // px
+export const DATE_HEADER_HEIGHT = 44; // px — date + weekday 2-line header
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const MS_PER_MINUTE = 60 * 1000;
 

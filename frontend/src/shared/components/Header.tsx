@@ -6,12 +6,14 @@ interface HeaderProps {
   onAddTask?: () => void;
   isEditMode?: boolean;
   onToggleEditMode?: () => void;
+  onDiscardEdits?: () => void;
 }
 
 export function Header({
   onAddTask,
   isEditMode = false,
   onToggleEditMode,
+  onDiscardEdits,
 }: HeaderProps) {
   return (
     <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-50">
@@ -53,24 +55,29 @@ export function Header({
           className="px-3 py-1.5 text-xs font-medium rounded-md transition-all border"
           style={
             isEditMode
-              ? // 저장하기: KBI Red 채움
-                {
-                  backgroundColor: "#C41230",
-                  color: "#FFFFFF",
-                  borderColor: "#C41230",
-                  cursor: "pointer",
-                }
-              : // 수정하기: KBI Brown 외곽선
-                {
-                  backgroundColor: "#FFFFFF",
-                  color: "#4A2C2A",
-                  borderColor: "#4A2C2A",
-                  cursor: "pointer",
-                }
+              ? { backgroundColor: "#C41230", color: "#FFFFFF", borderColor: "#C41230", cursor: "pointer" }
+              : { backgroundColor: "#FFFFFF", color: "#4A2C2A", borderColor: "#4A2C2A", cursor: "pointer" }
           }
         >
           {isEditMode ? "저장하기" : "수정하기"}
         </button>
+
+        {/* 취소 버튼 — 수정 모드일 때만 표시 */}
+        {isEditMode && (
+          <button
+            onClick={onDiscardEdits}
+            className="px-3 py-1.5 text-xs font-medium rounded-md transition-all border"
+            style={{
+              backgroundColor: "#FFFFFF",
+              color: "#6B7280",
+              borderColor: "#D1D5DB",
+              cursor: "pointer",
+            }}
+            title="변경 사항을 저장하지 않고 수정 모드를 종료합니다"
+          >
+            취소
+          </button>
+        )}
 
         <span className="text-[9px] text-gray-300 px-1.5 py-0.5">v0.1</span>
       </div>
