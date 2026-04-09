@@ -609,8 +609,8 @@ def cp_sat_schedule(
 
         # 캘린더 인식 슬롯 탐색 — 겹침 완전 방지
         slots = timeline.get(chosen_eq_code, [])
-        best_start = _find_available_slot(earliest, total_dur, slots, db)
-        end_dt = calculate_end_datetime(best_start, total_dur, db)
+        best_start = _find_available_slot(earliest, total_dur, slots, db, chosen_eq_code)
+        end_dt = calculate_end_datetime(best_start, total_dur, db, chosen_eq_code)
 
         # 정각 올림
         if end_dt.minute > 0 or end_dt.second > 0:
@@ -641,7 +641,7 @@ def cp_sat_schedule(
         else:
             lot_count = max(len(gb), 1)
         first_drum_min = actual_setup + (meta["work_dur"] / lot_count)
-        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
+        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db, chosen_eq_code)
 
         proc_sq_key = (rep.process_name, sq_int)
         if not _is_core_group(gk):

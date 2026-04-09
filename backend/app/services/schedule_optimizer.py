@@ -609,7 +609,7 @@ def auto_schedule(
                         if pred_task and pred_task.end_datetime > earliest:
                             earliest = pred_task.end_datetime
 
-            slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
+            slot_start = _find_available_slot(earliest, eq_total_duration, slots, db, eq.equipment_code)
 
             if best_start is None or slot_start < best_start:
                 best_eq = eq
@@ -620,7 +620,7 @@ def auto_schedule(
             result["warnings"].append(f"배치그룹 {group_key}: 가용 슬롯 없음")
             continue
 
-        end_dt = calculate_end_datetime(best_start, best_total_duration, db)
+        end_dt = calculate_end_datetime(best_start, best_total_duration, db, best_eq.equipment_code)
 
         # ── 시간 올림 — 간트 블록은 정각 단위로 표시 ────────────────────────
         if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
@@ -665,7 +665,7 @@ def auto_schedule(
         else:
             lot_count = max(len(group_batches), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
-        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db)
+        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db, best_eq.equipment_code)
         # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
         # (CORE 첫 드럼은 너무 이르므로 후행 공정 선행 제약으로 부적합)
         if not _is_core_group(group_key) and (
@@ -938,7 +938,7 @@ def _schedule_multi_equipment(
     machine_est_starts = []
     for eq in eligible:
         slots = timeline.get(eq.equipment_code, [])
-        est_start = _find_available_slot(earliest, one_drum_dur, slots, db)
+        est_start = _find_available_slot(earliest, one_drum_dur, slots, db, eq.equipment_code)
         machine_est_starts.append((est_start, eq))
     # 가장 빨리 시작 가능한 설비 순으로 정렬
     machine_est_starts.sort(key=lambda x: x[0])
@@ -1013,8 +1013,8 @@ def _schedule_multi_equipment(
         eq_total_duration = eq_duration + actual_setup + drum_winding_min
 
         slots = timeline.get(eq_code, [])
-        slot_start = _find_available_slot(earliest, eq_total_duration, slots, db)
-        end_dt = calculate_end_datetime(slot_start, eq_total_duration, db)
+        slot_start = _find_available_slot(earliest, eq_total_duration, slots, db, eq_code)
+        end_dt = calculate_end_datetime(slot_start, eq_total_duration, db, eq_code)
 
         # 시간 올림 — 간트 블록은 정각 단위
         if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
@@ -1043,7 +1043,7 @@ def _schedule_multi_equipment(
 
         # 첫 번째 드럼 출력 시각
         first_drum_min = actual_setup + (eq_duration / eq_drums)
-        first_output_dt = calculate_end_datetime(slot_start, first_drum_min, db)
+        first_output_dt = calculate_end_datetime(slot_start, first_drum_min, db, eq_code)
         split_first_outputs.append(first_output_dt)
 
         tasks_created.append(task)
@@ -1204,7 +1204,11 @@ def _narrow_by_stranding(
 
 
 def _find_available_slot(
-    earliest: datetime, duration_min: float, occupied_slots: list, db=None
+    earliest: datetime,
+    duration_min: float,
+    occupied_slots: list,
+    db=None,
+    equipment_code: str | None = None,
 ) -> datetime:
     """설비에서 가용한 첫 번째 슬롯 찾기.
 
@@ -1217,7 +1221,7 @@ def _find_available_slot(
     for slot_start, slot_end in sorted_slots:
         # 캘린더 기반 종료 시각으로 슬롯 겹침 판단
         if db is not None:
-            candidate_end = calculate_end_datetime(candidate, duration_min, db)
+            candidate_end = calculate_end_datetime(candidate, duration_min, db, equipment_code)
         else:
             candidate_end = candidate + timedelta(minutes=duration_min)
         if candidate_end <= slot_start:
