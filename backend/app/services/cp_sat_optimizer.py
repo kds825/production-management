@@ -484,8 +484,7 @@ def cp_sat_schedule(
         for gk in groups
     }
 
-    # 상태 추적 딕셔너리 (모든 그룹을 이 엔진이 처음부터 처리)
-    timeline: dict[str, list] = {}
+    # 상태 추적 딕셔너리
     predecessor_map: dict[tuple, int] = {}
     tasks_created: list[ScheduleTask] = []
     last_batch_on_equip: dict[str, ProductionBatch] = {}
@@ -493,6 +492,24 @@ def cp_sat_schedule(
     process_end_by_sq: dict[tuple[str, int], datetime] = {}
     process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
     core_first_drum_by_main_sq: dict[int, datetime] = {}
+
+    # ── 기존 scheduled 태스크를 timeline에 pre-load ───────────────────────
+    # 긴급수주 추가 후 재스케줄링 시 이미 확정된 블록과의 겹침을 방지한다.
+    timeline: dict[str, list] = {}
+    existing_tasks = (
+        db.query(ScheduleTask)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ScheduleTask.equipment_code.isnot(None),
+            ScheduleTask.start_datetime.isnot(None),
+            ScheduleTask.end_datetime.isnot(None),
+        )
+        .all()
+    )
+    for et in existing_tasks:
+        timeline.setdefault(et.equipment_code, []).append(
+            (et.start_datetime, et.end_datetime)
+        )
     first_insul_output: datetime | None = None
 
     for gk in solved_order:
