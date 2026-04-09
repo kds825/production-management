@@ -966,10 +966,14 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
         wip_qty_map = {wid: float(tl or 0) for wid, tl, _ in wip_rows}
         wip_stage_map2 = {wid: (ps or "") for wid, _, ps in wip_rows}
 
+    from app.services.batch_grouping import _WIP_COVERED_PROCESSES
+
     def _to_dict(b: ProductionBatch) -> dict:
         raw_len = float(b.total_length_m or 0)
         wip_stage = wip_stage_map2.get(b.wip_matched_id, "") if b.wip_matched_id else ""
-        is_wip = wip_stage in ("연선재고", "절연재고")
+        # 이 배치의 공정이 WIP에 의해 커버되는 경우에만 차감
+        # 예: 절연재고 WIP + 절연 공정 → 차감 / 절연재고 WIP + 시스 공정 → 차감 안 함
+        is_wip = bool(wip_stage) and (b.process_name or "") in _WIP_COVERED_PROCESSES.get(wip_stage, set())
         wip_len = wip_qty_map.get(b.wip_matched_id, 0.0) if is_wip else 0.0
         net_len = max(raw_len - wip_len, 0.0)
         return {
@@ -991,6 +995,7 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             "wip_stage": wip_stage or None,
             "product_group": b.product_group or "",
             "status": b.status or "",
+            "core_count": int(b.core_count or 1),
         }
 
     return [_to_dict(b) for b in batches]
@@ -1157,6 +1162,7 @@ def split_batch_group(
     total_drums = max(sum(int(b.drum_count or 1) for b in all_individual), 1)
     split_drums = sum(int(b.drum_count or 1) for b in split_off)
     remain_drums = total_drums - split_drums
+    remain_lots: int = -1  # -1 = 미계산 (Phase 2 그룹 또는 헤더 없는 경우)
 
     # ── 헤더 배치 분할 처리 ──────────────────────────────────────────────────
     if header and (split_off or remaining):
@@ -1413,6 +1419,13 @@ def split_batch_group(
             + f" (분할 잔여, 틀단위 {lot_size:.0f}m)"
         )
 
+    # ── 헤더 잔여 작업 0인 경우 wip_complete 처리 (Phase 1 연선 그룹) ─────────
+    # remain_lots == 0이면 잔여 배치 전부 WIP 재고로 충당됨 → 연선 작업 불필요.
+    # Stage 2가 이 그룹을 1분짜리 불가시 태스크로 생성하지 않도록 미리 처리.
+    # (remain_lots == -1은 Phase 2 그룹 / 헤더 없음 → 이 처리 불필요)
+    if header and remain_lots == 0:
+        header.status = "wip_complete"
+
     # ── 개별 배치들의 그룹 변경 ──────────────────────────────────────────────
     # batch_id_set: WIP greedy 재배정 이후 최종 split_off 집합 (line 1191에서 갱신됨)
     final_batch_ids = list(batch_id_set)
@@ -1455,10 +1468,23 @@ def split_batch_group(
 
     db.commit()
 
+    # ── 잔여 planned 배치 수 조회 (프론트 메시지용) ──────────────────────────
+    # Stage 2 재실행 후 원본 그룹의 간트 블록 생성 여부를 클라이언트에 알린다.
+    # "planned" 배치가 0이면 전체 WIP 충당 → 간트 블록 미표시 예상.
+    original_remaining_planned = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.status == "planned",
+        )
+        .count()
+    )
+
     return {
         "original_group": batch_group,
         "new_group": new_group,
         "moved_batches": updated,
+        "original_remaining_planned": original_remaining_planned,
     }
 
 
