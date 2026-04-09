@@ -54,6 +54,9 @@ interface SplitChunk {
   max_due: string;
   order_ids: string[];
   batch_ids: number[];
+  has_urgent?: boolean;
+  min_priority?: number;
+  days_until_due?: number;
 }
 
 interface SplitCandidate {
@@ -65,6 +68,8 @@ interface SplitCandidate {
   proposed_splits: SplitChunk[];
   gaps_days: number[];
   equipment_load_hours: number;
+  auto_split_recommended?: boolean;
+  urgency_reason?: string;
 }
 
 interface Stage1Result {
@@ -77,6 +82,7 @@ interface Stage1Result {
   added_orders?: number;
   created_batch_groups?: number;
   preserved_batches?: number;
+  auto_split_count?: number;
 }
 
 type UploadMode = "full" | "incremental";
@@ -480,6 +486,8 @@ function ErpUploadSection({
             parts.push(`${data.created_batch_groups}개 배치그룹 생성`);
           if (data.preserved_batches)
             parts.push(`${data.preserved_batches}개 보존`);
+          if (data.auto_split_count)
+            parts.push(`⚡ ${data.auto_split_count}개 자동분할`);
           if (parts.length > 0) setSuccessToast(parts.join(", "));
         }
       } catch (err) {

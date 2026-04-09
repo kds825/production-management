@@ -185,16 +185,24 @@ def _try_preempt_for_urgent(
     run_label: str,
     timeline: dict[str, list],
     db: Session,
+    urgent_priority: int = 7,
 ) -> list[ProductionBatch]:
-    """긴급 배치를 위해 chosen_eq_code의 블로킹 태스크를 선점 분할한다.
+    """긴급 배치를 위해 chosen_eq_code의 블로킹 태스크를 선점한다.
 
-    earliest 시점을 가로막는 슬롯을 드럼 경계에서 분할한다.
-    - 기존 ScheduleTask 의 end_datetime 을 earliest 이전으로 단축
-    - 잔여 드럼 분량의 새 ProductionBatch (status='planned') 생성
-    - timeline 인플레이스 갱신
+    earliest 시점을 가로막는 슬롯을 처리하는 두 가지 전략:
 
-    Returns:
-        새로 생성된 잔여 ProductionBatch 목록
+    A) 멀티드럼(drum_count >= 2): 드럼 경계에서 분할
+       - 기존 ScheduleTask 의 end_datetime 을 earliest 이전으로 단축
+       - 잔여 드럼 분량의 새 ProductionBatch (status='planned') 생성
+
+    B) 단드럼(drum_count < 2) + 비긴급 블로킹 배치: 밀어내기(deferral)
+       - 블로킹 ScheduleTask 삭제 + 해당 배치 status='planned' 리셋
+       - 원 배치를 반환 → 긴급 배치 완료 후 재스케줄링
+
+    두 전략 모두 timeline 인플레이스 갱신 후 remainder 배치 목록을 반환한다.
+
+    Args:
+        urgent_priority: 긴급 배치의 customer_priority (이 값 이하인 블로킹 배치는 밀지 않음)
     """
     slots = list(timeline.get(chosen_eq_code, []))
     if not slots:
@@ -232,14 +240,46 @@ def _try_preempt_for_urgent(
         setup_min = float(task.setup_time_min or 0)
         work_dur_min = float(src_batch.estimated_duration_min or 0)
 
-        if total_drums < 2:
-            break  # 단드럼 — 분할 불가
+        blocking_priority = int(src_batch.customer_priority or 99)
 
+        if total_drums < 2:
+            # ── 전략 B: 단드럼 밀어내기 ───────────────────────────────────────
+            # 블로킹 배치도 긴급/중요 수준이면 양보 불가
+            if blocking_priority <= urgent_priority:
+                break  # 동급 이상 긴급 배치 — 밀 수 없음
+
+            # 비긴급 단드럼 배치: ScheduleTask 삭제 후 재스케줄링 대상으로 반환
+            db.delete(task)
+            db.flush()
+
+            # timeline에서 슬롯 제거 (긴급 배치가 이 자리를 사용)
+            tl = timeline[chosen_eq_code]
+            tl.remove((slot_start, slot_end))
+
+            # 배치 상태 planned로 되돌리고 재스케줄링 대상에 추가
+            src_batch.status = "planned"
+            src_batch.equipment_code = chosen_eq_code  # 같은 설비에서 재스케줄링
+            db.flush()
+            remainder_batches.append(src_batch)
+            break
+
+        # ── 전략 A: 멀티드럼 분할 ─────────────────────────────────────────
         k = _drums_completable(
             slot_start, earliest, setup_min, work_dur_min, total_drums, chosen_eq_code, db
         )
         if k == 0:
-            break  # 셋업조차 완료 불가 — 선점 포기
+            # 셋업조차 완료 불가 → 단드럼 밀어내기와 동일 처리 (비긴급인 경우)
+            if blocking_priority <= urgent_priority:
+                break  # 동급 이상 긴급 → 포기
+            db.delete(task)
+            db.flush()
+            tl = timeline[chosen_eq_code]
+            tl.remove((slot_start, slot_end))
+            src_batch.status = "planned"
+            src_batch.equipment_code = chosen_eq_code
+            db.flush()
+            remainder_batches.append(src_batch)
+            break
 
         # k > 0: earliest 전에 k 드럼 완료 → 분할 처리
         drum_min = work_dur_min / total_drums
@@ -257,8 +297,7 @@ def _try_preempt_for_urgent(
         # 잔여 배치 생성 (remain_drums 드럼, setup 없음)
         remain_drums = total_drums - k
         remain_dur = remain_drums * drum_min
-        remain_len_ratio = remain_drums / total_drums
-        remain_len = float(src_batch.total_length_m or 0) * remain_len_ratio
+        remain_len = float(src_batch.total_length_m or 0) * remain_drums / total_drums
         new_bg = (
             f"{src_batch.batch_group}_REMAIN" if src_batch.batch_group
             else f"REMAIN_{src_batch.batch_id}"
@@ -810,6 +849,7 @@ def cp_sat_schedule(
                     run_label=run_label,
                     timeline=timeline,
                     db=db,
+                    urgent_priority=int(rep.customer_priority or 7),
                 )
                 if rem_list:
                     preempted_remainder.extend(rem_list)
@@ -910,10 +950,13 @@ def cp_sat_schedule(
         eq_code = rem_b.equipment_code
         if not eq_code:
             continue
+        # 밀어낸 단드럼 배치는 setup_time을 유지; 분할 잔여는 setup=0 (이미 설정됨)
+        rem_setup = float(rem_b.setup_time_min or 0)
         work_dur = float(rem_b.estimated_duration_min or 0)
+        total_rem_dur = work_dur + rem_setup
         slots_rem = timeline.get(eq_code, [])
-        rem_start = _find_available_slot(base_date, work_dur, slots_rem, db, eq_code)
-        rem_end = calculate_end_datetime(rem_start, work_dur, db, eq_code)
+        rem_start = _find_available_slot(base_date, total_rem_dur, slots_rem, db, eq_code)
+        rem_end = calculate_end_datetime(rem_start, total_rem_dur, db, eq_code)
         if rem_end.minute > 0 or rem_end.second > 0:
             rem_end = rem_end.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
@@ -922,7 +965,7 @@ def cp_sat_schedule(
             equipment_code=eq_code,
             start_datetime=rem_start,
             end_datetime=rem_end,
-            setup_time_min=0,
+            setup_time_min=rem_setup,
             status="scheduled",
             run_label=run_label,
             batch_group=rem_b.batch_group,

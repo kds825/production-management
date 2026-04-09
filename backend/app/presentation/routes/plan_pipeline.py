@@ -15,6 +15,7 @@ from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.batch_grouping import (
     create_batches,
     detect_split_candidates,
+    execute_auto_splits,
     format_spec_display,
 )
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
@@ -471,7 +472,21 @@ async def run_stage1_update(
 
         db.commit()
 
-        # ── 7. Split 감지 ────────────────────────────────────────────────────
+        # ── 7. 자동 분할 (긴급 수주 후순위 드럼 → 자동 분리) ────────────────
+        auto_split_result: dict = {"auto_split_count": 0, "splits": []}
+        try:
+            auto_split_result = execute_auto_splits(
+                run_label, db, gap_days=split_gap_days
+            )
+            if auto_split_result["auto_split_count"] > 0:
+                logger.info(
+                    "[Stage1 Update] 자동 분할 %d건 적용",
+                    auto_split_result["auto_split_count"],
+                )
+        except Exception as exc:
+            logger.warning("[Stage1 Update] 자동 분할 실패 (계속 진행): %s", exc)
+
+        # ── 8. Split 후보 감지 (자동 분할 후 잔여 후보) ──────────────────────
         try:
             split_candidates = detect_split_candidates(
                 run_label, db, gap_days=split_gap_days
@@ -502,10 +517,12 @@ async def run_stage1_update(
             "batches": batch_result,
             "warnings": warnings,
             "split_candidates": split_candidates,
+            "auto_split": auto_split_result,
             # 프론트엔드 토스트 메시지용
             "added_orders": parse_result.get("inserted", 0),
             "created_batch_groups": batch_result.get("total_batches", 0),
             "preserved_batches": len(frozen_batch_ids),
+            "auto_split_count": auto_split_result["auto_split_count"],
         }
 
     except HTTPException:

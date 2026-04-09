@@ -15,6 +15,9 @@ interface DrumChunk {
   max_due: string;
   order_ids: string[];
   batch_ids?: number[];
+  has_urgent?: boolean;
+  min_priority?: number;
+  days_until_due?: number;
 }
 
 interface SplitCandidate {
@@ -26,6 +29,8 @@ interface SplitCandidate {
   proposed_splits: DrumChunk[];
   gaps_days: number[];
   equipment_load_hours: number;
+  auto_split_recommended?: boolean;
+  urgency_reason?: string;
 }
 
 interface Props {
@@ -142,6 +147,14 @@ export function BatchSplitReview({
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-blue-400">
           납기 차이가 큰 배치 그룹이 감지되었습니다
+          {candidates.some((c) => c.auto_split_recommended) && (
+            <span
+              className="ml-2 rounded px-1 py-0.5 font-semibold"
+              style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+            >
+              ⚡ 긴급 포함
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-gray-500">납기 차이 기준</span>
@@ -250,8 +263,8 @@ function CandidateCard({
     <div
       className="rounded-md p-3 space-y-3"
       style={{
-        border: "1px solid #BFDBFE",
-        backgroundColor: "#FFFFFF",
+        border: c.auto_split_recommended ? "1px solid #FCD34D" : "1px solid #BFDBFE",
+        backgroundColor: c.auto_split_recommended ? "#FFFBEB" : "#FFFFFF",
       }}
     >
       {/* Title row */}
@@ -269,6 +282,15 @@ function CandidateCard({
           <span className="text-[10px] text-gray-400">
             {c.lot_count}틀 · {c.total_length_m.toLocaleString()}m
           </span>
+          {c.auto_split_recommended && (
+            <span
+              className="text-[9px] font-semibold rounded px-1 py-0.5"
+              style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+              title={c.urgency_reason}
+            >
+              ⚡ 자동분할 권고
+            </span>
+          )}
         </div>
         <span
           className="text-[10px] font-medium"
@@ -285,18 +307,39 @@ function CandidateCard({
             <div
               className="rounded px-2 py-1.5 text-center min-w-[80px]"
               style={{
-                backgroundColor: i % 2 === 0 ? "#F3F4F6" : "#E5E7EB",
-                border: "1px solid #D1D5DB",
+                backgroundColor:
+                  chunk.has_urgent
+                    ? "#FEF3C7"
+                    : i % 2 === 0
+                      ? "#F3F4F6"
+                      : "#E5E7EB",
+                border: chunk.has_urgent ? "1px solid #FCD34D" : "1px solid #D1D5DB",
               }}
             >
               <div className="text-[10px] font-medium text-gray-700">
                 {chunk.order_count}수주
+                {chunk.has_urgent && (
+                  <span className="ml-0.5" style={{ color: "#D97706" }}>
+                    ⚡
+                  </span>
+                )}
               </div>
               <div className="text-[10px] text-gray-500">
                 {chunk.total_m.toLocaleString()}m
               </div>
-              <div className="text-[9px] text-gray-400">
-                ~{chunk.max_due.slice(5)}
+              <div
+                className="text-[9px]"
+                style={{
+                  color:
+                    chunk.days_until_due !== undefined && chunk.days_until_due <= 7
+                      ? "#DC2626"
+                      : "#9CA3AF",
+                }}
+              >
+                ~{chunk.max_due?.slice(5)}
+                {chunk.days_until_due !== undefined && chunk.days_until_due <= 14 && (
+                  <span className="ml-0.5">({chunk.days_until_due}일)</span>
+                )}
               </div>
             </div>
 
