@@ -150,6 +150,168 @@ def _is_multi_equip_group(
     return (multi_eligible and total_drums >= 2 and len(eligible) >= 2), total_drums
 
 
+# ── 선점 스케줄링 헬퍼 ─────────────────────────────────────────────────────
+
+def _drums_completable(
+    task_start: datetime,
+    preempt_at: datetime,
+    setup_min: float,
+    work_dur_min: float,
+    total_drums: int,
+    eq_code: str | None,
+    db,
+) -> int:
+    """작업 시작부터 preempt_at 직전까지 완료 가능한 드럼 수 (이진탐색).
+
+    setup이 끝나기 전에 preempt_at이 오면 0 반환.
+    """
+    if total_drums <= 0 or preempt_at <= task_start:
+        return 0
+    drum_min = work_dur_min / max(total_drums, 1)
+    lo, hi = 0, total_drums
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        end_mid = calculate_end_datetime(task_start, setup_min + mid * drum_min, db, eq_code)
+        if end_mid <= preempt_at:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def _try_preempt_for_urgent(
+    earliest: datetime,
+    chosen_eq_code: str,
+    run_label: str,
+    timeline: dict[str, list],
+    db: Session,
+) -> list[ProductionBatch]:
+    """긴급 배치를 위해 chosen_eq_code의 블로킹 태스크를 선점 분할한다.
+
+    earliest 시점을 가로막는 슬롯을 드럼 경계에서 분할한다.
+    - 기존 ScheduleTask 의 end_datetime 을 earliest 이전으로 단축
+    - 잔여 드럼 분량의 새 ProductionBatch (status='planned') 생성
+    - timeline 인플레이스 갱신
+
+    Returns:
+        새로 생성된 잔여 ProductionBatch 목록
+    """
+    slots = list(timeline.get(chosen_eq_code, []))
+    if not slots:
+        return []
+
+    remainder_batches: list[ProductionBatch] = []
+
+    for slot_start, slot_end in sorted(slots, key=lambda s: s[0]):
+        if slot_end <= earliest:
+            continue  # earliest 이전에 이미 끝난 슬롯 → 무시
+        if slot_start >= earliest:
+            break  # earliest 이후 시작 → 긴급 배치가 앞에 끼어들 여지가 있음
+
+        # slot_start < earliest < slot_end → 진행 중인 블록이 earliest를 가로막는 경우
+        task = (
+            db.query(ScheduleTask)
+            .filter(
+                ScheduleTask.run_label == run_label,
+                ScheduleTask.equipment_code == chosen_eq_code,
+                ScheduleTask.start_datetime == slot_start,
+                ScheduleTask.end_datetime == slot_end,
+            )
+            .first()
+        )
+        if task is None:
+            break
+
+        src_batch = db.query(ProductionBatch).filter(
+            ProductionBatch.batch_id == task.batch_id
+        ).first()
+        if src_batch is None:
+            break
+
+        total_drums = int(src_batch.drum_count or 1)
+        setup_min = float(task.setup_time_min or 0)
+        work_dur_min = float(src_batch.estimated_duration_min or 0)
+
+        if total_drums < 2:
+            break  # 단드럼 — 분할 불가
+
+        k = _drums_completable(
+            slot_start, earliest, setup_min, work_dur_min, total_drums, chosen_eq_code, db
+        )
+        if k == 0:
+            break  # 셋업조차 완료 불가 — 선점 포기
+
+        # k > 0: earliest 전에 k 드럼 완료 → 분할 처리
+        drum_min = work_dur_min / total_drums
+        trim_dur = setup_min + k * drum_min
+        new_end = calculate_end_datetime(slot_start, trim_dur, db, chosen_eq_code)
+
+        # 기존 태스크 단축
+        task.end_datetime = new_end
+
+        # timeline 갱신
+        tl = timeline[chosen_eq_code]
+        tl.remove((slot_start, slot_end))
+        tl.append((slot_start, new_end))
+
+        # 잔여 배치 생성 (remain_drums 드럼, setup 없음)
+        remain_drums = total_drums - k
+        remain_dur = remain_drums * drum_min
+        remain_len_ratio = remain_drums / total_drums
+        remain_len = float(src_batch.total_length_m or 0) * remain_len_ratio
+        new_bg = (
+            f"{src_batch.batch_group}_REMAIN" if src_batch.batch_group
+            else f"REMAIN_{src_batch.batch_id}"
+        )
+
+        rem_b = ProductionBatch(
+            run_label=run_label,
+            sales_order_id=src_batch.sales_order_id,
+            sales_order_line=src_batch.sales_order_line,
+            item_code=src_batch.item_code,
+            routing_code=src_batch.routing_code,
+            process_name=src_batch.process_name,
+            equipment_code=chosen_eq_code,
+            batch_seq=src_batch.batch_seq,
+            drum_length_m=src_batch.drum_length_m,
+            drum_count=remain_drums,
+            total_length_m=remain_len,
+            extra_length_m=src_batch.extra_length_m,
+            sq_mm2=src_batch.sq_mm2,
+            core_count=src_batch.core_count,
+            core_colors=src_batch.core_colors,
+            sheath_color=src_batch.sheath_color,
+            customer_name=src_batch.customer_name,
+            due_date=src_batch.due_date,
+            customer_priority=src_batch.customer_priority,
+            line_speed_mpm=src_batch.line_speed_mpm,
+            setup_time_min=0,
+            estimated_duration_min=remain_dur,
+            status="planned",
+            remarks=f"[선점분할 잔여] 원배치={src_batch.batch_id} ({k}/{total_drums}드럼 선점)",
+            product_group=src_batch.product_group,
+            voltage=src_batch.voltage,
+            conductor_material=src_batch.conductor_material,
+            stranding_type=src_batch.stranding_type,
+            batch_group=new_bg,
+            spec_raw=src_batch.spec_raw,
+        )
+        db.add(rem_b)
+        db.flush()
+        remainder_batches.append(rem_b)
+
+        # 원 배치 drum_count / length / duration 를 완료분(k)으로 갱신
+        orig_total_m = float(src_batch.total_length_m or 0)
+        src_batch.drum_count = k
+        src_batch.total_length_m = orig_total_m * k / total_drums
+        src_batch.estimated_duration_min = trim_dur - setup_min
+        db.flush()
+
+        break  # 보통 한 슬롯만 처리
+
+    return remainder_batches
+
+
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
 
 def cp_sat_schedule(
@@ -511,6 +673,7 @@ def cp_sat_schedule(
             (et.start_datetime, et.end_datetime)
         )
     first_insul_output: datetime | None = None
+    preempted_remainder: list[ProductionBatch] = []  # 선점 분할된 잔여 배치
 
     for gk in solved_order:
         meta = group_meta[gk]
@@ -634,6 +797,27 @@ def cp_sat_schedule(
                     if ptask and ptask.end_datetime > earliest:
                         earliest = ptask.end_datetime
 
+        # ── 긴급/중요 배치: 납기 위반 예상 시 선점 분할 시도 ────────────────────
+        if _priority_label(rep.customer_priority) in ("urgent", "critical") and meta["earliest_due"]:
+            slots_sim = timeline.get(chosen_eq_code, [])
+            sim_start = _find_available_slot(earliest, total_dur, slots_sim, db, chosen_eq_code)
+            sim_end = calculate_end_datetime(sim_start, total_dur, db, chosen_eq_code)
+            if sim_end.date() > meta["earliest_due"] and sim_start > earliest:
+                # 납기 초과 + earliest보다 늦게 시작 → 선점 가능 여부 시도
+                rem_list = _try_preempt_for_urgent(
+                    earliest=earliest,
+                    chosen_eq_code=chosen_eq_code,
+                    run_label=run_label,
+                    timeline=timeline,
+                    db=db,
+                )
+                if rem_list:
+                    preempted_remainder.extend(rem_list)
+                    result["warnings"].append(
+                        f"선점분할: 배치그룹 {gk} 납기 {meta['earliest_due']} 맞추기 위해 "
+                        f"{rem_list[0].batch_group} 잔여 {rem_list[0].drum_count}드럼 후처리 예약"
+                    )
+
         # 캘린더 인식 슬롯 탐색 — 겹침 완전 방지
         slots = timeline.get(chosen_eq_code, [])
         best_start = _find_available_slot(earliest, total_dur, slots, db, chosen_eq_code)
@@ -717,6 +901,38 @@ def cp_sat_schedule(
             task_id=task.task_id,
             reason=f"CP-SAT 순서 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
         )
+        result["total_tasks"] += 1
+
+    # ── 9. 선점 잔여 배치 후속 배치 ───────────────────────────────────────────
+    # 선점 분할로 생성된 잔여 배치들을 같은 설비에서 순서대로 스케줄링한다.
+    # (이미 긴급 배치 슬롯이 timeline에 등록되어 있으므로 겹치지 않는다.)
+    for rem_b in preempted_remainder:
+        eq_code = rem_b.equipment_code
+        if not eq_code:
+            continue
+        work_dur = float(rem_b.estimated_duration_min or 0)
+        slots_rem = timeline.get(eq_code, [])
+        rem_start = _find_available_slot(base_date, work_dur, slots_rem, db, eq_code)
+        rem_end = calculate_end_datetime(rem_start, work_dur, db, eq_code)
+        if rem_end.minute > 0 or rem_end.second > 0:
+            rem_end = rem_end.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+        rem_task = ScheduleTask(
+            batch_id=rem_b.batch_id,
+            equipment_code=eq_code,
+            start_datetime=rem_start,
+            end_datetime=rem_end,
+            setup_time_min=0,
+            status="scheduled",
+            run_label=run_label,
+            batch_group=rem_b.batch_group,
+        )
+        db.add(rem_task)
+        db.flush()
+
+        timeline.setdefault(eq_code, []).append((rem_start, rem_end))
+        rem_b.status = "scheduled"
+        rem_b.equipment_code = eq_code
         result["total_tasks"] += 1
 
     return result
