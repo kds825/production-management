@@ -1097,26 +1097,36 @@ def split_batch_group(
         lot_size = float(header.drum_length_m or 0)  # 틀단위 (m)
         core_mul = int(header.core_count or 1)
 
-        # ── WIP 연선/절연재고 배치 파악 ─────────────────────────────────────
-        # wip_matched_id가 있고 process_stage가 연선재고/절연재고인 배치는
-        # 연선 작업이 불필요하므로 net qty 계산에서 제외
+        # ── WIP 연선/절연재고 배치 파악 및 수량 로드 ────────────────────────
         all_wip_ids = [
             b.wip_matched_id for b in all_individual if b.wip_matched_id is not None
         ]
         wip_stage_map: dict[int, str] = {}
+        wip_len_by_id: dict[int, float] = {}  # wip_id → WIP 재고량 (cable m)
         if all_wip_ids:
             wip_rows = (
-                db.query(WipModel.wip_id, WipModel.process_stage)
+                db.query(WipModel.wip_id, WipModel.process_stage, WipModel.total_length_m)
                 .filter(WipModel.wip_id.in_(all_wip_ids))
                 .all()
             )
-            wip_stage_map = {wid: ps for wid, ps in wip_rows}
+            wip_stage_map  = {wid: (ps or "") for wid, ps, _ in wip_rows}
+            wip_len_by_id  = {wid: float(tl or 0) for wid, _, tl in wip_rows}
 
         def _is_wip_strand(b: ProductionBatch) -> bool:
-            """연선/절연재고 WIP 사용 배치 → 연선 작업 불필요"""
+            """연선/절연재고 WIP 사용 배치"""
             if not b.wip_matched_id:
                 return False
             return wip_stage_map.get(b.wip_matched_id, "") in ("연선재고", "절연재고")
+
+        def _net_qty(b: ProductionBatch) -> float:
+            """배치의 실제 생산 필요량 (strand m).
+            WIP 커버량을 차감하되, WIP qty < 수주 qty이면 잔여분을 포함.
+            """
+            full = float(b.total_length_m or 0) * core_mul
+            if not _is_wip_strand(b):
+                return full
+            wip_cov = wip_len_by_id.get(b.wip_matched_id, 0.0) * core_mul
+            return max(0.0, full - wip_cov)
 
         # ── WIP 재매칭 최적화 ────────────────────────────────────────────────
         # 배치(수주)는 그룹 이동 없이 그대로 유지.
@@ -1131,68 +1141,125 @@ def split_batch_group(
                 return 0
             return _math.ceil(net / lot_size)
 
-        if lot_size > 0:
-            wip_in_split = [b for b in split_off if _is_wip_strand(b)]
-            wip_in_remain = [b for b in remaining if _is_wip_strand(b)]
-            # 비-WIP 배치: 큰 것부터 정렬 (WIP 수신 시 lot 절감 최대화)
-            non_wip_split = sorted(
-                [b for b in split_off if not _is_wip_strand(b)],
-                key=lambda b: float(b.total_length_m or 0), reverse=True,
-            )
-            non_wip_remain = sorted(
-                [b for b in remaining if not _is_wip_strand(b)],
-                key=lambda b: float(b.total_length_m or 0), reverse=True,
-            )
+        # ── WIP를 wip_id 단위로 묶어서 처리하는 헬퍼 ──────────────────────────
+        from collections import defaultdict as _dd
 
-            base_split_net = sum(float(b.total_length_m or 0) * core_mul for b in non_wip_split)
-            base_remain_net = sum(float(b.total_length_m or 0) * core_mul for b in non_wip_remain)
+        def _group_net(batches_list: list) -> float:
+            """배치 목록의 실제 생산 필요량 (strand m).
+            같은 wip_id를 공유하는 배치들의 합계에서 WIP 재고량을 차감.
+            """
+            wip_groups: dict = _dd(list)
+            non_wip = 0.0
+            for b in batches_list:
+                if _is_wip_strand(b):
+                    wip_groups[b.wip_matched_id].append(b)
+                else:
+                    non_wip += float(b.total_length_m or 0) * core_mul
+            wip_net = 0.0
+            for wid, grp in wip_groups.items():
+                orders_total = sum(float(b.total_length_m or 0) for b in grp) * core_mul
+                wip_qty = wip_len_by_id.get(wid, 0.0) * core_mul
+                wip_net += max(0.0, orders_total - wip_qty)
+            return non_wip + wip_net
+
+        def _select_receivers(candidates: list, wip_budget_m: float) -> list:
+            """WIP 예산(cable m) 내에서 수신 배치를 내림차순으로 greedy 선택.
+            선택된 배치들의 합계 ≤ wip_budget_m 을 보장.
+            """
+            budget = wip_budget_m
+            selected = []
+            for b in sorted(candidates, key=lambda b: float(b.total_length_m or 0), reverse=True):
+                sz = float(b.total_length_m or 0)
+                if sz <= budget:
+                    selected.append(b)
+                    budget -= sz
+            return selected
+
+        if lot_size > 0:
+            wip_in_split  = [b for b in split_off if _is_wip_strand(b)]
+            wip_in_remain = [b for b in remaining  if _is_wip_strand(b)]
+            non_wip_split  = [b for b in split_off if not _is_wip_strand(b)]
+            non_wip_remain = [b for b in remaining if not _is_wip_strand(b)]
+
+            # 현재 net (WIP 공유 합계 기준 차감)
+            base_split_net  = _group_net(split_off)
+            base_remain_net = _group_net(remaining)
             lots_current = _lot_count(base_split_net) + _lot_count(base_remain_net)
 
-            # 시나리오 A: remain WIP → split (split 비-WIP 배치가 수신)
-            if len(wip_in_remain) <= len(non_wip_split):
-                move_to_split = non_wip_split[:len(wip_in_remain)]
-                split_net_A = base_split_net - sum(
-                    float(b.total_length_m or 0) * core_mul for b in move_to_split
-                )
-                remain_net_A = base_remain_net + sum(
-                    float(b.total_length_m or 0) * core_mul for b in wip_in_remain
-                )
-                lots_A = _lot_count(split_net_A) + _lot_count(remain_net_A)
-            else:
-                lots_A = 10**9  # 수신할 비-WIP 배치 부족 → 불가
+            # wip_id 별로 묶기
+            wip_ids_in_remain = set(b.wip_matched_id for b in wip_in_remain)
+            wip_ids_in_split  = set(b.wip_matched_id for b in wip_in_split)
 
-            # 시나리오 B: split WIP → remain (remain 비-WIP 배치가 수신)
-            if len(wip_in_split) <= len(non_wip_remain):
-                move_to_remain = non_wip_remain[:len(wip_in_split)]
-                remain_net_B = base_remain_net - sum(
-                    float(b.total_length_m or 0) * core_mul for b in move_to_remain
-                )
-                split_net_B = base_split_net + sum(
-                    float(b.total_length_m or 0) * core_mul for b in wip_in_split
-                )
-                lots_B = _lot_count(split_net_B) + _lot_count(remain_net_B)
-            else:
-                lots_B = 10**9
+            # 시나리오 A: remain WIP 전부 → split
+            # 각 wip_id별 WIP 예산 내에서 split 비-WIP 배치를 선택해 수신
+            avail_for_A = list(non_wip_split)  # 수신 후보 (중복 배정 방지용)
+            plan_A: list[tuple[int, list]] = []  # (wip_id, 수신배치 목록)
+            sim_split_A  = base_split_net
+            sim_remain_A = base_remain_net
 
+            for wid in wip_ids_in_remain:
+                wip_qty_m = wip_len_by_id.get(wid, 0.0)  # cable m
+                src_batches = [b for b in wip_in_remain if b.wip_matched_id == wid]
+                # remain_net: WIP 해제 → 해당 배치들이 full 생산으로 복귀
+                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                covered_now = max(0.0, src_total - wip_qty_m * core_mul)
+                sim_remain_A += src_total - covered_now  # = min(src_total, wip_qty*cm)
+                # split_net: WIP 예산 내에서 수신 배치 선택
+                recvs = _select_receivers(avail_for_A, wip_qty_m)
+                recv_total = sum(float(b.total_length_m or 0) for b in recvs) * core_mul
+                sim_split_A -= min(recv_total, wip_qty_m * core_mul)
+                plan_A.append((wid, recvs))
+                for r in recvs:
+                    avail_for_A.remove(r)
+
+            sim_split_A  = max(0.0, sim_split_A)
+            sim_remain_A = max(0.0, sim_remain_A)
+            lots_A = _lot_count(sim_split_A) + _lot_count(sim_remain_A)
+
+            # 시나리오 B: split WIP 전부 → remain
+            avail_for_B = list(non_wip_remain)
+            plan_B: list[tuple[int, list]] = []
+            sim_split_B  = base_split_net
+            sim_remain_B = base_remain_net
+
+            for wid in wip_ids_in_split:
+                wip_qty_m = wip_len_by_id.get(wid, 0.0)
+                src_batches = [b for b in wip_in_split if b.wip_matched_id == wid]
+                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                covered_now = max(0.0, src_total - wip_qty_m * core_mul)
+                sim_split_B += src_total - covered_now
+                recvs = _select_receivers(avail_for_B, wip_qty_m)
+                recv_total = sum(float(b.total_length_m or 0) for b in recvs) * core_mul
+                sim_remain_B -= min(recv_total, wip_qty_m * core_mul)
+                plan_B.append((wid, recvs))
+                for r in recvs:
+                    avail_for_B.remove(r)
+
+            sim_split_B  = max(0.0, sim_split_B)
+            sim_remain_B = max(0.0, sim_remain_B)
+            lots_B = _lot_count(sim_split_B) + _lot_count(sim_remain_B)
+
+            # 최적 시나리오 적용
             if lots_A < lots_current and lots_A <= lots_B:
-                # WIP 전부 split으로: remain WIP 배치 → split 비-WIP 배치에 포인터 이전
-                for wip_b, recv in zip(wip_in_remain, move_to_split):
-                    recv.wip_matched_id = wip_b.wip_matched_id
-                    wip_b.wip_matched_id = None
+                # remain WIP 해제
+                for b in wip_in_remain:
+                    b.wip_matched_id = None
+                # split 수신 배치에 wip_id 부여
+                for wid, recvs in plan_A:
+                    for r in recvs:
+                        r.wip_matched_id = wid
             elif lots_B < lots_current and lots_B < lots_A:
-                # WIP 전부 remain으로: split WIP 배치 → remain 비-WIP 배치에 포인터 이전
-                for wip_b, recv in zip(wip_in_split, move_to_remain):
-                    recv.wip_matched_id = wip_b.wip_matched_id
-                    wip_b.wip_matched_id = None
-            # else: 현재 상태가 최적이거나 이미 한 쪽에 몰려있음 → 변경 없음
+                # split WIP 해제
+                for b in wip_in_split:
+                    b.wip_matched_id = None
+                # remain 수신 배치에 wip_id 부여
+                for wid, recvs in plan_B:
+                    for r in recvs:
+                        r.wip_matched_id = wid
 
         def _calc_lots(batches: list) -> tuple[int, float]:
-            """WIP 제외 net qty 기준 틀 수와 연선 작업량 계산"""
-            net = sum(
-                float(b.total_length_m or 0) * core_mul
-                for b in batches
-                if not _is_wip_strand(b)
-            )
+            """WIP 공유 합계 기준 net qty로 틀 수와 연선 작업량 계산"""
+            net = _group_net(batches)
             if lot_size > 0 and net > 0:
                 lots = _math.ceil(net / lot_size)
                 return lots, lots * lot_size
