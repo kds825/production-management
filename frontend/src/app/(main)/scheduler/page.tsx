@@ -69,6 +69,10 @@ interface BatchGroupOrder {
   drum_length_m: number;
   drum_count: number;
   total_length_m: number;
+  /** WIP 재고 커버량 (m) — WIP 사용 수주에만 존재 */
+  wip_length_m?: number;
+  /** 실제 작업지시량 (m) = total_length_m - wip_length_m */
+  net_length_m?: number;
   wip_matched_id: number | null;
   product_group: string;
   status: string;
@@ -93,7 +97,11 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
   const totalLots = headerBatch
     ? headerBatch.drum_count
     : displayRows.reduce((s, o) => s + o.drum_count, 0);
-  const totalQty = displayRows.reduce((s, o) => s + o.total_length_m, 0);
+  // 작업지시량 합계: WIP 재고 사용분 제외 (net_length_m 우선, 없으면 total_length_m)
+  const totalQty = displayRows.reduce(
+    (s, o) => s + (o.net_length_m ?? o.total_length_m),
+    0,
+  );
   const wipCount = displayRows.filter((o) => o.wip_matched_id).length;
 
   return (
@@ -166,7 +174,18 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
                 {order.drum_count} x {order.drum_length_m.toLocaleString()}m
               </td>
               <td className="py-1 px-2 text-right font-medium text-gray-700">
-                {order.total_length_m.toLocaleString()}m
+                {order.wip_length_m != null && order.wip_length_m > 0 ? (
+                  <span title={`원본: ${order.total_length_m.toLocaleString()}m, WIP차감: -${order.wip_length_m.toLocaleString()}m`}>
+                    <span style={{ color: "#16A34A" }}>
+                      {(order.net_length_m ?? order.total_length_m).toLocaleString()}m
+                    </span>
+                    <span className="ml-1 text-[9px] text-gray-400">
+                      (-{order.wip_length_m.toLocaleString()})
+                    </span>
+                  </span>
+                ) : (
+                  (order.net_length_m ?? order.total_length_m).toLocaleString() + "m"
+                )}
               </td>
               <td className="py-1 px-2 text-center">
                 {order.wip_matched_id ? (
@@ -174,7 +193,7 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
                     className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
                     style={{ backgroundColor: "#DCFCE7", color: "#16A34A" }}
                   >
-                    매칭
+                    재고
                   </span>
                 ) : (
                   <span className="text-gray-300">-</span>
@@ -209,11 +228,12 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
             <td
               className="py-1 px-2 text-right font-semibold"
               style={{ color: "#C41230" }}
+              title="WIP 재고 사용량 제외한 실제 작업지시량"
             >
               {totalQty.toLocaleString()}m
             </td>
             <td className="py-1 px-2 text-center text-[10px] text-gray-400">
-              {wipCount}건
+              {wipCount > 0 ? `재고 ${wipCount}건` : "-"}
             </td>
           </tr>
         </tfoot>

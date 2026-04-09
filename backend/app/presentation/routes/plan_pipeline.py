@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
+from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.batch_grouping import (
     create_batches,
     detect_split_candidates,
+    execute_auto_splits,
     format_spec_display,
 )
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
@@ -201,6 +203,14 @@ async def run_stage1_update(
     split_gap_days: int = Form(
         3, description="연선 그룹 분할 후보 납기 간격 임계값 (일)"
     ),
+    base_date: str | None = Form(
+        None,
+        description=(
+            "기준일자 (YYYY-MM-DD, incremental 모드 전용). "
+            "이 날짜 이전에 scheduled 된 배치는 동결, "
+            "이후 배치는 긴급수주와 합산 재생성."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     """Stage 1 증분/전체 업데이트 — Freeze & Rebuild.
@@ -249,15 +259,55 @@ async def run_stage1_update(
 
     try:
         # ── 1. Frozen 배치 식별 ───────────────────────────────────────────────
-        # planned 외 모든 상태를 보호: scheduled, wip_complete, in_progress, completed
-        frozen = (
-            db.query(ProductionBatch)
-            .filter(
+        # base_date(기준일자) 지정 시 (incremental 모드):
+        #   hard_frozen  : in_progress / completed / wip_complete — 항상 동결
+        #   soft_frozen  : 기준일자 이전에 scheduled 된 배치 — 동결
+        #   mutable      : 기준일자 이후 scheduled + 모든 planned → 삭제 후 재생성
+        #                  (create_batches 가 원래 수주 + 긴급수주를 합산해 새 배치 생성)
+        # base_date 미지정 시: planned 외 모든 상태를 보호 (기존 동작)
+        from app.infrastructure.models.schedule_task import ScheduleTask
+
+        cutoff_date: date | None = None
+        if upload_mode == "incremental" and base_date:
+            try:
+                cutoff_date = date.fromisoformat(base_date)
+            except ValueError:
+                pass
+
+        mutable_scheduled_ids: set[int] = set()
+
+        if cutoff_date:
+            cutoff_dt = datetime(cutoff_date.year, cutoff_date.month, cutoff_date.day, 0, 0, 0)
+            # 기준일자 이전 ScheduleTask 의 batch_id → soft_frozen 대상
+            before_task_batch_ids: set[int] = {
+                r[0]
+                for r in db.query(ScheduleTask.batch_id).filter(
+                    ScheduleTask.run_label == run_label,
+                    ScheduleTask.start_datetime.isnot(None),
+                    ScheduleTask.start_datetime < cutoff_dt,
+                ).all()
+            }
+            all_scheduled = db.query(ProductionBatch).filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status == "scheduled",
+            ).all()
+            hard_frozen = db.query(ProductionBatch).filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status.in_(["in_progress", "completed", "wip_complete"]),
+            ).all()
+            # 기준일자 이전 scheduled → frozen
+            soft_frozen = [b for b in all_scheduled if b.batch_id in before_task_batch_ids]
+            # 기준일자 이후(또는 태스크 없는) scheduled → mutable: 삭제 후 재생성
+            mutable_scheduled = [b for b in all_scheduled if b.batch_id not in before_task_batch_ids]
+            mutable_scheduled_ids = {b.batch_id for b in mutable_scheduled}
+            frozen = hard_frozen + soft_frozen
+        else:
+            # base_date 미지정: 기존 동작 — planned 외 모든 상태 동결
+            frozen = db.query(ProductionBatch).filter(
                 ProductionBatch.run_label == run_label,
                 ProductionBatch.status != "planned",
-            )
-            .all()
-        )
+            ).all()
+
         # frozen orders: batch_seq >= 1인 실제 수주 배치에서 추출
         frozen_order_keys: set[tuple] = {
             (b.sales_order_id, b.sales_order_line)
@@ -288,11 +338,11 @@ async def run_stage1_update(
         # frozen 자체도 protected에 포함
         protected_batch_ids |= frozen_batch_ids
 
-        # ── 2. Planned 배치/스케줄만 삭제 (FK 순서: audit_log → schedule_task → production_batch) ──
+        # ── 2. Planned + mutable_scheduled 배치/스케줄 삭제 ─────────────────────
+        # (FK 순서: audit_log → schedule_task → production_batch)
         from app.infrastructure.models.audit_log import AuditLog
-        from app.infrastructure.models.schedule_task import ScheduleTask
 
-        # 삭제 대상: protected_batch_ids에 속하지 않는 planned 배치
+        # 삭제 대상 1: protected_batch_ids에 속하지 않는 planned 배치
         planned_query = db.query(ProductionBatch.batch_id).filter(
             ProductionBatch.run_label == run_label,
             ProductionBatch.status == "planned",
@@ -302,7 +352,8 @@ async def run_stage1_update(
                 ProductionBatch.batch_id.notin_(protected_batch_ids)
             )
         unprotected_planned = planned_query.all()
-        delete_batch_ids = {b.batch_id for b in unprotected_planned}
+        # 삭제 대상 2: 기준일자 이후 mutable scheduled 배치 (재생성 대상)
+        delete_batch_ids = {b.batch_id for b in unprotected_planned} | mutable_scheduled_ids
 
         deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
         if delete_batch_ids:
@@ -421,7 +472,21 @@ async def run_stage1_update(
 
         db.commit()
 
-        # ── 7. Split 감지 ────────────────────────────────────────────────────
+        # ── 7. 자동 분할 (긴급 수주 후순위 드럼 → 자동 분리) ────────────────
+        auto_split_result: dict = {"auto_split_count": 0, "splits": []}
+        try:
+            auto_split_result = execute_auto_splits(
+                run_label, db, gap_days=split_gap_days
+            )
+            if auto_split_result["auto_split_count"] > 0:
+                logger.info(
+                    "[Stage1 Update] 자동 분할 %d건 적용",
+                    auto_split_result["auto_split_count"],
+                )
+        except Exception as exc:
+            logger.warning("[Stage1 Update] 자동 분할 실패 (계속 진행): %s", exc)
+
+        # ── 8. Split 후보 감지 (자동 분할 후 잔여 후보) ──────────────────────
         try:
             split_candidates = detect_split_candidates(
                 run_label, db, gap_days=split_gap_days
@@ -444,6 +509,7 @@ async def run_stage1_update(
                 "order_count": len(frozen_order_keys),
                 "wip_count": len(frozen_wip_ids),
                 "protected_batch_count": len(protected_batch_ids),
+                "mutable_count": len(mutable_scheduled_ids),
             },
             "deleted": deleted_counts,
             "parse": parse_result,
@@ -451,6 +517,12 @@ async def run_stage1_update(
             "batches": batch_result,
             "warnings": warnings,
             "split_candidates": split_candidates,
+            "auto_split": auto_split_result,
+            # 프론트엔드 토스트 메시지용
+            "added_orders": parse_result.get("inserted", 0),
+            "created_batch_groups": batch_result.get("total_batches", 0),
+            "preserved_batches": len(frozen_batch_ids),
+            "auto_split_count": auto_split_result["auto_split_count"],
         }
 
     except HTTPException:
@@ -877,43 +949,29 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             detail=f"batch_group '{batch_group}'에 해당하는 배치가 없습니다.",
         )
 
-    # 연선 그룹(ST-)은 헤더 외에 개별 수주 배치도 항상 포함한다.
-    # batch_group이 구버전 형식("연선_300SQ")으로 저장된 경우에도 동작하도록
-    # run_label + process_name + sq_mm2 + batch_seq=1 조건으로 추가 조회한다.
-    if batch_group.startswith("ST-"):
-        header = next(
-            (b for b in by_group if b.batch_seq is not None and b.batch_seq < 0),
-            None,
+    # batch_group 필터 결과를 그대로 사용 (분할된 그룹은 각자의 batch_group만 표시)
+    batches = by_group
+
+    # WIP 재고 수량 조회 — 연선/절연재고 사용 배치는 net qty에서 차감해야 함
+    from app.infrastructure.models.wip_inventory import WipInventory as WipModel
+    wip_ids = [b.wip_matched_id for b in batches if b.wip_matched_id is not None]
+    wip_qty_map: dict[int, float] = {}
+    wip_stage_map2: dict[int, str] = {}
+    if wip_ids:
+        wip_rows = (
+            db.query(WipModel.wip_id, WipModel.total_length_m, WipModel.process_stage)
+            .filter(WipModel.wip_id.in_(wip_ids))
+            .all()
         )
-        if header:
-            order_batches = (
-                db.query(ProductionBatch)
-                .filter(
-                    ProductionBatch.run_label == header.run_label,
-                    ProductionBatch.process_name == header.process_name,
-                    ProductionBatch.sq_mm2 == header.sq_mm2,
-                    ProductionBatch.batch_seq == 1,  # 개별 수주 배치만 (CORE=0 제외)
-                )
-                .order_by(
-                    ProductionBatch.due_date.asc(), ProductionBatch.sales_order_id.asc()
-                )
-                .all()
-            )
-            # 헤더 + 개별 수주 배치 (batch_id 기준 중복 제거)
-            seen = {header.batch_id}
-            combined = [header]
-            for b in order_batches:
-                if b.batch_id not in seen:
-                    seen.add(b.batch_id)
-                    combined.append(b)
-            batches = combined
-        else:
-            # 헤더가 없으면 by_group 결과 그대로 사용
-            batches = by_group
-    else:
-        batches = by_group
+        wip_qty_map = {wid: float(tl or 0) for wid, tl, _ in wip_rows}
+        wip_stage_map2 = {wid: (ps or "") for wid, _, ps in wip_rows}
 
     def _to_dict(b: ProductionBatch) -> dict:
+        raw_len = float(b.total_length_m or 0)
+        wip_stage = wip_stage_map2.get(b.wip_matched_id, "") if b.wip_matched_id else ""
+        is_wip = wip_stage in ("연선재고", "절연재고")
+        wip_len = wip_qty_map.get(b.wip_matched_id, 0.0) if is_wip else 0.0
+        net_len = max(raw_len - wip_len, 0.0)
         return {
             "batch_id": b.batch_id,
             "batch_seq": b.batch_seq,
@@ -926,8 +984,11 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             "due_date": str(b.due_date or ""),
             "drum_length_m": float(b.drum_length_m or 0),
             "drum_count": b.drum_count or 1,
-            "total_length_m": float(b.total_length_m or 0),
+            "total_length_m": raw_len,
+            "wip_length_m": wip_len,        # WIP 재고 커버량
+            "net_length_m": net_len,         # 실제 작업지시량 (WIP 제외)
             "wip_matched_id": b.wip_matched_id,
+            "wip_stage": wip_stage or None,
             "product_group": b.product_group or "",
             "status": b.status or "",
         }
@@ -1035,22 +1096,25 @@ def split_batch_group(
     """배치 그룹을 2개로 분할한다.
 
     지정된 batch_ids의 batch_group을 '{원래그룹}_{suffix}'로 변경하고,
-    해당 batch_group의 기존 schedule_task를 삭제한다.
-    프론트에서 재스케줄링(Stage 2)을 트리거해야 한다.
+    헤더 배치(batch_seq=-1)를 비율로 분할하여 신규 그룹에 새 헤더를 생성한다.
+    기존 schedule_task는 삭제되며 프론트에서 재스케줄링(Stage 2)을 트리거해야 한다.
 
     body:
-        batch_ids: list[int]  — 새 그룹으로 이동할 batch_id 목록
-        new_group_suffix: str — 새 그룹 이름 접미사 (기본값: "B")
+        batch_ids: list[int]  — 새 그룹으로 이동할 batch_id 목록 (seq >= 1)
+        suffix: str           — 새 그룹 이름 접미사 (기본값: "B")
     """
     from app.infrastructure.models.schedule_task import (
         ScheduleTask as ScheduleTaskModel,
     )
 
-    batch_ids = body.get("batch_ids", [])
-    suffix = body.get("new_group_suffix", "B")
+    batch_ids: list[int] = body.get("batch_ids", [])
+    # 프론트는 "suffix" 키로 전송; "new_group_suffix" 레거시도 허용
+    suffix: str = body.get("suffix") or body.get("new_group_suffix") or "B"
 
     if not batch_ids:
         raise HTTPException(status_code=400, detail="분리할 batch_ids가 비어 있습니다.")
+
+    batch_id_set = set(batch_ids)
 
     # 원래 그룹에 해당 배치가 존재하는지 검증
     existing = (
@@ -1069,18 +1133,299 @@ def split_batch_group(
 
     new_group = f"{batch_group}_{suffix}"
 
-    # 지정된 배치들의 그룹 변경
+    # ── 헤더 배치 및 개별 배치 조회 ─────────────────────────────────────────
+    header = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.batch_seq == -1,
+        )
+        .first()
+    )
+    all_individual = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.batch_seq >= 1,
+        )
+        .all()
+    )
+    # 사용자가 선택한 분할 배치 (초기값 — WIP 최적화 후 변경될 수 있음)
+    split_off = [b for b in all_individual if b.batch_id in batch_id_set]
+    remaining = [b for b in all_individual if b.batch_id not in batch_id_set]
+
+    total_drums = max(sum(int(b.drum_count or 1) for b in all_individual), 1)
+    split_drums = sum(int(b.drum_count or 1) for b in split_off)
+    remain_drums = total_drums - split_drums
+
+    # ── 헤더 배치 분할 처리 ──────────────────────────────────────────────────
+    if header and (split_off or remaining):
+        import math as _math
+        from app.infrastructure.models.wip_inventory import WipInventory as WipModel
+
+        orig_dur = float(header.estimated_duration_min or 0)
+        orig_len = float(header.total_length_m or 0)
+        lot_size = float(header.drum_length_m or 0)  # 틀단위 (m)
+        core_mul = int(header.core_count or 1)
+
+        # ── WIP 연선/절연재고 배치 파악 및 수량 로드 ────────────────────────
+        all_wip_ids = [
+            b.wip_matched_id for b in all_individual if b.wip_matched_id is not None
+        ]
+        wip_stage_map: dict[int, str] = {}
+        wip_len_by_id: dict[int, float] = {}  # wip_id → WIP 재고량 (cable m)
+        if all_wip_ids:
+            wip_rows = (
+                db.query(WipModel.wip_id, WipModel.process_stage, WipModel.total_length_m)
+                .filter(WipModel.wip_id.in_(all_wip_ids))
+                .all()
+            )
+            wip_stage_map  = {wid: (ps or "") for wid, ps, _ in wip_rows}
+            wip_len_by_id  = {wid: float(tl or 0) for wid, _, tl in wip_rows}
+
+        def _is_wip_strand(b: ProductionBatch) -> bool:
+            """연선/절연재고 WIP 사용 배치"""
+            if not b.wip_matched_id:
+                return False
+            return wip_stage_map.get(b.wip_matched_id, "") in ("연선재고", "절연재고")
+
+        def _net_qty(b: ProductionBatch) -> float:
+            """배치의 실제 생산 필요량 (strand m).
+            WIP 커버량을 차감하되, WIP qty < 수주 qty이면 잔여분을 포함.
+            """
+            full = float(b.total_length_m or 0) * core_mul
+            if not _is_wip_strand(b):
+                return full
+            wip_cov = wip_len_by_id.get(b.wip_matched_id, 0.0) * core_mul
+            return max(0.0, full - wip_cov)
+
+        # ── WIP 재매칭 최적화 ────────────────────────────────────────────────
+        # 배치(수주)는 그룹 이동 없이 그대로 유지.
+        # WIP 전체를 split 또는 remain 한 쪽에만 몰아서 총 틀 수를 최소화.
+        #
+        # 시나리오 A: WIP 전부 → split
+        # 시나리오 B: WIP 전부 → remain
+        # → 둘 중 총 틀 수가 적은 쪽 적용. 같으면 현재 상태 유지.
+
+        def _lot_count(net: float) -> int:
+            if net <= 0:
+                return 0
+            return _math.ceil(net / lot_size)
+
+        # ── WIP를 wip_id 단위로 묶어서 처리하는 헬퍼 ──────────────────────────
+        from collections import defaultdict as _dd
+
+        def _group_net(batches_list: list) -> float:
+            """배치 목록의 실제 생산 필요량 (strand m).
+            같은 wip_id를 공유하는 배치들의 합계에서 WIP 재고량을 차감.
+            """
+            wip_groups: dict = _dd(list)
+            non_wip = 0.0
+            for b in batches_list:
+                if _is_wip_strand(b):
+                    wip_groups[b.wip_matched_id].append(b)
+                else:
+                    non_wip += float(b.total_length_m or 0) * core_mul
+            wip_net = 0.0
+            for wid, grp in wip_groups.items():
+                orders_total = sum(float(b.total_length_m or 0) for b in grp) * core_mul
+                wip_qty = wip_len_by_id.get(wid, 0.0) * core_mul
+                wip_net += max(0.0, orders_total - wip_qty)
+            return non_wip + wip_net
+
+        def _select_receivers(candidates: list, wip_budget_m: float) -> list:
+            """WIP 예산(cable m) 내에서 수신 배치를 내림차순으로 greedy 선택.
+            선택된 배치들의 합계 ≤ wip_budget_m 을 보장.
+            """
+            budget = wip_budget_m
+            selected = []
+            for b in sorted(candidates, key=lambda b: float(b.total_length_m or 0), reverse=True):
+                sz = float(b.total_length_m or 0)
+                if sz <= budget:
+                    selected.append(b)
+                    budget -= sz
+            return selected
+
+        if lot_size > 0:
+            wip_in_split  = [b for b in split_off if _is_wip_strand(b)]
+            wip_in_remain = [b for b in remaining  if _is_wip_strand(b)]
+            non_wip_split  = [b for b in split_off if not _is_wip_strand(b)]
+            non_wip_remain = [b for b in remaining if not _is_wip_strand(b)]
+
+            # 현재 net (WIP 공유 합계 기준 차감)
+            base_split_net  = _group_net(split_off)
+            base_remain_net = _group_net(remaining)
+            lots_current = _lot_count(base_split_net) + _lot_count(base_remain_net)
+
+            # wip_id 별로 묶기
+            wip_ids_in_remain = set(b.wip_matched_id for b in wip_in_remain)
+            wip_ids_in_split  = set(b.wip_matched_id for b in wip_in_split)
+
+            # 시나리오 A: remain WIP 전부 → split
+            # 각 wip_id별 WIP 예산 내에서 split 비-WIP 배치를 선택해 수신
+            avail_for_A = list(non_wip_split)  # 수신 후보 (중복 배정 방지용)
+            plan_A: list[tuple[int, list]] = []  # (wip_id, 수신배치 목록)
+            sim_split_A  = base_split_net
+            sim_remain_A = base_remain_net
+
+            for wid in wip_ids_in_remain:
+                wip_qty_m = wip_len_by_id.get(wid, 0.0)  # cable m
+                src_batches = [b for b in wip_in_remain if b.wip_matched_id == wid]
+                # remain_net: WIP 해제 → 해당 배치들이 full 생산으로 복귀
+                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                covered_now = max(0.0, src_total - wip_qty_m * core_mul)
+                sim_remain_A += src_total - covered_now  # = min(src_total, wip_qty*cm)
+                # split_net: WIP 예산 내에서 수신 배치 선택
+                recvs = _select_receivers(avail_for_A, wip_qty_m)
+                recv_total = sum(float(b.total_length_m or 0) for b in recvs) * core_mul
+                sim_split_A -= min(recv_total, wip_qty_m * core_mul)
+                plan_A.append((wid, recvs))
+                for r in recvs:
+                    avail_for_A.remove(r)
+
+            sim_split_A  = max(0.0, sim_split_A)
+            sim_remain_A = max(0.0, sim_remain_A)
+            lots_A = _lot_count(sim_split_A) + _lot_count(sim_remain_A)
+
+            # 시나리오 B: split WIP 전부 → remain
+            avail_for_B = list(non_wip_remain)
+            plan_B: list[tuple[int, list]] = []
+            sim_split_B  = base_split_net
+            sim_remain_B = base_remain_net
+
+            for wid in wip_ids_in_split:
+                wip_qty_m = wip_len_by_id.get(wid, 0.0)
+                src_batches = [b for b in wip_in_split if b.wip_matched_id == wid]
+                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                covered_now = max(0.0, src_total - wip_qty_m * core_mul)
+                sim_split_B += src_total - covered_now
+                recvs = _select_receivers(avail_for_B, wip_qty_m)
+                recv_total = sum(float(b.total_length_m or 0) for b in recvs) * core_mul
+                sim_remain_B -= min(recv_total, wip_qty_m * core_mul)
+                plan_B.append((wid, recvs))
+                for r in recvs:
+                    avail_for_B.remove(r)
+
+            sim_split_B  = max(0.0, sim_split_B)
+            sim_remain_B = max(0.0, sim_remain_B)
+            lots_B = _lot_count(sim_split_B) + _lot_count(sim_remain_B)
+
+            # 최적 시나리오 적용
+            if lots_A < lots_current and lots_A <= lots_B:
+                # remain WIP 해제
+                for b in wip_in_remain:
+                    b.wip_matched_id = None
+                # split 수신 배치에 wip_id 부여
+                for wid, recvs in plan_A:
+                    for r in recvs:
+                        r.wip_matched_id = wid
+            elif lots_B < lots_current and lots_B < lots_A:
+                # split WIP 해제
+                for b in wip_in_split:
+                    b.wip_matched_id = None
+                # remain 수신 배치에 wip_id 부여
+                for wid, recvs in plan_B:
+                    for r in recvs:
+                        r.wip_matched_id = wid
+
+        def _calc_lots(batches: list) -> tuple[int, float]:
+            """WIP 공유 합계 기준 net qty로 틀 수와 연선 작업량 계산"""
+            net = _group_net(batches)
+            if lot_size > 0 and net > 0:
+                lots = _math.ceil(net / lot_size)
+                return lots, lots * lot_size
+            elif net > 0:
+                return 1, net
+            else:
+                return 0, 0.0
+
+        # ── 각 그룹 net qty 및 틀 수 계산 (WIP 연선/절연재고 제외) ──────────
+        split_lots, split_len_work = _calc_lots(split_off)
+        remain_lots, remain_len_work = _calc_lots(remaining)
+
+        split_len_raw = sum(float(b.total_length_m or 0) for b in split_off)
+        remain_len_raw = sum(float(b.total_length_m or 0) for b in remaining)
+        split_len = split_len_work  # 헤더 total_length_m = 실제 연선 작업량
+        remain_len = remain_len_work
+
+        # duration은 원본 비율로 배분 (작업량 기준)
+        total_work = split_len + remain_len
+        split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
+        remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
+
+        split_due = min((b.due_date for b in split_off if b.due_date), default=header.due_date)
+        remain_due = min((b.due_date for b in remaining if b.due_date), default=header.due_date)
+        split_pri = min((b.customer_priority or 99 for b in split_off), default=99)
+        remain_pri = min((b.customer_priority or 99 for b in remaining), default=99)
+
+        split_wip_count = sum(1 for b in split_off if _is_wip_strand(b))
+        remain_wip_count = sum(1 for b in remaining if _is_wip_strand(b))
+
+        # 신규 그룹 헤더 생성
+        new_header = ProductionBatch(
+            run_label=header.run_label,
+            sales_order_id=split_off[0].sales_order_id if split_off else header.sales_order_id,
+            sales_order_line=split_off[0].sales_order_line if split_off else header.sales_order_line,
+            item_code=header.item_code,
+            routing_code=header.routing_code,
+            process_name=header.process_name,
+            batch_seq=-1,
+            drum_count=split_lots,
+            drum_length_m=header.drum_length_m,
+            total_length_m=split_len,
+            extra_length_m=0,
+            sq_mm2=header.sq_mm2,
+            core_count=header.core_count,
+            core_colors=header.core_colors,
+            sheath_color=header.sheath_color,
+            customer_name=split_off[0].customer_name if split_off else header.customer_name,
+            due_date=split_due,
+            customer_priority=split_pri,
+            line_speed_mpm=header.line_speed_mpm,
+            setup_time_min=header.setup_time_min,
+            estimated_duration_min=split_dur,
+            status="planned",
+            product_group=header.product_group,
+            voltage=header.voltage,
+            conductor_material=header.conductor_material,
+            stranding_type=header.stranding_type,
+            batch_group=new_group,
+            spec_raw=header.spec_raw,
+            remarks=(
+                f"연선그룹 {len(split_off)}건 {split_lots}틀 / "
+                f"수주총량 {split_len_raw:.0f}m → 연선작업량 {split_len:.0f}m"
+                + (f" (WIP {split_wip_count}건 제외)" if split_wip_count else "")
+                + f" (분할 {suffix}, 틀단위 {lot_size:.0f}m)"
+            ),
+        )
+        db.add(new_header)
+
+        # 원본 헤더 업데이트 (잔여 그룹)
+        header.drum_count = remain_lots
+        header.total_length_m = remain_len
+        header.estimated_duration_min = remain_dur
+        header.due_date = remain_due
+        header.customer_priority = remain_pri
+        header.remarks = (
+            f"연선그룹 {len(remaining)}건 {remain_lots}틀 / "
+            f"수주총량 {remain_len_raw:.0f}m → 연선작업량 {remain_len:.0f}m"
+            + (f" (WIP {remain_wip_count}건 제외)" if remain_wip_count else "")
+            + f" (분할 잔여, 틀단위 {lot_size:.0f}m)"
+        )
+
+    # ── 개별 배치들의 그룹 변경 ──────────────────────────────────────────────
+    # batch_id_set: WIP greedy 재배정 이후 최종 split_off 집합 (line 1191에서 갱신됨)
+    final_batch_ids = list(batch_id_set)
     updated = (
         db.query(ProductionBatch)
         .filter(
-            ProductionBatch.batch_id.in_(batch_ids),
+            ProductionBatch.batch_id.in_(final_batch_ids),
             ProductionBatch.batch_group == batch_group,
         )
         .update({ProductionBatch.batch_group: new_group}, synchronize_session=False)
     )
 
-    # FK 순서: audit_log(task_id FK) → schedule_task → production_batch
-    # 기존 batch_group의 audit_log 삭제 (schedule_task.task_id를 참조)
+    # ── schedule_task 정리 (FK: audit_log → schedule_task) ───────────────────
     task_ids_old = [
         t.task_id
         for t in db.query(ScheduleTaskModel.task_id)
@@ -1100,7 +1445,6 @@ def split_batch_group(
             {"ids": tuple(all_task_ids)},
         )
 
-    # schedule_task 삭제 (분할 후 재스케줄링 필요)
     db.query(ScheduleTaskModel).filter(
         ScheduleTaskModel.batch_group == batch_group
     ).delete(synchronize_session=False)

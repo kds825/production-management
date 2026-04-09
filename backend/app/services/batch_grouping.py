@@ -259,9 +259,9 @@ def create_batches(
         _strand_groups[gkey]["total_qty"] += strand_qty
         # WIP 사용 수주: 연선이 이미 완료된 재고 → 틀 계산 대상에서 차감
         # 연선재고: 연선 완료 / 절연재고: 연선+절연 완료 → 둘 다 연선 작업 불요
-        if getattr(order, "use_wip", False) and (
-            getattr(order, "wip_type", "") or ""
-        ) in ("연선재고", "절연재고"):
+        # wip_type: "연선" 또는 "연선재고" → 연선 작업 불필요, 틀 계산 제외
+        _wip_type = (getattr(order, "wip_type", "") or "").replace("재고", "")
+        if getattr(order, "use_wip", False) and _wip_type in ("연선", "절연"):
             _strand_groups[gkey]["wip_strand_qty"] += strand_qty
         _strand_groups[gkey]["orders"].append(order)
 
@@ -1022,10 +1022,21 @@ def detect_split_candidates(
             continue
 
         # ── 분할 제안 구성 ────────────────────────────────────────────────────
+        today = date.today()
         proposed_splits = []
+        drum_details = []
+        has_urgent_in_later_drum = False
+
         for i, drum in enumerate(drums, start=1):
             dues = [b.due_date for b in drum if b.due_date]
             batch_ids = [b.batch_id for b in drum if b.batch_id]
+            min_priority = min((b.customer_priority or 99 for b in drum), default=99)
+            earliest_due = min(dues) if dues else None
+            days_until = (earliest_due - today).days if earliest_due else 999
+            is_urgent = min_priority <= 7 or (earliest_due is not None and days_until <= 7)
+            if i >= 2 and is_urgent:
+                has_urgent_in_later_drum = True
+
             proposed_splits.append(
                 {
                     "lot_index": i,
@@ -1039,8 +1050,28 @@ def detect_split_candidates(
                         set(b.sales_order_id for b in drum if b.sales_order_id)
                     ),
                     "batch_ids": batch_ids,
+                    "has_urgent": is_urgent,
+                    "min_priority": min_priority,
+                    "days_until_due": days_until,
                 }
             )
+            drum_details.append(
+                {
+                    "lot_index": i,
+                    "order_count": len(drum),
+                    "min_priority": min_priority,
+                    "earliest_due": str(earliest_due) if earliest_due else None,
+                    "days_until_due": days_until,
+                    "has_urgent": is_urgent,
+                }
+            )
+
+        auto_split_recommended = has_urgent_in_later_drum
+        urgency_reason = (
+            f"후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
+            if auto_split_recommended
+            else ""
+        )
 
         eq_code = header.equipment_code
         load_hours = (
@@ -1059,10 +1090,210 @@ def detect_split_candidates(
                 "proposed_splits": proposed_splits,
                 "gaps_days": gaps,
                 "equipment_load_hours": load_hours,
+                "drum_details": drum_details,
+                "auto_split_recommended": auto_split_recommended,
+                "urgency_reason": urgency_reason,
             }
         )
 
     return candidates
+
+
+# ── 자동 분할 ──────────────────────────────────────────────────────────────────
+
+
+def _apply_auto_split(
+    batch_group: str,
+    split_batch_ids: list[int],
+    suffix: str,
+    db: Session,
+) -> dict:
+    """배치 그룹을 2개로 분할한다 (WIP 재매칭 없이 단순 이동).
+
+    split_batch_ids의 배치들을 '{batch_group}_{suffix}' 신규 그룹으로 이동하고,
+    헤더 배치(batch_seq=-1)를 비율로 분할한다.
+    Stage 1 직후 스케줄링 전에 호출되므로 schedule_task 정리는 불필요.
+    """
+    import math as _math
+
+    if not split_batch_ids:
+        return {"skipped": True, "reason": "split_batch_ids 없음"}
+
+    batch_id_set = set(split_batch_ids)
+    new_group = f"{batch_group}_{suffix}"
+
+    header = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.batch_seq == -1,
+        )
+        .first()
+    )
+    if not header:
+        return {"skipped": True, "reason": "헤더 없음"}
+
+    all_individual = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.batch_group == batch_group,
+            ProductionBatch.batch_seq >= 1,
+        )
+        .all()
+    )
+    split_off = [b for b in all_individual if b.batch_id in batch_id_set]
+    remaining = [b for b in all_individual if b.batch_id not in batch_id_set]
+
+    if not split_off:
+        return {"skipped": True, "reason": "이동 대상 배치 없음"}
+
+    orig_dur = float(header.estimated_duration_min or 0)
+    orig_len = float(header.total_length_m or 0)
+    lot_size = float(header.drum_length_m or 0)
+    core_mul = int(header.core_count or 1)
+
+    def _calc_lots_len(batches: list) -> tuple[int, float]:
+        net = sum(float(b.total_length_m or 0) for b in batches) * core_mul
+        if lot_size > 0 and net > 0:
+            lots = _math.ceil(net / lot_size)
+            return lots, lots * lot_size
+        elif net > 0:
+            return 1, net
+        return 0, 0.0
+
+    split_lots, split_len = _calc_lots_len(split_off)
+    remain_lots, remain_len = _calc_lots_len(remaining)
+
+    split_len_raw = sum(float(b.total_length_m or 0) for b in split_off)
+    remain_len_raw = sum(float(b.total_length_m or 0) for b in remaining)
+
+    total_work = split_len + remain_len
+    split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
+    remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
+
+    split_due = min((b.due_date for b in split_off if b.due_date), default=header.due_date)
+    remain_due = min((b.due_date for b in remaining if b.due_date), default=header.due_date)
+    split_pri = min((b.customer_priority or 99 for b in split_off), default=99)
+    remain_pri = min((b.customer_priority or 99 for b in remaining), default=99)
+
+    # 신규 그룹 헤더 생성
+    new_header = ProductionBatch(
+        run_label=header.run_label,
+        sales_order_id=split_off[0].sales_order_id if split_off else header.sales_order_id,
+        sales_order_line=split_off[0].sales_order_line if split_off else header.sales_order_line,
+        item_code=header.item_code,
+        routing_code=header.routing_code,
+        process_name=header.process_name,
+        batch_seq=-1,
+        drum_count=split_lots,
+        drum_length_m=header.drum_length_m,
+        total_length_m=split_len,
+        extra_length_m=0,
+        sq_mm2=header.sq_mm2,
+        core_count=header.core_count,
+        core_colors=header.core_colors,
+        sheath_color=header.sheath_color,
+        customer_name=split_off[0].customer_name if split_off else header.customer_name,
+        due_date=split_due,
+        customer_priority=split_pri,
+        line_speed_mpm=header.line_speed_mpm,
+        setup_time_min=header.setup_time_min,
+        estimated_duration_min=split_dur,
+        status="planned",
+        product_group=header.product_group,
+        voltage=header.voltage,
+        conductor_material=header.conductor_material,
+        stranding_type=header.stranding_type,
+        batch_group=new_group,
+        spec_raw=header.spec_raw,
+        remarks=(
+            f"연선그룹 {len(split_off)}건 {split_lots}틀 / "
+            f"수주총량 {split_len_raw:.0f}m → 연선작업량 {split_len:.0f}m"
+            f" (자동분할 {suffix}, 틀단위 {lot_size:.0f}m)"
+        ),
+    )
+    db.add(new_header)
+
+    # 원본 헤더 업데이트
+    header.drum_count = remain_lots
+    header.total_length_m = remain_len
+    header.estimated_duration_min = remain_dur
+    header.due_date = remain_due
+    header.customer_priority = remain_pri
+    header.remarks = (
+        f"연선그룹 {len(remaining)}건 {remain_lots}틀 / "
+        f"수주총량 {remain_len_raw:.0f}m → 연선작업량 {remain_len:.0f}m"
+        f" (자동분할 잔여, 틀단위 {lot_size:.0f}m)"
+    )
+
+    # 개별 배치들 그룹 이동
+    db.query(ProductionBatch).filter(
+        ProductionBatch.batch_id.in_(split_batch_ids),
+        ProductionBatch.batch_group == batch_group,
+    ).update({ProductionBatch.batch_group: new_group}, synchronize_session=False)
+
+    return {
+        "original_group": batch_group,
+        "new_group": new_group,
+        "moved_count": len(split_off),
+    }
+
+
+def execute_auto_splits(
+    run_label: str,
+    db: Session,
+    *,
+    gap_days: int = 3,
+    urgency_priority_threshold: int = 7,
+    urgency_days_threshold: int = 7,
+) -> dict:
+    """납기 긴급 수주가 후순위 드럼에 포함된 그룹을 자동으로 분할한다.
+
+    detect_split_candidates 결과 중 auto_split_recommended=True인 항목에 대해
+    proposed_splits[1:] 의 batch_ids를 '{batch_group}_B' 신규 그룹으로 분리한다.
+    Stage 1의 create_batches + db.commit() 직후에 호출한다.
+
+    Returns:
+        {"auto_split_count": int, "splits": [{"original_group": ..., "new_group": ...}, ...]}
+    """
+    candidates = detect_split_candidates(
+        run_label,
+        db,
+        gap_days=gap_days,
+    )
+
+    results = []
+    for c in candidates:
+        if not c.get("auto_split_recommended"):
+            continue
+        proposed = c.get("proposed_splits", [])
+        if len(proposed) < 2:
+            continue
+
+        # proposed_splits[1:] 의 batch_ids 수집
+        split_ids: list[int] = []
+        for chunk in proposed[1:]:
+            split_ids.extend(chunk.get("batch_ids") or [])
+
+        if not split_ids:
+            continue
+
+        result = _apply_auto_split(
+            batch_group=c["batch_group"],
+            split_batch_ids=split_ids,
+            suffix="B",
+            db=db,
+        )
+        if not result.get("skipped"):
+            results.append(result)
+
+    if results:
+        db.commit()
+
+    return {
+        "auto_split_count": len(results),
+        "splits": results,
+    }
 
 
 # ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────
