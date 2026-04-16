@@ -1177,41 +1177,42 @@ export default function SchedulerPage() {
         onDragEnd={handleDragEnd}
       >
         <main className="flex-1 overflow-hidden flex flex-col">
-          {/* 간트 차트 + 제약 조건 */}
-          <div
-            className="flex-1 overflow-hidden flex flex-col p-3 gap-2"
-            style={{ minHeight: 300 }}
-          >
-            <SchedulerView
-              activeDragGroup={activeDragGroup}
-              activeDragSq={activeDragSq}
-              activeDragMaterial={activeDragMaterial}
-            />
-            <ConstraintAlert />
-          </div>
+          {/* 간트 차트 + 우측 상세 패널 */}
+          <div className="flex-1 overflow-hidden flex flex-row min-h-0">
+            {/* 간트 차트 + 제약 조건 */}
+            <div
+              className="flex-1 overflow-hidden flex flex-col p-3 gap-2 min-w-0"
+              style={{ minHeight: 300 }}
+            >
+              <SchedulerView
+                activeDragGroup={activeDragGroup}
+                activeDragSq={activeDragSq}
+                activeDragMaterial={activeDragMaterial}
+              />
+              <ConstraintAlert />
+            </div>
 
-          {/* 수주 상세 + 감사 트레일 패널 — 간트 차트 바로 아래, 미배정 작업 위 */}
-          {auditPanel.open &&
-            (() => {
-              const selectedTask = selectedTaskId
-                ? tasks.find((t) => t.id === selectedTaskId)
-                : null;
-              const selectedEquipment = selectedTask
-                ? equipment.find((e) => e.id === selectedTask.equipment_id)
-                : null;
+            {/* 수주 상세 + 감사 트레일 패널 — 간트 차트 우측 */}
+            {auditPanel.open &&
+              (() => {
+                const selectedTask = selectedTaskId
+                  ? tasks.find((t) => t.id === selectedTaskId)
+                  : null;
+                const selectedEquipment = selectedTask
+                  ? equipment.find((e) => e.id === selectedTask.equipment_id)
+                  : null;
 
-              return (
-                <div
-                  className="shrink-0 border-t bg-white"
-                  style={{
-                    maxHeight: 240,
-                    overflowY: "auto",
-                    borderColor: "#E5E7EB",
-                  }}
-                >
-                  {/* 패널 헤더 */}
+                return (
                   <div
-                    className="flex items-center justify-between px-4 py-2 border-b"
+                    className="shrink-0 border-l bg-white overflow-y-auto"
+                    style={{
+                      width: 420,
+                      borderColor: "#E5E7EB",
+                    }}
+                  >
+                  {/* 패널 헤더 — sticky: 스크롤해도 항상 상단에 고정 */}
+                  <div
+                    className="flex items-center justify-between px-4 py-2 border-b sticky top-0 z-10"
                     style={{
                       backgroundColor: "#FDF2F2",
                       borderColor: "#F3D5D5",
@@ -1753,6 +1754,7 @@ export default function SchedulerPage() {
                 </div>
               );
             })()}
+          </div>{/* END 간트+상세 패널 row */}
 
           {/* 하단 미배정 수주 패널 */}
           <CollapsiblePanel

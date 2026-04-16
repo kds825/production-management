@@ -787,20 +787,26 @@ def create_batches(
         sq_key = int(b.sq_mm2 or 0)
         group_key = f"{proc}_{sq_key}SQ"
 
-        # 시스: 설비(색상) + SQ 기준으로 묶음
-        # 저압시스를 SQ별로 분리하면 절연과 파이프라인 겹침(pipeline overlap)이 가능:
-        # 240SQ 절연 1드럼 완료 → 240SQ 시스 시작, 120SQ 절연 완료 → 120SQ 시스 시작
-        # 같은 설비(A100/A120) 위에서 SQ 그룹이 순차 큐잉된다.
-        # 고압시스는 단일 SQ(633)이므로 SQ 분리 불필요 — 색상만 사용.
+        # 시스: 색상 + 납기 주차 기준으로 묶음
+        # 동일 색상을 연속 생산하여 색상 교체를 최소화하되,
+        # 납기 주차가 다른 수주는 별도 배치로 분리 — 납기 준수 우선.
+        # (절연 완료 시점 근사: 납기가 급할수록 절연도 일찍 끝남 → 시스도 일찍 가능)
+        # 설비 라우팅: A120(흑/청/흑적) vs A100(갈/회/녹/황 등).
+        # 고압시스는 단일 SQ(633)이므로 색상만 사용.
         if proc in ("저압시스", "고압시스"):
             color = (b.sheath_color or "").strip()
             color_key = color.replace("/", "_") if color else "기타"
             if proc == "저압시스":
-                sq_suffix = f"_{int(sq_key)}SQ"
-                if color in ("흑", "청", "흑/적"):
-                    group_key = f"A120_{color_key}{sq_suffix}"
+                # 납기 ISO 주차로 분할 기준 결정
+                if b.due_date:
+                    _yr, _wk, _ = b.due_date.isocalendar()
+                    _due_wk = f"{_yr}W{_wk:02d}"
                 else:
-                    group_key = f"A100_{color_key}{sq_suffix}"
+                    _due_wk = "9999W99"
+                if color in ("흑", "청", "흑/적"):
+                    group_key = f"A120_{color_key}_{_due_wk}"
+                else:
+                    group_key = f"A100_{color_key}_{_due_wk}"
             else:
                 group_key = f"{proc}_{color_key}"
 

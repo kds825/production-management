@@ -300,7 +300,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   //   SQ 정보 없으면: spec → product 순 폴백
   const specLabel = (() => {
     if (SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color) {
-      return task.color;
+      // 색상 + 규격(SQ) 함께 표시
+      const sqPart = task.sq_mm2 ? ` · ${task.sq_mm2}SQ` : "";
+      return task.color + sqPart;
     }
     if (isKcmil && task.spec) {
       const m = task.spec.match(/(\d+(?:\.\d+)?)\s*KCMIL/i);
