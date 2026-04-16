@@ -108,7 +108,7 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[11px]">
+      <table className="text-[11px] whitespace-nowrap">
         <thead>
           <tr
             style={{
@@ -1330,7 +1330,7 @@ export default function SchedulerPage() {
                       style={{ borderColor: "#F3F4F6" }}
                     >
                       {/* 작업 요약 1행 */}
-                      <div className="grid grid-cols-8 gap-x-4 gap-y-1 mb-2">
+                      <div className="grid grid-cols-4 gap-x-3 gap-y-2 mb-2">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
                             규격
@@ -1405,26 +1405,6 @@ export default function SchedulerPage() {
                           </span>
                         </div>
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            우선순위
-                          </span>
-                          <span
-                            className="text-[11px] font-medium"
-                            style={{
-                              color:
-                                selectedTask.priority === "critical"
-                                  ? "#DC2626"
-                                  : selectedTask.priority === "urgent"
-                                    ? "#D97706"
-                                    : "#6B7280",
-                            }}
-                          >
-                            {selectedTask.priority === "critical"
-                              ? "긴급"
-                              : selectedTask.priority === "urgent"
-                                ? "우선"
-                                : "일반"}
-                          </span>
                         </div>
                         {/* 배치 상태 — 클릭으로 순환 변경 */}
                         {(() => {

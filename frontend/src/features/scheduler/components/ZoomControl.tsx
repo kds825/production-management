@@ -53,18 +53,20 @@ export function ZoomControl() {
     e.target.value = "";
   }
 
-  // 확대(+): dayWidthScale을 2배 → 픽셀 밀도 증가, range는 유지 (스크롤로 탐색)
+  // 확대(+): visible range를 절반으로 줄임 → 하루당 더 많은 픽셀 (항상 효과적)
   function handleZoomIn() {
-    const next = dayWidthScale * 2;
-    if (next > 32) return; // 최대 32배
-    setDayWidthScale(next);
+    const center = (range.start + range.end) / 2;
+    const halfSpan = Math.max((range.end - range.start) / 4, DAY_MS); // 최소 ±1일
+    setRange({ start: center - halfSpan, end: center + halfSpan });
+    setDayWidthScale(1.0);
   }
 
-  // 축소(-): dayWidthScale을 절반 → 픽셀 밀도 감소, range는 유지
+  // 축소(-): visible range를 2배로 늘림 → 하루당 더 적은 픽셀 (항상 효과적)
   function handleZoomOut() {
-    const next = dayWidthScale / 2;
-    if (next < 0.25) return; // 최소 0.25배
-    setDayWidthScale(next);
+    const center = (range.start + range.end) / 2;
+    const halfSpan = Math.min((range.end - range.start), 90 * DAY_MS); // 최대 ±90일
+    setRange({ start: center - halfSpan, end: center + halfSpan });
+    setDayWidthScale(1.0);
   }
 
   const btnBase =

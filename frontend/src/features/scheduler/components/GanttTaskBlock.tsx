@@ -11,7 +11,7 @@ import {
   getStatusStyle,
 } from "../utils/colorCoding";
 import { getSqColor } from "@/shared/constants/brand";
-import { timeToX, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
+import { timeToXAdj, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
 
 
 
@@ -24,6 +24,7 @@ interface GanttTaskBlockProps {
   task: ScheduleTask;
   rangeStart: number;
   dayWidth: number;
+  weekendWidth?: number;
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -120,7 +121,9 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   task,
   rangeStart,
   dayWidth,
+  weekendWidth,
 }: GanttTaskBlockProps) {
+  const ww = weekendWidth ?? dayWidth;
   // 색상 우선순위:
   //   1. 시스 공정(SH-A100/SH-A120): sheath_color 기반 고정색
   //   2. sq_mm2 있으면 SQ별 색상 (공정 흐름 추적용)
@@ -148,12 +151,15 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   // preview offset 적용: 드래그 중 밀려야 하는 만큼 시각적으로 이동
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const previewOffsetPx =
-    previewOffsetMs !== 0 ? (previewOffsetMs / MS_PER_DAY) * dayWidth : 0;
+    previewOffsetMs !== 0
+      ? timeToXAdj(startTs + previewOffsetMs, rangeStart, dayWidth, ww) -
+        timeToXAdj(startTs, rangeStart, dayWidth, ww)
+      : 0;
 
-  const left = timeToX(startTs, rangeStart, dayWidth) + previewOffsetPx;
+  const left = timeToXAdj(startTs, rangeStart, dayWidth, ww) + previewOffsetPx;
   const width =
-    timeToX(endTs, rangeStart, dayWidth) -
-    timeToX(startTs, rangeStart, dayWidth);
+    timeToXAdj(endTs, rangeStart, dayWidth, ww) -
+    timeToXAdj(startTs, rangeStart, dayWidth, ww);
 
   // frozen 배치(진행중/완료)는 드래그 불가
   const isFrozen = isFrozenStatus(task.status);
@@ -280,6 +286,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const volumeLabel = `${task.volume_m.toLocaleString()}m`;
 
   const isKcmil = /KCMIL/i.test(task.spec ?? "");
+  const isGonaehwa = task.batch_group?.endsWith("_고내화") ?? false;
 
   // 연선 공정 틀 수: 헤더 배치의 drum_count(lot_count)를 직접 사용
   // 고압 연선(KCMIL 규격)은 틀 단위 없이 m만 표시
@@ -371,7 +378,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   // --- 주말 분할 세그먼트 ---
   const segments = splitByWeekends(startTs, endTs);
   // 각 세그먼트의 x 위치는 startTs 기준 상대 좌표로 계산 (previewOffset은 외부 div에 적용)
-  const startX = timeToX(startTs, rangeStart, dayWidth);
+  const startX = timeToXAdj(startTs, rangeStart, dayWidth, ww);
 
   return (
     <div
@@ -415,11 +422,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         const isFirst = idx === 0;
         const isLast = idx === segments.length - 1;
         const isSingle = segments.length === 1;
-        const segLeft = timeToX(seg.start, rangeStart, dayWidth) - startX;
+        const segLeft = timeToXAdj(seg.start, rangeStart, dayWidth, ww) - startX;
         const segW = Math.max(
-          timeToX(seg.end, rangeStart, dayWidth) -
-            timeToX(seg.start, rangeStart, dayWidth),
-          isFirst ? 30 : 4,
+          timeToXAdj(seg.end, rangeStart, dayWidth, ww) -
+            timeToXAdj(seg.start, rangeStart, dayWidth, ww),
+          2,
         );
         const radius = isSingle
           ? 4
@@ -543,10 +550,26 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 }}
               >
                 <span
-                  className="text-white text-[10px] font-semibold truncate leading-tight"
-                  style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+                  className="text-white text-[10px] font-semibold leading-tight"
+                  style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}
                 >
-                  {specLabel}
+                  {isGonaehwa && (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 8,
+                        fontWeight: 700,
+                        lineHeight: 1.4,
+                        padding: "0px 3px",
+                        borderRadius: 3,
+                        backgroundColor: "rgba(234,88,12,0.85)",
+                        color: "#fff",
+                      }}
+                    >
+                      고
+                    </span>
+                  )}
+                  <span className="truncate">{specLabel}</span>
                 </span>
                 {segW >= 40 && (
                   <span
@@ -617,15 +640,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
-            {/* 우선순위 배지 — 첫 세그먼트만 */}
-            {isFirst && task.priority !== "normal" && (
-              <div
-                className="absolute top-0.5 right-1 text-[8px] font-bold text-white bg-red-600 rounded px-0.5"
-                style={{ lineHeight: "1.2", zIndex: 3 }}
-              >
-                {task.priority === "critical" ? "긴급" : "우선"}
-              </div>
-            )}
 
           </div>
         );

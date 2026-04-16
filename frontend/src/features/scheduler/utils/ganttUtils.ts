@@ -66,6 +66,71 @@ export function isWeekend(date: Date): boolean {
   return d === 0 || d === 6;
 }
 
+// --- 주말 너비 조정 매핑 ---
+
+/**
+ * 주말(토·일) 컬럼을 weekendWidth 너비로 처리하는 시간→픽셀 변환.
+ * weekendWidth === dayWidth 이면 기존 timeToX와 동일 결과.
+ */
+export function timeToXAdj(
+  timestamp: number,
+  rangeStart: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth) return timeToX(timestamp, rangeStart, dayWidth);
+  let x = 0;
+  const cursor = new Date(rangeStart);
+  cursor.setHours(0, 0, 0, 0);
+  const tsDay = new Date(timestamp);
+  tsDay.setHours(0, 0, 0, 0);
+  while (cursor.getTime() < tsDay.getTime()) {
+    x += isWeekend(cursor) ? weekendWidth : dayWidth;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const wThis = isWeekend(tsDay) ? weekendWidth : dayWidth;
+  x += ((timestamp - tsDay.getTime()) / MS_PER_DAY) * wThis;
+  return x;
+}
+
+/**
+ * 픽셀 X → 타임스탬프 역변환 (주말 너비 보정 적용).
+ */
+export function xToTimeAdj(
+  x: number,
+  rangeStart: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth) return xToTime(x, rangeStart, dayWidth);
+  let remaining = x;
+  const cursor = new Date(rangeStart);
+  cursor.setHours(0, 0, 0, 0);
+  while (remaining > 0) {
+    const w = isWeekend(cursor) ? weekendWidth : dayWidth;
+    if (remaining < w) {
+      return cursor.getTime() + (remaining / w) * MS_PER_DAY;
+    }
+    remaining -= w;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return cursor.getTime();
+}
+
+/**
+ * 주말 너비 보정을 적용한 타임라인 전체 너비 계산.
+ */
+export function timelineWidthAdj(
+  rangeStart: number,
+  rangeEnd: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth) return getTimelineWidth(rangeStart, rangeEnd, dayWidth);
+  const days = generateDays(rangeStart, rangeEnd);
+  return days.reduce((sum, d) => sum + (isWeekend(d.date) ? weekendWidth : dayWidth), 0);
+}
+
 /** 현재 달의 시작/끝 Date 반환 (하위 호환용 — 신규 코드에서는 getDefaultRange 사용) */
 export function getCurrentMonthRange(): { start: Date; end: Date } {
   const now = new Date();

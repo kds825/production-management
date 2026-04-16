@@ -14,11 +14,14 @@ import {
   ROW_HEIGHT,
   DATE_HEADER_HEIGHT,
   DAY_WIDTH_MAP,
-  timeToX,
-  getTimelineWidth,
+  timeToXAdj,
+  xToTimeAdj,
+  timelineWidthAdj,
   isWeekend,
   generateDays,
 } from "../utils/ganttUtils";
+
+const WEEKEND_COLLAPSED_WIDTH = 8;
 
 // ----- Droppable Row -----
 
@@ -35,6 +38,7 @@ interface GanttRowProps {
   rangeStart: number;
   rangeEnd: number;
   dayWidth: number;
+  weekendWidth: number;
   timelineWidth: number;
   /** 현재 공유 선택 상태 (다른 행에서 시작된 선택 포함) */
   sharedSelection: SharedSelection | null;
@@ -62,6 +66,7 @@ const GanttRow = memo(function GanttRow({
   rangeStart,
   rangeEnd,
   dayWidth,
+  weekendWidth,
   sharedSelection,
   onSelectionStart,
   onSelectionMove,
@@ -125,11 +130,11 @@ const GanttRow = memo(function GanttRow({
       const rect = timelineRef.current?.getBoundingClientRect();
       if (!rect) return rangeStart;
       const relX = clientX - rect.left;
-      const rawTs = rangeStart + (relX / dayWidth) * MS_PER_DAY_LOCAL;
+      const rawTs = xToTimeAdj(relX, rangeStart, dayWidth, weekendWidth);
       // 1시간 단위로 스냅 (반내림)
       return Math.floor(rawTs / MS_PER_HOUR) * MS_PER_HOUR;
     },
-    [rangeStart, dayWidth],
+    [rangeStart, dayWidth, weekendWidth],
   );
 
   // X좌표를 1시간 스냅된 픽셀 위치로 변환
@@ -138,11 +143,11 @@ const GanttRow = memo(function GanttRow({
       const rect = timelineRef.current?.getBoundingClientRect();
       if (!rect) return 0;
       const relX = clientX - rect.left;
-      const rawTs = rangeStart + (relX / dayWidth) * MS_PER_DAY_LOCAL;
+      const rawTs = xToTimeAdj(relX, rangeStart, dayWidth, weekendWidth);
       const snappedTs = Math.floor(rawTs / MS_PER_HOUR) * MS_PER_HOUR;
-      return ((snappedTs - rangeStart) / MS_PER_DAY_LOCAL) * dayWidth;
+      return timeToXAdj(snappedTs, rangeStart, dayWidth, weekendWidth);
     },
-    [rangeStart, dayWidth],
+    [rangeStart, dayWidth, weekendWidth],
   );
 
   const handleMouseDown = useCallback(
@@ -182,8 +187,8 @@ const GanttRow = memo(function GanttRow({
         const maxX = Math.max(selection.startX, selection.currentX);
         const rect = timelineRef.current?.getBoundingClientRect();
         if (rect) {
-          const startTs = rangeStart + (minX / dayWidth) * MS_PER_DAY_LOCAL;
-          const endTs = rangeStart + (maxX / dayWidth) * MS_PER_DAY_LOCAL;
+          const startTs = xToTimeAdj(minX, rangeStart, dayWidth, weekendWidth);
+          const endTs = xToTimeAdj(maxX, rangeStart, dayWidth, weekendWidth);
           // 최소 1시간 보장
           const finalEndTs = Math.max(endTs, startTs + MS_PER_HOUR);
           openContextMenu({
@@ -334,6 +339,7 @@ const GanttRow = memo(function GanttRow({
             task={task}
             rangeStart={rangeStart}
             dayWidth={dayWidth}
+            weekendWidth={weekendWidth}
           />
         ))}
       </div>
@@ -347,6 +353,7 @@ interface DateHeaderProps {
   rangeStart: number;
   rangeEnd: number;
   dayWidth: number;
+  weekendWidth: number;
   timelineWidth: number;
 }
 
@@ -354,6 +361,7 @@ function DateHeader({
   rangeStart,
   rangeEnd,
   dayWidth,
+  weekendWidth,
   timelineWidth,
 }: DateHeaderProps) {
   // Issue 3: rangeStart의 자정(floor)부터 날짜를 생성하여 첫 레이블이 항상 보이도록 함
@@ -398,7 +406,7 @@ function DateHeader({
       const d = new Date(ts);
       // 자정(0시)은 이미 날짜 레이블로 표시되므로 건너뜀
       if (d.getHours() !== 0) {
-        const left = timeToX(ts, rangeStart, dayWidth) + SIDEBAR_WIDTH;
+        const left = timeToXAdj(ts, rangeStart, dayWidth, weekendWidth) + SIDEBAR_WIDTH;
         markers.push({
           left,
           label: `${String(d.getHours()).padStart(2, "0")}:00`,
@@ -443,8 +451,9 @@ function DateHeader({
       {/* 날짜 레이블 영역 — 사이드바 오른쪽부터 클리핑 */}
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
         {days.map((day, idx) => {
-          const left = timeToX(day.timestamp, rangeStart, dayWidth);
+          const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
           const weekend = isWeekend(day.date);
+          const colWidth = weekend ? weekendWidth : dayWidth;
           const dow = day.date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
           const DOW_KO = ["일", "월", "화", "수", "목", "금", "토"];
           const dowLabel = DOW_KO[dow];
@@ -479,9 +488,10 @@ function DateHeader({
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
-                paddingLeft: 4,
+                paddingLeft: weekend && colWidth < 20 ? 1 : 4,
                 borderLeft: "1px solid #E5E7EB",
-                width: dayWidth,
+                width: colWidth,
+                overflow: "hidden",
                 // 주말 헤더 셀에 빗금 패턴 적용
                 ...(weekend
                   ? {
@@ -492,32 +502,37 @@ function DateHeader({
                   : {}),
               }}
             >
-              {/* 날짜 + 주차 (월요일에만) */}
-              <span
-                className="text-[10px] font-semibold leading-tight"
-                style={{ color: weekend ? "#C41230" : "#374151" }}
-              >
-                {day.date.getMonth() + 1}/{day.date.getDate()}
-                {weekNumber !== null && dayWidth >= 32 && (
+              {/* 주말 접힘 상태면 텍스트 숨김 */}
+              {!(weekend && colWidth < 20) && (
+                <>
+                  {/* 날짜 + 주차 (월요일에만) */}
                   <span
-                    style={{
-                      marginLeft: 3,
-                      fontSize: 8,
-                      fontWeight: 500,
-                      color: "#9CA3AF",
-                    }}
+                    className="text-[10px] font-semibold leading-tight"
+                    style={{ color: weekend ? "#C41230" : "#374151" }}
                   >
-                    W{weekNumber}
+                    {day.date.getMonth() + 1}/{day.date.getDate()}
+                    {weekNumber !== null && dayWidth >= 32 && (
+                      <span
+                        style={{
+                          marginLeft: 3,
+                          fontSize: 8,
+                          fontWeight: 500,
+                          color: "#9CA3AF",
+                        }}
+                      >
+                        W{weekNumber}
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-              {/* 요일 */}
-              <span
-                className="text-[9px] leading-tight"
-                style={{ color: weekend ? "#E57373" : "#9CA3AF" }}
-              >
-                {dowLabel}
-              </span>
+                  {/* 요일 */}
+                  <span
+                    className="text-[9px] leading-tight"
+                    style={{ color: weekend ? "#E57373" : "#9CA3AF" }}
+                  >
+                    {dowLabel}
+                  </span>
+                </>
+              )}
             </div>
           );
         })}
@@ -554,6 +569,7 @@ interface WeekendOverlayProps {
   rangeStart: number;
   rangeEnd: number;
   dayWidth: number;
+  weekendWidth: number;
   totalHeight: number;
 }
 
@@ -561,6 +577,7 @@ function WeekendOverlay({
   rangeStart,
   rangeEnd,
   dayWidth,
+  weekendWidth,
   totalHeight,
 }: WeekendOverlayProps) {
   const weekendCols = useMemo(() => {
@@ -569,12 +586,12 @@ function WeekendOverlay({
     for (const day of days) {
       if (isWeekend(day.date)) {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToX(day.timestamp, rangeStart, dayWidth);
-        cols.push({ left, width: dayWidth });
+        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+        cols.push({ left, width: weekendWidth });
       }
     }
     return cols;
-  }, [rangeStart, rangeEnd, dayWidth]);
+  }, [rangeStart, rangeEnd, dayWidth, weekendWidth]);
 
   return (
     <>
@@ -612,6 +629,7 @@ interface GridLinesProps {
   rangeStart: number;
   rangeEnd: number;
   dayWidth: number;
+  weekendWidth: number;
   totalHeight: number;
 }
 
@@ -619,6 +637,7 @@ function GridLines({
   rangeStart,
   rangeEnd,
   dayWidth,
+  weekendWidth,
   totalHeight,
 }: GridLinesProps) {
   const days = useMemo(
@@ -630,7 +649,7 @@ function GridLines({
     <>
       {days.map((day, idx) => {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToX(day.timestamp, rangeStart, dayWidth);
+        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
         return (
           <div
             key={idx}
@@ -842,14 +861,30 @@ export function SchedulerView({
     return () => observer.disconnect();
   }, []);
 
+  // 주말 숨김 토글
+  const [hideWeekends, setHideWeekends] = useState(false);
+
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const totalDays = Math.max((rangeEnd - rangeStart) / MS_PER_DAY, 1);
   const availableWidth = Math.max(containerWidth - SIDEBAR_WIDTH, 100);
   // dayWidth: (줌 레벨 기본값 × scale) 와 fit-to-container 중 큰 값
-  // - +/-로 scale을 키우면 픽셀 밀도 증가 → 가로 스크롤 등장
-  // - range는 그대로 유지 → 작업 컬링 범위 불변, 스크롤로 전체 탐색 가능
-  const dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, availableWidth / totalDays);
-  const timelineWidth = dayWidth * totalDays;
+  // - 주말 접힘 시: 주말 컬럼이 WEEKEND_COLLAPSED_WIDTH를 차지하므로
+  //   평일만으로 나머지 너비를 채워야 빈 공간이 생기지 않음
+  let dayWidth: number;
+  if (hideWeekends) {
+    const allDays = generateDays(rangeStart, rangeEnd);
+    const weekdayCount = Math.max(allDays.filter((d) => !isWeekend(d.date)).length, 1);
+    const weekendCount = allDays.length - weekdayCount;
+    const fitWidth = Math.max(
+      (availableWidth - weekendCount * WEEKEND_COLLAPSED_WIDTH) / weekdayCount,
+      1,
+    );
+    dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, fitWidth);
+  } else {
+    dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, availableWidth / totalDays);
+  }
+  const weekendWidth = hideWeekends ? WEEKEND_COLLAPSED_WIDTH : dayWidth;
+  const timelineWidth = timelineWidthAdj(rangeStart, rangeEnd, dayWidth, weekendWidth);
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
   // 전체 높이 (설비 수 * 행 높이)
@@ -893,6 +928,7 @@ export function SchedulerView({
           rangeStart={rangeStart}
           rangeEnd={rangeEnd}
           dayWidth={dayWidth}
+          weekendWidth={weekendWidth}
           timelineWidth={timelineWidth}
         />
 
@@ -919,6 +955,7 @@ export function SchedulerView({
               rangeStart={rangeStart}
               rangeEnd={rangeEnd}
               dayWidth={dayWidth}
+              weekendWidth={weekendWidth}
               totalHeight={Math.max(totalHeight, 128)}
             />
 
@@ -927,6 +964,7 @@ export function SchedulerView({
               rangeStart={rangeStart}
               rangeEnd={rangeEnd}
               dayWidth={dayWidth}
+              weekendWidth={weekendWidth}
               totalHeight={Math.max(totalHeight, 128)}
             />
 
@@ -935,6 +973,7 @@ export function SchedulerView({
               rangeStart={rangeStart}
               rangeEnd={rangeEnd}
               dayWidth={dayWidth}
+              weekendWidth={weekendWidth}
               totalHeight={Math.max(totalHeight, 128)}
             />
           </div>
@@ -949,6 +988,7 @@ export function SchedulerView({
                 rangeStart={rangeStart}
                 rangeEnd={rangeEnd}
                 dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
                 timelineWidth={timelineWidth}
                 sharedSelection={sharedSelection}
                 onSelectionStart={handleSelectionStart}
@@ -978,6 +1018,18 @@ export function SchedulerView({
           className="flex items-center gap-2 px-3 py-1.5 mt-1 rounded-md flex-wrap"
           style={{ backgroundColor: "#F3F4F6", border: "1px solid #E5E7EB" }}
         >
+          {/* 주말 열 접기/펴기 */}
+          <button
+            onClick={() => setHideWeekends((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] font-medium transition-colors"
+            style={{ color: hideWeekends ? "#C41230" : "#6B7280" }}
+          >
+            <span>{hideWeekends ? "▶" : "▼"}</span>
+            <span>{hideWeekends ? "주말 접힘" : "주말 펼침"}</span>
+          </button>
+
+          <span className="text-gray-300 select-none">|</span>
+
           <button
             onClick={() => { setHideEmpty((v) => !v); setShowHiddenList(false); }}
             className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 hover:text-gray-900 transition-colors"
