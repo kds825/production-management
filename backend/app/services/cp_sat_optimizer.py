@@ -640,10 +640,11 @@ def cp_sat_schedule(
                     wire_d_earliest[wd] = ed
 
     # 처리 순서 결정:
+    #   CORE/AL-CORE: 공정순 최우선 (ST- 선행)
     #   ST- 연선: 공정순 → 소선경 클러스터 최초납기 → 소선경값 → 그룹 EDD
     #     (같은 소선경 그룹을 연속 배치 → 선재교체 비용 최소화)
-    #   그 외 공정: 공정순 → EDD → 고객 우선순위
-    # CP-SAT start_vars는 기계 배정에만 활용, 실행 순서는 이 정렬로 결정
+    #   그 외 공정(절연·시스 등): 공정순 → EDD → 고객 우선순위
+    #   시스 색상 클러스터 정렬 제거 — 납기 준수가 색상 연속성보다 우선
     def _solved_order_key(gk: str):
         meta = group_meta[gk]
         proc_level = PROCESS_ORDER.get(meta["rep"].process_name, 50)
@@ -668,9 +669,10 @@ def cp_sat_schedule(
                 meta["rep"].customer_priority or 99,
                 solver.value(start_vars[gk]),
             )
+        # 절연·시스 등: EDD 순 — 색상 클러스터 우선 정렬 없음 (납기 준수 최우선)
         return (
             proc_level,
-            date.max,               # ST- 아니면 클러스터 정렬 패딩
+            meta["earliest_due"] or date.max,  # 그룹 자체 EDD
             0.0,
             meta["earliest_due"] or date.max,
             meta["rep"].customer_priority or 99,
@@ -863,6 +865,33 @@ def cp_sat_schedule(
         best_start = _find_available_slot(earliest, total_dur, slots, db, chosen_eq_code)
         end_dt = calculate_end_datetime(best_start, total_dur, db, chosen_eq_code)
 
+        # ── 파이프라인 겹침 보정: 후공정이 선행공정 종료 전에 끝나지 않도록 ───
+        # 절연은 연선 첫 드럼 출력 후 시작하지만 선속이 빠르면 연선보다 먼저 끝나는 현상 방지.
+        # 최소 end_dt = 선행공정 마지막 틀 완료 시각 + 후공정 1틀 소요시간.
+        _pipeline_procs: list[str] = []
+        if pred_proc:
+            _pipeline_procs.append(pred_proc)
+        if rep.process_name in ("저압시스", "고압시스"):
+            _pipeline_procs.append("연합")
+        if _pipeline_procs:
+            _all_sqs_p = {int(b.sq_mm2 or 0) for b in gb}
+            # 현재 그룹 틀 수를 직접 계산 (lot_count는 아직 미설정)
+            header_batch_p = next((b for b in gb if b.batch_seq == -1), None)
+            if header_batch_p is not None:
+                _p_lot_count = max(int(header_batch_p.drum_count or 1), 1)
+            else:
+                _p_lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
+            _per_drum_p = meta["work_dur"] / _p_lot_count
+            for _pp in _pipeline_procs:
+                for _sq_i in _all_sqs_p:
+                    _pred_last = process_end_by_sq.get((_pp, _sq_i))
+                    if _pred_last and _pred_last < datetime.max and _pred_last > best_start:
+                        _min_end = calculate_end_datetime(
+                            _pred_last, _per_drum_p, db, chosen_eq_code
+                        )
+                        if _min_end > end_dt:
+                            end_dt = _min_end
+
         # 정각 올림
         if end_dt.minute > 0 or end_dt.second > 0:
             end_dt = end_dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -887,10 +916,9 @@ def cp_sat_schedule(
         header_batch = next((b for b in gb if b.batch_seq == -1), None)
         if header_batch:
             lot_count = max(int(header_batch.drum_count or 1), 1)
-        elif _is_core_group(gk):
-            lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
         else:
-            lot_count = max(len(gb), 1)
+            # CORE 그룹 포함, 헤더 없는 그룹 모두 drum_count 합산 (len(gb) 아님)
+            lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
         first_drum_min = actual_setup + (meta["work_dur"] / lot_count)
         first_output_dt = calculate_end_datetime(best_start, first_drum_min, db, chosen_eq_code)
 

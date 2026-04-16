@@ -296,37 +296,13 @@ def auto_schedule(
                 if wd not in wire_d_earliest or ed < wire_d_earliest[wd]:
                     wire_d_earliest[wd] = ed
 
-    # ── 시스 색상 클러스터 최초 납기 — 색상별 최초 납기 기준으로 클러스터 정렬 ──
-    # A100_/A120_ 그룹 키: "A120_color_YYYYWww" 형식
-    # 같은 색상(equipment+color)의 모든 납기 주차 그룹 중 가장 이른 납기를 클러스터 대표 납기로 사용.
-    # → 동일 색상 그룹이 납기 주차와 무관하게 연속 배치될 때 색상 교체 최소화.
-    sheath_cluster_due: dict[str, date] = {}
-    for _gk, _gb in batch_groups.items():
-        if _gk.startswith("A100_") or _gk.startswith("A120_"):
-            _parts = _gk.split("_")
-            # "A120_color_YYYYWww" → cluster key = "A120_color"
-            _cluster_key = f"{_parts[0]}_{_parts[1]}" if len(_parts) >= 2 else _gk
-            _ed = _group_earliest_due(_gb)
-            if _cluster_key not in sheath_cluster_due or _ed < sheath_cluster_due[_cluster_key]:
-                sheath_cluster_due[_cluster_key] = _ed
-
     # ── 그룹 처리 순서 결정 ──────────────────────────────────────────────────
     # 우선순위:
     #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
     #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
     #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
     #   2 = 그 외 공정(절연·시스 등): 납기 오름차순(EDD) 최우선
-    #       시스 그룹(A100_/A120_): 색상 클러스터 최초납기 → 그룹 자체 납기
-    #       (동일 클러스터 내에서 납기 순으로 정렬 → 같은 색상 연속 배치)
-    def _sheath_cluster_key(gk: str, gb: list) -> tuple:
-        """A100_/A120_ 시스 그룹의 정렬 키: (클러스터 최초납기, 그룹 납기)."""
-        _parts = gk.split("_")
-        _ck = f"{_parts[0]}_{_parts[1]}" if len(_parts) >= 2 else gk
-        return (
-            sheath_cluster_due.get(_ck, date.max),
-            _group_earliest_due(gb),
-        )
-
+    #       색상 클러스터 정렬 제거 — 납기 준수가 색상 연속성보다 우선
     ordered_group_items = sorted(
         batch_groups.items(),
         key=lambda kv: (
@@ -338,10 +314,7 @@ def auto_schedule(
             # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
             sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
             if kv[0].startswith("ST-") else 0.0,
-            # 시스 그룹(A100_/A120_): 색상 클러스터 최초납기 → 그룹 납기 (색상 연속 배치)
-            _sheath_cluster_key(kv[0], kv[1])[0]
-            if (kv[0].startswith("A100_") or kv[0].startswith("A120_")) else date.max,
-            # 그룹 자체 최초 납기 (EDD)
+            # 그룹 자체 최초 납기 (EDD) — 시스 포함 모든 공정 납기 우선
             _group_earliest_due(kv[1]),
             # 동일 납기 내 공정 순서 보장 (절연→시스 등)
             PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
@@ -663,7 +636,12 @@ def auto_schedule(
             _pipeline_check_procs.append("연합")
 
         _all_sqs_g = {int(b.sq_mm2 or 0) for b in group_batches}
-        _per_drum_min = group_duration / max(lot_count, 1)
+        # 현재 그룹의 틀 수를 직접 계산 (lot_count는 아직 이 시점에서 미설정)
+        if header_batch is not None:
+            _curr_lot_count = max(int(header_batch.drum_count or 1), 1)
+        else:
+            _curr_lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
+        _per_drum_min = group_duration / _curr_lot_count
         for _pp in _pipeline_check_procs:
             for _sq_i in _all_sqs_g:
                 _pred_last = process_end_by_sq.get((_pp, _sq_i))
@@ -712,10 +690,9 @@ def auto_schedule(
         # 절연/시스 등: 헤더 없으므로 그룹 내 배치 수 = 순차 처리 단위 수
         if header_batch is not None:
             lot_count = max(int(header_batch.drum_count or 1), 1)
-        elif _is_core_group(group_key):
-            lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
         else:
-            lot_count = max(len(group_batches), 1)
+            # CORE 그룹 포함, 절연/시스 등 헤더 없는 그룹 모두 drum_count 합산
+            lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
         first_output_dt = calculate_end_datetime(best_start, first_drum_min, db, best_eq.equipment_code)
         # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
