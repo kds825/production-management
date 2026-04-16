@@ -787,6 +787,10 @@ def create_batches(
         sq_key = int(b.sq_mm2 or 0)
         group_key = f"{proc}_{sq_key}SQ"
 
+        # 저압절연: 고내화 제품군(TFR-8(…))은 일반 제품과 혼합 생산 불가 → 별도 그룹
+        if proc == "저압절연" and "TFR-8(" in (b.product_group or ""):
+            group_key = f"{proc}_{sq_key}SQ_고내화"
+
         # 시스: 색상 + 납기 주차 기준으로 묶음
         # 동일 색상을 연속 생산하여 색상 교체를 최소화하되,
         # 납기 주차가 다른 수주는 별도 배치로 분리 — 납기 준수 우선.
