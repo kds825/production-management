@@ -1636,7 +1636,10 @@ def _find_speed(
         "고압시스": ["SH-A150", "SH-B100"],
         "연선": ["ST-T6B0", "ST-AL6BO", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
         "신선": ["WD-A100"],
-        "연합": ["AS-A100"],
+        # CA-12BO (소단면 1.5~6), CA-4BO (35~95), CA-LU (Laying Up 35~150) 순회.
+        # 이전 버그: "AS-A100" 은 equipment_master 에 없는 설비 — 37/37 batch 가
+        # line_speed_mpm=None 으로 저장되던 회귀.
+        "연합": ["CA-12BO", "CA-4BO", "CA-LU"],
         "T/P": ["TP-2"],
     }
 
