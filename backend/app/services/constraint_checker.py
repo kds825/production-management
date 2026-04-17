@@ -97,7 +97,7 @@ def _check_overlap(tasks: list) -> list[dict]:
 
 
 def _check_delivery(tasks, batches) -> list[dict]:
-    """납기 초과 확인"""
+    """납기 초과 확인 — 사용자 요구 '납기는 반드시 지켜져야함' → severity=error"""
     violations = []
     for t in tasks:
         batch = batches.get(t.batch_id)
@@ -107,7 +107,8 @@ def _check_delivery(tasks, batches) -> list[dict]:
                     "constraint_id": "1-1",
                     "task_id": t.task_id,
                     "batch_id": t.batch_id,
-                    "severity": "warning",
+                    # 납기는 하드 제약 — 위반 시 error 로 격상하여 재시도/알림 트리거
+                    "severity": "error",
                     "detail": f"납기 {batch.due_date} 초과 (완료 예정: {t.end_datetime.date()})",
                 }
             )

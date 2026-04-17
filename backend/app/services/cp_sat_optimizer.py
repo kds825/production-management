@@ -61,8 +61,16 @@ _MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY
 # CP-SAT 솔버 시간 제한(초)
 _SOLVER_TIME_LIMIT_SEC = 30
 
-# 납기 초과 가중치
-_TARDINESS_WEIGHT = {"critical": 100, "urgent": 10, "normal": 1}
+# 납기 초과 가중치 — 납기는 사용자 요구 상 하드 제약.
+# CP-SAT 에서 실제 'hard' add() 는 INFEASIBLE 위험(과거 납기 등) 때문에 피하고,
+# 아이들(1)/체인(1)/선점 등 다른 목적함수 항들을 _DUE_HARD_WEIGHT 로 압도하여
+# 실질적 hard 로 동작시킨다. 납기 맞출 해가 있으면 솔버는 그 해를 반드시 선택.
+_DUE_HARD_WEIGHT = 100000
+_TARDINESS_WEIGHT = {
+    "critical": _DUE_HARD_WEIGHT * 100,
+    "urgent": _DUE_HARD_WEIGHT * 10,
+    "normal": _DUE_HARD_WEIGHT,
+}
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────
@@ -1094,7 +1102,7 @@ def cp_sat_schedule(
         last_batch_on_equip[chosen_eq_code] = gb[-1]
         tasks_created.append(task)
 
-        # 납기 위반 기록
+        # 납기 위반 기록 — hard constraint 위반이므로 error 격상
         if meta["earliest_due"] and end_dt.date() > meta["earliest_due"]:
             late_days = (end_dt.date() - meta["earliest_due"]).days
             result["violations"].append(
@@ -1102,7 +1110,7 @@ def cp_sat_schedule(
                     "batch_id": rep.batch_id,
                     "task_id": task.task_id,
                     "type": "delivery",
-                    "severity": "warning",
+                    "severity": "error",
                     "detail": f"납기 {meta['earliest_due']} 초과 → 완료 {end_dt.date()} (+{late_days}일)",
                 }
             )

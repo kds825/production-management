@@ -967,6 +967,8 @@ def _run_optimization_once(
         tasks_created.append(task)
 
         # Check delivery date violation — 그룹 내 가장 빠른 납기 기준
+        # 납기는 사용자 요구 상 하드 제약 → severity=error 로 상향
+        # (validate_all 이 이를 보고 재시도/알림을 유발하도록)
         earliest_due = min(
             (b.due_date for b in group_batches if b.due_date), default=None
         )
@@ -975,10 +977,13 @@ def _run_optimization_once(
                 "batch_id": rep.batch_id,
                 "task_id": task.task_id,
                 "type": "delivery",
-                "severity": "warning",
+                "severity": "error",
                 "detail": f"납기 {earliest_due} 초과 → 완료 예정 {end_dt.date()}",
             }
             result["violations"].append(violation)
+            result.setdefault("warnings", []).append(
+                f"납기 위반 예상: 배치그룹 {group_key} end={end_dt.date()} > due={earliest_due}"
+            )
 
         # Audit log
         log_decision(
