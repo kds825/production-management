@@ -66,6 +66,11 @@ _SHEATH_COLOR_RANK: dict[str, int] = {
     "흑/적": 8,
 }
 
+# 고내화(TFR-8(...)) 감지 패턴 — 괄호 앞 공백 허용, 대소문자 무관
+# 의도: "TFR-8(830℃/120min)", "tfr-8 (...)" 등 변형도 동일 그룹으로 묶도록
+# 모듈 레벨에서 한 번만 컴파일 → 배치별 호출 시 재컴파일 비용 0
+_TFR8_PATTERN = re.compile(r"TFR-8\s*\(", re.IGNORECASE)
+
 
 def create_batches(
     run_label: str,
@@ -831,7 +836,12 @@ def create_batches(
         group_key = f"{proc}_{sq_key}SQ"
 
         # 저압절연: 고내화 제품군(TFR-8(…))은 일반 제품과 혼합 생산 불가 → 별도 그룹
-        if proc == "저압절연" and "TFR-8(" in (b.product_group or ""):
+        # 공백/대소문자 변형("tfr-8 (", "TFR-8 (830℃/120min)" 등) 전부 커버
+        if (
+            proc == "저압절연"
+            and b.product_group
+            and _TFR8_PATTERN.search(b.product_group)
+        ):
             group_key = f"{proc}_{sq_key}SQ_고내화"
 
         # 시스: 색상 + 납기 주차 기준으로 묶음

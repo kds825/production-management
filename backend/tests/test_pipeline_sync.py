@@ -199,3 +199,61 @@ def _get_task_by_process(db, run_label, process_name):
         )
         .first()
     )
+
+
+def test_assembly_to_sheath_pipeline_end_constraint(db):
+    """연합→시스: 시스 끝이 연합 끝보다 빨리 끝나지 않도록.
+
+    파이프라인 동기화의 일반성 검증 — 연선→절연 케이스 외에도
+    연합→시스 쌍에서 pred_end <= succ_end 불변식이 유지되어야 함.
+    """
+    from app.services.schedule_optimizer import auto_schedule
+    from datetime import date
+
+    # 연합 + 시스 쌍 (같은 SQ) 시드
+    db.add(
+        ProductionBatch(
+            run_label="test-assy-sh",
+            batch_seq=0,
+            process_name="연합",
+            sq_mm2=50,
+            drum_count=1,
+            drum_length_m=800,
+            total_length_m=800,
+            conductor_material="CU",
+            sales_order_id="SO-AS-1",
+            sales_order_line=1,
+            batch_group="",
+            status="planned",
+        )
+    )
+    db.add(
+        ProductionBatch(
+            run_label="test-assy-sh",
+            batch_seq=0,
+            process_name="저압시스",
+            sheath_color="흑",
+            sq_mm2=50,
+            due_date=date(2026, 4, 30),
+            drum_count=1,
+            drum_length_m=400,
+            total_length_m=400,
+            conductor_material="CU",
+            sales_order_id="SO-AS-1",
+            sales_order_line=1,
+            batch_group="",
+            status="planned",
+        )
+    )
+    db.flush()
+
+    auto_schedule(run_label="test-assy-sh", db=db)
+    assy = _get_task_by_process(db, "test-assy-sh", "연합")
+    sheath = _get_task_by_process(db, "test-assy-sh", "저압시스")
+    if assy is None or sheath is None:
+        import pytest
+
+        pytest.skip(f"시드 부족 — assy={assy}, sheath={sheath}")
+    assert sheath.end_datetime >= assy.end_datetime, (
+        f"시스 끝 {sheath.end_datetime} < 연합 끝 {assy.end_datetime}"
+    )
