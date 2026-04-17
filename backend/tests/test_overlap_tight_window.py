@@ -91,3 +91,26 @@ def test_baseline_overlap_is_exactly_the_known_pair(db_session: Session):
     assert eq == "SH-A100"
     overlap_min = (c_end - n_start).total_seconds() / 60
     assert 15 <= overlap_min <= 25, f"overlap 분 값 범위 벗어남: {overlap_min}"
+
+
+# Phase D 재실행 run — ceiling fix 적용 후 + JIT post-processing 적용된 검증용 run.
+# 이 run 에는 설비 내 overlap 이 단 1건도 없어야 한다.
+_VERIFIED_RUN = "20260418_jit_run"
+
+
+def test_no_overlap_in_verified_run(db_session: Session):
+    """ceiling fix + JIT 적용 후 생성된 run 에 overlap 0 — Phase D 성공 criterion."""
+    tasks = (
+        db_session.query(ScheduleTask)
+        .filter(ScheduleTask.run_label == _VERIFIED_RUN)
+        .all()
+    )
+    if not tasks:
+        pytest.skip(
+            f"run={_VERIFIED_RUN} 에 schedule_task 없음 — "
+            "scripts/run_stage2_direct.py 로 재실행 필요"
+        )
+    pairs = _find_overlaps(tasks)
+    assert not pairs, (
+        f"Phase D fix 후에도 설비 내 overlap {len(pairs)}건 잔존: {pairs[:3]}"
+    )

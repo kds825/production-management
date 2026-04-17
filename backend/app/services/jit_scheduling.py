@@ -115,12 +115,13 @@ def _backward_pass(
 
             due_end = datetime.combine(pb.due_date, time(23, 59))
 
-            # 2. 설비 내 다음 task 의 start (upper bound)
+            # 2. 설비 내 다음 task 의 start (upper bound) + 이전 task 의 end (lower bound)
             next_start = (
                 eq_tasks[i + 1].start_datetime
                 if i + 1 < len(eq_tasks)
                 else datetime.max
             )
+            prev_end = eq_tasks[i - 1].end_datetime if i > 0 else datetime.min
 
             # 3. Successor (후공정) 제약 — 같은 수주 line 의 다른 task 중
             #    start 가 현재 t.end 이상인 것 = 후공정.
@@ -155,6 +156,18 @@ def _backward_pass(
 
             if new_start <= t.start_datetime:
                 continue  # gain 없음
+
+            # Defensive sanity: calculate_start_datetime 의 edge case (working hour 창
+            # 경계, break 구간 처리 등) 에서 드물게 new_start 가 new_end 이후로 튀는
+            # 현상 관측 — 이 경우 task 의 start/end 역전이 발생해 overlap 생성.
+            if new_start >= new_end:
+                continue
+
+            # Defensive lower-bound: wall_min 은 working_min 의 상한이라
+            # calculate_start_datetime 이 backward 로 overshoot 할 수 있음.
+            # 그 결과 new_start < prev_end 이면 설비 내 overlap 을 만들 수 있으므로 skip.
+            if new_start < prev_end:
+                continue
 
             # 5. Apply shift
             t.start_datetime = new_start

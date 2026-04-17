@@ -126,3 +126,20 @@ if (candidate_end.minute > 0 or candidate_end.second > 0 or candidate_end.micros
 - `tests/test_find_slot_ceiling.py` — unit test 4 PASS.
 - `tests/test_overlap_tight_window.py` — baseline run 기준 xfail 유지 (새 run 실행 전까지).
 - 본 문서 — root cause H6 확정 기록.
+
+## Phase D 검증 완료 (2026-04-18)
+
+### 새 stage2 run 결과
+
+`20260418_jit_run` (baseline 984 batches 복사 + greedy 재실행 + JIT=1):
+
+- **설비 내 overlap 0건** — ceiling fix 효과 확인.
+- constraint_checker 위반 9건 — setup_time 등 (overlap 제외).
+- JIT post-processing 62 shifts 적용 — 역전/overlap 0건.
+
+### 후속 조치
+
+- `tests/test_overlap_tight_window.py::test_no_overlap_in_verified_run` 추가 —
+  새 run 에서 overlap 0 검증. 현재 PASS.
+- 기존 xfail 은 historical baseline 추적용으로 유지 (strict=False, XPASS 시에도 무해).
+  DB 데이터 자체를 re-run 으로 덮어쓰면 다른 대화/세션의 참조가 깨질 수 있어 유지.
