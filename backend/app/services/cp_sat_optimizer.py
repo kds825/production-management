@@ -1026,8 +1026,14 @@ def cp_sat_schedule(
         end_dt = calculate_end_datetime(best_start, total_dur, db, chosen_eq_code)
 
         # ── 파이프라인 유휴 최소 역산 — start 지연 방식 ──────────────────────
-        # 기존 "end_dt 확장" 방식은 블록 폭이 늘어나 소요시간 고정 요건을 위반.
-        # helper 는 reverse_start = pred_end - duration 으로 start 만 지연.
+        # T_succ_end = T_pred_end + 후공정 1드럼 소요, 블록 폭(total_dur)은 고정.
+        # lot_count: 헤더 있으면 그 drum_count, 없으면 gb 합산.
+        _header_p = next((b for b in gb if b.batch_seq == -1), None)
+        if _header_p is not None:
+            _lot_count_p = max(int(_header_p.drum_count or 1), 1)
+        else:
+            _lot_count_p = max(sum(int(b.drum_count or 1) for b in gb), 1)
+        _per_drum_p = meta["work_dur"] / _lot_count_p if _lot_count_p > 0 else 0.0
         best_start, end_dt = align_start_to_predecessor_end(
             process_name=rep.process_name,
             pred_proc=pred_proc,
@@ -1036,6 +1042,7 @@ def cp_sat_schedule(
             current_start=best_start,
             current_end=end_dt,
             duration_min=total_dur,
+            tail_offset_min=_per_drum_p,
             slots=slots,
             db=db,
             equipment_code=chosen_eq_code,

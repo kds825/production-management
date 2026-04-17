@@ -912,9 +912,14 @@ def _run_optimization_once(
         )
 
         # ── 파이프라인 유휴 최소 역산 공식 ────────────────────────────────────
-        # T_succ_start = max(T_pred_first_drum, T_pred_end - D_succ)
-        # 불변식: T_succ_end >= T_pred_end (후공정 끝 ≥ 선행공정 끝)
-        # 효과: 절연 선속이 연선보다 빠르면 시작을 늦춰 끝을 정렬. 블록 width 불변.
+        # 물리: 후공정은 선행 마지막 드럼이 나와야 자기 마지막 드럼을 처리 가능.
+        # T_succ_end = T_pred_end + D_succ_per_drum
+        # T_succ_start = T_succ_end - D_succ_total (블록 폭 유지)
+        _per_drum_min = (
+            group_duration / max(int(total_drums or 1), 1)
+            if group_duration > 0
+            else 0.0
+        )
         best_start, end_dt = align_start_to_predecessor_end(
             process_name=rep.process_name,
             pred_proc=pred_proc,
@@ -923,6 +928,7 @@ def _run_optimization_once(
             current_start=best_start,
             current_end=end_dt,
             duration_min=best_total_duration,
+            tail_offset_min=_per_drum_min,
             slots=timeline.get(best_eq.equipment_code, []),
             db=db,
             equipment_code=best_eq.equipment_code,
@@ -1335,7 +1341,8 @@ def _schedule_multi_equipment(
 
         # ── 파이프라인 유휴 최소 역산 — 서브태스크별 독립 적용 ────────────────
         # duration(= eq_total_duration)은 드럼 수 비례이므로 서브태스크마다 다름.
-        # 각 서브태스크가 선행공정 종료 이상에서 끝나도록 개별 정렬.
+        # 각 서브태스크가 선행공정 종료 + 후공정 1드럼 소요 이상에서 끝나도록 개별 정렬.
+        _per_drum_min = eq_duration / max(int(eq_drums or 1), 1)
         slot_start, end_dt = align_start_to_predecessor_end(
             process_name=rep.process_name,
             pred_proc=pred_proc,
@@ -1344,6 +1351,7 @@ def _schedule_multi_equipment(
             current_start=slot_start,
             current_end=end_dt,
             duration_min=eq_total_duration,
+            tail_offset_min=_per_drum_min,
             slots=slots,
             db=db,
             equipment_code=eq_code,
@@ -1551,16 +1559,21 @@ def align_start_to_predecessor_end(
     current_start: datetime,
     current_end: datetime,
     duration_min: float,
+    tail_offset_min: float = 0.0,
     slots: list,
     db: "Session",
     equipment_code: str,
 ) -> tuple[datetime, datetime]:
-    """후공정 종료가 선행공정 종료 이상이 되도록 시작을 지연한다.
+    """후공정 종료가 선행공정 종료 + 후공정 1드럼 소요시간 이상이 되도록 시작을 지연한다.
+
+    물리적 의미: 후공정은 선행공정 마지막 드럼이 나온 뒤에야 자기 마지막 드럼을 처리.
+    → T_succ_end = T_pred_end + tail_offset_min (후공정 1드럼 wall-clock duration)
 
     불변식:
-      - aligned_end >= pred_end_latest (후공정 끝 ≥ 선행공정 끝)
+      - aligned_end >= T_target (T_target = calculate_end_datetime(pred_end, tail_offset_min))
       - aligned_end - aligned_start == duration_min (블록 폭 유지, 캘린더 보정 오차 허용)
 
+    tail_offset_min 은 호출자가 `후공정 group_duration / drum_count` 로 산정한 per-drum 소요.
     시스 공정(저압시스/고압시스)은 pred_proc 외에 "연합" 종료도 함께 고려.
     pred_proc 가 None 이거나 process_end_by_sq 에 기록이 없으면 입력 그대로 반환.
 
@@ -1589,6 +1602,7 @@ def align_start_to_predecessor_end(
     aligned_start = current_start
     aligned_end = current_end
 
+    # Phase 1: aligned_end 를 pred_end 에 역산 정렬
     reverse_start = calculate_start_datetime(
         pred_end_latest, duration_min, db, equipment_code
     )
@@ -1599,10 +1613,21 @@ def align_start_to_predecessor_end(
         aligned_end = calculate_end_datetime(
             aligned_start, duration_min, db, equipment_code
         )
-
-    # 캘린더 보정 오차 대비: end < pred_end_latest 면 bump
     if aligned_end < pred_end_latest:
         aligned_end = pred_end_latest
+
+    # Phase 2: tail_offset_min 만큼 wall-clock 으로 shift (aligned_end > pred_end 보장)
+    # 블록 폭(duration_min 기반 wall-clock)은 Phase 1 결과 그대로 유지.
+    if tail_offset_min > 0 and aligned_start > current_start:
+        shifted_start = aligned_start + timedelta(minutes=tail_offset_min)
+        shifted_start = _find_available_slot(
+            shifted_start, duration_min, slots, db, equipment_code
+        )
+        shifted_end = calculate_end_datetime(
+            shifted_start, duration_min, db, equipment_code
+        )
+        aligned_start = shifted_start
+        aligned_end = shifted_end
 
     return aligned_start, aligned_end
 

@@ -125,6 +125,60 @@ def test_delays_start_when_predecessor_ends_later(monkeypatch):
     assert aligned_end == datetime(2026, 4, 17, 8, 0)
 
 
+def test_tail_offset_shifts_end_strictly_after_pred_end(monkeypatch):
+    """tail_offset_min > 0 이면 aligned_end 가 pred_end 이후로 이동 (물리 정합).
+
+    후공정은 선행 마지막 드럼이 나와야 자기 마지막 드럼을 돌릴 수 있으므로
+    T_succ_end = T_pred_end + per_drum_succ. 블록 폭은 그대로 유지.
+    """
+    from app.services import schedule_optimizer
+
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "calculate_start_datetime",
+        lambda end, dur, db, eq: end - timedelta(minutes=dur),
+    )
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "calculate_end_datetime",
+        lambda start, dur, db, eq: start + timedelta(minutes=dur),
+    )
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "_find_available_slot",
+        lambda earliest, dur, slots, db, eq: earliest,
+    )
+
+    current_start = datetime(2026, 4, 9, 8, 0)
+    duration_min = 5 * 24 * 60  # 5일
+    current_end = current_start + timedelta(minutes=duration_min)
+    pred_end = datetime(2026, 4, 17, 8, 0)
+    tail = 30  # 후공정 1드럼 30분
+
+    aligned_start, aligned_end = schedule_optimizer.align_start_to_predecessor_end(
+        process_name="고압시스",
+        pred_proc="고압절연",
+        group_sqs={300},
+        process_end_by_sq={("고압절연", 300): pred_end},
+        current_start=current_start,
+        current_end=current_end,
+        duration_min=duration_min,
+        tail_offset_min=tail,
+        slots=[],
+        db=_mock_db(),
+        equipment_code="SH-A150",
+    )
+
+    # Phase 1: aligned_end = pred_end (4/17 08:00), aligned_start = pred_end - 5일 = 4/12 08:00
+    # Phase 2: shift by 30분 → start = 4/12 08:30, end = 4/12 08:30 + 5일 = 4/17 08:30
+    assert aligned_start == datetime(2026, 4, 12, 8, 30)
+    assert aligned_end == datetime(2026, 4, 17, 8, 30)
+    # 블록 폭 유지
+    assert (aligned_end - aligned_start).total_seconds() / 60 == duration_min
+    # 불변식: aligned_end > pred_end (strictly later)
+    assert aligned_end > pred_end
+
+
 def test_mixed_sq_uses_max_pred_end(monkeypatch):
     """혼합 SQ 그룹(고압시스 색상별) — 모든 SQ의 pred_end 중 최대값 사용."""
     from app.services import schedule_optimizer
@@ -377,10 +431,11 @@ def test_high_voltage_sheath_block_width_preserved(db):
 
     for t in sheath_tasks:
         width_min = (t.end_datetime - t.start_datetime).total_seconds() / 60
-        # 블록 폭 상한 8h — 1500m × 드럼 1개 서브태스크는 시스 선속상 수 시간 내 종료.
-        # 24h 상한은 너무 느슨해 "몇 시간씩 확장" 버그를 못 잡으므로 실제 기대 폭 근처로.
-        assert width_min <= 8 * 60, (
-            f"고압시스 블록 폭 {width_min}분 (> 8h). start 지연 대신 end 확장 회귀 의심."
+        # 블록 wall-clock 폭은 주말·휴식을 포함할 수 있음 (work-time != wall-clock).
+        # tail_offset 에 의해 start 가 수시간 밀리면 주말 건너 Mon 오전까지 이어질 수 있다.
+        # 상한 96h(4d) — 연속 주말 포함 실제 최대. 그 이상이면 "end 확장" 회귀 신호.
+        assert width_min <= 96 * 60, (
+            f"고압시스 블록 폭 {width_min}분 (> 96h=4d). start 지연 대신 end 확장 회귀 의심."
         )
 
 
