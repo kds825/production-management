@@ -102,6 +102,31 @@ test.describe("기존 구현 기능 검증", () => {
     expect(nonOverlap).toBe(true);
   });
 
+  test("SH-A150 / SH-B100 시스 블록 D 라벨(색상 + SQ) 회귀 방지", async ({
+    page,
+  }) => {
+    // BUG A 회귀 방지: 과거 SHEATH_EQUIPMENT_IDS set 에 SH-A150/SH-B100 이
+    // 누락되어 해당 설비의 블록이 D 라벨 대신 "1250KCMIL" 같은 KCMIL 폴백
+    // 브랜치로 떨어지는 회귀가 있었다. prefix("SH-") 검사로 전환했으므로
+    // 두 설비 모두 색상 칩(한글) 또는 SQ 라벨을 포함해야 한다.
+    for (const eq of ["SH-A150", "SH-B100"]) {
+      const block = page
+        .locator(`[data-testid^="gantt-block-"][data-equipment-id="${eq}"]`)
+        .first();
+      if ((await block.count()) === 0) {
+        // 해당 설비 데이터가 시드/렌더 범위에 없으면 스킵
+        continue;
+      }
+      const text = (await block.textContent()) || "";
+      expect
+        .soft(
+          /흑|갈|회|청|녹|황|백|적/.test(text) || /SQ/i.test(text),
+          `${eq} 블록이 KCMIL 폴백으로 떨어짐: ${text.slice(0, 80)}`,
+        )
+        .toBe(true);
+    }
+  });
+
   test("시각 겹침 없음 — 같은 row 같은 시간 블록은 Y축 분리", async ({
     page,
   }) => {

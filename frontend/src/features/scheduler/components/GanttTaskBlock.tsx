@@ -93,7 +93,7 @@ function splitByWeekends(
   return segments.length > 0 ? segments : [{ start: startTs, end: endTs }];
 }
 
-/** 시스 공정(SH-A100/SH-A120) 설비의 sheath_color → 블록 배경색 매핑 */
+/** 시스 공정(SH-*) 설비의 sheath_color → 블록 배경색 매핑 */
 const SHEATH_COLOR_MAP: Record<string, string> = {
   흑: "#374151",
   갈: "#92400E",
@@ -104,11 +104,18 @@ const SHEATH_COLOR_MAP: Record<string, string> = {
   "흑/적": "#991B1B",
 };
 
-const SHEATH_EQUIPMENT_IDS = new Set(["SH-A100", "SH-A120"]);
+/**
+ * 시스 설비 판별: equipment_id 가 "SH-" 로 시작하면 시스 공정으로 간주.
+ * 기존에는 명시 set(SH-A100/SH-A120)을 사용했으나 SH-A150(고압시스), SH-B100 등
+ * 신규 설비가 추가될 때마다 라벨/색상이 회귀하는 버그가 있어 prefix 검사로 전환.
+ */
+function isSheathEquipment(equipmentId: string | undefined | null): boolean {
+  return typeof equipmentId === "string" && equipmentId.startsWith("SH-");
+}
 
 /** 시스 설비일 때 task.color 기반 배경색 반환, 아니면 null */
 function getSheathColor(equipmentId: string, color: string): string | null {
-  if (!SHEATH_EQUIPMENT_IDS.has(equipmentId)) return null;
+  if (!isSheathEquipment(equipmentId)) return null;
   if (!color) return null;
   // 정확한 키 매칭 우선
   if (SHEATH_COLOR_MAP[color]) return SHEATH_COLOR_MAP[color];
@@ -317,14 +324,18 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   })();
 
   // 블록 상단 규격 라벨:
-  //   시스 설비(SH-A100/A120): 색상(흑/갈/회…)
+  //   시스 설비(SH-*): 색상(흑/갈/회…) · SQ 목록 [D 방식]
   //   고압 제품(spec에 KCMIL 포함): "500KCMIL" / "1C × 500KCMIL"
   //   CORE/AL-CORE 배치(T6BO 중심선): spec에서 원본 SQ 추출 (sq_mm2=35 무시)
   //   1코어: "50SQ"
   //   다심(2코어 이상): "4C × 50SQ"
   //   SQ 정보 없으면: spec → product 순 폴백
+  //
+  // 시스 판별은 prefix("SH-") 로 통일한다. 과거에 고정 set 을 쓰던 시절
+  // SH-A150/SH-B100 이 set 에 빠져 D 라벨을 잃고 KCMIL 폴백으로 떨어지는
+  // 회귀가 발생했기 때문이다.
   const specLabel = (() => {
-    if (SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color) {
+    if (isSheathEquipment(task.equipment_id) && task.color) {
       // D 방식: 색상 · 규격 목록 (1-3개 전부, 4개 이상 축약)
       const specList = (task.spec_list ?? []).filter(Boolean);
       if (specList.length > 0) {
@@ -430,7 +441,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         left,
         top: laneTop,
         width: Math.max(width, 30),
-        height: ROW_HEIGHT - 8,
+        // laneHeight prop 이 주어지면 그에 맞춘다. SchedulerView 에서 LANE_HEIGHT
+        // 상수를 통해 전달하므로 laneHeight/ROW_HEIGHT 가 달라져도 블록 높이가
+        // 깨지지 않는다.
+        height: laneH - 8,
         zIndex: isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
         cursor:
@@ -613,7 +627,20 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                       고
                     </span>
                   )}
-                  <span className="truncate">{specLabel}</span>
+                  {/* 좁은 블록에서 "흑 · 50·60·100 SQ +2종" 같은 긴 D 라벨이
+                      잘릴 때 네이티브 tooltip 으로 전체 텍스트를 노출한다. */}
+                  <span
+                    className="truncate"
+                    title={specLabel}
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "100%",
+                    }}
+                  >
+                    {specLabel}
+                  </span>
                 </span>
                 {segW >= 40 && (
                   <span
