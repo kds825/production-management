@@ -1297,6 +1297,22 @@ def _schedule_multi_equipment(
         )
         end_dt = calculate_end_datetime(slot_start, eq_total_duration, db, eq_code)
 
+        # ── 파이프라인 유휴 최소 역산 — 서브태스크별 독립 적용 ────────────────
+        # duration(= eq_total_duration)은 드럼 수 비례이므로 서브태스크마다 다름.
+        # 각 서브태스크가 선행공정 종료 이상에서 끝나도록 개별 정렬.
+        slot_start, end_dt = align_start_to_predecessor_end(
+            process_name=rep.process_name,
+            pred_proc=pred_proc,
+            group_sqs={int(b.sq_mm2 or 0) for b in group_batches},
+            process_end_by_sq=process_end_by_sq,
+            current_start=slot_start,
+            current_end=end_dt,
+            duration_min=eq_total_duration,
+            slots=slots,
+            db=db,
+            equipment_code=eq_code,
+        )
+
         # 시간 올림 — 간트 블록은 정각 단위
         if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
             end_dt = end_dt.replace(minute=0, second=0, microsecond=0) + timedelta(

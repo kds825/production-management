@@ -211,3 +211,164 @@ def test_sheath_also_checks_assembly_end(monkeypatch):
     )
 
     assert aligned_end == datetime(2026, 4, 14, 8, 0)
+
+
+# ---- 통합 테스트 (실제 스케줄러 + DB) ----
+
+
+def test_high_voltage_sheath_ends_after_high_voltage_insulation(db):
+    """고압시스 최종 종료가 고압절연 최종 종료 이상 (멀티설비 분배 경로).
+
+    재현: 2026-04-18 자동배열에서 고압시스(A150+B100)가 고압절연(CV#1+CV#2)
+    보다 하루 먼저 끝나던 버그. _schedule_multi_equipment 에 end-alignment
+    역산이 없어서 발생.
+    """
+    from datetime import date
+
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+    from app.services.schedule_optimizer import auto_schedule
+
+    run_label = "test-hv-align"
+
+    # 고압절연 2드럼 (CV#1+CV#2 분배 발동 조건: drums≥2, eligible≥2)
+    # 고압시스 2드럼 (A150+B100 분배 발동)
+    for i in range(2):
+        db.add(
+            ProductionBatch(
+                run_label=run_label,
+                batch_seq=i,
+                process_name="고압절연",
+                sq_mm2=300,
+                drum_count=1,
+                drum_length_m=8000,  # 길이 크게 → 절연 duration 길어짐
+                total_length_m=8000,
+                conductor_material="CU",
+                voltage="22.9kV",
+                sales_order_id=f"SO-HV-{i + 1}",
+                sales_order_line=1,
+                batch_group="",
+                status="planned",
+            )
+        )
+        db.add(
+            ProductionBatch(
+                run_label=run_label,
+                batch_seq=i,
+                process_name="고압시스",
+                sheath_color="흑",
+                sq_mm2=300,
+                due_date=date(2026, 4, 30),
+                drum_count=1,
+                drum_length_m=2000,  # 길이 작게 → 시스 duration 짧음 (버그 조건)
+                total_length_m=2000,
+                conductor_material="CU",
+                voltage="22.9kV",
+                sales_order_id=f"SO-HV-{i + 1}",
+                sales_order_line=1,
+                batch_group="",
+                status="planned",
+            )
+        )
+    db.flush()
+
+    auto_schedule(run_label=run_label, db=db)
+
+    insul_tasks = (
+        db.query(ScheduleTask)
+        .join(ProductionBatch, ScheduleTask.batch_id == ProductionBatch.batch_id)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ProductionBatch.process_name == "고압절연",
+        )
+        .all()
+    )
+    sheath_tasks = (
+        db.query(ScheduleTask)
+        .join(ProductionBatch, ScheduleTask.batch_id == ProductionBatch.batch_id)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ProductionBatch.process_name == "고압시스",
+        )
+        .all()
+    )
+    assert insul_tasks, "고압절연 task 생성 실패 (시드 부족?)"
+    assert sheath_tasks, "고압시스 task 생성 실패 (시드 부족?)"
+
+    insul_last_end = max(t.end_datetime for t in insul_tasks)
+    sheath_last_end = max(t.end_datetime for t in sheath_tasks)
+
+    # 불변식: 고압시스 최종 종료 >= 고압절연 최종 종료
+    assert sheath_last_end >= insul_last_end, (
+        f"고압시스 최종 종료 {sheath_last_end} < 고압절연 최종 종료 {insul_last_end} "
+        f"— end-alignment 실패 (버그 회귀)"
+    )
+
+
+def test_high_voltage_sheath_block_width_preserved(db):
+    """멀티설비 경로 end-alignment 후에도 블록 폭(end-start)이 커지지 않음."""
+    from datetime import date
+
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+    from app.services.schedule_optimizer import auto_schedule
+
+    run_label = "test-hv-width"
+    for i in range(2):
+        db.add(
+            ProductionBatch(
+                run_label=run_label,
+                batch_seq=i,
+                process_name="고압절연",
+                sq_mm2=300,
+                drum_count=1,
+                drum_length_m=8000,
+                total_length_m=8000,
+                conductor_material="CU",
+                voltage="22.9kV",
+                sales_order_id=f"SO-W-{i + 1}",
+                sales_order_line=1,
+                batch_group="",
+                status="planned",
+            )
+        )
+        db.add(
+            ProductionBatch(
+                run_label=run_label,
+                batch_seq=i,
+                process_name="고압시스",
+                sheath_color="흑",
+                sq_mm2=300,
+                due_date=date(2026, 4, 30),
+                drum_count=1,
+                drum_length_m=2000,
+                total_length_m=2000,
+                conductor_material="CU",
+                voltage="22.9kV",
+                sales_order_id=f"SO-W-{i + 1}",
+                sales_order_line=1,
+                batch_group="",
+                status="planned",
+            )
+        )
+    db.flush()
+
+    auto_schedule(run_label=run_label, db=db)
+
+    sheath_tasks = (
+        db.query(ScheduleTask)
+        .join(ProductionBatch, ScheduleTask.batch_id == ProductionBatch.batch_id)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ProductionBatch.process_name == "고압시스",
+        )
+        .all()
+    )
+    assert sheath_tasks
+
+    for t in sheath_tasks:
+        width_min = (t.end_datetime - t.start_datetime).total_seconds() / 60
+        # 블록 폭이 24h(= 1일) 이내 — 2000m는 시스 선속상 수 시간 내 작업. 극단적 확장 방지.
+        assert width_min <= 24 * 60, (
+            f"고압시스 블록 폭 {width_min}분 (> 24h). 확장 버그 회귀 의심."
+        )
