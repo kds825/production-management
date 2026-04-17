@@ -99,11 +99,14 @@ def _db_task_to_response(
     group_order_count: int = 1,
     color_change_min: int = 0,
     lot_count: int | None = None,
+    spec_list: list[str] | None = None,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
     group_volume_m: batch_group 전체 합산 길이 (None이면 단일 배치 길이 사용)
     group_order_count: 그룹 내 개별 행 수
+    spec_list: 시스(SH-*) 블록에서 같은 batch_group 에 묶인 SQ 목록
+               (예: ['50SQ','100SQ']). 비시스 task 는 None.
     """
     # customer_priority(int) → TaskPriority
     cp = batch.customer_priority or 99
@@ -170,6 +173,7 @@ def _db_task_to_response(
         created_at=task.created_at,
         sq_mm2=sq_mm2 if sq_mm2 else None,
         lot_count=lot_count,
+        spec_list=spec_list,
     )
 
 
@@ -290,6 +294,45 @@ def list_tasks(
                 )
         prev_colors[eq] = curr_color
 
+    # spec_list 계산 — 시스 batch_group 에 묶인 SQ 규격 목록 (오름차순, 중복 제거)
+    # 왜 bulk 1-query: task 별 N+1 쿼리 방지. 시스 batch_group 만 대상이므로
+    # 응답에 포함된 시스 태스크의 batch_group 집합만 스캔한다.
+    sheath_groups: set[str] = {
+        t.batch_group
+        for t, _ in db_tasks
+        if t.batch_group and (t.equipment_code or "").startswith("SH-")
+    }
+    group_spec_list: dict[str, list[str]] = {}
+    if sheath_groups:
+        sq_rows = (
+            db.query(
+                ProductionBatchModel.batch_group,
+                ProductionBatchModel.sq_mm2,
+            )
+            .filter(
+                ProductionBatchModel.batch_group.in_(sheath_groups),
+                ProductionBatchModel.sq_mm2.isnot(None),
+                # batch_seq >= 0: 헤더(-1) 제외 — 헤더는 대표 SQ 만 갖고 있어
+                # 실제 묶인 수주 규격 목록을 왜곡한다.
+                ProductionBatchModel.batch_seq >= 0,
+            )
+            .all()
+        )
+        tmp: dict[str, set[int]] = {}
+        for bg, sq in sq_rows:
+            if sq is None:
+                continue
+            tmp.setdefault(bg, set()).add(int(sq))
+        group_spec_list = {
+            bg: [f"{sq}SQ" for sq in sorted(sqs)] for bg, sqs in tmp.items()
+        }
+
+    def _spec_list_for(task: ScheduleTaskModel) -> list[str] | None:
+        """시스 task 에만 spec_list 부여, 비시스는 None."""
+        if not (task.equipment_code or "").startswith("SH-"):
+            return None
+        return group_spec_list.get(task.batch_group) or []
+
     return [
         _db_task_to_response(
             task,
@@ -298,6 +341,7 @@ def list_tasks(
             group_order_count=group_counts.get(task.batch_group, 1),
             color_change_min=color_change_map.get(task.task_id, 0),
             lot_count=header_drum_counts.get(task.batch_group),
+            spec_list=_spec_list_for(task),
         )
         for task, batch in db_tasks
     ]

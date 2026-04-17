@@ -90,6 +90,9 @@ class ScheduleTaskResponse(BaseModel):
     created_at: Optional[datetime] = None  # schedule_task.created_at — 생성 시각
     sq_mm2: Optional[float] = None  # 도체 단면적 (mm²) — SQ별 색상 구분용
     lot_count: Optional[int] = None  # 헤더 배치 drum_count — 간트 틀 수 표시용
+    # 시스(SH-*) 배치 블록에서 같은 batch_group 에 묶인 수주들의 SQ 규격 목록.
+    # 예: ['50SQ', '100SQ']. 비시스 task 는 None — 프론트가 존재 여부로 분기.
+    spec_list: Optional[list[str]] = None
 
 
 class ScheduleTaskCreate(BaseModel):
