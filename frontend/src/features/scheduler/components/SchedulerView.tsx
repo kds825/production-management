@@ -20,8 +20,16 @@ import {
   isWeekend,
   generateDays,
 } from "../utils/ganttUtils";
+import { assignLanes, getLaneCount } from "../utils/laneAssign";
 
 const WEEKEND_COLLAPSED_WIDTH = 8;
+
+/**
+ * 한 lane(Y축 칸) 의 높이. ROW_HEIGHT 와 동일하게 두어
+ * 단일 lane(겹침 없음) 인 경우 기존 레이아웃과 동일하게 보이고,
+ * 겹치는 블록이 있으면 lane 개수만큼 row 가 세로로 늘어난다.
+ */
+const LANE_HEIGHT = ROW_HEIGHT;
 
 // ----- Droppable Row -----
 
@@ -113,6 +121,29 @@ const GanttRow = memo(function GanttRow({
       return tEnd >= rangeStart && tStart <= rangeEnd;
     });
   }, [tasks, equipment.id, rangeStart, rangeEnd]);
+
+  // --- Y축 lane 스태킹 (안전망) ---
+  // 동일 설비 행에서 시간 겹치는 블록은 lane 을 분리해 세로로 쌓는다.
+  // 백엔드(CP-SAT Task 7-9)가 겹침을 방지하지만, 엣지 케이스 대비 UI 최후 방어선.
+  const { laneMap, laneCount } = useMemo(() => {
+    if (rowTasks.length === 0) {
+      return { laneMap: {} as Record<string, number>, laneCount: 1 };
+    }
+    const inputs = rowTasks.map((t) => ({
+      id: t.id,
+      start:
+        t.start instanceof Date
+          ? t.start.getTime()
+          : new Date(t.start).getTime(),
+      end: t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime(),
+    }));
+    const out = assignLanes(inputs);
+    const lm: Record<string, number> = {};
+    for (const a of out) lm[String(a.id)] = a.lane;
+    return { laneMap: lm, laneCount: getLaneCount(out) };
+  }, [rowTasks]);
+
+  const rowPixelHeight = Math.max(ROW_HEIGHT, laneCount * LANE_HEIGHT);
 
   // 이 행에 대한 선택 상태만 추출
   const selection =
@@ -251,7 +282,7 @@ const GanttRow = memo(function GanttRow({
         display: "flex",
         width: "100%",
         borderBottom: "1px solid #E5E7EB",
-        minHeight: ROW_HEIGHT,
+        minHeight: rowPixelHeight,
       }}
     >
       {/* 사이드바: 설비 정보 — sticky */}
@@ -265,7 +296,7 @@ const GanttRow = memo(function GanttRow({
           zIndex: 3,
           backgroundColor: "#FFFFFF",
           borderRight: "1px solid #E5E7EB",
-          height: ROW_HEIGHT,
+          height: rowPixelHeight,
         }}
       >
         <EquipmentSidebar equipment={equipment} />
@@ -284,7 +315,7 @@ const GanttRow = memo(function GanttRow({
           flex: 1,
           // overflow:hidden으로 내부 요소가 타임라인 밖으로 나가지 않도록
           overflow: "hidden",
-          height: ROW_HEIGHT,
+          height: rowPixelHeight,
           backgroundColor: isIncompatible
             ? "rgba(107, 114, 128, 0.12)"
             : isOver
@@ -340,6 +371,8 @@ const GanttRow = memo(function GanttRow({
             rangeStart={rangeStart}
             dayWidth={dayWidth}
             weekendWidth={weekendWidth}
+            lane={laneMap[String(task.id)] ?? 0}
+            laneHeight={LANE_HEIGHT}
           />
         ))}
       </div>
@@ -917,8 +950,40 @@ export function SchedulerView({
   );
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
-  // 전체 높이 (설비 수 * 행 높이)
-  const totalHeight = visibleEquipment.length * ROW_HEIGHT;
+  // 전체 높이 — 각 설비 행의 실제 lane 수를 반영해야 주말/그리드/오늘 마커가
+  // 늘어난 row 전체를 덮을 수 있다. 기본은 ROW_HEIGHT, 겹침 있는 행은 laneCount*LANE_HEIGHT.
+  const totalHeight = useMemo(() => {
+    let sum = 0;
+    for (const eq of visibleEquipment) {
+      const eqTasks = tasks.filter((t) => {
+        if (t.equipment_id !== eq.id) return false;
+        const tStart =
+          t.start instanceof Date
+            ? t.start.getTime()
+            : new Date(t.start).getTime();
+        const tEnd =
+          t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
+        return tEnd >= rangeStart && tStart <= rangeEnd;
+      });
+      if (eqTasks.length === 0) {
+        sum += ROW_HEIGHT;
+        continue;
+      }
+      const out = assignLanes(
+        eqTasks.map((t) => ({
+          id: t.id,
+          start:
+            t.start instanceof Date
+              ? t.start.getTime()
+              : new Date(t.start).getTime(),
+          end:
+            t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime(),
+        })),
+      );
+      sum += Math.max(ROW_HEIGHT, getLaneCount(out) * LANE_HEIGHT);
+    }
+    return sum;
+  }, [visibleEquipment, tasks, rangeStart, rangeEnd]);
 
   // 패닝 훅 — overflow-auto 컨테이너에 연결
   const scrollContainerRef = useTimelineNavigation(dayWidth);

@@ -101,4 +101,49 @@ test.describe("기존 구현 기능 검증", () => {
       g!.x + g!.width <= n!.x + 0.5 || n!.x + n!.width <= g!.x + 0.5;
     expect(nonOverlap).toBe(true);
   });
+
+  test("시각 겹침 없음 — 같은 row 같은 시간 블록은 Y축 분리", async ({
+    page,
+  }) => {
+    // beforeEach 가 이미 /scheduler 로 이동 + 블록 대기함
+    const blocks = await page.locator('[data-testid^="gantt-block-"]').all();
+    if (blocks.length < 2) {
+      test.skip(true, "간트 블록 2개 미만 — 시각 겹침 검증 불가");
+      return;
+    }
+    const boxes = await Promise.all(blocks.map((b) => b.boundingBox()));
+    const validBoxes = boxes.filter((b) => b !== null) as Array<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+
+    // Note: GanttTaskBlock 이 가독성 위해 width 를 최소 30px 로 inflate 하므로,
+    // 짧은 배치 2개가 시간상 인접하면 시각적으로 오버랩 보일 수 있다(가짜 양성).
+    // 실제 시간 겹침 여부는 lane 알고리즘이 다루므로, 테스트는 "lane 0 블록끼리
+    // 완전히 같은 시각 구간(≥50% 오버랩) 에 찍히는지" 만 확인한다.
+    const MIN_BLOCK_W_INFLATION = 30;
+    for (let i = 0; i < validBoxes.length; i++) {
+      for (let j = i + 1; j < validBoxes.length; j++) {
+        const a = validBoxes[i];
+        const b = validBoxes[j];
+        const sameBand = Math.abs(a.y - b.y) < 2;
+        if (!sameBand) continue;
+        const overlapW =
+          Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        if (overlapW <= 0) continue;
+        // min-width inflation 보정: 두 블록 중 좁은 쪽 폭이 최소 폭이라면
+        // 실제 시간 오버랩이 아닐 가능성이 커서 무시
+        const minW = Math.min(a.width, b.width);
+        if (minW <= MIN_BLOCK_W_INFLATION + 1) continue;
+        // 의미 있는 오버랩(≥50% of the smaller block) 이면 lane 분리 실패
+        if (overlapW > minW * 0.5) {
+          throw new Error(
+            `시각 겹침: block ${i} at (${a.x},${a.y},w${a.width}) vs block ${j} at (${b.x},${b.y},w${b.width}) overlap=${overlapW}`,
+          );
+        }
+      }
+    }
+  });
 });

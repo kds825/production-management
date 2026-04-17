@@ -27,6 +27,10 @@ interface GanttTaskBlockProps {
   rangeStart: number;
   dayWidth: number;
   weekendWidth?: number;
+  /** Y축 lane 번호 (0부터). 동일 설비에서 시간 겹치는 블록 시 1 이상으로 분리된다. */
+  lane?: number;
+  /** 한 lane 의 세로 높이(px). 기본 ROW_HEIGHT. */
+  laneHeight?: number;
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -124,8 +128,15 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   rangeStart,
   dayWidth,
   weekendWidth,
+  lane,
+  laneHeight,
 }: GanttTaskBlockProps) {
   const ww = weekendWidth ?? dayWidth;
+  // lane 스태킹: 동일 행에서 시간 겹치는 블록은 lane 별로 Y축 분리 배치.
+  // 기본값(lane=0) 인 경우 top=4 로 기존 단일 lane 렌더링과 동일.
+  const laneIdx = lane ?? 0;
+  const laneH = laneHeight ?? ROW_HEIGHT;
+  const laneTop = laneIdx * laneH + 4;
   // 색상 우선순위:
   //   1. 시스 공정(SH-A100/SH-A120): sheath_color 기반 고정색
   //   2. sq_mm2 있으면 SQ별 색상 (공정 흐름 추적용)
@@ -417,7 +428,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
       style={{
         position: "absolute",
         left,
-        top: 4,
+        top: laneTop,
         width: Math.max(width, 30),
         height: ROW_HEIGHT - 8,
         zIndex: isDragging ? 20 : isSelected ? 10 : 2,
