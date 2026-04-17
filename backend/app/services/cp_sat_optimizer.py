@@ -50,6 +50,7 @@ from app.services.schedule_optimizer import (
     _narrow_by_stranding,
     _schedule_multi_equipment,
     _st_sq,
+    align_start_to_predecessor_end,
 )
 
 # 하루 근무 시간(분): 08:00~22:00
@@ -1024,36 +1025,21 @@ def cp_sat_schedule(
         )
         end_dt = calculate_end_datetime(best_start, total_dur, db, chosen_eq_code)
 
-        # ── 파이프라인 겹침 보정: 후공정이 선행공정 종료 전에 끝나지 않도록 ───
-        # 절연은 연선 첫 드럼 출력 후 시작하지만 선속이 빠르면 연선보다 먼저 끝나는 현상 방지.
-        # 최소 end_dt = 선행공정 마지막 틀 완료 시각 + 후공정 1틀 소요시간.
-        _pipeline_procs: list[str] = []
-        if pred_proc:
-            _pipeline_procs.append(pred_proc)
-        if rep.process_name in ("저압시스", "고압시스"):
-            _pipeline_procs.append("연합")
-        if _pipeline_procs:
-            _all_sqs_p = {int(b.sq_mm2 or 0) for b in gb}
-            # 현재 그룹 틀 수를 직접 계산 (lot_count는 아직 미설정)
-            header_batch_p = next((b for b in gb if b.batch_seq == -1), None)
-            if header_batch_p is not None:
-                _p_lot_count = max(int(header_batch_p.drum_count or 1), 1)
-            else:
-                _p_lot_count = max(sum(int(b.drum_count or 1) for b in gb), 1)
-            _per_drum_p = meta["work_dur"] / _p_lot_count
-            for _pp in _pipeline_procs:
-                for _sq_i in _all_sqs_p:
-                    _pred_last = process_end_by_sq.get((_pp, _sq_i))
-                    if (
-                        _pred_last
-                        and _pred_last < datetime.max
-                        and _pred_last > best_start
-                    ):
-                        _min_end = calculate_end_datetime(
-                            _pred_last, _per_drum_p, db, chosen_eq_code
-                        )
-                        if _min_end > end_dt:
-                            end_dt = _min_end
+        # ── 파이프라인 유휴 최소 역산 — start 지연 방식 ──────────────────────
+        # 기존 "end_dt 확장" 방식은 블록 폭이 늘어나 소요시간 고정 요건을 위반.
+        # helper 는 reverse_start = pred_end - duration 으로 start 만 지연.
+        best_start, end_dt = align_start_to_predecessor_end(
+            process_name=rep.process_name,
+            pred_proc=pred_proc,
+            group_sqs={int(b.sq_mm2 or 0) for b in gb},
+            process_end_by_sq=process_end_by_sq,
+            current_start=best_start,
+            current_end=end_dt,
+            duration_min=total_dur,
+            slots=slots,
+            db=db,
+            equipment_code=chosen_eq_code,
+        )
 
         # 정각 올림
         if end_dt.minute > 0 or end_dt.second > 0:

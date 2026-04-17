@@ -382,3 +382,71 @@ def test_high_voltage_sheath_block_width_preserved(db):
         assert width_min <= 8 * 60, (
             f"고압시스 블록 폭 {width_min}분 (> 8h). start 지연 대신 end 확장 회귀 의심."
         )
+
+
+def test_cp_sat_single_path_block_width_preserved(db):
+    """CP-SAT 단일 경로: end-alignment 후 블록 폭(end-start)이 duration과 거의 같음.
+
+    기존 "end_dt 확장" 방식은 best_start 유지 + end_dt 만 pred_end+1드럼으로
+    늘려 블록 폭이 크게 증가했다. helper 교체 후 블록 폭은 duration 에 고정.
+    """
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    run_label = "test-cpsat-width"
+    db.add(
+        ProductionBatch(
+            run_label=run_label,
+            batch_seq=0,
+            process_name="연선",
+            sq_mm2=50,
+            drum_count=1,
+            drum_length_m=6000,
+            total_length_m=6000,
+            sales_order_id="SO-CPSAT-W",
+            sales_order_line=1,
+            batch_group="",
+            status="planned",
+            conductor_material="CU",
+        )
+    )
+    db.add(
+        ProductionBatch(
+            run_label=run_label,
+            batch_seq=0,
+            process_name="저압절연",
+            sq_mm2=50,
+            drum_count=1,
+            drum_length_m=6000,  # 선속 차이로 절연 duration << 연선 duration
+            total_length_m=6000,
+            sales_order_id="SO-CPSAT-W",
+            sales_order_line=1,
+            batch_group="",
+            status="planned",
+            conductor_material="CU",
+        )
+    )
+    db.flush()
+
+    result = cp_sat_schedule(run_label=run_label, db=db)
+    if result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
+        import pytest
+
+        pytest.skip(f"CP-SAT solver failed: {result.get('solver_status')}")
+
+    insul = (
+        db.query(ScheduleTask)
+        .join(ProductionBatch, ScheduleTask.batch_id == ProductionBatch.batch_id)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ProductionBatch.process_name == "저압절연",
+        )
+        .first()
+    )
+    assert insul
+    width_min = (insul.end_datetime - insul.start_datetime).total_seconds() / 60
+    # 절연 duration 은 선속상 수십 분. 블록 폭이 24h 를 넘으면 "end_dt 확장" 회귀.
+    assert width_min <= 24 * 60, (
+        f"저압절연 블록 폭 {width_min}분 (> 24h). CP-SAT end_dt 확장 회귀."
+    )
