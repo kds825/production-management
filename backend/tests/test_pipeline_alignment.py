@@ -377,7 +377,8 @@ def test_high_voltage_sheath_block_width_preserved(db):
 
     for t in sheath_tasks:
         width_min = (t.end_datetime - t.start_datetime).total_seconds() / 60
-        # 블록 폭이 24h(= 1일) 이내 — 1500m는 시스 선속상 수 시간 내 작업. 극단적 확장 방지.
-        assert width_min <= 24 * 60, (
-            f"고압시스 블록 폭 {width_min}분 (> 24h). 확장 버그 회귀 의심."
+        # 블록 폭 상한 8h — 1500m × 드럼 1개 서브태스크는 시스 선속상 수 시간 내 종료.
+        # 24h 상한은 너무 느슨해 "몇 시간씩 확장" 버그를 못 잡으므로 실제 기대 폭 근처로.
+        assert width_min <= 8 * 60, (
+            f"고압시스 블록 폭 {width_min}분 (> 8h). start 지연 대신 end 확장 회귀 의심."
         )
