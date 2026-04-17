@@ -223,6 +223,10 @@ _TP_DATA = [
     (400, 10),
 ]
 _add_range("TP-1", "T/P", 180, _TP_DATA)
+# TP-2: 운영 DB 에 EX-B100 값(16→55 등) 이 잘못 복제되어 있음. 스케줄러가
+# 현재 TP-2 에 배정은 안 하지만, 미래 routing 변경 시 silent bug 발생 가능하므로
+# seed_db.py 와 일관되게 정상 tp_data 로 UPDATE (12 rows 수정).
+_add_range("TP-2", "T/P", 180, _TP_DATA)
 _add_range("TP-GD", "T/P", 180, _TP_DATA)
 
 # 고압시스 SH-B100 (setup_spec_min=30)
@@ -242,6 +246,11 @@ _add_range(
 def main(dry_run: bool = False) -> int:
     s = SessionLocal()
     try:
+        # LANDMINE: 키 튜플은 (equipment_code, cross_section) 뿐. SH-A100 같은 설비는
+        # 같은 (eq, sq) 에 product_type 다른 다수 행이 존재 → 이 스크립트는 그 중 1건만
+        # index 에 남김. 현재 DESIRED_ROWS 에는 multi-product-type 설비(SH-A100/A120) 가
+        # 포함되어 있지 않아 live 이슈 없음. 추가 시에는 product_type 을 키에 포함하거나
+        # 다른 UPSERT 전략 필요.
         existing_map: dict[tuple[str, float], SpeedMaster] = {}
         for sm in s.query(SpeedMaster).all():
             sq = float(sm.cross_section or 0)
@@ -280,9 +289,21 @@ def main(dry_run: bool = False) -> int:
                         )
                     )
 
+        # Orphan 제거: equipment_master 의 range 밖 SpeedMaster 행 중 DESIRED 에
+        # 없는 것은 수동 입력 잔재. ST-T6B0 SQ=16 (range 25-50SQ 밖) 이 대표.
+        ORPHAN_KEYS: list[tuple[str, float]] = [("ST-T6B0", 16.0)]
+        deletes: list[tuple[str, float]] = []
+        for key in ORPHAN_KEYS:
+            row = existing_map.get(key)
+            if row is not None:
+                deletes.append(key)
+                if not dry_run:
+                    s.delete(row)
+
         print(f"DESIRED_ROWS total = {len(DESIRED_ROWS)}")
         print(f"INSERT planned     = {len(inserts)}")
         print(f"UPDATE planned     = {len(updates)}")
+        print(f"DELETE planned     = {len(deletes)} (orphans)")
         if updates:
             print("UPDATE preview:")
             for eq, sq, old, new in updates[:20]:
