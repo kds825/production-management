@@ -28,7 +28,10 @@ from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.domain.constants import PROCESS_ORDER
-from app.services.calendar_engine import calculate_end_datetime
+from app.services.calendar_engine import (
+    calculate_end_datetime,
+    calculate_start_datetime,
+)
 from app.services.audit_logger import log_decision
 
 # WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
@@ -38,7 +41,16 @@ _WIP_SKIP_PROCESSES: dict[str, set[str]] = {
     "연선재고": {"신선", "연선"},
     "절연재고": {"신선", "연선", "저압절연", "고압절연"},
     "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
-    "완제품":   {"신선", "연선", "저압절연", "고압절연", "연합", "T/P", "저압시스", "고압시스"},
+    "완제품": {
+        "신선",
+        "연선",
+        "저압절연",
+        "고압절연",
+        "연합",
+        "T/P",
+        "저압시스",
+        "고압시스",
+    },
 }
 
 # 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용
@@ -308,14 +320,13 @@ def auto_schedule(
     ordered_group_items = sorted(
         batch_groups.items(),
         key=lambda kv: (
-            0 if _is_core_group(kv[0])
-            else (1 if kv[0].startswith("ST-") else 2),
+            0 if _is_core_group(kv[0]) else (1 if kv[0].startswith("ST-") else 2),
             # ST- 그룹: 소선경 클러스터 최초 납기(클러스터 우선순위)
             wire_d_earliest.get(sq_to_wire_d.get(_st_sq(kv[0]), 0.0), date.max)
-            if kv[0].startswith("ST-") else date.max,
+            if kv[0].startswith("ST-")
+            else date.max,
             # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
-            sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
-            if kv[0].startswith("ST-") else 0.0,
+            sq_to_wire_d.get(_st_sq(kv[0]), 0.0) if kv[0].startswith("ST-") else 0.0,
             # 공정 순서 — 절연(2)→시스(4) 등 파이프라인 강제 (EDD보다 우선)
             # ST- 그룹은 모두 연선(1)이므로 실질적 영향 없음
             PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
@@ -496,8 +507,9 @@ def auto_schedule(
             prev_batch = last_batch_on_equip.get(eq_code)
             if prev_batch is not None and rep.process_name == "연선":
                 compound_min = float(
-                    speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
-                    speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
+                    speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None)
+                    and speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min
+                    or 0
                 )
                 actual_setup = _get_stranding_setup_min(
                     float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
@@ -614,7 +626,9 @@ def auto_schedule(
                         if pred_task and pred_task.end_datetime > earliest:
                             earliest = pred_task.end_datetime
 
-            slot_start = _find_available_slot(earliest, eq_total_duration, slots, db, eq.equipment_code)
+            slot_start = _find_available_slot(
+                earliest, eq_total_duration, slots, db, eq.equipment_code
+            )
 
             if best_start is None or slot_start < best_start:
                 best_eq = eq
@@ -625,13 +639,14 @@ def auto_schedule(
             result["warnings"].append(f"배치그룹 {group_key}: 가용 슬롯 없음")
             continue
 
-        end_dt = calculate_end_datetime(best_start, best_total_duration, db, best_eq.equipment_code)
+        end_dt = calculate_end_datetime(
+            best_start, best_total_duration, db, best_eq.equipment_code
+        )
 
-        # ── 파이프라인 겹침 보정: 후공정이 선행공정 종료 전에 끝나지 않도록 ───
-        # 배경: 절연은 연선 첫 드럼 출력 후 시작하지만 선속이 2배 빠르면
-        #       연선이 아직 진행 중인데 절연이 끝나는 현상 발생.
-        # 수정: 선행공정 마지막 틀 완료 시각 + 후공정 1틀 소요시간 >= end_dt 보장.
-        # 대상 공정: PREDECESSOR_PROCESS 기준 + 시스는 연합도 추가 체크.
+        # ── 파이프라인 유휴 최소 역산 공식 ────────────────────────────────────
+        # T_succ_start = max(T_pred_first_drum, T_pred_end - D_succ)
+        # 불변식: T_succ_end >= T_pred_end (후공정 끝 ≥ 선행공정 끝)
+        # 효과: 절연 선속이 연선보다 빠르면 시작을 늦춰 끝을 정렬. 블록 width 불변.
         _pipeline_check_procs: list[str] = []
         if pred_proc:
             _pipeline_check_procs.append(pred_proc)
@@ -639,21 +654,37 @@ def auto_schedule(
             _pipeline_check_procs.append("연합")
 
         _all_sqs_g = {int(b.sq_mm2 or 0) for b in group_batches}
-        # 현재 그룹의 틀 수를 직접 계산 (lot_count는 아직 이 시점에서 미설정)
-        if header_batch is not None:
-            _curr_lot_count = max(int(header_batch.drum_count or 1), 1)
-        else:
-            _curr_lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
-        _per_drum_min = group_duration / _curr_lot_count
+
+        # 모든 관련 선행공정의 종료 시각 중 최대
+        pred_end_latest: datetime | None = None
         for _pp in _pipeline_check_procs:
             for _sq_i in _all_sqs_g:
-                _pred_last = process_end_by_sq.get((_pp, _sq_i))
-                if _pred_last and _pred_last < datetime.max and _pred_last > best_start:
-                    _min_end = calculate_end_datetime(
-                        _pred_last, _per_drum_min, db, best_eq.equipment_code
-                    )
-                    if _min_end > end_dt:
-                        end_dt = _min_end
+                _pe = process_end_by_sq.get((_pp, _sq_i))
+                if _pe and _pe < datetime.max:
+                    if pred_end_latest is None or _pe > pred_end_latest:
+                        pred_end_latest = _pe
+
+        if pred_end_latest is not None:
+            # 역산 시작 = pred_end - succ_duration (캘린더 보정)
+            reverse_start = calculate_start_datetime(
+                pred_end_latest, best_total_duration, db, best_eq.equipment_code
+            )
+            # 역산 시작이 현재 best_start 보다 늦으면 지연 (유휴 최소)
+            if reverse_start > best_start:
+                delayed_start = _find_available_slot(
+                    reverse_start,
+                    best_total_duration,
+                    slots,
+                    db,
+                    best_eq.equipment_code,
+                )
+                best_start = delayed_start
+                end_dt = calculate_end_datetime(
+                    best_start, best_total_duration, db, best_eq.equipment_code
+                )
+            # 불변식 보장 (캘린더 보정 오차 대비)
+            if end_dt < pred_end_latest:
+                end_dt = pred_end_latest
 
         # ── 시간 올림 — 간트 블록은 정각 단위로 표시 ────────────────────────
         if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
@@ -697,7 +728,9 @@ def auto_schedule(
             # CORE 그룹 포함, 절연/시스 등 헤더 없는 그룹 모두 drum_count 합산
             lot_count = max(sum(int(b.drum_count or 1) for b in group_batches), 1)
         first_drum_min = setup_min + (group_duration / lot_count)
-        first_output_dt = calculate_end_datetime(best_start, first_drum_min, db, best_eq.equipment_code)
+        first_output_dt = calculate_end_datetime(
+            best_start, first_drum_min, db, best_eq.equipment_code
+        )
         # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
         # (CORE 첫 드럼은 너무 이르므로 후행 공정 선행 제약으로 부적합)
         if not _is_core_group(group_key) and (
@@ -970,7 +1003,9 @@ def _schedule_multi_equipment(
     machine_est_starts = []
     for eq in eligible:
         slots = timeline.get(eq.equipment_code, [])
-        est_start = _find_available_slot(earliest, one_drum_dur, slots, db, eq.equipment_code)
+        est_start = _find_available_slot(
+            earliest, one_drum_dur, slots, db, eq.equipment_code
+        )
         machine_est_starts.append((est_start, eq))
     # 가장 빨리 시작 가능한 설비 순으로 정렬
     machine_est_starts.sort(key=lambda x: x[0])
@@ -1021,8 +1056,9 @@ def _schedule_multi_equipment(
         prev_batch = last_batch_on_equip.get(eq_code)
         if prev_batch is not None and rep.process_name == "연선" and sq_to_wire_d:
             compound_min = float(
-                speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None) and
-                speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min or 0
+                speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None)
+                and speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min
+                or 0
             )
             actual_setup = _get_stranding_setup_min(
                 float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
@@ -1045,7 +1081,9 @@ def _schedule_multi_equipment(
         eq_total_duration = eq_duration + actual_setup + drum_winding_min
 
         slots = timeline.get(eq_code, [])
-        slot_start = _find_available_slot(earliest, eq_total_duration, slots, db, eq_code)
+        slot_start = _find_available_slot(
+            earliest, eq_total_duration, slots, db, eq_code
+        )
         end_dt = calculate_end_datetime(slot_start, eq_total_duration, db, eq_code)
 
         # 시간 올림 — 간트 블록은 정각 단위
@@ -1075,7 +1113,9 @@ def _schedule_multi_equipment(
 
         # 첫 번째 드럼 출력 시각
         first_drum_min = actual_setup + (eq_duration / eq_drums)
-        first_output_dt = calculate_end_datetime(slot_start, first_drum_min, db, eq_code)
+        first_output_dt = calculate_end_datetime(
+            slot_start, first_drum_min, db, eq_code
+        )
         split_first_outputs.append(first_output_dt)
 
         tasks_created.append(task)
@@ -1112,19 +1152,23 @@ def _schedule_multi_equipment(
 
     # ── 납기 위반 체크: 서브배치별 독립 검사 ─────────────────────────────────
     # 각 설비 서브배치는 자신에게 배정된 수주의 가장 이른 납기를 기준으로 위반 여부 판정
-    for j, (task_j, end_j, due_j) in enumerate(zip(split_tasks, split_end_dts, split_sub_dues)):
+    for j, (task_j, end_j, due_j) in enumerate(
+        zip(split_tasks, split_end_dts, split_sub_dues)
+    ):
         if due_j and end_j.date() > due_j:
             late_days = (end_j.date() - due_j).days
-            result["violations"].append({
-                "batch_id": rep.batch_id,
-                "task_id": task_j.task_id,
-                "type": "delivery",
-                "severity": "warning",
-                "detail": (
-                    f"[분할배치 {j+1}/{len(split_tasks)}] 납기 {due_j} 초과 "
-                    f"→ 완료 {end_j.date()} (+{late_days}일)"
-                ),
-            })
+            result["violations"].append(
+                {
+                    "batch_id": rep.batch_id,
+                    "task_id": task_j.task_id,
+                    "type": "delivery",
+                    "severity": "warning",
+                    "detail": (
+                        f"[분할배치 {j + 1}/{len(split_tasks)}] 납기 {due_j} 초과 "
+                        f"→ 완료 {end_j.date()} (+{late_days}일)"
+                    ),
+                }
+            )
 
     return True
 
@@ -1253,7 +1297,9 @@ def _find_available_slot(
     for slot_start, slot_end in sorted_slots:
         # 캘린더 기반 종료 시각으로 슬롯 겹침 판단
         if db is not None:
-            candidate_end = calculate_end_datetime(candidate, duration_min, db, equipment_code)
+            candidate_end = calculate_end_datetime(
+                candidate, duration_min, db, equipment_code
+            )
         else:
             candidate_end = candidate + timedelta(minutes=duration_min)
         if candidate_end <= slot_start:
