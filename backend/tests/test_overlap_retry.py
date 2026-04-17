@@ -87,3 +87,59 @@ def test_overlap_retry_succeeds_on_second_attempt(db, monkeypatch):
     result = schedule_optimizer.auto_schedule(run_label="test-retry-success", db=db)
     assert result.get("overlap_alert") is False
     assert call_count["run"] == 2  # 1회 실패 + 1회 성공
+
+
+def test_retry_real_run_resets_batch_status_and_audit(db, monkeypatch):
+    """Real integration: 실제 _run_optimization_once 경로에서 재시도 시
+    배치 상태가 'planned' 로 복원되고 audit_log FK 참조가 정리되는지 검증.
+
+    BUG 1 (silent empty schedule) + BUG 2 (audit_log FK violation) 방지용.
+    기존 테스트는 _run_optimization_once 자체를 monkey-patch 해서
+    실제 경로를 커버하지 못했음.
+    """
+    from app.services import schedule_optimizer, constraint_checker
+    from app.infrastructure.models.schedule_task import ScheduleTask
+    from app.infrastructure.models.audit_log import AuditLog
+
+    run_label = "test-retry-real"
+    _seed_minimal(db, run_label=run_label)
+
+    # 첫 호출만 overlap 보고, 두번째부터는 실제 검증 경로
+    call_count = {"validate": 0}
+    real_validate = constraint_checker.validate_all
+
+    def _flaky_validate(rlabel, dbs):
+        call_count["validate"] += 1
+        if call_count["validate"] == 1:
+            return [{"constraint_id": "overlap", "detail": "mock", "task_id": -1}]
+        return real_validate(rlabel, dbs)
+
+    monkeypatch.setattr(constraint_checker, "validate_all", _flaky_validate)
+
+    # _run_optimization_once 는 monkey-patch 하지 않음 — 실제 경로 실행
+    result = schedule_optimizer.auto_schedule(run_label=run_label, db=db)
+
+    # 재시도 성공 → overlap_alert=False
+    assert result.get("overlap_alert") is False, (
+        f"Retry should succeed on real path: {result}"
+    )
+
+    # 재시도 2회차가 실제로 태스크를 생성했는지 — 빈 스케줄이면 BUG 1 재발
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+    assert len(tasks) >= 1, (
+        "Retry produced empty schedule (silent failure) — BUG 1 still present."
+    )
+
+    # FK 무결성: 삭제된 task_id 를 참조하는 orphan audit row 가 없어야 함
+    audit_task_ids = {
+        a.task_id
+        for a in db.query(AuditLog)
+        .filter(AuditLog.run_label == run_label, AuditLog.task_id.isnot(None))
+        .all()
+        if a.task_id
+    }
+    current_task_ids = {t.task_id for t in tasks}
+    orphans = audit_task_ids - current_task_ids
+    assert not orphans, (
+        f"Orphan audit_log rows reference deleted tasks (BUG 2): {orphans}"
+    )

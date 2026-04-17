@@ -236,9 +236,15 @@ def auto_schedule(run_label: str, db: Session, **kwargs) -> dict:
 
 
 def _purge_run_tasks(db: Session, run_label: str) -> None:
-    """재시도 전 해당 run 의 기존 ScheduleTask 삭제 + 배치 상태 리셋.
+    """재시도 전 해당 run 의 감사로그 + ScheduleTask 삭제 + 배치 상태 리셋.
 
-    왜 상태 리셋이 필요한가:
+    왜 AuditLog 를 먼저 지우는가:
+      ``audit_log.task_id`` 는 ``schedule_task.task_id`` 에 FK 참조(ON DELETE
+      CASCADE 없음). 첫 시도에서 ``schedule_placed`` 액션으로 남긴 감사 로그가
+      ScheduleTask 를 참조하므로, ScheduleTask 먼저 삭제 시 Postgres 에서
+      FK violation 발생 → AuditLog 삭제를 가장 먼저 수행.
+
+    왜 배치 상태 리셋이 필요한가:
       ``_run_optimization_once`` 는 placement 시점에 ``ProductionBatch.status`` 를
       ``"scheduled"`` 로 변경하고, 다음 호출에서는 ``status == "planned"`` 인 배치만
       다시 로드한다. 상태 리셋을 하지 않으면 재시도 시 0건 배치만 발견되어
@@ -246,15 +252,29 @@ def _purge_run_tasks(db: Session, run_label: str) -> None:
       ``overlap_alert=False`` 로 조용히 성공 처리되는 심각한 integrity 버그 발생.
 
     동작:
-      1. 해당 run 의 ScheduleTask 삭제
-      2. ``status == "scheduled"`` 인 ProductionBatch 를 ``"planned"`` 로 복원하고
+      1. 해당 run 의 AuditLog 삭제 (FK 참조 제거)
+      2. 해당 run 의 ScheduleTask 삭제
+      3. ``status == "scheduled"`` 인 ProductionBatch 를 ``"planned"`` 로 복원하고
          ``equipment_code`` 도 해제 (재배정 허용)
     """
+    from app.infrastructure.models.audit_log import AuditLog
     from app.infrastructure.models.production_batch import ProductionBatch
 
+    # 0. 세션에 아직 flush 되지 않은 INSERT (schedule_placed audit, overlap_detected_retry 등)
+    #    를 먼저 DB 에 밀어넣는다. autoflush=False 세션이므로, 이 단계 없이 bulk DELETE 를
+    #    실행한 뒤 db.flush() 시점에 pending INSERT 가 뒤늦게 수행되면 "삭제된 task_id 를
+    #    참조하는 audit row 를 insert" 하려다 FK violation 이 발생한다.
+    db.flush()
+
+    # 1. AuditLog 먼저 — FK 무결성 (audit_log.task_id → schedule_task.task_id)
+    db.query(AuditLog).filter(AuditLog.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    # 2. ScheduleTask
     db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
         synchronize_session=False
     )
+    # 3. 배치 상태 리셋
     db.query(ProductionBatch).filter(
         ProductionBatch.run_label == run_label,
         ProductionBatch.status == "scheduled",
