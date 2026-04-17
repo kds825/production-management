@@ -1729,6 +1729,8 @@ export default function SchedulerPage() {
                           startTs,
                           endTs,
                           setupMin + colorChangeMin,
+                          (selectedTask as { equipment_id?: string })
+                            .equipment_id,
                         );
                         const totalHrs = (
                           (endTs - startTs) /
@@ -1768,22 +1770,26 @@ export default function SchedulerPage() {
                                   {tb.actualWork.toFixed(1)}h
                                 </span>
                               </span>
-                              {tb.weekendHrs > 0 && (
+                              {tb.gapHrs > 0 && (
                                 <span>
                                   <span className="text-gray-400">
-                                    주말 휴무
+                                    주말·야간 gap
                                   </span>{" "}
                                   <span className="text-gray-600">
-                                    {tb.weekendHrs}h
+                                    {tb.gapHrs}h
                                   </span>
                                 </span>
                               )}
-                              <span>
-                                <span className="text-gray-400">일일 부동</span>{" "}
-                                <span className="text-gray-600">
-                                  {tb.dailyIdleHrs}h
+                              {tb.breakHrs > 0 && (
+                                <span>
+                                  <span className="text-gray-400">
+                                    평일 break
+                                  </span>{" "}
+                                  <span className="text-gray-600">
+                                    {tb.breakHrs}h
+                                  </span>
                                 </span>
-                              </span>
+                              )}
                               {setupMin > 0 && (
                                 <span>
                                   <span className="text-gray-400">

@@ -393,6 +393,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     startTs,
     endTs,
     setupMin + colorChangeMin,
+    task.equipment_id,
   );
 
   const handleBlockClick = useCallback(
@@ -820,13 +821,14 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               <div style={{ fontWeight: 600, color: "#F9FAFB" }}>
                 유휴시간 상세 ({timeBreakdown.totalIdleHrs}h)
               </div>
-              {timeBreakdown.weekendHrs > 0 && (
-                <div>주말 휴무: {timeBreakdown.weekendHrs}h (토~월 08시)</div>
+              {timeBreakdown.gapHrs > 0 && (
+                <div>주말·야간 gap: {timeBreakdown.gapHrs}h</div>
               )}
-              <div>
-                일일 부동: {timeBreakdown.dailyIdleHrs}h (월~목 2h, 금 10h ×{" "}
-                {timeBreakdown.workingDays}일)
-              </div>
+              {timeBreakdown.breakHrs > 0 && (
+                <div>
+                  평일 break: {timeBreakdown.breakHrs}h (점심·저녁·간식)
+                </div>
+              )}
               {timeBreakdown.details.length > 0 && (
                 <div style={{ marginTop: 2 }}>
                   {timeBreakdown.details.slice(0, 4).join(", ")}
