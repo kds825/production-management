@@ -387,12 +387,17 @@ def cp_sat_schedule(
     db: Session,
     *,
     base_date: datetime | None = None,
+    random_seed: int = 0,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.
 
     CP-SAT → 전체 그룹의 처리 순서 결정
     캘린더 그리디 → 그 순서대로 실제 시작/종료 시각 계산 및 DB 저장
+
+    Args:
+        random_seed: CP-SAT 솔버의 random_seed. retry wrapper 가 시도 번호를
+            전달해 결정론적 동일 해가 반복되는 것을 방지한다 (기본 0).
 
     Returns:
         {"total_tasks", "violations", "warnings", "solver_status", "objective_value"}
@@ -551,6 +556,8 @@ def cp_sat_schedule(
             "due_wmin": due_wmin,
             "weight": _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)],
             "earliest_due": earliest_due,
+            # 인접 쌍 chain_terms 계산용 ordinal — None 안전
+            "due_date_ord": earliest_due.toordinal() if earliest_due else None,
             "sq": int(rep.sq_mm2 or 0),
         }
 
@@ -698,18 +705,32 @@ def cp_sat_schedule(
             _eq_cat = _rep.process_name
         sheath_groups_by_color.setdefault((_eq_cat, _color), []).append(_gk)
 
+    # chain_terms: 같은 (설비카테고리, 색상) 그룹 간 start_var 근접성 페널티.
+    # 과거 O(n²) 전체 쌍 구성 → H1/H2 반주차 분할 이후 그룹 수가 급증하면
+    # 모델 변수·제약이 폭증해 CP-SAT 이 타임아웃될 위험이 있음.
+    # 개선: due_date 정렬 후 '인접한 쌍' 만 묶고, 납기 14일 이상 벌어지면 스킵.
+    # → O(n) 으로 감소, 멀리 있는 그룹들 간 chain bonus 는 의미가 없으므로 품질 손실 없음.
     chain_terms: list = []
     for (_cat, _color), _gks in sheath_groups_by_color.items():
         if len(_gks) < 2:
             continue
-        for i in range(len(_gks) - 1):
-            for j in range(i + 1, len(_gks)):
-                _gk_a, _gk_b = _gks[i], _gks[j]
-                _diff = model.new_int_var(
-                    0, _MAX_HORIZON_MIN, f"chain_diff_{_gk_a}_{_gk_b}"
-                )
-                model.add_abs_equality(_diff, start_vars[_gk_a] - start_vars[_gk_b])
-                chain_terms.append(_diff)
+        # due_date_ord 기준 정렬 — None 은 뒤로 밀기 위해 큰 값(date.max ordinal)
+        _MAX_ORD = date.max.toordinal()
+        sorted_gks = sorted(
+            _gks, key=lambda gk: group_meta[gk].get("due_date_ord") or _MAX_ORD
+        )
+        for i in range(len(sorted_gks) - 1):
+            _gk_a, _gk_b = sorted_gks[i], sorted_gks[i + 1]
+            _due_a = group_meta[_gk_a].get("due_date_ord")
+            _due_b = group_meta[_gk_b].get("due_date_ord")
+            # 납기 14일 이상 벌어지면 chain 묶음 해체 (멀리 있는 쌍은 관계 없음)
+            if _due_a is not None and _due_b is not None and abs(_due_b - _due_a) > 14:
+                continue
+            _diff = model.new_int_var(
+                0, _MAX_HORIZON_MIN, f"chain_diff_{_gk_a}_{_gk_b}"
+            )
+            model.add_abs_equality(_diff, start_vars[_gk_a] - start_vars[_gk_b])
+            chain_terms.append(_diff)
 
     _CHAIN_WEIGHT = 1
     if chain_terms:
@@ -722,6 +743,8 @@ def cp_sat_schedule(
     solver.parameters.max_time_in_seconds = _SOLVER_TIME_LIMIT_SEC
     solver.parameters.num_search_workers = 4
     solver.parameters.log_search_progress = False
+    # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
+    solver.parameters.random_seed = int(random_seed)
 
     status = solver.solve(model)
     status_name = solver.status_name(status)

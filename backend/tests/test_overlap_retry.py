@@ -143,3 +143,49 @@ def test_retry_real_run_resets_batch_status_and_audit(db, monkeypatch):
     assert not orphans, (
         f"Orphan audit_log rows reference deleted tasks (BUG 2): {orphans}"
     )
+
+
+def test_cpsat_path_also_retries_on_overlap(db, monkeypatch):
+    """CP-SAT 경로(use_cpsat=True)도 overlap 감지 시 재시도.
+
+    Fix P0-4A: 기존에는 plan_pipeline 이 cp_sat_schedule 을 직접 호출하여
+    retry+validate 래퍼를 우회했음. auto_schedule(use_cpsat=True) 로 통합된
+    이후 CP-SAT 경로도 greedy 와 동일한 안전망(validate → overlap 감지 →
+    random_seed 변동 재시도)을 공유하는지 확인한다.
+    """
+    from app.services import schedule_optimizer, constraint_checker
+    from app.infrastructure.models.production_batch import ProductionBatch
+
+    db.add(
+        ProductionBatch(
+            run_label="test-cpsat-retry",
+            batch_seq=0,
+            process_name="저압절연",
+            sq_mm2=50,
+            drum_count=1,
+            drum_length_m=500,
+            total_length_m=500,
+            conductor_material="CU",
+            sales_order_id="SO-CP-RETRY",
+            sales_order_line=1,
+            batch_group="",
+            status="planned",
+        )
+    )
+    db.flush()
+
+    calls = {"validate": 0}
+    real_validate = constraint_checker.validate_all
+
+    def _flaky(rlabel, dbs):
+        calls["validate"] += 1
+        if calls["validate"] == 1:
+            return [{"constraint_id": "overlap", "detail": "mock", "task_id": -1}]
+        return real_validate(rlabel, dbs)
+
+    monkeypatch.setattr(constraint_checker, "validate_all", _flaky)
+    result = schedule_optimizer.auto_schedule(
+        run_label="test-cpsat-retry", db=db, use_cpsat=True
+    )
+    assert result.get("overlap_alert") is False
+    assert calls["validate"] >= 2  # 최소 1회 겹침 감지 + 1회 재검증

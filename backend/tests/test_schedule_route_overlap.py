@@ -53,12 +53,14 @@ def test_stage2_route_returns_overlap_alert_on_persist(monkeypatch, client):
 
 
 def test_stage2_route_overlap_alert_via_cpsat_fallback(monkeypatch, client):
-    """CP-SAT 미해결 → greedy 폴백 경로에서도 overlap_alert 이 반환된다."""
-    from app.presentation.routes import plan_pipeline
+    """CP-SAT 경로(optimizer=cpsat) 에서도 overlap_alert 이 반환된다.
 
-    def _cpsat_unsolved(run_label, db, **kwargs):
-        # solver_status 가 OPTIMAL/FEASIBLE 이 아닐 때 라우트가 greedy 폴백을 시도
-        return {"solver_status": "INFEASIBLE", "warnings": []}
+    Fix P0-4A 이후: plan_pipeline 은 cp_sat_schedule 을 직접 호출하지 않고
+    ``auto_schedule(use_cpsat=True)`` 로 통합됨. CP-SAT 미해결 → greedy 폴백은
+    auto_schedule 내부에서 처리되며, 어느 경로에서든 ``SchedulerOverlapError``
+    가 발생하면 라우트가 동일하게 200 + overlap_alert=True 로 응답해야 한다.
+    """
+    from app.presentation.routes import plan_pipeline
 
     def _raise_overlap(run_label, db, **kwargs):
         raise SchedulerOverlapError(
@@ -68,7 +70,7 @@ def test_stage2_route_overlap_alert_via_cpsat_fallback(monkeypatch, client):
             attempts=3,
         )
 
-    monkeypatch.setattr(plan_pipeline, "cp_sat_schedule", _cpsat_unsolved)
+    # 라우트가 import 한 단일 entry 를 패치 — use_cpsat 플래그 포함 kwargs 는 무시
     monkeypatch.setattr(plan_pipeline, "auto_schedule", _raise_overlap)
 
     resp = client.post(

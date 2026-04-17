@@ -163,20 +163,31 @@ def _extract_core_main_sq(group_key: str) -> int | None:
     return None
 
 
-def auto_schedule(run_label: str, db: Session, **kwargs) -> dict:
-    """겹침 재시도 2회 포함 스케줄 생성 래퍼.
+def auto_schedule(
+    run_label: str, db: Session, *, use_cpsat: bool = False, **kwargs
+) -> dict:
+    """겹침 재시도 2회 포함 스케줄 생성 래퍼 (greedy / CP-SAT 공용).
 
     동작:
-      1. ``_run_optimization_once`` 로 스케줄 생성
+      1. 전략 선택
+         - ``use_cpsat=False`` (기본): ``_run_optimization_once`` 만 실행 (greedy)
+         - ``use_cpsat=True``        : ``cp_sat_schedule`` 먼저 시도, infeasible
+           /타임아웃 시 같은 retry 사이클 안에서 greedy 폴백
       2. ``constraint_checker.validate_all`` 로 겹침 검증
-      3. 겹침 있으면 최대 2회 재시도 (기존 태스크 삭제 후 동일 목적함수 재실행)
+      3. 겹침 있으면 최대 2회 재시도
+         - CP-SAT 경로는 시도 번호를 ``random_seed`` 로 전달해 결정론적 동일 해가
+           반복되지 않도록 변동 (Fix P0-4B)
+         - 재시도 전 ``_purge_run_tasks`` 로 기존 태스크/감사 로그 정리
       4. 2회 재시도 후에도 겹침이면 ``SchedulerOverlapError`` 발생 (DB rollback)
 
-    왜 지역 import인가: constraint_checker 는 schedule_optimizer 내부 모듈을
-    참조하지 않지만, monkeypatch 가 `app.services.constraint_checker` 속성을
-    교체하는 테스트 시나리오에서 실시간 lookup이 필요하므로 함수 내부에서
-    `from app.services import constraint_checker` 를 수행해 패치된 바인딩을
-    그대로 사용한다.
+    왜 단일 public entry 로 통합했는가:
+      기존에는 plan_pipeline 이 ``cp_sat_schedule`` 을 직접 호출하여
+      retry+validate 루프를 완전히 우회했음 (Review B CRITICAL). 같은 실패 모드를
+      두 경로가 공유하도록 여기서 묶어 안전망을 단일 지점에 집약한다.
+
+    왜 지역 import인가: constraint_checker / cp_sat_optimizer 는 monkeypatch
+    시나리오에서 실시간 lookup 이 필요하므로 함수 내부에서 import 하여
+    패치된 바인딩을 그대로 사용한다.
     """
     from app.services import constraint_checker
 
@@ -185,13 +196,30 @@ def auto_schedule(run_label: str, db: Session, **kwargs) -> dict:
     violations: list[dict] = []
 
     for attempt in range(MAX_RETRIES + 1):
-        result = _run_optimization_once(run_label, db, **kwargs)
-        violations = constraint_checker.validate_all(run_label, db)
-        overlap_hits = [v for v in violations if v.get("constraint_id") == "overlap"]
+        if use_cpsat:
+            # CP-SAT 우선 시도. random_seed 를 시도 번호로 변동 → 동일 해 반복 방지.
+            from app.services.cp_sat_optimizer import cp_sat_schedule
 
-        if not overlap_hits:
+            result = cp_sat_schedule(run_label, db, random_seed=attempt, **kwargs)
+            # INFEASIBLE / UNKNOWN / timeout → 같은 시도 사이클 내 greedy 폴백.
+            # (plan_pipeline 에서 별도 폴백을 수행했으나, retry 래퍼 안으로 끌어와
+            # 폴백 경로도 동일한 validate+retry 안전망을 공유하도록 한다.)
+            if result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
+                result.setdefault("warnings", []).append(
+                    "CP-SAT 솔버 미해결 — 그리디 폴백으로 전환합니다"
+                )
+                _purge_run_tasks(db, run_label)
+                result = _run_optimization_once(run_label, db, **kwargs)
+        else:
+            result = _run_optimization_once(run_label, db, **kwargs)
+
+        violations = constraint_checker.validate_all(run_label, db)
+
+        if not constraint_checker.has_overlap(violations):
             result["overlap_alert"] = False
             return result
+
+        overlap_hits = [v for v in violations if v.get("constraint_id") == "overlap"]
 
         # 재시도 전 audit 기록 + 현재 run 의 기존 태스크 정리
         # audit 실패는 스케줄링 실패로 연결하지 않는다 (best-effort 로깅).

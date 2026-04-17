@@ -11,6 +11,15 @@ from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.operation_calendar import OperationCalendar
 
 
+def has_overlap(violations: list[dict]) -> bool:
+    """validate_all 결과에 겹침 위반이 하나라도 있는지.
+
+    DRY: 기존에는 호출자마다 `[v for v in violations if v.get("constraint_id") == "overlap"]`
+    를 인라인으로 반복했음. overlap 검출 로직을 단일 함수로 집약해 유지보수성을 높인다.
+    """
+    return any(v.get("constraint_id") == "overlap" for v in violations)
+
+
 def validate_all(run_label: str, db: Session) -> list[dict]:
     """모든 활성 제약조건으로 스케줄 검증. Returns list of violations."""
 

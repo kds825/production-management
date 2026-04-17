@@ -15,6 +15,7 @@ Stage 1 전체 파이프라인을 태우는 통합 테스트는 test_pipeline_sy
 
 from datetime import date
 
+import pytest
 
 from app.infrastructure.models.production_batch import ProductionBatch
 

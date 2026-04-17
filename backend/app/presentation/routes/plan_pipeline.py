@@ -23,7 +23,6 @@ from app.services.constraint_checker import validate_all  # noqa: F401 — used 
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
-from app.services.cp_sat_optimizer import cp_sat_schedule  # CP-SAT 최적화 엔진
 from app.services.wip_matching import match_wip
 
 logger = logging.getLogger(__name__)
@@ -872,20 +871,18 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
             schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
             schedule_result["engine"] = "greedy"
         else:
-            # CP-SAT 시도 → 실패(INFEASIBLE / 타임아웃) 시 그리디 폴백
-            schedule_result = cp_sat_schedule(run_label, db, base_date=base_date_dt)
-            schedule_result["engine"] = "cpsat"
-            if schedule_result["solver_status"] not in ("OPTIMAL", "FEASIBLE"):
-                schedule_result["warnings"].append(
-                    "CP-SAT 솔버 미해결 — 그리디 방식으로 재시도합니다"
-                )
-                # 이미 wip_complete 처리된 배치가 있으므로 그리디를 그대로 이어 실행
-                fallback = auto_schedule(run_label, db, base_date=base_date_dt)
-                fallback["engine"] = "greedy_fallback"
-                fallback["warnings"] = schedule_result["warnings"] + fallback.get(
-                    "warnings", []
-                )
-                schedule_result = fallback
+            # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
+            # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
+            # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
+            schedule_result = auto_schedule(
+                run_label, db, use_cpsat=True, base_date=base_date_dt
+            )
+            # solver_status 가 OPTIMAL/FEASIBLE 이 아니면 내부에서 greedy 로 폴백된 것.
+            # 엔진 라벨은 그에 맞춰 분기.
+            if schedule_result.get("solver_status") in ("OPTIMAL", "FEASIBLE"):
+                schedule_result["engine"] = "cpsat"
+            else:
+                schedule_result["engine"] = "greedy_fallback"
     except SchedulerOverlapError as exc:
         # 왜 200: 이 예외는 '겹침 재시도 실패' 비즈니스 시그널이지 서버 장애가 아니다.
         # 프론트가 overlap_alert=True 플래그로 경고 배너를 표시할 수 있도록 성공 코드로 반환.
