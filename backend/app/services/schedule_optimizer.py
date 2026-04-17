@@ -236,12 +236,32 @@ def auto_schedule(run_label: str, db: Session, **kwargs) -> dict:
 
 
 def _purge_run_tasks(db: Session, run_label: str) -> None:
-    """재시도 전 해당 run 의 기존 ScheduleTask 만 삭제.
+    """재시도 전 해당 run 의 기존 ScheduleTask 삭제 + 배치 상태 리셋.
 
-    ProductionBatch 는 그대로 두고 태스크 재생성만 반복한다 — 재스케줄링이지
-    재배치(rebatching) 가 아니므로.
+    왜 상태 리셋이 필요한가:
+      ``_run_optimization_once`` 는 placement 시점에 ``ProductionBatch.status`` 를
+      ``"scheduled"`` 로 변경하고, 다음 호출에서는 ``status == "planned"`` 인 배치만
+      다시 로드한다. 상태 리셋을 하지 않으면 재시도 시 0건 배치만 발견되어
+      빈 스케줄이 반환되고 겹침 검증도 통과(0 태스크 → 겹침 없음)해
+      ``overlap_alert=False`` 로 조용히 성공 처리되는 심각한 integrity 버그 발생.
+
+    동작:
+      1. 해당 run 의 ScheduleTask 삭제
+      2. ``status == "scheduled"`` 인 ProductionBatch 를 ``"planned"`` 로 복원하고
+         ``equipment_code`` 도 해제 (재배정 허용)
     """
-    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete()
+    from app.infrastructure.models.production_batch import ProductionBatch
+
+    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    db.query(ProductionBatch).filter(
+        ProductionBatch.run_label == run_label,
+        ProductionBatch.status == "scheduled",
+    ).update(
+        {"status": "planned", "equipment_code": None},
+        synchronize_session=False,
+    )
     db.flush()
 
 
