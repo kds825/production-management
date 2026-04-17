@@ -603,6 +603,15 @@ def _run_optimization_once(
             if pref_match:
                 eligible = pref_match
 
+        # ── T/P 공정 preferred 설비: TP-2 (not alphabetical TP-1) ────────────
+        # Why: _find_speed.equipment_map["T/P"] = ["TP-2"] 이므로 duration 계산과
+        # 실제 배정 설비를 일관되게 유지한다. PDF 1안도 T/P#2 만 사용.
+        # 만약 TP-2 가 eligible 에서 제외 (color/range 필터 등) 되면 fallback.
+        if rep.process_name == "T/P":
+            tp2_match = [e for e in eligible if e.equipment_code == "TP-2"]
+            if tp2_match:
+                eligible = tp2_match
+
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
         # drum_lot_master.wire_diameter 기준 — 동일 소선경 SQ는 같은 설비 선호
         if is_stranding and sq_key not in sq_to_equip and not _is_core_group(group_key):
