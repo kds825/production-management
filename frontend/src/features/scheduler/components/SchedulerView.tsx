@@ -406,7 +406,8 @@ function DateHeader({
       const d = new Date(ts);
       // 자정(0시)은 이미 날짜 레이블로 표시되므로 건너뜀
       if (d.getHours() !== 0) {
-        const left = timeToXAdj(ts, rangeStart, dayWidth, weekendWidth) + SIDEBAR_WIDTH;
+        const left =
+          timeToXAdj(ts, rangeStart, dayWidth, weekendWidth) + SIDEBAR_WIDTH;
         markers.push({
           left,
           label: `${String(d.getHours()).padStart(2, "0")}:00`,
@@ -451,7 +452,12 @@ function DateHeader({
       {/* 날짜 레이블 영역 — 사이드바 오른쪽부터 클리핑 */}
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
         {days.map((day, idx) => {
-          const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+          const left = timeToXAdj(
+            day.timestamp,
+            rangeStart,
+            dayWidth,
+            weekendWidth,
+          );
           const weekend = isWeekend(day.date);
           const colWidth = weekend ? weekendWidth : dayWidth;
           const dow = day.date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
@@ -586,7 +592,12 @@ function WeekendOverlay({
     for (const day of days) {
       if (isWeekend(day.date)) {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+        const left = timeToXAdj(
+          day.timestamp,
+          rangeStart,
+          dayWidth,
+          weekendWidth,
+        );
         cols.push({ left, width: weekendWidth });
       }
     }
@@ -598,6 +609,7 @@ function WeekendOverlay({
       {weekendCols.map((col, idx) => (
         <div
           key={idx}
+          data-weekend="true"
           style={{
             position: "absolute",
             top: 0,
@@ -649,7 +661,12 @@ function GridLines({
     <>
       {days.map((day, idx) => {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+        const left = timeToXAdj(
+          day.timestamp,
+          rangeStart,
+          dayWidth,
+          weekendWidth,
+        );
         return (
           <div
             key={idx}
@@ -830,16 +847,18 @@ export function SchedulerView({
   );
 
   const visibleEquipment = useMemo(
-    () => hideEmpty
-      ? filteredEquipment.filter((eq) => equipmentWithTasks.has(eq.id))
-      : filteredEquipment,
+    () =>
+      hideEmpty
+        ? filteredEquipment.filter((eq) => equipmentWithTasks.has(eq.id))
+        : filteredEquipment,
     [filteredEquipment, hideEmpty, equipmentWithTasks],
   );
 
   const hiddenEquipment = useMemo(
-    () => hideEmpty
-      ? filteredEquipment.filter((eq) => !equipmentWithTasks.has(eq.id))
-      : [],
+    () =>
+      hideEmpty
+        ? filteredEquipment.filter((eq) => !equipmentWithTasks.has(eq.id))
+        : [],
     [filteredEquipment, hideEmpty, equipmentWithTasks],
   );
 
@@ -873,7 +892,10 @@ export function SchedulerView({
   let dayWidth: number;
   if (hideWeekends) {
     const allDays = generateDays(rangeStart, rangeEnd);
-    const weekdayCount = Math.max(allDays.filter((d) => !isWeekend(d.date)).length, 1);
+    const weekdayCount = Math.max(
+      allDays.filter((d) => !isWeekend(d.date)).length,
+      1,
+    );
     const weekendCount = allDays.length - weekdayCount;
     const fitWidth = Math.max(
       (availableWidth - weekendCount * WEEKEND_COLLAPSED_WIDTH) / weekdayCount,
@@ -881,10 +903,18 @@ export function SchedulerView({
     );
     dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, fitWidth);
   } else {
-    dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, availableWidth / totalDays);
+    dayWidth = Math.max(
+      DAY_WIDTH_MAP[zoomLevel] * dayWidthScale,
+      availableWidth / totalDays,
+    );
   }
   const weekendWidth = hideWeekends ? WEEKEND_COLLAPSED_WIDTH : dayWidth;
-  const timelineWidth = timelineWidthAdj(rangeStart, rangeEnd, dayWidth, weekendWidth);
+  const timelineWidth = timelineWidthAdj(
+    rangeStart,
+    rangeEnd,
+    dayWidth,
+    weekendWidth,
+  );
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
   // 전체 높이 (설비 수 * 행 높이)
@@ -922,94 +952,94 @@ export function SchedulerView({
       >
         {/* 전체 콘텐츠 너비 — 이 div가 가로 스크롤 범위를 결정 */}
         <div style={{ width: totalContentWidth }}>
+          {/* 날짜 헤더 */}
+          <DateHeader
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            dayWidth={dayWidth}
+            weekendWidth={weekendWidth}
+            timelineWidth={timelineWidth}
+          />
 
-        {/* 날짜 헤더 */}
-        <DateHeader
-          rangeStart={rangeStart}
-          rangeEnd={rangeEnd}
-          dayWidth={dayWidth}
-          weekendWidth={weekendWidth}
-          timelineWidth={timelineWidth}
-        />
-
-        {/* 행 영역 (설비 + 작업 블록) */}
-        <div
-          style={{
-            position: "relative",
-            minHeight: totalHeight || 128,
-          }}
-        >
-          {/* 주말 배경 — 사이드바 너비만큼 오프셋 */}
+          {/* 행 영역 (설비 + 작업 블록) */}
           <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: SIDEBAR_WIDTH,
-              right: 0,
-              bottom: 0,
-              overflow: "hidden",
-              pointerEvents: "none",
+              position: "relative",
+              minHeight: totalHeight || 128,
             }}
           >
-            <WeekendOverlay
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-
-            {/* 수직 그리드 라인 */}
-            <GridLines
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-
-            {/* 오늘 마커 */}
-            <TodayMarker
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-          </div>
-
-          {/* 설비 행 */}
-          <div style={{ position: "relative", zIndex: 1 }}>
-            {visibleEquipment.map((eq) => (
-              <GanttRow
-                key={eq.id}
-                equipment={eq}
-                tasks={tasks}
+            {/* 주말 배경 — 사이드바 너비만큼 오프셋 */}
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: SIDEBAR_WIDTH,
+                right: 0,
+                bottom: 0,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            >
+              <WeekendOverlay
                 rangeStart={rangeStart}
                 rangeEnd={rangeEnd}
                 dayWidth={dayWidth}
                 weekendWidth={weekendWidth}
-                timelineWidth={timelineWidth}
-                sharedSelection={sharedSelection}
-                onSelectionStart={handleSelectionStart}
-                onSelectionMove={handleSelectionMove}
-                onSelectionEnd={handleSelectionEnd}
-                activeDragGroup={activeDragGroup}
-                activeDragSq={activeDragSq}
-                activeDragMaterial={activeDragMaterial}
+                totalHeight={Math.max(totalHeight, 128)}
               />
-            ))}
 
-            {visibleEquipment.length === 0 && (
-              <div className="flex items-center justify-center h-32 text-sm text-gray-400">
-                {equipment.length === 0
-                  ? "설비 데이터를 불러오는 중..."
-                  : "선택한 필터에 해당하는 설비가 없습니다"}
-              </div>
-            )}
+              {/* 수직 그리드 라인 */}
+              <GridLines
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalHeight={Math.max(totalHeight, 128)}
+              />
+
+              {/* 오늘 마커 */}
+              <TodayMarker
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalHeight={Math.max(totalHeight, 128)}
+              />
+            </div>
+
+            {/* 설비 행 */}
+            <div style={{ position: "relative", zIndex: 1 }}>
+              {visibleEquipment.map((eq) => (
+                <GanttRow
+                  key={eq.id}
+                  equipment={eq}
+                  tasks={tasks}
+                  rangeStart={rangeStart}
+                  rangeEnd={rangeEnd}
+                  dayWidth={dayWidth}
+                  weekendWidth={weekendWidth}
+                  timelineWidth={timelineWidth}
+                  sharedSelection={sharedSelection}
+                  onSelectionStart={handleSelectionStart}
+                  onSelectionMove={handleSelectionMove}
+                  onSelectionEnd={handleSelectionEnd}
+                  activeDragGroup={activeDragGroup}
+                  activeDragSq={activeDragSq}
+                  activeDragMaterial={activeDragMaterial}
+                />
+              ))}
+
+              {visibleEquipment.length === 0 && (
+                <div className="flex items-center justify-center h-32 text-sm text-gray-400">
+                  {equipment.length === 0
+                    ? "설비 데이터를 불러오는 중..."
+                    : "선택한 필터에 해당하는 설비가 없습니다"}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        </div> {/* totalContentWidth wrapper */}
+        </div>{" "}
+        {/* totalContentWidth wrapper */}
       </div>
 
       {/* 숨김 설비 토글 바 */}
@@ -1031,7 +1061,10 @@ export function SchedulerView({
           <span className="text-gray-300 select-none">|</span>
 
           <button
-            onClick={() => { setHideEmpty((v) => !v); setShowHiddenList(false); }}
+            onClick={() => {
+              setHideEmpty((v) => !v);
+              setShowHiddenList(false);
+            }}
             className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 hover:text-gray-900 transition-colors"
           >
             <span>{hideEmpty ? "▶" : "▼"}</span>

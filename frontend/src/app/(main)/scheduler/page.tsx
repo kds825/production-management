@@ -1306,6 +1306,7 @@ export default function SchedulerPage() {
 
                 return (
                   <div
+                    data-testid="task-detail-panel"
                     className="shrink-0 border-l bg-white overflow-y-auto"
                     style={{
                       width: 420,

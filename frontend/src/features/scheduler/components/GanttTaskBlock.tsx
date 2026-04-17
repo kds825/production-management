@@ -409,7 +409,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
       }}
       data-draggable
       data-task-id={task.id}
+      data-testid={`gantt-block-${task.id}`}
       data-equipment-id={task.equipment_id}
+      data-batch-group={task.batch_group ?? ""}
+      data-sq-mm2={String(task.sq_mm2 ?? "")}
+      data-spec-list-length={String((task.spec_list ?? []).length)}
       style={{
         position: "absolute",
         left,
