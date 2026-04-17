@@ -295,3 +295,123 @@ def test_sheath_scheduler_actual_order_forms_color_chain(db):
     # 체인지오버 횟수 (인접 색상 변화 수) ≤ 1
     changeovers = sum(1 for i in range(len(colors) - 1) if colors[i] != colors[i + 1])
     assert changeovers <= 1, f"색상 체인지오버 과다: {changeovers}회, 순서={colors}"
+
+
+def _get_due(db, task):
+    b = (
+        db.query(ProductionBatch)
+        .filter(ProductionBatch.batch_id == task.batch_id)
+        .first()
+    )
+    return b.due_date if b else None
+
+
+def test_sheath_half_week_split_separates_same_week_early_late_due(db):
+    """같은 주(W15) 내 월·목요일 납기 차이 → H1/H2 분리 그룹.
+    효과: EDD H1 그룹이 EDD H2 그룹보다 먼저 스케줄.
+    """
+    from app.services.schedule_optimizer import auto_schedule
+
+    # 같은 W15 주 내 흑 색상 4건:
+    #   월(4/6) H1: 납기 임박
+    #   수(4/8) H1
+    #   목(4/9) H2
+    #   금(4/10) H2
+    # 기대: 실제 배치 순서가 H1 그룹 먼저, H2 그룹 나중
+    rows = [
+        ("흑", 50, date(2026, 4, 6), "SO-HW-1"),  # W15H1
+        ("흑", 60, date(2026, 4, 8), "SO-HW-2"),  # W15H1
+        ("흑", 70, date(2026, 4, 9), "SO-HW-3"),  # W15H2
+        ("흑", 80, date(2026, 4, 10), "SO-HW-4"),  # W15H2
+    ]
+    for color, sq, due, so in rows:
+        db.add(
+            ProductionBatch(
+                run_label="test-halfweek",
+                batch_seq=0,
+                process_name="저압시스",
+                sheath_color=color,
+                sq_mm2=sq,
+                due_date=due,
+                drum_count=1,
+                drum_length_m=500,
+                total_length_m=500,
+                conductor_material="CU",
+                sales_order_id=so,
+                sales_order_line=1,
+                batch_group="",
+            )
+        )
+    db.flush()
+
+    auto_schedule(run_label="test-halfweek", db=db)
+
+    tasks = _get_sheath_tasks_sorted(db, "test-halfweek", eq_code_prefix="SH-A120")
+    assert len(tasks) >= 2, f"기대 ≥2 tasks, 실제 {len(tasks)}"
+
+    # H1 그룹(due ≤ 4/8) task 들이 H2(due ≥ 4/9) 보다 먼저 끝나야
+    h1_end_max = max(
+        (
+            t.end_datetime
+            for t in tasks
+            if _get_due(db, t) and _get_due(db, t) <= date(2026, 4, 8)
+        ),
+        default=None,
+    )
+    h2_start_min = min(
+        (
+            t.start_datetime
+            for t in tasks
+            if _get_due(db, t) and _get_due(db, t) >= date(2026, 4, 9)
+        ),
+        default=None,
+    )
+    assert h1_end_max is not None and h2_start_min is not None, (
+        f"H1 또는 H2 tasks 누락 — H1 end: {h1_end_max}, H2 start: {h2_start_min}"
+    )
+    # H1 그룹의 마지막 종료가 H2 그룹의 첫 시작 이전이거나 같음
+    assert h1_end_max <= h2_start_min, (
+        f"H1 종료 {h1_end_max} > H2 시작 {h2_start_min} — 반주차 분할 미작동"
+    )
+
+
+def test_long_color_chain_not_broken_by_half_week(db):
+    """같은 색상 H1·H2 연속이면 여전히 체인 형성 (다른 색으로 끼어들지 않음).
+
+    batch_group 을 H1/H2 bucket 형식으로 pre-seed 하여 A120 라우팅이
+    타게 함 — batch_grouping 의 새 H1/H2 bucket 포맷과 정합.
+    """
+    from app.services.schedule_optimizer import auto_schedule
+
+    rows = [
+        # (color, sq, due, so, bucket)
+        ("흑", 50, date(2026, 4, 6), "SO-CCH-1", "2026W15H1"),  # 월
+        ("흑", 60, date(2026, 4, 9), "SO-CCH-2", "2026W15H2"),  # 목
+        ("흑", 70, date(2026, 4, 13), "SO-CCH-3", "2026W16H1"),  # 월(다음주)
+    ]
+    for color, sq, due, so, bucket in rows:
+        db.add(
+            ProductionBatch(
+                run_label="test-chain-hw",
+                batch_seq=0,
+                process_name="저압시스",
+                sheath_color=color,
+                sq_mm2=sq,
+                due_date=due,
+                drum_count=1,
+                drum_length_m=500,
+                total_length_m=500,
+                conductor_material="CU",
+                sales_order_id=so,
+                sales_order_line=1,
+                batch_group=f"A120_{color}_{bucket}",
+            )
+        )
+    db.flush()
+
+    auto_schedule(run_label="test-chain-hw", db=db)
+    tasks = _get_sheath_tasks_sorted(db, "test-chain-hw", eq_code_prefix="SH-A120")
+    colors = [_get_color(db, t) for t in tasks]
+    # 모두 흑이어야
+    assert all(c == "흑" for c in colors), f"색상 이탈: {colors}"
+    assert len(tasks) == 3, f"3개 태스크 기대, 실제 {len(tasks)}"

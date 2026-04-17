@@ -844,16 +844,19 @@ def create_batches(
             color = (b.sheath_color or "").strip()
             color_key = color.replace("/", "_") if color else "기타"
             if proc == "저압시스":
-                # 납기 ISO 주차로 분할 기준 결정
+                # 반-주차(H1/H2) 버킷으로 분할 — 같은 주 내 납기 3-4일 차이 수주도
+                # 별도 그룹으로 만들어 EDD 우선 스케줄링 보장.
+                # H1 = 월~수, H2 = 목~일 (isocalendar weekday 1=Mon … 7=Sun)
                 if b.due_date:
-                    _yr, _wk, _ = b.due_date.isocalendar()
-                    _due_wk = f"{_yr}W{_wk:02d}"
+                    yr, wk, wday = b.due_date.isocalendar()
+                    half = "H1" if wday <= 3 else "H2"
+                    _due_bucket = f"{yr}W{wk:02d}{half}"
                 else:
-                    _due_wk = "9999W99"
+                    _due_bucket = "9999W99X"
                 if color in ("흑", "청", "흑/적"):
-                    group_key = f"A120_{color_key}_{_due_wk}"
+                    group_key = f"A120_{color_key}_{_due_bucket}"
                 else:
-                    group_key = f"A100_{color_key}_{_due_wk}"
+                    group_key = f"A100_{color_key}_{_due_bucket}"
             else:
                 group_key = f"{proc}_{color_key}"
 

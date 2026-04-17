@@ -132,16 +132,18 @@ def _sheath_group_color_rank(batches: list) -> int:
 
 
 def _sheath_group_due_week_int(batches: list) -> int:
-    """대표 배치의 납기 ISO 주차 — 주 단위로 EDD 버킷팅.
+    """대표 배치의 납기 반-주차(H1/H2) 버킷.
 
-    같은 주 내에서 색상 체인을 형성하기 위해 EDD 대신 주차 버킷을 1차 키로
-    사용한다. 주가 다르면 빠른 주차가 먼저 → 납기 우선 유지.
+    batch_grouping 의 H1(월~수)/H2(목~일) 분할과 정합시키기 위해 주차 × 2
+    해상도로 인코딩한다. 같은 색상 안에서 H1 이 H2 보다 먼저 스케줄링되고,
+    다른 색상 간에는 earliest_due 가 3차 tiebreaker 로 동작한다.
     """
     due = _group_earliest_due(batches)
     if due == date.max:
-        return 999999
-    yr, wk, _ = due.isocalendar()
-    return yr * 100 + wk
+        return 9999999
+    yr, wk, wday = due.isocalendar()
+    half = 0 if wday <= 3 else 1  # H1 → 0, H2 → 1
+    return (yr * 100 + wk) * 2 + half
 
 
 def _extract_core_main_sq(group_key: str) -> int | None:
