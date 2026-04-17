@@ -33,6 +33,7 @@ from app.services.calendar_engine import (
     calculate_start_datetime,
 )
 from app.services.audit_logger import log_decision
+from app.exceptions import SchedulerOverlapError
 
 # WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
 # batch_grouping._WIP_COVERED_PROCESSES와 동일한 기준 — Phase 2에서 대부분 걸러지지만
@@ -162,7 +163,89 @@ def _extract_core_main_sq(group_key: str) -> int | None:
     return None
 
 
-def auto_schedule(
+def auto_schedule(run_label: str, db: Session, **kwargs) -> dict:
+    """겹침 재시도 2회 포함 스케줄 생성 래퍼.
+
+    동작:
+      1. ``_run_optimization_once`` 로 스케줄 생성
+      2. ``constraint_checker.validate_all`` 로 겹침 검증
+      3. 겹침 있으면 최대 2회 재시도 (기존 태스크 삭제 후 동일 목적함수 재실행)
+      4. 2회 재시도 후에도 겹침이면 ``SchedulerOverlapError`` 발생 (DB rollback)
+
+    왜 지역 import인가: constraint_checker 는 schedule_optimizer 내부 모듈을
+    참조하지 않지만, monkeypatch 가 `app.services.constraint_checker` 속성을
+    교체하는 테스트 시나리오에서 실시간 lookup이 필요하므로 함수 내부에서
+    `from app.services import constraint_checker` 를 수행해 패치된 바인딩을
+    그대로 사용한다.
+    """
+    from app.services import constraint_checker
+
+    MAX_RETRIES = 2
+    result: dict = {}
+    violations: list[dict] = []
+
+    for attempt in range(MAX_RETRIES + 1):
+        result = _run_optimization_once(run_label, db, **kwargs)
+        violations = constraint_checker.validate_all(run_label, db)
+        overlap_hits = [v for v in violations if v.get("constraint_id") == "overlap"]
+
+        if not overlap_hits:
+            result["overlap_alert"] = False
+            return result
+
+        # 재시도 전 audit 기록 + 현재 run 의 기존 태스크 정리
+        # audit 실패는 스케줄링 실패로 연결하지 않는다 (best-effort 로깅).
+        try:
+            log_decision(
+                db,
+                run_label=run_label,
+                stage="stage2",
+                action_type="overlap_detected_retry",
+                reason=(
+                    f"겹침 감지 — 재시도 {attempt + 1}/{MAX_RETRIES + 1}회차, "
+                    f"위반 {len(overlap_hits)}건"
+                ),
+                constraints_applied=overlap_hits,
+            )
+        except Exception:
+            pass
+        _purge_run_tasks(db, run_label)
+
+    # 모든 재시도 후에도 겹침 지속 → 고위 경보 + DB 롤백 + 예외
+    try:
+        log_decision(
+            db,
+            run_label=run_label,
+            stage="stage2",
+            action_type="overlap_persist_alert",
+            reason=(f"겹침 재시도 {MAX_RETRIES + 1}회 모두 실패 — 스케줄 저장 거부"),
+            constraints_applied=[
+                v for v in violations if v.get("constraint_id") == "overlap"
+            ],
+        )
+    except Exception:
+        pass
+
+    db.rollback()
+    raise SchedulerOverlapError(
+        "스케줄 겹침이 재시도 후에도 지속됩니다.",
+        run_label=run_label,
+        violations=[v for v in violations if v.get("constraint_id") == "overlap"],
+        attempts=MAX_RETRIES + 1,
+    )
+
+
+def _purge_run_tasks(db: Session, run_label: str) -> None:
+    """재시도 전 해당 run 의 기존 ScheduleTask 만 삭제.
+
+    ProductionBatch 는 그대로 두고 태스크 재생성만 반복한다 — 재스케줄링이지
+    재배치(rebatching) 가 아니므로.
+    """
+    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete()
+    db.flush()
+
+
+def _run_optimization_once(
     run_label: str, db: Session, *, base_date: datetime | None = None
 ) -> dict:
     """
