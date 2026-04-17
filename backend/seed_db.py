@@ -977,15 +977,146 @@ def _speed_master():
         (300, 12, 180),
         (400, 10, 180),
     ]
-    for sq, speed, setup in tp_data:
+    # TP-1(일반 60Ø) / TP-GD(강대 100Ø) 동일 속도표 공유. TP-2 는 운영 DB 에
+    # 역사적으로 EX-B100 값이 들어가 있으나 스케줄러가 미배정하므로 seed 레벨에서는
+    # 정상값(tp_data)을 제공. fresh seed 시 TP-2 값이 정상화된다.
+    for tp_eq in ("TP-1", "TP-2", "TP-GD"):
+        for sq, speed, setup in tp_data:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=tp_eq,
+                    product_type="T/P",
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=setup,
+                )
+            )
+
+    # ── 7-H. 연선(ST-*) 선속 ──
+    # Why: fix_speed_master_option_b.py 와 동기화된 canonical. 값은 PDF 레퍼런스
+    # 기반 PoC 초기 추정 — 생산팀 실측 검증 필요. setup=210분(SQ 교체 policy).
+    stranding_speeds = [
+        # ST-54BO1: CU 61연선 70~800SQ
+        (
+            "ST-54BO1",
+            "61연선 CU",
+            [
+                (70, 30),
+                (95, 28),
+                (120, 25),
+                (150, 22),
+                (185, 20),
+                (240, 18),
+                (300, 15),
+                (400, 12),
+                (500, 10),
+                (630, 8),
+                (800, 6),
+            ],
+        ),
+        # ST-54BO2: AL 61연선 70~800SQ
+        (
+            "ST-54BO2",
+            "61연선 AL",
+            [
+                (70, 32),
+                (95, 30),
+                (120, 27),
+                (150, 24),
+                (185, 22),
+                (240, 20),
+                (300, 17),
+                (380, 15),
+                (400, 14),
+                (500, 12),
+                (507, 12),
+                (630, 10),
+                (633, 10),
+                (800, 8),
+            ],
+        ),
+        # ST-54BO3: AL 61연선 (ST-54BO2 병렬 설비)
+        (
+            "ST-54BO3",
+            "61연선 AL",
+            [
+                (70, 32),
+                (95, 30),
+                (107, 28),
+                (120, 27),
+                (150, 24),
+                (185, 22),
+                (240, 20),
+                (300, 17),
+                (380, 15),
+                (400, 14),
+                (500, 12),
+                (630, 10),
+                (633, 10),
+                (800, 8),
+            ],
+        ),
+        # ST-30BO: AL 19연선 70~120SQ
+        ("ST-30BO", "19연선 AL", [(70, 25), (95, 22), (120, 20)]),
+        # ST-44BO: AL 19연선 70~240SQ
+        (
+            "ST-44BO",
+            "19연선 AL",
+            [(70, 25), (95, 22), (120, 20), (150, 18), (185, 16), (240, 14)],
+        ),
+        # ST-1150BC: AL B/C 4~16SQ
+        ("ST-1150BC", "B/C AL", [(4, 40), (6, 38), (10, 35), (16, 30)]),
+        # ST-T6B0: CU 7연선 25~50SQ
+        ("ST-T6B0", "7연선 CU", [(25, 25), (35, 25), (50, 20)]),
+        # ST-AL6BO: AL 7연선 25~50SQ
+        ("ST-AL6BO", "7연선 AL", [(25, 22), (35, 20), (50, 17)]),
+    ]
+    for eq_code, ptype, sq_speeds in stranding_speeds:
+        for sq, speed in sq_speeds:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=eq_code,
+                    product_type=ptype,
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=210,
+                )
+            )
+
+    # ── 7-I. 연합(CA-*) 선속 ──
+    # 연합 공정: 다심 꼬기. 설비 range_unit 이 Ø 이지만 SpeedMaster cross_section
+    # 은 SQ 공통 키로 저장 (스케줄러 조회 키와 일치).
+    coupling_speeds = [
+        ("CA-12BO", [(1.5, 35), (2.5, 32), (4, 30), (6, 28)]),
+        ("CA-4BO", [(35, 28), (50, 25), (70, 22), (95, 20)]),
+        ("CA-LU", [(35, 30), (50, 28), (70, 25), (95, 22), (120, 20), (150, 18)]),
+    ]
+    for eq_code, sq_speeds in coupling_speeds:
+        for sq, speed in sq_speeds:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=eq_code,
+                    product_type="연합",
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=120,
+                )
+            )
+
+    # ── 7-J. 고압시스 SH-B100 (저용량, range_max=50Ø) ──
+    b100_hp_sheath = [(16, 8.0), (25, 7.5), (35, 7.0), (50, 6.5)]
+    for sq, spd in b100_hp_sheath:
         rows.append(
             SpeedMaster(
-                equipment_code="TP-1",
-                product_type="T/P",
+                equipment_code="SH-B100",
+                product_type="고압시스 저용량",
                 cross_section=sq,
-                line_speed_mpm=speed,
-                line_speed_hr=speed * 60,
-                setup_spec_min=setup,
+                line_speed_mpm=spd,
+                line_speed_hr=round(spd * 60, 1),
+                setup_spec_min=30,
             )
         )
 
