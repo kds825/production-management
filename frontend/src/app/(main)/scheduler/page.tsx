@@ -1309,7 +1309,9 @@ export default function SchedulerPage() {
                     data-testid="task-detail-panel"
                     className="shrink-0 border-l bg-white overflow-y-auto"
                     style={{
-                      width: 420,
+                      // 좁은 뷰포트(<~933px)에서 간트가 가려지지 않도록 비율 축소
+                      // min(420px, 45vw): 기본 420px, 뷰포트가 좁을 땐 45% 폭으로 줄임
+                      width: "min(420px, 45vw)",
                       borderColor: "#E5E7EB",
                     }}
                   >
