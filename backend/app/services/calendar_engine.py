@@ -41,17 +41,17 @@ _PROCESS_HOURS: dict[str, dict[int, float]] = {
     "연선연합": {0: 22, 1: 22, 2: 22, 3: 22, 4: 14, 5: 0, 6: 0},
     "저압절연": {0: 24, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0},
     "고압절연": {0: 18, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0},
-    "시스":     {0: 24, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0},
-    "default":  {0: 22, 1: 22, 2: 22, 3: 22, 4: 14, 5: 0, 6: 0},
+    "시스": {0: 24, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0},
+    "default": {0: 22, 1: 22, 2: 22, 3: 22, 4: 14, 5: 0, 6: 0},
 }
 
 # ── 설비코드 prefix → 공정 카테고리 ──────────────────────────────────────────
 _EQUIP_PREFIX_CATEGORY: list[tuple[str, str]] = [
-    ("ST-",   "연선연합"),
-    ("CA-",   "연선연합"),
-    ("EX-B",  "저압절연"),
+    ("ST-", "연선연합"),
+    ("CA-", "연선연합"),
+    ("EX-B", "저압절연"),
     ("EX-CV", "고압절연"),
-    ("SH-",   "시스"),
+    ("SH-", "시스"),
 ]
 
 # ── 금요일 작업 윈도우 종료 시각 ──────────────────────────────────────────────
@@ -59,15 +59,15 @@ _FRI_END_HOUR: dict[str, int] = {
     "연선연합": 22,
     "저압절연": 20,
     "고압절연": 20,
-    "시스":     20,
-    "default":  22,
+    "시스": 20,
+    "default": 22,
 }
 
 # ── 일일 부동(휴식) 시간대 — 연선연합·default, 월~목 적용 ────────────────────
 # (start_time, end_time): 해당 시간대는 생산 불가
 _DAILY_BREAKS: dict[str, list[tuple[time, time]]] = {
     "연선연합": [
-        (time(12, 0), time(13, 0)),   # 점심  60 min
+        (time(12, 0), time(13, 0)),  # 점심  60 min
         (time(18, 0), time(18, 30)),  # 저녁  30 min
         (time(22, 0), time(22, 30)),  # 간식  30 min
     ],
@@ -79,7 +79,7 @@ _DAILY_BREAKS: dict[str, list[tuple[time, time]]] = {
     # 저압절연·시스·고압절연: 24h 가동 → 휴식 없음
     "저압절연": [],
     "고압절연": [],
-    "시스":     [],
+    "시스": [],
 }
 
 
@@ -171,7 +171,7 @@ def get_working_window(
         # 22h(연선연합) → 08:00 ~ 익일 08:00 (창 24h, 휴식 2h를 내부에서 스킵)
         # 18h(고압절연 월) → 08:00 ~ 익일 02:00
         if cat in ("연선연합", "default"):
-            end = start + timedelta(hours=24)   # 창은 24h, 휴식을 내부 스킵으로 처리
+            end = start + timedelta(hours=24)  # 창은 24h, 휴식을 내부 스킵으로 처리
         else:
             end = start + timedelta(hours=avail_h)  # 고압절연 월: 18h 창
 
@@ -275,6 +275,94 @@ def generate_edu_dates(start_date: date, end_date: date) -> list[date]:
         current = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
 
     return edu_dates
+
+
+def calculate_start_datetime(
+    end: datetime,
+    duration_min: float,
+    db: Session | None = None,
+    equipment_code: str | None = None,
+) -> datetime:
+    """종료시각 - 소요시간(분) → 시작시각 (역방향 캘린더 보정).
+
+    calculate_end_datetime 의 역연산. 휴식·주말·금요일 종료 시각을 건너뛰며
+    뒤에서부터 시간을 소진한다. 유휴 최소화 역산 공식 T_start = T_end - D 에 사용.
+    """
+    if duration_min <= 0:
+        return end
+
+    remaining = duration_min
+    current = end
+    cat = _get_category(equipment_code)
+
+    for _ in range(1000):
+        if remaining <= 0:
+            return current
+
+        current_date = current.date()
+        avail_hours = get_available_hours(current_date, equipment_code, db)
+
+        if avail_hours <= 0:
+            # 비가동일 → 전날 종료시각으로 이동
+            prev = current_date - timedelta(days=1)
+            _, prev_end = get_working_window(prev, equipment_code)
+            current = prev_end
+            continue
+
+        day_start, day_end = get_working_window(current_date, equipment_code)
+
+        if current <= day_start:
+            prev = current_date - timedelta(days=1)
+            _, prev_end = get_working_window(prev, equipment_code)
+            current = prev_end
+            continue
+
+        # 현재 위치가 휴식 구간 내에 있으면 휴식 시작 시각으로 이동
+        day_breaks = _get_day_breaks(current_date, cat)
+        for brk_s, brk_e in day_breaks:
+            if brk_s < current <= brk_e:
+                current = brk_s
+                break
+
+        if current <= day_start:
+            prev = current_date - timedelta(days=1)
+            _, prev_end = get_working_window(prev, equipment_code)
+            current = prev_end
+            continue
+
+        # current 직전의 가장 가까운 휴식 구간 탐색 (역방향)
+        prev_brk_s: datetime | None = None
+        prev_brk_e: datetime | None = None
+        for brk_s, brk_e in reversed(day_breaks):
+            if brk_e < current:
+                prev_brk_s = brk_s
+                prev_brk_e = brk_e
+                break
+
+        # 이전 정지 지점: 이전 휴식 종료 or 창 시작 중 느린 것
+        if prev_brk_e is not None and prev_brk_e > day_start:
+            work_back_until = prev_brk_e
+        else:
+            work_back_until = day_start
+
+        avail_min = (current - work_back_until).total_seconds() / 60
+
+        if remaining <= avail_min:
+            return current - timedelta(minutes=remaining)
+
+        remaining -= avail_min
+
+        if prev_brk_e is not None and work_back_until == prev_brk_e:
+            # 휴식 구간 건너뜀 (역방향)
+            current = prev_brk_s  # type: ignore[assignment]
+        else:
+            # 창 시작 → 전날 종료시각
+            prev = current_date - timedelta(days=1)
+            _, prev_end = get_working_window(prev, equipment_code)
+            current = prev_end
+
+    # 안전 폴백
+    return end - timedelta(minutes=duration_min)
 
 
 def _is_last_two_mondays(d: date) -> bool:
