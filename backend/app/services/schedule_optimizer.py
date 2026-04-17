@@ -102,6 +102,48 @@ def _group_earliest_due(batches: list) -> date:
     return min(dates) if dates else date.max
 
 
+def _is_sheath_group(group_key: str, batches: list) -> bool:
+    """시스 공정 그룹 판별 — batch_group prefix + 대표 배치 공정명 폴백.
+
+    create_batches 가 할당한 A120_*/A100_* 외에도, 수동 시드로 batch_group
+    이 비어 있는 시스 배치도 체인 정렬 대상에 포함시킨다.
+    """
+    if group_key.startswith("A120_") or group_key.startswith("A100_"):
+        return True
+    if batches and batches[0].process_name in ("저압시스", "고압시스"):
+        return True
+    return False
+
+
+def _sheath_group_color_rank(batches: list) -> int:
+    """대표 배치의 sheath_color 로부터 색상 순위를 반환 (A'' 접근안).
+
+    순위는 batch_grouping._SHEATH_COLOR_RANK 를 참조 (단일 소스 유지).
+    순환 import 회피를 위해 함수 내부에서 지연 로드한다.
+    """
+    # 지연 import: batch_grouping 모듈의 비공개 상수를 참조하되 top-level
+    # 순환 의존성과 린터의 "unused import 제거" 부작용을 동시에 방지한다.
+    from app.services.batch_grouping import _SHEATH_COLOR_RANK
+
+    if not batches:
+        return 99
+    color = (batches[0].sheath_color or "").strip() or "기타"
+    return _SHEATH_COLOR_RANK.get(color, 99)
+
+
+def _sheath_group_due_week_int(batches: list) -> int:
+    """대표 배치의 납기 ISO 주차 — 주 단위로 EDD 버킷팅.
+
+    같은 주 내에서 색상 체인을 형성하기 위해 EDD 대신 주차 버킷을 1차 키로
+    사용한다. 주가 다르면 빠른 주차가 먼저 → 납기 우선 유지.
+    """
+    due = _group_earliest_due(batches)
+    if due == date.max:
+        return 999999
+    yr, wk, _ = due.isocalendar()
+    return yr * 100 + wk
+
+
 def _extract_core_main_sq(group_key: str) -> int | None:
     """CORE/AL-CORE 그룹 키에서 main SQ를 추출한다.
 
@@ -316,26 +358,54 @@ def auto_schedule(
     #   2 = 그 외 공정(절연·시스 등): 공정 순서(PROCESS_ORDER) 최우선 → EDD
     #       파이프라인 보장: 절연(2)이 시스(4)보다 항상 먼저 스케줄링되어야
     #       process_first_output_by_sq에 절연 데이터가 등록된 후 시스가 참조 가능.
-    #       색상 클러스터 정렬 제거 — 납기 준수가 색상 연속성보다 우선
-    ordered_group_items = sorted(
-        batch_groups.items(),
-        key=lambda kv: (
-            0 if _is_core_group(kv[0]) else (1 if kv[0].startswith("ST-") else 2),
-            # ST- 그룹: 소선경 클러스터 최초 납기(클러스터 우선순위)
-            wire_d_earliest.get(sq_to_wire_d.get(_st_sq(kv[0]), 0.0), date.max)
-            if kv[0].startswith("ST-")
+    #
+    # 시스 그룹 전용 체인 정렬 (A'' 접근안):
+    #   - 1차: 색상 순위 (_SHEATH_COLOR_RANK: 흑→갈→회→청…)
+    #   - 2차: 납기 ISO 주차 (같은 색상 내 빠른 주차 먼저)
+    #   - 3차: 실제 납기일 (같은 주+색상 내 stable EDD)
+    #   → 색상 체인지오버 최소화가 목표. 동일 EDD 의 다른 색상 두 그룹을
+    #     하나의 chain 으로 묶기 위해 색상을 1차 키로 둔다.
+    #   Tradeoff: 서로 다른 색상 간에서는 납기가 뒤로 밀릴 수 있다.
+    #     예) 청(W15) 이 흑(W16) 뒤로 밀림. 하지만 시스 설비(SH-A120/100) 는
+    #         그룹 수가 제한적(≤ 주당 ~4건)이라 실무적 영향은 미미하며,
+    #         색상 교체로 인한 setup loss(수십 분) 를 절감한다.
+    #     납기 위반은 위반 체커가 warning 으로 감지하므로 보고 가능.
+    def _group_sort_key(kv):
+        gk, gb = kv
+        tier = 0 if _is_core_group(gk) else (1 if gk.startswith("ST-") else 2)
+        proc_order = PROCESS_ORDER.get(gb[0].process_name, 50) if gb else 50
+        earliest_due = _group_earliest_due(gb)
+        cust_prio = gb[0].customer_priority or 99 if gb else 99
+
+        # 시스 체인: 색상 → 주 버킷 → EDD 순으로 정렬키 구성
+        if _is_sheath_group(gk, gb):
+            return (
+                tier,
+                date.max,  # ST- 클러스터 납기 (비해당)
+                0.0,  # ST- 소선경 (비해당)
+                proc_order,
+                _sheath_group_color_rank(gb),  # 1차: 색상 체인
+                _sheath_group_due_week_int(gb),  # 2차: 주 버킷
+                earliest_due,  # 3차: 실제 EDD
+                cust_prio,
+            )
+
+        # 비시스 기존 정렬 (호환성 유지)
+        return (
+            tier,
+            wire_d_earliest.get(sq_to_wire_d.get(_st_sq(gk), 0.0), date.max)
+            if gk.startswith("ST-")
             else date.max,
-            # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
-            sq_to_wire_d.get(_st_sq(kv[0]), 0.0) if kv[0].startswith("ST-") else 0.0,
-            # 공정 순서 — 절연(2)→시스(4) 등 파이프라인 강제 (EDD보다 우선)
-            # ST- 그룹은 모두 연선(1)이므로 실질적 영향 없음
-            PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
-            # 동일 공정 내 납기 정렬 (EDD)
-            _group_earliest_due(kv[1]),
-            # 고객 우선순위
-            kv[1][0].customer_priority or 99 if kv[1] else 99,
-        ),
-    )
+            sq_to_wire_d.get(_st_sq(gk), 0.0) if gk.startswith("ST-") else 0.0,
+            proc_order,
+            earliest_due,
+            # 시스 정렬키와 길이를 맞추기 위한 padding (비교 시 영향 없도록 동일 상수)
+            0,
+            date.max,
+            cust_prio,
+        )
+
+    ordered_group_items = sorted(batch_groups.items(), key=_group_sort_key)
 
     for group_key, group_batches in ordered_group_items:
         rep = group_batches[0]  # 대표 배치 (설비 선정용)

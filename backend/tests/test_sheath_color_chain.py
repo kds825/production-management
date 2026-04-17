@@ -193,3 +193,105 @@ def test_non_sheath_preserves_relative_order(db):
         if b.process_name not in ("저압시스", "고압시스")
     ]
     assert non_sheath == ["연선", "저압절연"], f"비시스 상대 순서 깨짐: {non_sheath}"
+
+
+# ---- E2E helpers ----
+
+
+def _get_sheath_tasks_sorted(db, run_label, eq_code_prefix):
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    return (
+        db.query(ScheduleTask)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ScheduleTask.equipment_code.like(f"{eq_code_prefix}%"),
+        )
+        .order_by(ScheduleTask.start_datetime)
+        .all()
+    )
+
+
+def _get_color(db, task):
+    b = (
+        db.query(ProductionBatch)
+        .filter(ProductionBatch.batch_id == task.batch_id)
+        .first()
+    )
+    return (b.sheath_color or "").strip() if b else ""
+
+
+def test_sheath_scheduler_actual_order_forms_color_chain(db):
+    """End-to-end: auto_schedule 이후 SH-A120 설비의 실제 시작시각 순서가
+    색상 체인을 형성한다.
+
+    시드: 흑120(due 4/13), 흑95(due 4/20), 청120(due 4/13), 청95(due 4/20) —
+    모두 A120 설비 대상. create_batches 가 생성하는 batch_group (A120_<color>_<week>)
+    을 미리 할당하여 scheduler 의 A120 라우팅 필터를 타게 한다.
+
+    기대: 흑·흑·청·청 또는 청·청·흑·흑 (체인지오버 1회).
+    절대 금지: 흑·청·흑·청 (체인지오버 3회).
+    """
+    from app.services.schedule_optimizer import auto_schedule
+
+    rows = [
+        {
+            "color": "흑",
+            "sq": 120,
+            "due": date(2026, 4, 13),
+            "so": "SO-CH-A",
+            "bg": "A120_흑_2026W15",
+        },
+        {
+            "color": "흑",
+            "sq": 95,
+            "due": date(2026, 4, 20),
+            "so": "SO-CH-B",
+            "bg": "A120_흑_2026W16",
+        },
+        {
+            "color": "청",
+            "sq": 120,
+            "due": date(2026, 4, 13),
+            "so": "SO-CH-C",
+            "bg": "A120_청_2026W15",
+        },
+        {
+            "color": "청",
+            "sq": 95,
+            "due": date(2026, 4, 20),
+            "so": "SO-CH-D",
+            "bg": "A120_청_2026W16",
+        },
+    ]
+    for r in rows:
+        db.add(
+            ProductionBatch(
+                run_label="test-chain-e2e",
+                batch_seq=0,
+                process_name="저압시스",
+                sheath_color=r["color"],
+                sq_mm2=r["sq"],
+                due_date=r["due"],
+                drum_count=1,
+                drum_length_m=1000,
+                total_length_m=1000,
+                conductor_material="CU",
+                sales_order_id=r["so"],
+                sales_order_line=1,
+                batch_group=r["bg"],
+            )
+        )
+    db.flush()
+
+    auto_schedule(run_label="test-chain-e2e", db=db)
+
+    tasks = _get_sheath_tasks_sorted(db, "test-chain-e2e", eq_code_prefix="SH-A120")
+    assert len(tasks) == 4, (
+        f"A120 설비에 4 태스크 기대, 실제 {len(tasks)} — 라우팅 실패 가능"
+    )
+
+    colors = [_get_color(db, t) for t in tasks]
+    # 체인지오버 횟수 (인접 색상 변화 수) ≤ 1
+    changeovers = sum(1 for i in range(len(colors) - 1) if colors[i] != colors[i + 1])
+    assert changeovers <= 1, f"색상 체인지오버 과다: {changeovers}회, 순서={colors}"
