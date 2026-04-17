@@ -71,6 +71,45 @@ _SHEATH_COLOR_RANK: dict[str, int] = {
 # 모듈 레벨에서 한 번만 컴파일 → 배치별 호출 시 재컴파일 비용 0
 _TFR8_PATTERN = re.compile(r"TFR-8\s*\(", re.IGNORECASE)
 
+# A120 설비로 라우팅되는 시스 색상군 (현장 룰). 그 외는 A100.
+_A120_COLORS = ("흑", "청", "흑/적")
+
+
+def _compose_sheath_group_key(
+    *,
+    proc: str,
+    color: str | None,
+    due_date: date | None,
+    sq: int | float | None,
+) -> str:
+    """시스 배치 그룹 키 생성 — 색상 + 반주차(H1/H2) bucket + SQ 접미.
+
+    왜 이 조합인가:
+    - **색상**: 같은 색상을 연속 생산해 교체 시간 최소화 (`_sheath_chain_key` 체인).
+    - **반주차(H1/H2)**: 같은 주 내 월·목 납기 차이도 별도 그룹으로 분리 → EDD 보장.
+    - **SQ 접미**: 회사 수기 양식처럼 같은 색상/주차 내에서도 규격(120/240 등)이
+      다르면 별도 런으로 분할한다. 과거에는 다중 SQ가 하나의 그룹으로 합쳐져
+      간트에 단일 블록으로 보였지만, 현장은 규격별 생산이 기본 단위다.
+    - 슬래시(`/`)가 들어간 색상(예: 흑/적, 녹/황)은 underscore 로 치환해 키로 사용.
+
+    색상 체인 연속성은 `_sheath_chain_key` 가 색상+납기만 보고 정렬하므로 SQ 분할
+    후에도 stable sort 로 자연 보존된다 (같은 색상·같은 주차 그룹이 인접 배치됨).
+    """
+    color_str = (color or "").strip()
+    color_key = color_str.replace("/", "_") if color_str else "기타"
+    sq_key = int(sq or 0)
+    if proc == "저압시스":
+        if due_date:
+            yr, wk, wday = due_date.isocalendar()
+            half = "H1" if wday <= 3 else "H2"
+            due_bucket = f"{yr}W{wk:02d}{half}"
+        else:
+            due_bucket = "9999W99X"
+        eq_prefix = "A120" if color_str in _A120_COLORS else "A100"
+        return f"{eq_prefix}_{color_key}_{due_bucket}_{sq_key}SQ"
+    # 고압시스 — 색상 + SQ (실질 633SQ 단일이나 일관성 위해 접미 유지)
+    return f"{proc}_{color_key}_{sq_key}SQ"
+
 
 def create_batches(
     run_label: str,
@@ -844,31 +883,20 @@ def create_batches(
         ):
             group_key = f"{proc}_{sq_key}SQ_고내화"
 
-        # 시스: 색상 + 납기 주차 기준으로 묶음
-        # 동일 색상을 연속 생산하여 색상 교체를 최소화하되,
-        # 납기 주차가 다른 수주는 별도 배치로 분리 — 납기 준수 우선.
-        # (절연 완료 시점 근사: 납기가 급할수록 절연도 일찍 끝남 → 시스도 일찍 가능)
+        # 시스: 색상 + 반주차(H1/H2) + SQ 기준으로 묶음 (`_compose_sheath_group_key`)
+        # - 같은 색상은 연속 생산해 색상 교체 최소화
+        # - 같은 주 내 월·목 납기 차이도 H1/H2 분리 → EDD 우선 보장
+        # - 규격(SQ)이 다르면 별도 런으로 분할 → 회사 수기 양식 일치
         # 설비 라우팅: A120(흑/청/흑적) vs A100(갈/회/녹/황 등).
-        # 고압시스는 단일 SQ(633)이므로 색상만 사용.
+        # 색상 체인 연속성은 `_sheath_chain_key` 가 색상+납기만 보므로 SQ 분할 후에도
+        # stable sort 로 보존됨 (같은 색상 그룹이 인접 배치).
         if proc in ("저압시스", "고압시스"):
-            color = (b.sheath_color or "").strip()
-            color_key = color.replace("/", "_") if color else "기타"
-            if proc == "저압시스":
-                # 반-주차(H1/H2) 버킷으로 분할 — 같은 주 내 납기 3-4일 차이 수주도
-                # 별도 그룹으로 만들어 EDD 우선 스케줄링 보장.
-                # H1 = 월~수, H2 = 목~일 (isocalendar weekday 1=Mon … 7=Sun)
-                if b.due_date:
-                    yr, wk, wday = b.due_date.isocalendar()
-                    half = "H1" if wday <= 3 else "H2"
-                    _due_bucket = f"{yr}W{wk:02d}{half}"
-                else:
-                    _due_bucket = "9999W99X"
-                if color in ("흑", "청", "흑/적"):
-                    group_key = f"A120_{color_key}_{_due_bucket}"
-                else:
-                    group_key = f"A100_{color_key}_{_due_bucket}"
-            else:
-                group_key = f"{proc}_{color_key}"
+            group_key = _compose_sheath_group_key(
+                proc=proc,
+                color=b.sheath_color,
+                due_date=b.due_date,
+                sq=b.sq_mm2,
+            )
 
         # CORE-/ST- 등 Phase 1에서 이미 할당된 batch_group은 보존
         if b.batch_group:
