@@ -18,7 +18,7 @@
 
 import math
 import re
-from datetime import date
+from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.sales_order import SalesOrder
@@ -1099,25 +1099,41 @@ def detect_split_candidates(
             # 실제로 드럼이 1개로 수렴하면 분할 불필요
             continue
 
-        # ── Overload 사전 판정 (2026-04-18 추가) ─────────────────────────────
+        # ── Overload 사전 판정 (2026-04-18 추가, 2026-04-18 개선) ────────────
         # 헤더의 duration vs 납기 가용시간 비교 — 드럼 간 gap 무관하게 작동해야
         # 하므로 merge/gap filter 이전에 판정. PDF "1안 수정 5틀→3+2" 패턴.
-        # 판정: required_hr > 납기까지 available_hr. available_hr = days × 20h/일
-        # (연선 유효시간 가중평균 20.4h 반올림). drum_count >= 3 에만 적용.
+        #
+        # 가용시간 계산: calendar_engine 의 _PROCESS_HOURS 를 설비 카테고리별로
+        # 누적. Mon-Thu 22h + Fri 14h + 토일 0h 의 정확한 weekday 가중치 적용.
+        # 이전 근사값 (days × 20h) 은 주말 포함 calendar day 에 20h 를 곱해
+        # 주말 있는 구간에서 40h 이상 과대 추정되던 bias 수정.
+        # drum_count >= 3 에만 적용 (단일/2틀 분할 의미 없음).
         is_overload = False
         overload_reason = ""
-        _DAILY_EFFECTIVE_HR = 20
         if header.due_date and header.estimated_duration_min and lot_count >= 3:
-            _days_until_due_hdr = (header.due_date - date.today()).days
-            if _days_until_due_hdr > 0:
+            from app.services.calendar_engine import (
+                _PROCESS_HOURS as _CAL_HOURS,
+                _get_category as _cal_cat,
+            )
+
+            _cat = _cal_cat(header.equipment_code)
+            _hours_tbl = _CAL_HOURS.get(_cat, _CAL_HOURS["default"])
+            _available_hr = 0.0
+            _day = date.today()
+            _due = header.due_date
+            if _due > _day:
+                while _day < _due:
+                    _available_hr += _hours_tbl[_day.weekday()]
+                    _day += timedelta(days=1)
                 _required_hr = float(header.estimated_duration_min) / 60.0
-                _available_hr = _days_until_due_hdr * _DAILY_EFFECTIVE_HR
-                if _required_hr > _available_hr:
+                if _required_hr > _available_hr and _available_hr > 0:
                     is_overload = True
+                    _days_cal = (header.due_date - date.today()).days
                     overload_reason = (
-                        f"설비 과부하 — 납기 {header.due_date} 까지 "
-                        f"{_days_until_due_hdr}일 가용 ~{_available_hr:.0f}h, "
-                        f"배치 요구 {_required_hr:.0f}h"
+                        f"설비 과부하 — {header.equipment_code or _cat} 기준 "
+                        f"납기 {header.due_date} 까지 {_days_cal}일 "
+                        f"(실가동 {_available_hr:.0f}h) < 배치 요구 "
+                        f"{_required_hr:.0f}h"
                     )
 
         # ── 드럼 간 납기 간격 계산 ───────────────────────────────────────────

@@ -48,7 +48,9 @@ def _make_overload_fixture(db: Session, run_label: str) -> None:
         db.flush()
 
     today = date.today()
-    due = today + timedelta(days=2)  # 2일 후 납기 — 69h pure work 에 대해 과부하
+    # 3일 후 (월요일 포함) 납기 — available 실가동 ≤ 44h 로 72.6h 요구보다 작게.
+    # calendar-aware 로직 하에서도 overload 판정 보장.
+    due = today + timedelta(days=3)
 
     # 헤더 (batch_seq=-1)
     header = ProductionBatch(
