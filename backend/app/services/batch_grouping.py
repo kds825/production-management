@@ -1099,6 +1099,27 @@ def detect_split_candidates(
             # 실제로 드럼이 1개로 수렴하면 분할 불필요
             continue
 
+        # ── Overload 사전 판정 (2026-04-18 추가) ─────────────────────────────
+        # 헤더의 duration vs 납기 가용시간 비교 — 드럼 간 gap 무관하게 작동해야
+        # 하므로 merge/gap filter 이전에 판정. PDF "1안 수정 5틀→3+2" 패턴.
+        # 판정: required_hr > 납기까지 available_hr. available_hr = days × 20h/일
+        # (연선 유효시간 가중평균 20.4h 반올림). drum_count >= 3 에만 적용.
+        is_overload = False
+        overload_reason = ""
+        _DAILY_EFFECTIVE_HR = 20
+        if header.due_date and header.estimated_duration_min and lot_count >= 3:
+            _days_until_due_hdr = (header.due_date - date.today()).days
+            if _days_until_due_hdr > 0:
+                _required_hr = float(header.estimated_duration_min) / 60.0
+                _available_hr = _days_until_due_hdr * _DAILY_EFFECTIVE_HR
+                if _required_hr > _available_hr:
+                    is_overload = True
+                    overload_reason = (
+                        f"설비 과부하 — 납기 {header.due_date} 까지 "
+                        f"{_days_until_due_hdr}일 가용 ~{_available_hr:.0f}h, "
+                        f"배치 요구 {_required_hr:.0f}h"
+                    )
+
         # ── 드럼 간 납기 간격 계산 ───────────────────────────────────────────
         gaps: list[int] = []
         for i in range(len(drums) - 1):
@@ -1115,26 +1136,27 @@ def detect_split_candidates(
             gaps.append(gap)
 
         max_gap = max(gaps) if gaps else 0
-        if max_gap < gap_days:
+        # overload 은 납기 gap 무관하게 분할 대상. 아니면 기존 임계치(gap_days).
+        if not is_overload and max_gap < gap_days:
             continue
 
-        # ── gap=0 연속 드럼을 하나의 청크로 병합 ─────────────────────────────
-        # greedy 분할로 소량이 별도 드럼으로 넘어갈 수 있다 (예: 835m).
-        # gap=0이면 같은 납기 그룹이므로 하나의 제안 청크로 합산한다.
-        merged_chunks: list[list[ProductionBatch]] = [drums[0]]
-        merged_gaps: list[int] = []
-        for i, gap_val in enumerate(gaps):
-            if gap_val == 0:
-                # 이전 청크에 병합
-                merged_chunks[-1].extend(drums[i + 1])
-            else:
-                merged_gaps.append(gap_val)
-                merged_chunks.append(drums[i + 1])
-        gaps = merged_gaps
-        drums = merged_chunks
+        if not is_overload:
+            # ── gap=0 연속 드럼을 하나의 청크로 병합 (기존 로직) ─────────────
+            # overload 케이스는 개별 드럼 유지 (ceil(N/2) 분할 지점을 정확히
+            # 잡기 위함).
+            merged_chunks: list[list[ProductionBatch]] = [drums[0]]
+            merged_gaps: list[int] = []
+            for i, gap_val in enumerate(gaps):
+                if gap_val == 0:
+                    merged_chunks[-1].extend(drums[i + 1])
+                else:
+                    merged_gaps.append(gap_val)
+                    merged_chunks.append(drums[i + 1])
+            gaps = merged_gaps
+            drums = merged_chunks
 
-        if len(drums) <= 1:
-            continue
+            if len(drums) <= 1:
+                continue
 
         # ── 분할 제안 구성 ────────────────────────────────────────────────────
         today = date.today()
@@ -1183,12 +1205,15 @@ def detect_split_candidates(
                 }
             )
 
-        auto_split_recommended = has_urgent_in_later_drum
-        urgency_reason = (
-            "후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
-            if auto_split_recommended
-            else ""
-        )
+        auto_split_recommended = has_urgent_in_later_drum or is_overload
+        urgency_reason_parts: list[str] = []
+        if has_urgent_in_later_drum:
+            urgency_reason_parts.append(
+                "후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
+            )
+        if is_overload:
+            urgency_reason_parts.append(overload_reason)
+        urgency_reason = " / ".join(urgency_reason_parts)
 
         eq_code = header.equipment_code
         load_hours = (
@@ -1210,6 +1235,8 @@ def detect_split_candidates(
                 "drum_details": drum_details,
                 "auto_split_recommended": auto_split_recommended,
                 "urgency_reason": urgency_reason,
+                "is_overload": is_overload,
+                "has_urgent_in_later_drum": has_urgent_in_later_drum,
             }
         )
 
@@ -1395,9 +1422,19 @@ def execute_auto_splits(
         if len(proposed) < 2:
             continue
 
-        # proposed_splits[1:] 의 batch_ids 수집
+        # Split boundary:
+        # - is_overload: ceil(N/2) 지점으로 균형 분할 (PDF "5틀→3+2" 패턴).
+        #   먼저 처리되어야 할 초기 드럼이 더 많도록 앞쪽에 우선 배치.
+        # - 단순 긴급(has_urgent_in_later_drum only): 기존 동작 유지,
+        #   proposed_splits[1:] 전부를 뒤로 이동 (앞 드럼만 단독 보존).
+        N = len(proposed)
+        if c.get("is_overload"):
+            split_idx = (N + 1) // 2  # 3→2, 4→2, 5→3
+        else:
+            split_idx = 1
+
         split_ids: list[int] = []
-        for chunk in proposed[1:]:
+        for chunk in proposed[split_idx:]:
             split_ids.extend(chunk.get("batch_ids") or [])
 
         if not split_ids:
