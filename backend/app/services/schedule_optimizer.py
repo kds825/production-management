@@ -301,7 +301,9 @@ def auto_schedule(
     #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
     #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
     #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
-    #   2 = 그 외 공정(절연·시스 등): 납기 오름차순(EDD) 최우선
+    #   2 = 그 외 공정(절연·시스 등): 공정 순서(PROCESS_ORDER) 최우선 → EDD
+    #       파이프라인 보장: 절연(2)이 시스(4)보다 항상 먼저 스케줄링되어야
+    #       process_first_output_by_sq에 절연 데이터가 등록된 후 시스가 참조 가능.
     #       색상 클러스터 정렬 제거 — 납기 준수가 색상 연속성보다 우선
     ordered_group_items = sorted(
         batch_groups.items(),
@@ -314,10 +316,11 @@ def auto_schedule(
             # ST- 그룹: 소선경 값(같은 클러스터 내 안정 정렬)
             sq_to_wire_d.get(_st_sq(kv[0]), 0.0)
             if kv[0].startswith("ST-") else 0.0,
-            # 그룹 자체 최초 납기 (EDD) — 시스 포함 모든 공정 납기 우선
-            _group_earliest_due(kv[1]),
-            # 동일 납기 내 공정 순서 보장 (절연→시스 등)
+            # 공정 순서 — 절연(2)→시스(4) 등 파이프라인 강제 (EDD보다 우선)
+            # ST- 그룹은 모두 연선(1)이므로 실질적 영향 없음
             PROCESS_ORDER.get(kv[1][0].process_name, 50) if kv[1] else 50,
+            # 동일 공정 내 납기 정렬 (EDD)
+            _group_earliest_due(kv[1]),
             # 고객 우선순위
             kv[1][0].customer_priority or 99 if kv[1] else 99,
         ),
