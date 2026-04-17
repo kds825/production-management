@@ -239,9 +239,18 @@ def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
                 gap_min = (
                     next_task.start_datetime - curr.end_datetime
                 ).total_seconds() / 60
-                required_setup = float(curr.setup_time_min or 0)
+                # Why:
+                # schedule_optimizer 는 setup 을 task.setup_time_min 내부에 저장하고
+                # eq_total_duration 에 포함(line 1309). single-equipment 경로는 next 에,
+                # multi-equipment 경로는 curr 에 setup 을 기록하는 차이가 있음.
+                # 따라서 "어느 쪽에든 setup 시간이 기록됐는가" 를 gap + curr + next 합으로
+                # 판정해야 false positive (gap만 보는 과거 로직) 가 발생하지 않는다.
+                curr_setup = float(curr.setup_time_min or 0)
+                next_setup = float(next_task.setup_time_min or 0)
+                required_setup = max(curr_setup, next_setup)
+                effective_setup = gap_min + curr_setup + next_setup
 
-                if gap_min < required_setup * 0.5:  # Less than half the required setup
+                if required_setup > 0 and effective_setup < required_setup * 0.5:
                     violations.append(
                         {
                             "constraint_id": "4-1",
@@ -249,7 +258,9 @@ def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
                             "severity": "warning",
                             "detail": (
                                 f"설비 {eq_code}: SQ {curr_batch.sq_mm2}→{next_batch.sq_mm2}"
-                                f" 교체, 간격 {gap_min:.0f}분 (필요: {required_setup:.0f}분)"
+                                f" 교체, 확보된 setup {effective_setup:.0f}분"
+                                f" (gap={gap_min:.0f} + curr.setup={curr_setup:.0f}"
+                                f" + next.setup={next_setup:.0f}, 필요: {required_setup:.0f}분)"
                             ),
                         }
                     )
