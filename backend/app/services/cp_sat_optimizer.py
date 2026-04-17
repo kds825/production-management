@@ -671,6 +671,42 @@ def cp_sat_schedule(
     )
     if idle_terms:
         _objective = _objective + _IDLE_WEIGHT * sum(idle_terms)
+
+    # 6-g. 시스 색상 체인 보너스 — 같은 설비 카테고리(A100/A120) 내 같은 색상 그룹
+    # 쌍에 대해 |start_a - start_b| 를 최소화. 체인지오버 비용을 간접적으로 penalize.
+    # 가중치는 IDLE 과 동일 (1) — 납기 가중치(수십~수백) 대비 훨씬 낮음.
+    sheath_groups_by_color: dict[tuple[str, str], list[str]] = {}
+    for _gk, _meta in group_meta.items():
+        _rep = _meta["rep"]
+        if _rep.process_name not in ("저압시스", "고압시스"):
+            continue
+        _color = (_rep.sheath_color or "").strip() or "기타"
+        # 설비 카테고리: group_key prefix (A100 / A120 / 저압시스 / 고압시스)
+        if _gk.startswith("A120_"):
+            _eq_cat = "A120"
+        elif _gk.startswith("A100_"):
+            _eq_cat = "A100"
+        else:
+            _eq_cat = _rep.process_name
+        sheath_groups_by_color.setdefault((_eq_cat, _color), []).append(_gk)
+
+    chain_terms: list = []
+    for (_cat, _color), _gks in sheath_groups_by_color.items():
+        if len(_gks) < 2:
+            continue
+        for i in range(len(_gks) - 1):
+            for j in range(i + 1, len(_gks)):
+                _gk_a, _gk_b = _gks[i], _gks[j]
+                _diff = model.new_int_var(
+                    0, _MAX_HORIZON_MIN, f"chain_diff_{_gk_a}_{_gk_b}"
+                )
+                model.add_abs_equality(_diff, start_vars[_gk_a] - start_vars[_gk_b])
+                chain_terms.append(_diff)
+
+    _CHAIN_WEIGHT = 1
+    if chain_terms:
+        _objective = _objective + _CHAIN_WEIGHT * sum(chain_terms)
+
     model.minimize(_objective)
 
     # ── 7. 솔버 실행 ──────────────────────────────────────────────────────

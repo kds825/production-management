@@ -415,3 +415,48 @@ def test_long_color_chain_not_broken_by_half_week(db):
     # 모두 흑이어야
     assert all(c == "흑" for c in colors), f"색상 이탈: {colors}"
     assert len(tasks) == 3, f"3개 태스크 기대, 실제 {len(tasks)}"
+
+
+def test_cp_sat_color_chain_bonus(db):
+    """CP-SAT 솔버가 시스 같은 색상을 인접 배치하는 해를 선호."""
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    rows = [
+        ("흑", 120, date(2026, 4, 13), "SO-CP-1"),
+        ("흑", 95, date(2026, 4, 20), "SO-CP-2"),
+        ("청", 120, date(2026, 4, 13), "SO-CP-3"),
+        ("청", 95, date(2026, 4, 20), "SO-CP-4"),
+    ]
+    for color, sq, due, so in rows:
+        db.add(
+            ProductionBatch(
+                run_label="test-cpsat-chain",
+                batch_seq=0,
+                process_name="저압시스",
+                sheath_color=color,
+                sq_mm2=sq,
+                due_date=due,
+                drum_count=1,
+                drum_length_m=1000,
+                total_length_m=1000,
+                conductor_material="CU",
+                sales_order_id=so,
+                sales_order_line=1,
+                batch_group="",
+            )
+        )
+    db.flush()
+
+    result = cp_sat_schedule(run_label="test-cpsat-chain", db=db)
+    assert result.get("solver_status") in ("OPTIMAL", "FEASIBLE"), (
+        f"Solver failed: {result.get('solver_status')}"
+    )
+
+    tasks = _get_sheath_tasks_sorted(db, "test-cpsat-chain", eq_code_prefix="SH-A120")
+    if len(tasks) < 2:
+        pytest.skip(f"SH-A120 에 2개 이상 task 필요 (실제 {len(tasks)})")
+    colors = [_get_color(db, t) for t in tasks]
+    changeovers = sum(1 for i in range(len(colors) - 1) if colors[i] != colors[i + 1])
+    assert changeovers <= 1, (
+        f"CP-SAT: 색상 체인지오버 과다 {changeovers}회, 순서={colors}"
+    )
