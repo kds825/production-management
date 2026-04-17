@@ -277,6 +277,28 @@ def generate_edu_dates(start_date: date, end_date: date) -> list[date]:
     return edu_dates
 
 
+def _prev_day_window_end(current_date: date, equipment_code: str | None) -> datetime:
+    """이전 영업일(하루 전)의 작업 창 종료 시각. 역방향 순회 시 비가동 구간 점프용."""
+    prev = current_date - timedelta(days=1)
+    _, prev_end = get_working_window(prev, equipment_code)
+    return prev_end
+
+
+def _active_date_for_reverse(current: datetime, equipment_code: str | None) -> date:
+    """역방향 순회 시 current 시각이 속한 '작업 shift' 의 날짜를 반환.
+
+    경계 처리: current 가 어떤 날짜 d 의 작업 창 시작시각과 정확히 일치하면
+    그 시각은 '이전 날의 shift 종료' 로 간주 → d-1 반환. 예: 저압절연 목요일
+    shift 는 08:00 ~ 익일 08:00 인데 current == 금 08:00 이면 이는 목 shift 의
+    끝이므로 date() 가 반환하는 금요일이 아닌 목요일을 활성 날짜로 사용.
+    """
+    d = current.date()
+    day_start, _ = get_working_window(d, equipment_code)
+    if current == day_start:
+        return d - timedelta(days=1)
+    return d
+
+
 def calculate_start_datetime(
     end: datetime,
     duration_min: float,
@@ -295,39 +317,36 @@ def calculate_start_datetime(
     current = end
     cat = _get_category(equipment_code)
 
-    for _ in range(1000):
+    for _ in range(1000):  # 최대 ~1000 영업일 역산 안전 상한 (무한 루프 방지)
         if remaining <= 0:
             return current
 
-        current_date = current.date()
+        # 경계 시각(예: 24h shift 다음날 08:00) 은 이전 shift 소속으로 해석
+        current_date = _active_date_for_reverse(current, equipment_code)
         avail_hours = get_available_hours(current_date, equipment_code, db)
 
         if avail_hours <= 0:
             # 비가동일 → 전날 종료시각으로 이동
-            prev = current_date - timedelta(days=1)
-            _, prev_end = get_working_window(prev, equipment_code)
-            current = prev_end
+            current = _prev_day_window_end(current_date, equipment_code)
             continue
 
         day_start, day_end = get_working_window(current_date, equipment_code)
 
         if current <= day_start:
-            prev = current_date - timedelta(days=1)
-            _, prev_end = get_working_window(prev, equipment_code)
-            current = prev_end
+            current = _prev_day_window_end(current_date, equipment_code)
             continue
 
         # 현재 위치가 휴식 구간 내에 있으면 휴식 시작 시각으로 이동
         day_breaks = _get_day_breaks(current_date, cat)
+        # 역방향 semantics: current == brk_e 는 '휴식 끝난 직후' 로 간주 → 휴식 구간 내부로 처리.
+        # 반대로 current == brk_s 는 '휴식 시작 직전' 으로 외부 처리. 순방향 계산과 거울 대칭.
         for brk_s, brk_e in day_breaks:
             if brk_s < current <= brk_e:
                 current = brk_s
                 break
 
         if current <= day_start:
-            prev = current_date - timedelta(days=1)
-            _, prev_end = get_working_window(prev, equipment_code)
-            current = prev_end
+            current = _prev_day_window_end(current_date, equipment_code)
             continue
 
         # current 직전의 가장 가까운 휴식 구간 탐색 (역방향)
@@ -357,9 +376,7 @@ def calculate_start_datetime(
             current = prev_brk_s  # type: ignore[assignment]
         else:
             # 창 시작 → 전날 종료시각
-            prev = current_date - timedelta(days=1)
-            _, prev_end = get_working_window(prev, equipment_code)
-            current = prev_end
+            current = _prev_day_window_end(current_date, equipment_code)
 
     # 안전 폴백
     return end - timedelta(minutes=duration_min)
