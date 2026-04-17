@@ -446,7 +446,9 @@ def test_cp_sat_single_path_block_width_preserved(db):
     )
     assert insul
     width_min = (insul.end_datetime - insul.start_datetime).total_seconds() / 60
-    # 절연 duration 은 선속상 수십 분. 블록 폭이 24h 를 넘으면 "end_dt 확장" 회귀.
-    assert width_min <= 24 * 60, (
-        f"저압절연 블록 폭 {width_min}분 (> 24h). CP-SAT end_dt 확장 회귀."
+    # 절연 duration 은 선속상 ~90~150분(캘린더 휴식 스킵 포함). 3h 상한 —
+    # 기존 end_dt 확장 방식은 _per_drum_p 만큼(≈90분) 늘려 ~200분대로
+    # 부풀었으므로 3h 상한으로 end 확장 회귀 감지.
+    assert width_min <= 3 * 60, (
+        f"저압절연 블록 폭 {width_min}분 (> 3h). CP-SAT end_dt 확장 회귀."
     )
