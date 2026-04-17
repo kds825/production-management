@@ -879,44 +879,18 @@ def _run_optimization_once(
         # T_succ_start = max(T_pred_first_drum, T_pred_end - D_succ)
         # 불변식: T_succ_end >= T_pred_end (후공정 끝 ≥ 선행공정 끝)
         # 효과: 절연 선속이 연선보다 빠르면 시작을 늦춰 끝을 정렬. 블록 width 불변.
-        _pipeline_check_procs: list[str] = []
-        if pred_proc:
-            _pipeline_check_procs.append(pred_proc)
-        if rep.process_name in ("저압시스", "고압시스"):
-            _pipeline_check_procs.append("연합")
-
-        _all_sqs_g = {int(b.sq_mm2 or 0) for b in group_batches}
-
-        # 모든 관련 선행공정의 종료 시각 중 최대
-        pred_end_latest: datetime | None = None
-        for _pp in _pipeline_check_procs:
-            for _sq_i in _all_sqs_g:
-                _pe = process_end_by_sq.get((_pp, _sq_i))
-                if _pe and _pe < datetime.max:
-                    if pred_end_latest is None or _pe > pred_end_latest:
-                        pred_end_latest = _pe
-
-        if pred_end_latest is not None:
-            # 역산 시작 = pred_end - succ_duration (캘린더 보정)
-            reverse_start = calculate_start_datetime(
-                pred_end_latest, best_total_duration, db, best_eq.equipment_code
-            )
-            # 역산 시작이 현재 best_start 보다 늦으면 지연 (유휴 최소)
-            if reverse_start > best_start:
-                delayed_start = _find_available_slot(
-                    reverse_start,
-                    best_total_duration,
-                    slots,
-                    db,
-                    best_eq.equipment_code,
-                )
-                best_start = delayed_start
-                end_dt = calculate_end_datetime(
-                    best_start, best_total_duration, db, best_eq.equipment_code
-                )
-            # 불변식 보장 (캘린더 보정 오차 대비)
-            if end_dt < pred_end_latest:
-                end_dt = pred_end_latest
+        best_start, end_dt = align_start_to_predecessor_end(
+            process_name=rep.process_name,
+            pred_proc=pred_proc,
+            group_sqs={int(b.sq_mm2 or 0) for b in group_batches},
+            process_end_by_sq=process_end_by_sq,
+            current_start=best_start,
+            current_end=end_dt,
+            duration_min=best_total_duration,
+            slots=timeline.get(best_eq.equipment_code, []),
+            db=db,
+            equipment_code=best_eq.equipment_code,
+        )
 
         # ── 시간 올림 — 간트 블록은 정각 단위로 표시 ────────────────────────
         if end_dt.minute > 0 or end_dt.second > 0 or end_dt.microsecond > 0:
