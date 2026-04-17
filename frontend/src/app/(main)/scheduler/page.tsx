@@ -22,6 +22,7 @@ import {
 import { ViewFilter } from "@/features/scheduler/components/ViewFilter";
 import { OrderInbox } from "@/features/scheduler/components/OrderInbox";
 import { ConstraintAlert } from "@/features/scheduler/components/ConstraintAlert";
+import { OverlapAlertBanner } from "@/features/scheduler/components/OverlapAlertBanner";
 import { ContextMenu } from "@/features/scheduler/components/ContextMenu";
 import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
@@ -178,16 +179,23 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
               </td>
               <td className="py-1 px-2 text-right font-medium text-gray-700">
                 {order.wip_length_m != null && order.wip_length_m > 0 ? (
-                  <span title={`원본: ${order.total_length_m.toLocaleString()}m, WIP차감: -${order.wip_length_m.toLocaleString()}m`}>
+                  <span
+                    title={`원본: ${order.total_length_m.toLocaleString()}m, WIP차감: -${order.wip_length_m.toLocaleString()}m`}
+                  >
                     <span style={{ color: "#16A34A" }}>
-                      {(order.net_length_m ?? order.total_length_m).toLocaleString()}m
+                      {(
+                        order.net_length_m ?? order.total_length_m
+                      ).toLocaleString()}
+                      m
                     </span>
                     <span className="ml-1 text-[9px] text-gray-400">
                       (-{order.wip_length_m.toLocaleString()})
                     </span>
                   </span>
                 ) : (
-                  (order.net_length_m ?? order.total_length_m).toLocaleString() + "m"
+                  (
+                    order.net_length_m ?? order.total_length_m
+                  ).toLocaleString() + "m"
                 )}
               </td>
               <td className="py-1 px-2 text-right text-gray-600">
@@ -195,7 +203,9 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
                   const base = order.net_length_m ?? order.total_length_m;
                   const conv = calcConvertedQty(order.spec_raw || "", base);
                   return (
-                    <span title={`${order.core_count}C × ${base.toLocaleString()}m`}>
+                    <span
+                      title={`${order.core_count}C × ${base.toLocaleString()}m`}
+                    >
                       {conv.toLocaleString()}m
                     </span>
                   );
@@ -251,10 +261,13 @@ function BatchGroupOrderTable({ orders }: { orders: BatchGroupOrder[] }) {
               style={{ color: "#C41230" }}
               title="다심 케이블 환산수량 합계 (단심은 —)"
             >
-              {displayRows.reduce((s, o) => {
-                const base = o.net_length_m ?? o.total_length_m;
-                return s + calcConvertedQty(o.spec_raw || "", base);
-              }, 0).toLocaleString()}m
+              {displayRows
+                .reduce((s, o) => {
+                  const base = o.net_length_m ?? o.total_length_m;
+                  return s + calcConvertedQty(o.spec_raw || "", base);
+                }, 0)
+                .toLocaleString()}
+              m
             </td>
             <td className="py-1 px-2 text-center text-[10px] text-gray-400">
               {wipCount > 0 ? `재고 ${wipCount}건` : "-"}
@@ -316,6 +329,10 @@ export default function SchedulerPage() {
   const [autoScheduleResult, setAutoScheduleResult] = useState<string | null>(
     null,
   );
+  // 겹침 경고 — Stage 2 API가 `overlap_alert: true`를 반환했을 때 상단 배너에 표시할 메시지
+  // 의도: 자동배열이 재시도 한도 내에 non-overlapping 스케줄을 만들지 못한 경우
+  //       기존 스케줄을 유지(refresh 안 함)하고 사용자에게 명시적으로 경고한다.
+  const [overlapAlert, setOverlapAlert] = useState<string | null>(null);
 
   // ── 배치 그룹 수주 목록 상태 ──
   const [batchGroupOrders, setBatchGroupOrders] = useState<BatchGroupOrder[]>(
@@ -369,7 +386,9 @@ export default function SchedulerPage() {
         due.setHours(23, 59, 59, 999);
         const endTs =
           t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
-        const lateDays = Math.ceil((endTs - due.getTime()) / (24 * 60 * 60 * 1000));
+        const lateDays = Math.ceil(
+          (endTs - due.getTime()) / (24 * 60 * 60 * 1000),
+        );
         return { task: t, lateDays };
       })
       .sort((a, b) => b.lateDays - a.lateDays);
@@ -379,6 +398,8 @@ export default function SchedulerPage() {
   const handleAutoSchedule = useCallback(async () => {
     setAutoScheduleLoading(true);
     setAutoScheduleResult(null);
+    // 새 실행 시작 시 이전 겹침 배너는 제거 (성공/실패는 아래 분기에서 재설정)
+    setOverlapAlert(null);
     try {
       // 최신 런 라벨 조회
       const runsRes = await fetch(`${API_BASE}/pipeline/runs`);
@@ -407,6 +428,29 @@ export default function SchedulerPage() {
         }),
       });
       if (res.ok) {
+        // 백엔드가 SchedulerOverlapError를 포착한 경우 200 응답에 overlap_alert 플래그를 실어 돌려줌.
+        // 이때는 기존 스케줄을 보존하고(refresh 안 함) 상단 배너만 띄운다.
+        type OverlapPayload = {
+          overlap_alert?: boolean;
+          attempts?: number;
+          message?: string;
+        };
+        let overlapPayload: OverlapPayload | null = null;
+        try {
+          overlapPayload = (await res.clone().json()) as OverlapPayload;
+        } catch {
+          // JSON 파싱 실패 — 기존 happy path로 진행
+          overlapPayload = null;
+        }
+        if (overlapPayload?.overlap_alert) {
+          const attempts = overlapPayload.attempts ?? 3;
+          setOverlapAlert(
+            `${attempts}회 재시도 실패. 기존 스케줄을 유지합니다.`,
+          );
+          // 자동배열 결과 토스트는 중복 정보를 주지 않도록 비움
+          setAutoScheduleResult(null);
+          return;
+        }
         setAutoScheduleResult(
           `자동배열 완료 (런: ${runLabel}). 새로고침 중...`,
         );
@@ -876,6 +920,14 @@ export default function SchedulerPage() {
         onDiscardEdits={discardEdits}
       />
 
+      {/* 겹침 경고 배너 — Stage 2 overlap_alert 응답 시에만 노출, 헤더 바로 아래 최상단 */}
+      {overlapAlert && (
+        <OverlapAlertBanner
+          message={overlapAlert}
+          onDismiss={() => setOverlapAlert(null)}
+        />
+      )}
+
       {/* 뷰 필터 + 동기화 + 줌 컨트롤 + 자동배열 */}
       <div className="flex items-center bg-white border-b border-gray-200">
         <div className="flex-1">
@@ -920,10 +972,18 @@ export default function SchedulerPage() {
             onClick={() => setShowLatePanel((v) => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors"
             style={{
-              backgroundColor: lateTasks.length > 0
-                ? (showLatePanel ? "#7F1D1D" : "#FEE2E2")
-                : "#F3F4F6",
-              color: lateTasks.length > 0 ? (showLatePanel ? "#FCA5A5" : "#B91C1C") : "#6B7280",
+              backgroundColor:
+                lateTasks.length > 0
+                  ? showLatePanel
+                    ? "#7F1D1D"
+                    : "#FEE2E2"
+                  : "#F3F4F6",
+              color:
+                lateTasks.length > 0
+                  ? showLatePanel
+                    ? "#FCA5A5"
+                    : "#B91C1C"
+                  : "#6B7280",
               border: `1px solid ${lateTasks.length > 0 ? "#FECACA" : "#E5E7EB"}`,
             }}
             title="납기를 초과한 배치 목록 보기"
@@ -1003,14 +1063,21 @@ export default function SchedulerPage() {
       {showLatePanel && (
         <div
           className="shrink-0 border-b overflow-auto"
-          style={{ maxHeight: 220, backgroundColor: "#FFF7F7", borderColor: "#FECACA" }}
+          style={{
+            maxHeight: 220,
+            backgroundColor: "#FFF7F7",
+            borderColor: "#FECACA",
+          }}
         >
           <div
             className="flex items-center justify-between px-4 py-2 sticky top-0 border-b"
             style={{ backgroundColor: "#FEF2F2", borderColor: "#FECACA" }}
           >
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold" style={{ color: "#991B1B" }}>
+              <span
+                className="text-[11px] font-bold"
+                style={{ color: "#991B1B" }}
+              >
                 납기 초과 배치
               </span>
               <span
@@ -1038,11 +1105,23 @@ export default function SchedulerPage() {
             <table className="w-full text-[11px] border-collapse">
               <thead>
                 <tr style={{ backgroundColor: "#FEE2E2" }}>
-                  {["지연", "설비", "규격", "거래처", "납기일", "배치완료", "배치그룹"].map((h) => (
+                  {[
+                    "지연",
+                    "설비",
+                    "규격",
+                    "거래처",
+                    "납기일",
+                    "배치완료",
+                    "배치그룹",
+                  ].map((h) => (
                     <th
                       key={h}
                       className="px-3 py-1.5 text-left font-semibold border-b"
-                      style={{ color: "#7F1D1D", borderColor: "#FECACA", whiteSpace: "nowrap" }}
+                      style={{
+                        color: "#7F1D1D",
+                        borderColor: "#FECACA",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       {h}
                     </th>
@@ -1062,27 +1141,50 @@ export default function SchedulerPage() {
                       setShowLatePanel(false);
                     }}
                   >
-                    <td className="px-3 py-1.5 font-bold" style={{ color: "#DC2626", whiteSpace: "nowrap" }}>
+                    <td
+                      className="px-3 py-1.5 font-bold"
+                      style={{ color: "#DC2626", whiteSpace: "nowrap" }}
+                    >
                       +{lateDays}일
                     </td>
-                    <td className="px-3 py-1.5 text-gray-600" style={{ whiteSpace: "nowrap" }}>
+                    <td
+                      className="px-3 py-1.5 text-gray-600"
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {t.equipment_id}
                     </td>
                     <td className="px-3 py-1.5 text-gray-700 max-w-[160px] truncate">
                       {t.spec || t.product}
                     </td>
-                    <td className="px-3 py-1.5 text-gray-600" style={{ whiteSpace: "nowrap" }}>
+                    <td
+                      className="px-3 py-1.5 text-gray-600"
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {t.customer ?? "-"}
                     </td>
-                    <td className="px-3 py-1.5 font-medium" style={{ color: "#B91C1C", whiteSpace: "nowrap" }}>
+                    <td
+                      className="px-3 py-1.5 font-medium"
+                      style={{ color: "#B91C1C", whiteSpace: "nowrap" }}
+                    >
                       {t.delivery_date instanceof Date
                         ? t.delivery_date.toLocaleDateString("ko-KR")
-                        : new Date(t.delivery_date!).toLocaleDateString("ko-KR")}
+                        : new Date(t.delivery_date!).toLocaleDateString(
+                            "ko-KR",
+                          )}
                     </td>
-                    <td className="px-3 py-1.5 text-gray-500" style={{ whiteSpace: "nowrap" }}>
-                      {(t.end instanceof Date ? t.end : new Date(t.end)).toLocaleDateString("ko-KR")}
+                    <td
+                      className="px-3 py-1.5 text-gray-500"
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {(t.end instanceof Date
+                        ? t.end
+                        : new Date(t.end)
+                      ).toLocaleDateString("ko-KR")}
                     </td>
-                    <td className="px-3 py-1.5 font-mono text-gray-400 text-[10px]" style={{ whiteSpace: "nowrap" }}>
+                    <td
+                      className="px-3 py-1.5 font-mono text-gray-400 text-[10px]"
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {t.batch_group ?? "-"}
                     </td>
                   </tr>
@@ -1210,531 +1312,576 @@ export default function SchedulerPage() {
                       borderColor: "#E5E7EB",
                     }}
                   >
-                  {/* 패널 헤더 — sticky: 스크롤해도 항상 상단에 고정 */}
-                  <div
-                    className="flex items-center justify-between px-4 py-2 border-b sticky top-0 z-10"
-                    style={{
-                      backgroundColor: "#FDF2F2",
-                      borderColor: "#F3D5D5",
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-1 h-4 rounded-sm"
-                        style={{ backgroundColor: "#C41230" }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold"
-                        style={{ color: "#4A2C2A" }}
-                      >
-                        {batchGroupOrders.filter(
-                          (o) => o.batch_seq == null || o.batch_seq >= 0,
-                        ).length > 1
-                          ? "배치 그룹 수주 목록"
-                          : "수주 상세 정보"}
-                      </span>
-                      {selectedTask?.batch_group && (
-                        <span
-                          className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                          style={{
-                            backgroundColor: "#F3E8E8",
-                            color: "#C41230",
-                          }}
-                        >
-                          {selectedTask.batch_group}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* 공정 흐름 네비게이션 */}
-                      {processFlow.length > 1 &&
-                        (() => {
-                          const currentBg =
-                            selectedTask?.batch_group ??
-                            processFlow[0]?.batch_group;
-                          const currentIdx = processFlow.findIndex(
-                            (p) => p.batch_group === currentBg,
-                          );
-                          const prev =
-                            currentIdx > 0 ? processFlow[currentIdx - 1] : null;
-                          const next =
-                            currentIdx >= 0 &&
-                            currentIdx < processFlow.length - 1
-                              ? processFlow[currentIdx + 1]
-                              : null;
-                          return (
-                            <div className="flex items-center gap-1">
-                              <button
-                                disabled={!prev}
-                                onClick={() =>
-                                  prev &&
-                                  navigateToProcessBatch(prev.batch_group)
-                                }
-                                className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                                style={{
-                                  borderColor: "#D1D5DB",
-                                  color: "#4A2C2A",
-                                }}
-                                title={
-                                  prev
-                                    ? `${prev.process_name} (${prev.batch_group})`
-                                    : "이전 공정 없음"
-                                }
-                              >
-                                &larr; 이전공정
-                              </button>
-                              <span
-                                className="text-[9px] px-1 font-mono"
-                                style={{ color: "#9CA3AF" }}
-                              >
-                                {currentIdx + 1}/{processFlow.length}
-                              </span>
-                              <button
-                                disabled={!next}
-                                onClick={() =>
-                                  next &&
-                                  navigateToProcessBatch(next.batch_group)
-                                }
-                                className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                                style={{
-                                  borderColor: "#D1D5DB",
-                                  color: "#4A2C2A",
-                                }}
-                                title={
-                                  next
-                                    ? `${next.process_name} (${next.batch_group})`
-                                    : "다음 공정 없음"
-                                }
-                              >
-                                다음공정 &rarr;
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      <button
-                        onClick={() => {
-                          setAuditPanel((prev) => ({ ...prev, open: false }));
-                          selectTask(null);
-                        }}
-                        className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 작업 요약 + 배치 그룹 수주 테이블 */}
-                  {selectedTask && (
+                    {/* 패널 헤더 — sticky: 스크롤해도 항상 상단에 고정 */}
                     <div
-                      className="px-4 py-3 border-b"
-                      style={{ borderColor: "#F3F4F6" }}
+                      className="flex items-center justify-between px-4 py-2 border-b sticky top-0 z-10"
+                      style={{
+                        backgroundColor: "#FDF2F2",
+                        borderColor: "#F3D5D5",
+                      }}
                     >
-                      {/* 작업 요약 1행 */}
-                      <div className="grid grid-cols-4 gap-x-3 gap-y-2 mb-2">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            규격
-                          </span>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-1 h-4 rounded-sm"
+                          style={{ backgroundColor: "#C41230" }}
+                        />
+                        <span
+                          className="text-[11px] font-semibold"
+                          style={{ color: "#4A2C2A" }}
+                        >
+                          {batchGroupOrders.filter(
+                            (o) => o.batch_seq == null || o.batch_seq >= 0,
+                          ).length > 1
+                            ? "배치 그룹 수주 목록"
+                            : "수주 상세 정보"}
+                        </span>
+                        {selectedTask?.batch_group && (
                           <span
-                            className="text-[11px] font-semibold"
-                            style={{ color: "#1F2937" }}
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                            style={{
+                              backgroundColor: "#F3E8E8",
+                              color: "#C41230",
+                            }}
                           >
-                            {selectedTask.spec || "-"}
+                            {selectedTask.batch_group}
                           </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            배정 설비
-                          </span>
-                          <span
-                            className="text-[11px] font-semibold"
-                            style={{ color: "#1F2937" }}
-                          >
-                            {selectedEquipment?.name ||
-                              selectedTask.equipment_id ||
-                              "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            총 길이
-                          </span>
-                          <span
-                            className="text-[11px] font-semibold"
-                            style={{ color: "#1F2937" }}
-                          >
-                            {selectedTask.volume_m
-                              ? `${selectedTask.volume_m.toLocaleString()}m`
-                              : "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            작업 기간
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {new Date(selectedTask.start).toLocaleString(
-                              "ko-KR",
-                              {
-                                month: "numeric",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              },
-                            )}
-                            {" ~ "}
-                            {new Date(selectedTask.end).toLocaleString(
-                              "ko-KR",
-                              {
-                                month: "numeric",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              },
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            선속
-                          </span>
-                          <span className="text-[11px] text-gray-600">
-                            {selectedTask.line_speed_m_per_min
-                              ? `${selectedTask.line_speed_m_per_min}m/min`
-                              : "-"}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                        </div>
-                        {/* 배치 상태 — 클릭으로 순환 변경 */}
-                        {(() => {
-                          const STATUS_CYCLE: Record<string, string> = {
-                            planned: "in_progress",
-                            in_progress: "completed",
-                            completed: "planned",
-                          };
-                          const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-                            planned:     { label: "계획",  bg: "#6B7280", text: "#fff" },
-                            in_progress: { label: "진행",  bg: "#2563EB", text: "#fff" },
-                            completed:   { label: "완료",  bg: "#059669", text: "#fff" },
-                          };
-                          const cfg = STATUS_CONFIG[selectedTask.status] ?? STATUS_CONFIG.planned;
-                          const handleStatusClick = async () => {
-                            if (!selectedTask.batch_id) return;
-                            const nextStatus = STATUS_CYCLE[selectedTask.status] ?? "planned";
-                            const prevStatus = selectedTask.status;
-                            updateTask(selectedTask.id, { status: nextStatus });
-                            try {
-                              const res = await fetch(
-                                `${API_BASE}/pipeline/batch/${selectedTask.batch_id}/status`,
-                                { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: nextStatus }) },
-                              );
-                              if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                            } catch {
-                              updateTask(selectedTask.id, { status: prevStatus });
-                            }
-                          };
-                          return (
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                                배치 상태
-                              </span>
-                              <button
-                                onClick={handleStatusClick}
-                                disabled={!selectedTask.batch_id}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 3,
-                                  padding: "2px 7px",
-                                  borderRadius: 4,
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  backgroundColor: cfg.bg,
-                                  color: cfg.text,
-                                  border: "none",
-                                  cursor: selectedTask.batch_id ? "pointer" : "default",
-                                  lineHeight: 1.5,
-                                  width: "fit-content",
-                                }}
-                                title="클릭하여 상태 변경"
-                              >
-                                {cfg.label}
-                                {selectedTask.batch_id && (
-                                  <span style={{ fontSize: 8, opacity: 0.75 }}>▾</span>
-                                )}
-                              </button>
-                            </div>
-                          );
-                        })()}
-
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            수주 건수
-                          </span>
-                          <span
-                            className="text-[11px] font-semibold"
-                            style={{ color: "#C41230" }}
-                          >
-                            {batchGroupOrders.filter(
-                              (o) => o.batch_seq == null || o.batch_seq >= 0,
-                            ).length > 0
-                              ? `${batchGroupOrders.filter((o) => o.batch_seq == null || o.batch_seq >= 0).length}건`
-                              : "-"}
-                          </span>
-                        </div>
+                        )}
                       </div>
+                      <div className="flex items-center gap-2">
+                        {/* 공정 흐름 네비게이션 */}
+                        {processFlow.length > 1 &&
+                          (() => {
+                            const currentBg =
+                              selectedTask?.batch_group ??
+                              processFlow[0]?.batch_group;
+                            const currentIdx = processFlow.findIndex(
+                              (p) => p.batch_group === currentBg,
+                            );
+                            const prev =
+                              currentIdx > 0
+                                ? processFlow[currentIdx - 1]
+                                : null;
+                            const next =
+                              currentIdx >= 0 &&
+                              currentIdx < processFlow.length - 1
+                                ? processFlow[currentIdx + 1]
+                                : null;
+                            return (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  disabled={!prev}
+                                  onClick={() =>
+                                    prev &&
+                                    navigateToProcessBatch(prev.batch_group)
+                                  }
+                                  className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                                  style={{
+                                    borderColor: "#D1D5DB",
+                                    color: "#4A2C2A",
+                                  }}
+                                  title={
+                                    prev
+                                      ? `${prev.process_name} (${prev.batch_group})`
+                                      : "이전 공정 없음"
+                                  }
+                                >
+                                  &larr; 이전공정
+                                </button>
+                                <span
+                                  className="text-[9px] px-1 font-mono"
+                                  style={{ color: "#9CA3AF" }}
+                                >
+                                  {currentIdx + 1}/{processFlow.length}
+                                </span>
+                                <button
+                                  disabled={!next}
+                                  onClick={() =>
+                                    next &&
+                                    navigateToProcessBatch(next.batch_group)
+                                  }
+                                  className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                                  style={{
+                                    borderColor: "#D1D5DB",
+                                    color: "#4A2C2A",
+                                  }}
+                                  title={
+                                    next
+                                      ? `${next.process_name} (${next.batch_group})`
+                                      : "다음 공정 없음"
+                                  }
+                                >
+                                  다음공정 &rarr;
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        <button
+                          onClick={() => {
+                            setAuditPanel((prev) => ({ ...prev, open: false }));
+                            selectTask(null);
+                          }}
+                          className="text-gray-400 hover:text-gray-600 text-xs leading-none px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
 
-                      {/* 배치 그룹 수주 목록 테이블 */}
-                      {batchGroupLoading ? (
-                        <div className="flex items-center gap-2 py-2 text-[11px] text-gray-400">
-                          <span
-                            className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
-                            style={{ animation: "spin 1s linear infinite" }}
-                          />
-                          수주 목록 로드 중...
-                        </div>
-                      ) : batchGroupOrders.length > 0 ? (
-                        <BatchGroupOrderTable orders={batchGroupOrders} />
-                      ) : (
-                        /* batch_group가 없거나 API 실패 시 기존 단일 수주 정보 표시 */
-                        <div className="grid grid-cols-6 gap-x-4 gap-y-1">
+                    {/* 작업 요약 + 배치 그룹 수주 테이블 */}
+                    {selectedTask && (
+                      <div
+                        className="px-4 py-3 border-b"
+                        style={{ borderColor: "#F3F4F6" }}
+                      >
+                        {/* 작업 요약 1행 */}
+                        <div className="grid grid-cols-4 gap-x-3 gap-y-2 mb-2">
                           <div className="flex flex-col gap-0.5">
                             <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              수주번호
-                            </span>
-                            <span className="text-[11px] text-gray-700">
-                              {selectedTask.order_id || "-"}
-                            </span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              거래처
-                            </span>
-                            <span className="text-[11px] text-gray-700">
-                              {selectedTask.customer || "-"}
-                            </span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              제품군
-                            </span>
-                            <span className="text-[11px] text-gray-700">
-                              {selectedTask.product || "-"}
-                            </span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              색상
-                            </span>
-                            <span className="text-[11px] text-gray-700">
-                              {selectedTask.color || "-"}
-                            </span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              납기
+                              규격
                             </span>
                             <span
-                              className="text-[11px]"
-                              style={{
-                                color: selectedTask.delivery_date
-                                  ? new Date(
-                                      selectedTask.delivery_date,
-                                    ).getTime() < Date.now()
-                                    ? "#DC2626"
-                                    : "#4B5563"
-                                  : "#9CA3AF",
-                              }}
+                              className="text-[11px] font-semibold"
+                              style={{ color: "#1F2937" }}
                             >
-                              {selectedTask.delivery_date
-                                ? new Date(
-                                    selectedTask.delivery_date,
-                                  ).toLocaleDateString("ko-KR")
-                                : "-"}
+                              {selectedTask.spec || "-"}
                             </span>
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                              길이
+                              배정 설비
                             </span>
-                            <span className="text-[11px] text-gray-700">
+                            <span
+                              className="text-[11px] font-semibold"
+                              style={{ color: "#1F2937" }}
+                            >
+                              {selectedEquipment?.name ||
+                                selectedTask.equipment_id ||
+                                "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              총 길이
+                            </span>
+                            <span
+                              className="text-[11px] font-semibold"
+                              style={{ color: "#1F2937" }}
+                            >
                               {selectedTask.volume_m
                                 ? `${selectedTask.volume_m.toLocaleString()}m`
                                 : "-"}
                             </span>
                           </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              작업 기간
+                            </span>
+                            <span className="text-[11px] text-gray-600">
+                              {new Date(selectedTask.start).toLocaleString(
+                                "ko-KR",
+                                {
+                                  month: "numeric",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                },
+                              )}
+                              {" ~ "}
+                              {new Date(selectedTask.end).toLocaleString(
+                                "ko-KR",
+                                {
+                                  month: "numeric",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                },
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              선속
+                            </span>
+                            <span className="text-[11px] text-gray-600">
+                              {selectedTask.line_speed_m_per_min
+                                ? `${selectedTask.line_speed_m_per_min}m/min`
+                                : "-"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5"></div>
+                          {/* 배치 상태 — 클릭으로 순환 변경 */}
+                          {(() => {
+                            const STATUS_CYCLE: Record<string, string> = {
+                              planned: "in_progress",
+                              in_progress: "completed",
+                              completed: "planned",
+                            };
+                            const STATUS_CONFIG: Record<
+                              string,
+                              { label: string; bg: string; text: string }
+                            > = {
+                              planned: {
+                                label: "계획",
+                                bg: "#6B7280",
+                                text: "#fff",
+                              },
+                              in_progress: {
+                                label: "진행",
+                                bg: "#2563EB",
+                                text: "#fff",
+                              },
+                              completed: {
+                                label: "완료",
+                                bg: "#059669",
+                                text: "#fff",
+                              },
+                            };
+                            const cfg =
+                              STATUS_CONFIG[selectedTask.status] ??
+                              STATUS_CONFIG.planned;
+                            const handleStatusClick = async () => {
+                              if (!selectedTask.batch_id) return;
+                              const nextStatus =
+                                STATUS_CYCLE[selectedTask.status] ?? "planned";
+                              const prevStatus = selectedTask.status;
+                              updateTask(selectedTask.id, {
+                                status: nextStatus,
+                              });
+                              try {
+                                const res = await fetch(
+                                  `${API_BASE}/pipeline/batch/${selectedTask.batch_id}/status`,
+                                  {
+                                    method: "PATCH",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({
+                                      status: nextStatus,
+                                    }),
+                                  },
+                                );
+                                if (!res.ok)
+                                  throw new Error(`HTTP ${res.status}`);
+                              } catch {
+                                updateTask(selectedTask.id, {
+                                  status: prevStatus,
+                                });
+                              }
+                            };
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                  배치 상태
+                                </span>
+                                <button
+                                  onClick={handleStatusClick}
+                                  disabled={!selectedTask.batch_id}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                    padding: "2px 7px",
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    backgroundColor: cfg.bg,
+                                    color: cfg.text,
+                                    border: "none",
+                                    cursor: selectedTask.batch_id
+                                      ? "pointer"
+                                      : "default",
+                                    lineHeight: 1.5,
+                                    width: "fit-content",
+                                  }}
+                                  title="클릭하여 상태 변경"
+                                >
+                                  {cfg.label}
+                                  {selectedTask.batch_id && (
+                                    <span
+                                      style={{ fontSize: 8, opacity: 0.75 }}
+                                    >
+                                      ▾
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })()}
+
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                              수주 건수
+                            </span>
+                            <span
+                              className="text-[11px] font-semibold"
+                              style={{ color: "#C41230" }}
+                            >
+                              {batchGroupOrders.filter(
+                                (o) => o.batch_seq == null || o.batch_seq >= 0,
+                              ).length > 0
+                                ? `${batchGroupOrders.filter((o) => o.batch_seq == null || o.batch_seq >= 0).length}건`
+                                : "-"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 배치 그룹 수주 목록 테이블 */}
+                        {batchGroupLoading ? (
+                          <div className="flex items-center gap-2 py-2 text-[11px] text-gray-400">
+                            <span
+                              className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
+                              style={{ animation: "spin 1s linear infinite" }}
+                            />
+                            수주 목록 로드 중...
+                          </div>
+                        ) : batchGroupOrders.length > 0 ? (
+                          <BatchGroupOrderTable orders={batchGroupOrders} />
+                        ) : (
+                          /* batch_group가 없거나 API 실패 시 기존 단일 수주 정보 표시 */
+                          <div className="grid grid-cols-6 gap-x-4 gap-y-1">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                수주번호
+                              </span>
+                              <span className="text-[11px] text-gray-700">
+                                {selectedTask.order_id || "-"}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                거래처
+                              </span>
+                              <span className="text-[11px] text-gray-700">
+                                {selectedTask.customer || "-"}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                제품군
+                              </span>
+                              <span className="text-[11px] text-gray-700">
+                                {selectedTask.product || "-"}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                색상
+                              </span>
+                              <span className="text-[11px] text-gray-700">
+                                {selectedTask.color || "-"}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                납기
+                              </span>
+                              <span
+                                className="text-[11px]"
+                                style={{
+                                  color: selectedTask.delivery_date
+                                    ? new Date(
+                                        selectedTask.delivery_date,
+                                      ).getTime() < Date.now()
+                                      ? "#DC2626"
+                                      : "#4B5563"
+                                    : "#9CA3AF",
+                                }}
+                              >
+                                {selectedTask.delivery_date
+                                  ? new Date(
+                                      selectedTask.delivery_date,
+                                    ).toLocaleDateString("ko-KR")
+                                  : "-"}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                길이
+                              </span>
+                              <span className="text-[11px] text-gray-700">
+                                {selectedTask.volume_m
+                                  ? `${selectedTask.volume_m.toLocaleString()}m`
+                                  : "-"}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 작업 시간 구성 */}
+                    {selectedTask &&
+                      (() => {
+                        const startTs = new Date(selectedTask.start).getTime();
+                        const endTs = new Date(selectedTask.end).getTime();
+                        const setupMin =
+                          (selectedTask as { setup_time_min?: number })
+                            .setup_time_min ??
+                          selectedTask.changeover_min ??
+                          0;
+                        const colorChangeMin =
+                          (selectedTask as { color_change_min?: number })
+                            .color_change_min ?? 0;
+                        const tb = computeTimeBreakdown(
+                          startTs,
+                          endTs,
+                          setupMin + colorChangeMin,
+                        );
+                        const totalHrs = (
+                          (endTs - startTs) /
+                          (60 * 60 * 1000)
+                        ).toFixed(1);
+                        return (
+                          <div
+                            className="px-4 py-2 border-t"
+                            style={{ borderColor: "#F3F4F6" }}
+                          >
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <svg
+                                width="10"
+                                height="10"
+                                viewBox="0 0 16 16"
+                                fill="#9CA3AF"
+                              >
+                                <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
+                              </svg>
+                              <span className="text-[10px] font-medium text-gray-400">
+                                작업 시간 구성
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+                              <span>
+                                <span className="text-gray-400">총 기간</span>{" "}
+                                <span className="font-medium text-gray-700">
+                                  {totalHrs}h
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-gray-400">실제 작업</span>{" "}
+                                <span
+                                  className="font-medium"
+                                  style={{ color: "#C41230" }}
+                                >
+                                  {tb.actualWork.toFixed(1)}h
+                                </span>
+                              </span>
+                              {tb.weekendHrs > 0 && (
+                                <span>
+                                  <span className="text-gray-400">
+                                    주말 휴무
+                                  </span>{" "}
+                                  <span className="text-gray-600">
+                                    {tb.weekendHrs}h
+                                  </span>
+                                </span>
+                              )}
+                              <span>
+                                <span className="text-gray-400">일일 부동</span>{" "}
+                                <span className="text-gray-600">
+                                  {tb.dailyIdleHrs}h
+                                </span>
+                              </span>
+                              {setupMin > 0 && (
+                                <span>
+                                  <span className="text-gray-400">
+                                    규격교체
+                                  </span>{" "}
+                                  <span className="text-gray-600">
+                                    {setupMin}분
+                                  </span>
+                                </span>
+                              )}
+                              {colorChangeMin > 0 && (
+                                <span>
+                                  <span className="text-gray-400">
+                                    색상교체
+                                  </span>{" "}
+                                  <span className="text-gray-600">
+                                    {colorChangeMin}분
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                    {/* AI 스케줄링 근거 */}
+                    <div className="px-4 py-2">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <svg
+                          width="10"
+                          height="10"
+                          viewBox="0 0 16 16"
+                          fill="#9CA3AF"
+                        >
+                          <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a1 1 0 110 2 1 1 0 010-2zm-1 4h2v5H7V7z" />
+                        </svg>
+                        <span className="text-[10px] font-medium text-gray-400">
+                          AI 스케줄링 근거
+                        </span>
+                      </div>
+                      {auditPanel.loading && (
+                        <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                          <span
+                            className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
+                            style={{ animation: "spin 1s linear infinite" }}
+                          />
+                          AI 설명 로드 중...
+                        </div>
+                      )}
+                      {auditPanel.error && !auditPanel.loading && (
+                        <p className="text-[11px] text-gray-400 italic">
+                          스케줄링 근거를 불러올 수 없습니다.
+                        </p>
+                      )}
+                      {auditPanel.data && !auditPanel.loading && (
+                        <div className="flex flex-col gap-1">
+                          {(auditPanel.data.explanation ||
+                            auditPanel.data.reasoning) && (
+                            <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap">
+                              {auditPanel.data.explanation ??
+                                auditPanel.data.reasoning}
+                            </p>
+                          )}
+                          {auditPanel.data.scheduled_at && (
+                            <p className="text-[10px] text-gray-400">
+                              배정 시각:{" "}
+                              {new Date(
+                                auditPanel.data.scheduled_at,
+                              ).toLocaleString("ko-KR")}
+                            </p>
+                          )}
+                          {auditPanel.data.changed_by && (
+                            <p className="text-[10px] text-gray-400">
+                              변경자: {auditPanel.data.changed_by}
+                            </p>
+                          )}
+                          {Object.entries(auditPanel.data)
+                            .filter(
+                              ([k]) =>
+                                ![
+                                  "batch_id",
+                                  "explanation",
+                                  "reasoning",
+                                  "scheduled_at",
+                                  "changed_by",
+                                ].includes(k),
+                            )
+                            .map(([k, v]) => (
+                              <p key={k} className="text-[10px] text-gray-500">
+                                <span className="font-medium">{k}</span>:{" "}
+                                {String(v)}
+                              </p>
+                            ))}
                         </div>
                       )}
                     </div>
-                  )}
-
-                  {/* 작업 시간 구성 */}
-                  {selectedTask &&
-                    (() => {
-                      const startTs = new Date(selectedTask.start).getTime();
-                      const endTs = new Date(selectedTask.end).getTime();
-                      const setupMin =
-                        (selectedTask as { setup_time_min?: number })
-                          .setup_time_min ??
-                        selectedTask.changeover_min ??
-                        0;
-                      const colorChangeMin =
-                        (selectedTask as { color_change_min?: number })
-                          .color_change_min ?? 0;
-                      const tb = computeTimeBreakdown(
-                        startTs,
-                        endTs,
-                        setupMin + colorChangeMin,
-                      );
-                      const totalHrs = (
-                        (endTs - startTs) /
-                        (60 * 60 * 1000)
-                      ).toFixed(1);
-                      return (
-                        <div
-                          className="px-4 py-2 border-t"
-                          style={{ borderColor: "#F3F4F6" }}
-                        >
-                          <div className="flex items-center gap-1.5 mb-1.5">
-                            <svg
-                              width="10"
-                              height="10"
-                              viewBox="0 0 16 16"
-                              fill="#9CA3AF"
-                            >
-                              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
-                            </svg>
-                            <span className="text-[10px] font-medium text-gray-400">
-                              작업 시간 구성
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-                            <span>
-                              <span className="text-gray-400">총 기간</span>{" "}
-                              <span className="font-medium text-gray-700">
-                                {totalHrs}h
-                              </span>
-                            </span>
-                            <span>
-                              <span className="text-gray-400">실제 작업</span>{" "}
-                              <span
-                                className="font-medium"
-                                style={{ color: "#C41230" }}
-                              >
-                                {tb.actualWork.toFixed(1)}h
-                              </span>
-                            </span>
-                            {tb.weekendHrs > 0 && (
-                              <span>
-                                <span className="text-gray-400">주말 휴무</span>{" "}
-                                <span className="text-gray-600">
-                                  {tb.weekendHrs}h
-                                </span>
-                              </span>
-                            )}
-                            <span>
-                              <span className="text-gray-400">일일 부동</span>{" "}
-                              <span className="text-gray-600">
-                                {tb.dailyIdleHrs}h
-                              </span>
-                            </span>
-                            {setupMin > 0 && (
-                              <span>
-                                <span className="text-gray-400">규격교체</span>{" "}
-                                <span className="text-gray-600">
-                                  {setupMin}분
-                                </span>
-                              </span>
-                            )}
-                            {colorChangeMin > 0 && (
-                              <span>
-                                <span className="text-gray-400">색상교체</span>{" "}
-                                <span className="text-gray-600">
-                                  {colorChangeMin}분
-                                </span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                  {/* AI 스케줄링 근거 */}
-                  <div className="px-4 py-2">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 16 16"
-                        fill="#9CA3AF"
-                      >
-                        <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a1 1 0 110 2 1 1 0 010-2zm-1 4h2v5H7V7z" />
-                      </svg>
-                      <span className="text-[10px] font-medium text-gray-400">
-                        AI 스케줄링 근거
-                      </span>
-                    </div>
-                    {auditPanel.loading && (
-                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <span
-                          className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
-                          style={{ animation: "spin 1s linear infinite" }}
-                        />
-                        AI 설명 로드 중...
-                      </div>
-                    )}
-                    {auditPanel.error && !auditPanel.loading && (
-                      <p className="text-[11px] text-gray-400 italic">
-                        스케줄링 근거를 불러올 수 없습니다.
-                      </p>
-                    )}
-                    {auditPanel.data && !auditPanel.loading && (
-                      <div className="flex flex-col gap-1">
-                        {(auditPanel.data.explanation ||
-                          auditPanel.data.reasoning) && (
-                          <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap">
-                            {auditPanel.data.explanation ??
-                              auditPanel.data.reasoning}
-                          </p>
-                        )}
-                        {auditPanel.data.scheduled_at && (
-                          <p className="text-[10px] text-gray-400">
-                            배정 시각:{" "}
-                            {new Date(
-                              auditPanel.data.scheduled_at,
-                            ).toLocaleString("ko-KR")}
-                          </p>
-                        )}
-                        {auditPanel.data.changed_by && (
-                          <p className="text-[10px] text-gray-400">
-                            변경자: {auditPanel.data.changed_by}
-                          </p>
-                        )}
-                        {Object.entries(auditPanel.data)
-                          .filter(
-                            ([k]) =>
-                              ![
-                                "batch_id",
-                                "explanation",
-                                "reasoning",
-                                "scheduled_at",
-                                "changed_by",
-                              ].includes(k),
-                          )
-                          .map(([k, v]) => (
-                            <p key={k} className="text-[10px] text-gray-500">
-                              <span className="font-medium">{k}</span>:{" "}
-                              {String(v)}
-                            </p>
-                          ))}
-                      </div>
-                    )}
                   </div>
-                </div>
-              );
-            })()}
-          </div>{/* END 간트+상세 패널 row */}
+                );
+              })()}
+          </div>
+          {/* END 간트+상세 패널 row */}
 
           {/* 하단 미배정 수주 패널 */}
           <CollapsiblePanel
