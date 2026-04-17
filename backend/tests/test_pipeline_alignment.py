@@ -231,9 +231,14 @@ def test_high_voltage_sheath_ends_after_high_voltage_insulation(db):
 
     run_label = "test-hv-align"
 
-    # 고압절연 2드럼 (CV#1+CV#2 분배 발동 조건: drums≥2, eligible≥2)
-    # 고압시스 2드럼 (A150+B100 분배 발동)
-    for i in range(2):
+    # 고압절연 4드럼 (CV#1+CV#2 분배 발동) / 고압시스 4드럼 (A150+B100 분배 발동)
+    # 극단 비율: insulation duration ≫ sheath duration + 20h 경화 버퍼.
+    # 2드럼+8000/2000m 는 20h 버퍼가 이미 충족시켜 버그 재현 불가 → 4드럼+30000/1500m 로 강화.
+    # batch_group 을 공유해야 _schedule_multi_equipment 가 발동한다
+    # (`batch_group=""` 이면 auto_schedule 이 _single_{id} 로 치환해 단일 경로로 흐름).
+    insul_group = "HV-INSUL-300"
+    sheath_group = "HV-SHEATH-흑-300"
+    for i in range(4):
         db.add(
             ProductionBatch(
                 run_label=run_label,
@@ -241,13 +246,13 @@ def test_high_voltage_sheath_ends_after_high_voltage_insulation(db):
                 process_name="고압절연",
                 sq_mm2=300,
                 drum_count=1,
-                drum_length_m=8000,  # 길이 크게 → 절연 duration 길어짐
-                total_length_m=8000,
+                drum_length_m=30000,  # 매우 김 → 절연 duration 크게
+                total_length_m=30000,
                 conductor_material="CU",
                 voltage="22.9kV",
                 sales_order_id=f"SO-HV-{i + 1}",
                 sales_order_line=1,
-                batch_group="",
+                batch_group=insul_group,
                 status="planned",
             )
         )
@@ -260,13 +265,13 @@ def test_high_voltage_sheath_ends_after_high_voltage_insulation(db):
                 sq_mm2=300,
                 due_date=date(2026, 4, 30),
                 drum_count=1,
-                drum_length_m=2000,  # 길이 작게 → 시스 duration 짧음 (버그 조건)
-                total_length_m=2000,
+                drum_length_m=1500,  # 매우 짧음 → 시스 duration 작게
+                total_length_m=1500,
                 conductor_material="CU",
                 voltage="22.9kV",
                 sales_order_id=f"SO-HV-{i + 1}",
                 sales_order_line=1,
-                batch_group="",
+                batch_group=sheath_group,
                 status="planned",
             )
         )
@@ -314,7 +319,11 @@ def test_high_voltage_sheath_block_width_preserved(db):
     from app.services.schedule_optimizer import auto_schedule
 
     run_label = "test-hv-width"
-    for i in range(2):
+    # end-alignment 테스트와 동일한 극단 비율 fixture: 4드럼 + insulation 30000m / sheath 1500m
+    # batch_group 공유로 _schedule_multi_equipment 경로 발동
+    insul_group = "HV-INSUL-W-300"
+    sheath_group = "HV-SHEATH-W-흑-300"
+    for i in range(4):
         db.add(
             ProductionBatch(
                 run_label=run_label,
@@ -322,13 +331,13 @@ def test_high_voltage_sheath_block_width_preserved(db):
                 process_name="고압절연",
                 sq_mm2=300,
                 drum_count=1,
-                drum_length_m=8000,
-                total_length_m=8000,
+                drum_length_m=30000,
+                total_length_m=30000,
                 conductor_material="CU",
                 voltage="22.9kV",
                 sales_order_id=f"SO-W-{i + 1}",
                 sales_order_line=1,
-                batch_group="",
+                batch_group=insul_group,
                 status="planned",
             )
         )
@@ -341,13 +350,13 @@ def test_high_voltage_sheath_block_width_preserved(db):
                 sq_mm2=300,
                 due_date=date(2026, 4, 30),
                 drum_count=1,
-                drum_length_m=2000,
-                total_length_m=2000,
+                drum_length_m=1500,
+                total_length_m=1500,
                 conductor_material="CU",
                 voltage="22.9kV",
                 sales_order_id=f"SO-W-{i + 1}",
                 sales_order_line=1,
-                batch_group="",
+                batch_group=sheath_group,
                 status="planned",
             )
         )
@@ -368,7 +377,7 @@ def test_high_voltage_sheath_block_width_preserved(db):
 
     for t in sheath_tasks:
         width_min = (t.end_datetime - t.start_datetime).total_seconds() / 60
-        # 블록 폭이 24h(= 1일) 이내 — 2000m는 시스 선속상 수 시간 내 작업. 극단적 확장 방지.
+        # 블록 폭이 24h(= 1일) 이내 — 1500m는 시스 선속상 수 시간 내 작업. 극단적 확장 방지.
         assert width_min <= 24 * 60, (
             f"고압시스 블록 폭 {width_min}분 (> 24h). 확장 버그 회귀 의심."
         )
