@@ -40,7 +40,30 @@ _WIP_COVERED_PROCESSES: dict[str, set[str]] = {
     "연선재고": {"신선", "연선"},
     "절연재고": {"신선", "연선", "저압절연", "고압절연"},
     "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
-    "완제품":   {"신선", "연선", "저압절연", "고압절연", "연합", "T/P", "저압시스", "고압시스"},
+    "완제품": {
+        "신선",
+        "연선",
+        "저압절연",
+        "고압절연",
+        "연합",
+        "T/P",
+        "저압시스",
+        "고압시스",
+    },
+}
+
+# 시스 색상 정렬 우선순위 (A120: 흑·청·흑/적 / A100: 갈·회·녹/황 등)
+# 현장에서 자주 쓰이는 색상일수록 앞에 배치 → 긴 체인 형성 확률 ↑
+_SHEATH_COLOR_RANK: dict[str, int] = {
+    "흑": 1,
+    "갈": 2,
+    "회": 3,
+    "청": 4,
+    "녹": 5,
+    "녹/황": 5,
+    "백": 6,
+    "적": 7,
+    "흑/적": 8,
 }
 
 
@@ -463,9 +486,8 @@ def create_batches(
                     process_name="연선",
                     batch_seq=0,
                     drum_count=int(order.drum_count or 1),
-                    drum_length_m=float(order.drum_length_m or 0) or (
-                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
-                    ),
+                    drum_length_m=float(order.drum_length_m or 0)
+                    or (float(order.ordered_qty_m or 0) / int(order.drum_count or 1)),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # T6BO SQ 범위(≤35) 매칭용 — 실제 선심 소선경 기준
@@ -520,9 +542,8 @@ def create_batches(
                     process_name="연선",
                     batch_seq=0,
                     drum_count=int(order.drum_count or 1),
-                    drum_length_m=float(order.drum_length_m or 0) or (
-                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
-                    ),
+                    drum_length_m=float(order.drum_length_m or 0)
+                    or (float(order.ordered_qty_m or 0) / int(order.drum_count or 1)),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # AL6BO SQ 범위(25~50) 매칭용
@@ -680,7 +701,9 @@ def create_batches(
                 continue
             # WIP 재고가 이 공정을 이미 커버하면 배치 생성 불필요
             # 예: 절연재고 → 절연 공정 배치 생략 / 연선재고 → 절연은 그대로 생성
-            if wip_stage and process_name in _WIP_COVERED_PROCESSES.get(wip_stage, set()):
+            if wip_stage and process_name in _WIP_COVERED_PROCESSES.get(
+                wip_stage, set()
+            ):
                 continue
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
@@ -776,6 +799,26 @@ def create_batches(
         )
 
     batches.sort(key=_sort_key)
+
+    # ── 시스(저압/고압) 전용 2차 정렬: 색상 체인 + 납기 ─────────────────────
+    # A'' 접근안: 동일 색상 인접 주차를 연속 배치하여 체인지오버 최소화.
+    # Python sort 가 stable 이므로 비시스 배치의 상대 순서는 _sort_key 결과 유지.
+    def _sheath_chain_key(b: ProductionBatch) -> tuple:
+        if b.process_name not in ("저압시스", "고압시스"):
+            # 비시스는 고정 키 → 원순서 유지 (stable sort)
+            return (0, 0, 0, 0)
+        color = (b.sheath_color or "").strip() or "기타"
+        color_rank = _SHEATH_COLOR_RANK.get(color, 99)
+        if b.due_date:
+            yr, wk, _ = b.due_date.isocalendar()
+            due_wk_int = yr * 100 + wk
+            due_ord = b.due_date.toordinal()
+        else:
+            due_wk_int = 999999
+            due_ord = 9999999
+        return (1, color_rank, due_wk_int, due_ord)
+
+    batches.sort(key=_sheath_chain_key)
 
     # ── 배치 그룹 부여 ─────────────────────────────────────────────────────────
     # 같은 (process_name, sq_mm2)를 하나의 batch_group으로 묶는다.
@@ -1064,7 +1107,9 @@ def detect_split_candidates(
             min_priority = min((b.customer_priority or 99 for b in drum), default=99)
             earliest_due = min(dues) if dues else None
             days_until = (earliest_due - today).days if earliest_due else 999
-            is_urgent = min_priority <= 7 or (earliest_due is not None and days_until <= 7)
+            is_urgent = min_priority <= 7 or (
+                earliest_due is not None and days_until <= 7
+            )
             if i >= 2 and is_urgent:
                 has_urgent_in_later_drum = True
 
@@ -1099,7 +1144,7 @@ def detect_split_candidates(
 
         auto_split_recommended = has_urgent_in_later_drum
         urgency_reason = (
-            f"후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
+            "후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
             if auto_split_recommended
             else ""
         )
@@ -1202,16 +1247,24 @@ def _apply_auto_split(
     split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
     remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
 
-    split_due = min((b.due_date for b in split_off if b.due_date), default=header.due_date)
-    remain_due = min((b.due_date for b in remaining if b.due_date), default=header.due_date)
+    split_due = min(
+        (b.due_date for b in split_off if b.due_date), default=header.due_date
+    )
+    remain_due = min(
+        (b.due_date for b in remaining if b.due_date), default=header.due_date
+    )
     split_pri = min((b.customer_priority or 99 for b in split_off), default=99)
     remain_pri = min((b.customer_priority or 99 for b in remaining), default=99)
 
     # 신규 그룹 헤더 생성
     new_header = ProductionBatch(
         run_label=header.run_label,
-        sales_order_id=split_off[0].sales_order_id if split_off else header.sales_order_id,
-        sales_order_line=split_off[0].sales_order_line if split_off else header.sales_order_line,
+        sales_order_id=split_off[0].sales_order_id
+        if split_off
+        else header.sales_order_id,
+        sales_order_line=split_off[0].sales_order_line
+        if split_off
+        else header.sales_order_line,
         item_code=header.item_code,
         routing_code=header.routing_code,
         process_name=header.process_name,
