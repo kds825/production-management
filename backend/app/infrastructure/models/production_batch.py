@@ -44,10 +44,10 @@ class ProductionBatch(Base):
     line_speed_mpm = Column(Numeric)
     setup_time_min = Column(Numeric, default=0)
     estimated_duration_min = Column(Numeric)
-    # 유효 값: 'planned' | 'in_progress' | 'completed' | 'unassigned'
-    status = Column(
-        String(20), default="planned"
-    )  # planned, scheduled, in_progress, completed, unassigned
+    # 유효 값: 'planned' | 'scheduled' (legacy) | 'in_progress' | 'completed' | 'unassigned'
+    # 'scheduled'는 스케줄러가 배치 할당 완료 시 쓰는 레거시 리터럴
+    # (schedule_optimizer / cp_sat_optimizer 참조) — 신규 spec과 혼재
+    status = Column(String(20), default="planned")
     # 미배치 사유 — status='unassigned'일 때만 의미 있음
     # 유효 값: '자재지연' | '설비고장' | '납기재협상' | '기타' | NULL (legacy)
     unassign_reason = Column(String(32), nullable=True)
