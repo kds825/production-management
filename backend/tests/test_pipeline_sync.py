@@ -61,6 +61,26 @@ def test_insulation_start_not_before_first_drum(db: Session):
     assert delta >= -60, f"절연이 첫 드럼 완료 전에 시작: 차이 {delta}초"
 
 
+def test_cp_sat_pipeline_end_constraint(db):
+    """CP-SAT solver: pred_end <= succ_end 하드 제약."""
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    _seed_stranding_then_insulation(
+        db, run_label="test-cpsat-1", stranding_total_min=600, insulation_total_min=300
+    )
+    result = cp_sat_schedule(run_label="test-cpsat-1", db=db)
+    assert result.get("solver_status") in ("OPTIMAL", "FEASIBLE"), (
+        f"Solver failed: {result.get('solver_status')}"
+    )
+
+    stranding = _get_task_by_process(db, "test-cpsat-1", "연선")
+    insulation = _get_task_by_process(db, "test-cpsat-1", "저압절연")
+    assert stranding and insulation
+    assert insulation.end_datetime >= stranding.end_datetime, (
+        f"CP-SAT: 절연 끝 {insulation.end_datetime} < 연선 끝 {stranding.end_datetime}"
+    )
+
+
 def test_insulation_block_width_unchanged(db: Session):
     """블록 width 는 선속 기반 고정 — 역산 공식 적용해도 width 늘어나지 않음."""
     from app.services.schedule_optimizer import auto_schedule
