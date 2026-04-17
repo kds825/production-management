@@ -1594,6 +1594,18 @@ def _find_available_slot(
             )
         else:
             candidate_end = candidate + timedelta(minutes=duration_min)
+        # 올림 일관성: auto_schedule line 922-925 는 end_dt 를 다음 정각으로 올림
+        # 하여 timeline 에 등록한다. 여기서도 같은 규칙을 적용해야 slot_start 비교가
+        # 실제 점유 시간과 일치 (Phase C Task 3 root cause — SH-A100 task 28942×28966
+        # 19분 overlap 원인).
+        if (
+            candidate_end.minute > 0
+            or candidate_end.second > 0
+            or candidate_end.microsecond > 0
+        ):
+            candidate_end = candidate_end.replace(
+                minute=0, second=0, microsecond=0
+            ) + timedelta(hours=1)
         if candidate_end <= slot_start:
             # Fits before this slot
             return candidate

@@ -81,8 +81,48 @@ eligible 내 여러 eq 의 min 선택 시 slots 가 다른 eq 의 상태 로 판
 3. 여전히 overlap 있으면 H3, H4 순차 검증.
 4. 수정 후 xfail marker 제거.
 
+## 2026-04-18 확정: H6 (Ceiling mismatch) — fix 적용
+
+### 결정적 증거
+
+28966 group 의 `batch_seq>=0 total_duration` = **37.4min**, setup 30 → eq_total_duration **= 67.4min**. 하지만 wall 점유 = 120min (03:00-05:00).
+
+계산 흐름:
+
+1. `_find_available_slot(03:00, 67.4, slots=[(04:41, 08:00)])`:
+   - candidate_end = 03:00 + 67.4 = 04:07.4. **올림 없음**.
+   - 04:07 <= 04:41 TRUE → return 03:00 ✓ (bug: 올림 무시)
+2. `calculate_end_datetime(03:00, 67.4)` = 04:07.
+3. `schedule_optimizer.py:922-925` 올림: 04:07 → **05:00**.
+4. `timeline.append((03:00, 05:00))` — 올림된 end.
+5. 28966 wall 점유 실제 120min. 28942 (먼저 04:41-08:00 앉음) 과 19분 overlap 생성.
+
+### Fix
+
+`_find_available_slot` 내부에서 `candidate_end` 를 같은 올림 규칙으로 처리. 1-line diff:
+
+```python
+if (candidate_end.minute > 0 or candidate_end.second > 0 or candidate_end.microsecond > 0):
+    candidate_end = candidate_end.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+```
+
+### 회귀 테스트
+
+`tests/test_find_slot_ceiling.py` 4 cases:
+
+- 67min + tight window → push 검증
+- 정각 end 는 fit (기존 동작)
+- 59min end → 04:00 올림 → slot 정확히 맞아 fit
+- empty occupied
+
+### 잔여 작업
+
+- 새 stage2 run 실행 → `test_overlap_tight_window.py::test_no_overlap_in_baseline_run` xfail marker 제거 가능성 확인.
+- baseline run `20260417_215558` 은 과거 DB 데이터 → 남아있는 overlap 은 코드 fix 가 소급 적용 안 됨. 다음 Stage2 재실행 때 overlap 없어야.
+
 ## 현재 조치
 
-- regression test `tests/test_overlap_tight_window.py` — xfail marker (strict=False).
-- 본 문서 기록으로 Phase D 재개 시작점 제공.
-- Phase C commits 는 Task 1 (C-FindSpeed) + Task 2 (C-TP) 만 반영, Task 3 는 이 investigation 문서 + regression test 로 대체.
+- `schedule_optimizer.py` `_find_available_slot` — 올림 규칙 적용.
+- `tests/test_find_slot_ceiling.py` — unit test 4 PASS.
+- `tests/test_overlap_tight_window.py` — baseline run 기준 xfail 유지 (새 run 실행 전까지).
+- 본 문서 — root cause H6 확정 기록.
