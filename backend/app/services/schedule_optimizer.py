@@ -17,6 +17,7 @@
      cross-equipment cascade는 미구현 상태이다.
 """
 
+import os
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -33,7 +34,18 @@ from app.services.calendar_engine import (
     calculate_start_datetime,
 )
 from app.services.audit_logger import log_decision
+from app.services.jit_scheduling import apply_jit_delay
 from app.exceptions import SchedulerOverlapError
+
+
+def _should_apply_jit() -> bool:
+    """SCHEDULER_JIT env var 읽어 JIT post-processing on/off 결정.
+
+    "1" / "true" / "yes" (case-insensitive) 이면 활성. 그 외 (unset, "0") 비활성.
+    """
+    v = os.environ.get("SCHEDULER_JIT", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
 
 # WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
 # batch_grouping._WIP_COVERED_PROCESSES와 동일한 기준 — Phase 2에서 대부분 걸러지지만
@@ -217,6 +229,30 @@ def auto_schedule(
 
         if not constraint_checker.has_overlap(violations):
             result["overlap_alert"] = False
+            # JIT post-processing — opt-in via SCHEDULER_JIT env var.
+            # 성공한 schedule 에만 적용 (겹침 재시도 회피). JIT 자체가 overlap
+            # 을 만들면 안 되므로 shift 후 재검증 — 실패 시 경고만 남기고 shift
+            # 결과를 그대로 둔다 (invariant 위반은 도메인 오류로 후속 round 조사).
+            if _should_apply_jit():
+                run_tasks = (
+                    db.query(ScheduleTask)
+                    .filter(ScheduleTask.run_label == run_label)
+                    .all()
+                )
+                shifts = apply_jit_delay(run_tasks, db)
+                db.flush()
+                if shifts:
+                    post_violations = constraint_checker.validate_all(run_label, db)
+                    post_overlap = [
+                        v
+                        for v in post_violations
+                        if v.get("constraint_id") == "overlap"
+                    ]
+                    result["jit_shifts_applied"] = shifts
+                    if post_overlap:
+                        result.setdefault("warnings", []).append(
+                            f"JIT post-shift 후 overlap {len(post_overlap)}건 발생 — 로직 재검토 필요"
+                        )
             return result
 
         overlap_hits = [v for v in violations if v.get("constraint_id") == "overlap"]

@@ -6,9 +6,10 @@ packing 이 끝난 schedule 에 대해 납기 여유가 큰 task 를 설비 내 
 
 설계: docs/specs/2026-04-18-jit-scheduling-design.md.
 
-이 라운드는 **standalone prototype** — auto_schedule() 에 아직 통합 안 됨.
-env var `SCHEDULER_JIT=1` 활성 전에는 호출 경로 없음. 통합 전 단위 테스트로
-invariant 검증.
+auto_schedule() 내부에서 env var ``SCHEDULER_JIT=1`` 일 때 호출된다. 파이프라인
+체인 (연선→절연→시스) 은 fixed-point iteration 으로 전파 — 한 pass 에서
+downstream task 가 shift 되면 upstream 의 successor cap 이 확장되어 다음
+pass 에서 추가 shift 가능. shift 0 pass 에 도달하면 종료.
 """
 
 from __future__ import annotations
@@ -21,12 +22,15 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models import ProductionBatch, ScheduleTask
 from app.services.calendar_engine import calculate_start_datetime
 
+_MAX_JIT_ITERATIONS = 5
+
 
 def apply_jit_delay(
     tasks: list[ScheduleTask],
     db: Session | None,
     *,
     min_slack_days: int = 3,
+    max_iterations: int = _MAX_JIT_ITERATIONS,
 ) -> int:
     """납기 여유 큰 task 를 설비 내 gap 범위에서 뒤로 shift.
 
@@ -59,6 +63,27 @@ def apply_jit_delay(
     else:
         pb_by_id = {}
 
+    # Fixed-point iteration — downstream shift 이후 upstream cap 확장 재평가.
+    total = 0
+    for _ in range(max_iterations):
+        pass_shifts = _backward_pass(tasks, db, pb_by_id, min_slack_days)
+        total += pass_shifts
+        if pass_shifts == 0:
+            break
+    return total
+
+
+def _backward_pass(
+    tasks: list[ScheduleTask],
+    db: Session | None,
+    pb_by_id: dict,
+    min_slack_days: int,
+) -> int:
+    """한 번의 우→좌 backward shift pass — 설비별 독립.
+
+    호출마다 successors_by_key 를 tasks 의 현재 start_datetime 기준으로 재계산
+    → 이전 pass 에서 shift 된 downstream 반영.
+    """
     # Successor lookup — 같은 (sales_order_id, sales_order_line) 의 다른 task
     successors_by_key: dict[tuple, list[ScheduleTask]] = defaultdict(list)
     for t in tasks:
@@ -98,13 +123,15 @@ def apply_jit_delay(
             )
 
             # 3. Successor (후공정) 제약 — 같은 수주 line 의 다른 task 중
-            #    start 가 현재 t.end 보다 후에 오는 것 = 후공정
+            #    start 가 현재 t.end 이상인 것 = 후공정.
+            # >= 사용 이유: 연속 공정 간 adjacent (prev.end == succ.start) 관계도
+            # 반드시 후공정으로 인식되어야 shift 가 후공정을 침범하지 않음.
             succ_cap = datetime.max
             key = (pb.sales_order_id, pb.sales_order_line)
             for succ in successors_by_key.get(key, []):
                 if succ.task_id == t.task_id:
                     continue
-                if succ.start_datetime > t.end_datetime:
+                if succ.start_datetime >= t.end_datetime:
                     if succ.start_datetime < succ_cap:
                         succ_cap = succ.start_datetime
 
