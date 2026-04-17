@@ -101,7 +101,7 @@ const SHEATH_COLOR_MAP: Record<string, string> = {
   청: "#1E40AF",
   녹: "#065F46",
   황: "#B45309",
-  "흑/적": "#991B1B",
+  "흑/적": "#C41230",
 };
 
 /**
@@ -423,6 +423,24 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   // 각 세그먼트의 x 위치는 startTs 기준 상대 좌표로 계산 (previewOffset은 외부 div에 적용)
   const startX = timeToXAdj(startTs, rangeStart, dayWidth, ww);
 
+  // 라벨 overlay 를 어느 segment 위에 그릴지 — 가장 넓은 segment 기준.
+  // 왜: 주말/야간 건너뛴 블록은 첫 segment 가 7~8px 조각일 때가 있고, 그러면
+  // 기존 "isFirst segment 안 flex:1 라벨" 이 0-width 로 축소되어 시각적으로
+  // 사라진다 (예: SH-A150/B100 고압시스 블록). 가장 넓은 segment 위에 절대
+  // 배치하는 overlay 로 이동해 항상 보이도록 한다.
+  const widestSegIdx = segments.reduce(
+    (m, s, i, arr) => (s.end - s.start > arr[m].end - arr[m].start ? i : m),
+    0,
+  );
+  const widestSeg = segments[widestSegIdx];
+  const widestSegLeft =
+    timeToXAdj(widestSeg.start, rangeStart, dayWidth, ww) - startX;
+  const widestSegW = Math.max(
+    timeToXAdj(widestSeg.end, rangeStart, dayWidth, ww) -
+      timeToXAdj(widestSeg.start, rangeStart, dayWidth, ww),
+    2,
+  );
+
   return (
     <div
       ref={(node) => {
@@ -584,7 +602,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               </div>
             )}
 
-            {/* 가운데 콘텐츠 + dnd listeners — 첫 세그먼트만 */}
+            {/* DnD listeners 전용 placeholder — 라벨은 블록 레벨 overlay 로 분리
+                (좁은 첫 segment 에서 라벨이 0-width 로 사라지는 문제 회피). */}
             {isFirst ? (
               <div
                 {...listeners}
@@ -592,68 +611,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                  paddingLeft: 4,
-                  paddingRight: 4,
-                  gap: 1,
                   cursor: "inherit",
                 }}
-              >
-                <span
-                  className="text-white text-[10px] font-semibold leading-tight"
-                  style={{
-                    textShadow: "0 1px 2px rgba(0,0,0,0.4)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 3,
-                    minWidth: 0,
-                  }}
-                >
-                  {isGonaehwa && (
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 8,
-                        fontWeight: 700,
-                        lineHeight: 1.4,
-                        padding: "0px 3px",
-                        borderRadius: 3,
-                        backgroundColor: "rgba(234,88,12,0.85)",
-                        color: "#fff",
-                      }}
-                    >
-                      고
-                    </span>
-                  )}
-                  {/* 좁은 블록에서 "흑 · 50·60·100 SQ +2종" 같은 긴 D 라벨이
-                      잘릴 때 네이티브 tooltip 으로 전체 텍스트를 노출한다. */}
-                  <span
-                    className="truncate"
-                    title={specLabel}
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      maxWidth: "100%",
-                    }}
-                  >
-                    {specLabel}
-                  </span>
-                </span>
-                {segW >= 40 && (
-                  <span
-                    className="text-white/80 text-[9px] truncate leading-tight"
-                    style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
-                  >
-                    {lotLabel ? `${lotLabel} · ` : ""}
-                    {volumeLabel}
-                  </span>
-                )}
-              </div>
+              />
             ) : (
-              /* 중간/마지막 세그먼트 — flex 여백 채우기 */
               <div style={{ flex: 1, minWidth: 0 }} />
             )}
 
@@ -713,6 +674,82 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           </div>
         );
       })}
+
+      {/* 라벨 overlay — 가장 넓은 segment 위에 절대 배치.
+          왜 overlay 방식: 주말 건너뛴 첫 segment 가 7-8px 로 좁을 때 (SH-A150/B100
+          고압시스 케이스) flex 내부 truncate span 이 0-width 로 축소되어 글자가
+          보이지 않는다. overlay 로 분리하면 widestSegW 기준으로 항상 펼쳐진다.
+          pointerEvents:none 으로 DnD/click 방해 없음. */}
+      <div
+        style={{
+          position: "absolute",
+          left: widestSegLeft,
+          top: 0,
+          width: widestSegW,
+          height: ROW_HEIGHT - 8,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          paddingLeft: 4,
+          paddingRight: 4,
+          gap: 1,
+          pointerEvents: "none",
+          overflow: "hidden",
+          zIndex: 4,
+        }}
+      >
+        <span
+          className="text-white text-[10px] font-semibold leading-tight"
+          style={{
+            // 진한 빨강(#C41230) 배경에서도 흰 글자가 묻히지 않도록 얇은 블랙
+            // 스트로크 + 드롭섀도우를 겹침
+            textShadow: "0 0 2px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            gap: 3,
+            minWidth: 0,
+          }}
+        >
+          {isGonaehwa && (
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: 8,
+                fontWeight: 700,
+                lineHeight: 1.4,
+                padding: "0px 3px",
+                borderRadius: 3,
+                backgroundColor: "rgba(234,88,12,0.85)",
+                color: "#fff",
+              }}
+            >
+              고
+            </span>
+          )}
+          <span
+            className="truncate"
+            title={specLabel}
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              flex: 1,
+            }}
+          >
+            {specLabel}
+          </span>
+        </span>
+        {widestSegW >= 40 && (
+          <span
+            className="text-white/80 text-[9px] truncate leading-tight"
+            style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
+          >
+            {lotLabel ? `${lotLabel} · ` : ""}
+            {volumeLabel}
+          </span>
+        )}
+      </div>
 
       {/* 시간 구성 팝오버 — Portal로 overflow:hidden 회피 */}
       {showTimePopover &&
