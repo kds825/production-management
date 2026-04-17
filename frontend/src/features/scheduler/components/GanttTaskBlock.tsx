@@ -11,9 +11,11 @@ import {
   getStatusStyle,
 } from "../utils/colorCoding";
 import { getSqColor } from "@/shared/constants/brand";
-import { timeToXAdj, ROW_HEIGHT, computeTimeBreakdown } from "../utils/ganttUtils";
-
-
+import {
+  timeToXAdj,
+  ROW_HEIGHT,
+  computeTimeBreakdown,
+} from "../utils/ganttUtils";
 
 /** frozen 배치(진행중/완료)는 드래그 불가 */
 function isFrozenStatus(status: string): boolean {
@@ -256,18 +258,22 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     dueMidnight.setHours(23, 59, 59, 999);
     return endTs > dueMidnight.getTime();
   })();
-  const lateDays = isLate && task.delivery_date
-    ? Math.ceil(
-        (endTs - (() => {
-          const dd =
-            task.delivery_date instanceof Date
-              ? task.delivery_date
-              : new Date(task.delivery_date!);
-          const m = new Date(dd); m.setHours(23, 59, 59, 999); return m.getTime();
-        })()) /
-        (24 * 60 * 60 * 1000),
-      )
-    : 0;
+  const lateDays =
+    isLate && task.delivery_date
+      ? Math.ceil(
+          (endTs -
+            (() => {
+              const dd =
+                task.delivery_date instanceof Date
+                  ? task.delivery_date
+                  : new Date(task.delivery_date!);
+              const m = new Date(dd);
+              m.setHours(23, 59, 59, 999);
+              return m.getTime();
+            })()) /
+            (24 * 60 * 60 * 1000),
+        )
+      : 0;
 
   const priorityStyle = getPriorityStyle(task.priority);
   const statusStyle = getStatusStyle(task.status, baseColor);
@@ -292,7 +298,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   // 고압 연선(KCMIL 규격)은 틀 단위 없이 m만 표시
   const lotLabel = (() => {
     if (isKcmil) return null;
-    if (task.lot_count != null && task.lot_count > 0) return `${task.lot_count}틀`;
+    if (task.lot_count != null && task.lot_count > 0)
+      return `${task.lot_count}틀`;
     // 폴백: notes에서 추출
     const m = task.notes?.match(/\d+건\s+(\d+)틀/);
     return m ? `${m[1]}틀` : null;
@@ -307,19 +314,33 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   //   SQ 정보 없으면: spec → product 순 폴백
   const specLabel = (() => {
     if (SHEATH_EQUIPMENT_IDS.has(task.equipment_id) && task.color) {
-      // 색상 + 규격(SQ) 함께 표시
-      const sqPart = task.sq_mm2 ? ` · ${task.sq_mm2}SQ` : "";
-      return task.color + sqPart;
+      // D 방식: 색상 · 규격 목록 (1-3개 전부, 4개 이상 축약)
+      const specList = (task.spec_list ?? []).filter(Boolean);
+      if (specList.length > 0) {
+        const visible = specList.slice(0, 3).map((s) => s.replace(/SQ$/, ""));
+        const sqPart =
+          specList.length <= 3
+            ? `${visible.join("·")} SQ`
+            : `${visible.join("·")} SQ +${specList.length - 3}종`;
+        return `${task.color} · ${sqPart}`;
+      }
+      // 폴백: spec_list 미전달 시 단일 SQ 로
+      const single = task.sq_mm2 ? ` · ${task.sq_mm2}SQ` : "";
+      return task.color + single;
     }
     if (isKcmil && task.spec) {
       const m = task.spec.match(/(\d+(?:\.\d+)?)\s*KCMIL/i);
       if (m) {
         const kcmilStr = `${m[1]}KCMIL`;
-        return task.core_count > 1 ? `${task.core_count}C × ${kcmilStr}` : kcmilStr;
+        return task.core_count > 1
+          ? `${task.core_count}C × ${kcmilStr}`
+          : kcmilStr;
       }
     }
     // CORE/AL-CORE 배치(T6BO 중심선): sq_mm2=35(설비 매칭용)이므로 spec에서 원본 SQ 추출
-    const isCoreGroup = task.batch_group?.startsWith("CORE-") || task.batch_group?.startsWith("AL-CORE-");
+    const isCoreGroup =
+      task.batch_group?.startsWith("CORE-") ||
+      task.batch_group?.startsWith("AL-CORE-");
     if (isCoreGroup && task.spec) {
       const m = task.spec.match(/(\d+(?:\.\d+)?)\s*SQ/i);
       if (m) {
@@ -397,11 +418,12 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         height: ROW_HEIGHT - 8,
         zIndex: isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
-        cursor: !isEditMode || isFrozen
-          ? "default"
-          : isDragging
-            ? "grabbing"
-            : "grab",
+        cursor:
+          !isEditMode || isFrozen
+            ? "default"
+            : isDragging
+              ? "grabbing"
+              : "grab",
       }}
       onClick={handleBlockClick}
       onDoubleClick={handleDoubleClick}
@@ -422,7 +444,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         const isFirst = idx === 0;
         const isLast = idx === segments.length - 1;
         const isSingle = segments.length === 1;
-        const segLeft = timeToXAdj(seg.start, rangeStart, dayWidth, ww) - startX;
+        const segLeft =
+          timeToXAdj(seg.start, rangeStart, dayWidth, ww) - startX;
         const segW = Math.max(
           timeToXAdj(seg.end, rangeStart, dayWidth, ww) -
             timeToXAdj(seg.start, rangeStart, dayWidth, ww),
@@ -551,7 +574,13 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               >
                 <span
                   className="text-white text-[10px] font-semibold leading-tight"
-                  style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}
+                  style={{
+                    textShadow: "0 1px 2px rgba(0,0,0,0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                    minWidth: 0,
+                  }}
                 >
                   {isGonaehwa && (
                     <span
@@ -617,7 +646,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               />
             )}
 
-          {/* 납기 초과 배지 — 마지막 세그먼트, 블록 폭 30px 이상 */}
+            {/* 납기 초과 배지 — 마지막 세그먼트, 블록 폭 30px 이상 */}
             {isLast && isLate && segW >= 30 && (
               <div
                 style={{
@@ -639,8 +668,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 {segW >= 60 ? `+${lateDays}일 지연` : "지연"}
               </div>
             )}
-
-
           </div>
         );
       })}

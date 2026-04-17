@@ -49,6 +49,8 @@ export interface ScheduleTask {
   sq_mm2?: number;
   /** 헤더 배치 drum_count — 틀 수 표시용 */
   lot_count?: number;
+  /** 시스 배치 묶인 규격 목록 (백엔드에서 자동 채움, SH-* 설비 전용) */
+  spec_list?: string[] | null;
 }
 
 export interface ConstraintViolation {
