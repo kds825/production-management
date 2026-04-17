@@ -1516,6 +1516,71 @@ def _narrow_by_stranding(
     return eligible
 
 
+def align_start_to_predecessor_end(
+    *,
+    process_name: str,
+    pred_proc: str | None,
+    group_sqs: set[int],
+    process_end_by_sq: dict[tuple[str, int], datetime],
+    current_start: datetime,
+    current_end: datetime,
+    duration_min: float,
+    slots: list,
+    db: "Session",
+    equipment_code: str,
+) -> tuple[datetime, datetime]:
+    """후공정 종료가 선행공정 종료 이상이 되도록 시작을 지연한다.
+
+    불변식:
+      - aligned_end >= pred_end_latest (후공정 끝 ≥ 선행공정 끝)
+      - aligned_end - aligned_start == duration_min (블록 폭 유지, 캘린더 보정 오차 허용)
+
+    시스 공정(저압시스/고압시스)은 pred_proc 외에 "연합" 종료도 함께 고려.
+    pred_proc 가 None 이거나 process_end_by_sq 에 기록이 없으면 입력 그대로 반환.
+
+    반환: (aligned_start, aligned_end)
+    """
+    pipeline_procs: list[str] = []
+    if pred_proc:
+        pipeline_procs.append(pred_proc)
+    if process_name in ("저압시스", "고압시스"):
+        pipeline_procs.append("연합")
+
+    if not pipeline_procs:
+        return current_start, current_end
+
+    pred_end_latest: datetime | None = None
+    for pp in pipeline_procs:
+        for sq_i in group_sqs:
+            pe = process_end_by_sq.get((pp, sq_i))
+            if pe and pe < datetime.max:
+                if pred_end_latest is None or pe > pred_end_latest:
+                    pred_end_latest = pe
+
+    if pred_end_latest is None:
+        return current_start, current_end
+
+    aligned_start = current_start
+    aligned_end = current_end
+
+    reverse_start = calculate_start_datetime(
+        pred_end_latest, duration_min, db, equipment_code
+    )
+    if reverse_start > current_start:
+        aligned_start = _find_available_slot(
+            reverse_start, duration_min, slots, db, equipment_code
+        )
+        aligned_end = calculate_end_datetime(
+            aligned_start, duration_min, db, equipment_code
+        )
+
+    # 캘린더 보정 오차 대비: end < pred_end_latest 면 bump
+    if aligned_end < pred_end_latest:
+        aligned_end = pred_end_latest
+
+    return aligned_start, aligned_end
+
+
 def _find_available_slot(
     earliest: datetime,
     duration_min: float,
