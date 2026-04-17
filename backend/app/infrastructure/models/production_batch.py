@@ -44,9 +44,13 @@ class ProductionBatch(Base):
     line_speed_mpm = Column(Numeric)
     setup_time_min = Column(Numeric, default=0)
     estimated_duration_min = Column(Numeric)
+    # 유효 값: 'planned' | 'in_progress' | 'completed' | 'unassigned'
     status = Column(
         String(20), default="planned"
-    )  # planned, scheduled, in_progress, completed
+    )  # planned, scheduled, in_progress, completed, unassigned
+    # 미배치 사유 — status='unassigned'일 때만 의미 있음
+    # 유효 값: '자재지연' | '설비고장' | '납기재협상' | '기타' | NULL (legacy)
+    unassign_reason = Column(String(32), nullable=True)
     remarks = Column(Text)
     product_group = Column(String(50))
     voltage = Column(String(20))

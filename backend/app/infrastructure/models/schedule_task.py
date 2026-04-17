@@ -17,9 +17,10 @@ class ScheduleTask(Base):
         Integer, ForeignKey("schedule_task.task_id"), nullable=True
     )
     setup_time_min = Column(Numeric, default=0)
+    # 유효 값: 'planned' | 'in_progress' | 'completed' | 'unassigned'
     status = Column(
         String(20), default="scheduled"
-    )  # scheduled, in_progress, completed
+    )  # scheduled, in_progress, completed, unassigned
     run_label = Column(String(50), index=True)
     batch_group = Column(String(50), index=True)  # 배치 그룹 식별자 (간트 블록 1개)
     created_at = Column(DateTime, default=datetime.utcnow)
