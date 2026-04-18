@@ -117,3 +117,38 @@ export class BulkUpdateError extends Error {
     this.canRetry = payload.can_retry;
   }
 }
+
+// ── Restore-at (Task 2.1) ────────────────────────────────────────────────
+
+/** POST /api/pipeline/batch-group/{bg}/restore-at 의 task_positions 요소. */
+export interface TaskPosition {
+  task_id: number;
+  batch_id: number;
+  process_name: string;
+  new_equipment_code: string;
+  new_start: string; // naive ISO, 예: "2026-04-25T09:00:00"
+  new_end: string;
+  is_anchor: boolean;
+}
+
+/** POST /api/pipeline/batch-group/{bg}/restore-at 요청 본문. */
+export interface RestoreAtRequest {
+  anchor_equipment_code: string;
+  anchor_start: string; // naive ISO
+}
+
+/**
+ * POST /api/pipeline/batch-group/{bg}/restore-at 응답.
+ * cascade-preview-v2 와 shape 호환 — pushes/pulls/unresolved 는 기존 타입 재사용.
+ */
+export interface RestoreAtResponse {
+  batch_group: string;
+  task_positions: TaskPosition[];
+  pushes: CascadePreviewResponse["pushes"];
+  pulls: CascadePreviewResponse["pulls"];
+  unresolved: CascadePreviewResponse["unresolved"];
+  request_id: string;
+  can_auto_resolve: boolean;
+  iter_count: number;
+  truncated: boolean;
+}

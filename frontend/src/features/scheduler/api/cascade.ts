@@ -21,6 +21,8 @@ import {
   BulkUpdateSuccess,
   CascadePreviewRequest,
   CascadePreviewResponse,
+  RestoreAtRequest,
+  RestoreAtResponse,
 } from "./cascade.types";
 
 // 프로젝트 전역 관례: `NEXT_PUBLIC_API_URL` 은 이미 `/api` 접미사를 포함.
@@ -102,4 +104,28 @@ export async function revertChangeSet(
     throw new Error(`revert ${res.status}: ${body}`);
   }
   return (await res.json()) as { reverted: boolean };
+}
+
+/**
+ * POST /api/pipeline/batch-group/{bg}/restore-at
+ * no-mutation preview — 호출 후 사용자 확정 시 bulkUpdate 로 적용한다.
+ * 에러 계약: 백엔드가 4xx/5xx면 Error throw (상세 메시지는 response body).
+ */
+export async function restoreBatchGroupAt(
+  batchGroup: string,
+  input: RestoreAtRequest,
+): Promise<RestoreAtResponse> {
+  const res = await fetch(
+    `${API_BASE}/pipeline/batch-group/${encodeURIComponent(batchGroup)}/restore-at`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`restore-at failed ${res.status}: ${text}`);
+  }
+  return res.json();
 }
