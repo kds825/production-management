@@ -336,7 +336,6 @@ def compute_restore_at_plan(
         default=anchor_start + timedelta(days=30),
     ) + timedelta(days=7)
 
-    anchor_pos = positions[0]
     anchor_task = task_by_batch_seq[ordered_seqs[0]]
     cascade_result = plan_cascade_preview_on_snap(
         snap=snap,
