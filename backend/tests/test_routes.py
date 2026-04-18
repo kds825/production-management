@@ -2,6 +2,7 @@
 API 엔드포인트 통합 테스트 — TestClient로 실제 HTTP 요청/응답 검증
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -310,3 +311,108 @@ class TestProcessRouteRoutes:
         # 모든 규격에 insulation, jacketing 속도 존재
         assert "insulation" in speed["speeds"]
         assert "jacketing" in speed["speeds"]
+
+
+# ---------------------------------------------------------------------------
+# batch_group 미배정 (Task 2.3) — POST /api/pipeline/batch-group/{bg}/unassign
+# ---------------------------------------------------------------------------
+
+
+class TestBatchGroupUnassignRoutes:
+    """POST /api/pipeline/batch-group/{bg}/unassign 단일 트랜잭션 검증.
+
+    Why DI override:
+        conftest의 db 픽스처는 teardown에서 rollback하여 실 DB 오염을 막는다.
+        라우트가 get_db로 새 세션을 열면 (1) seed된 flush 전용 데이터가 안 보이고,
+        (2) 라우트의 db.commit()이 실 DB에 영구 반영되어 rollback이 무의미해진다.
+        → app.dependency_overrides[get_db]로 테스트 세션을 주입하고,
+          db.commit을 db.flush로 치환하여 conftest rollback 범위 안에서 검증.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        """라우트가 쓸 세션을 테스트의 db 픽스처로 강제. commit은 flush로 치환."""
+        from app.infrastructure.database import get_db
+
+        # commit을 flush로 치환 — 실 DB 영구반영 차단, 세션 내 가시성은 유지
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_unassign_with_reason_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g1")
+        res = client.post(
+            "/api/pipeline/batch-group/route-g1/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["batch_group"] == "route-g1"
+        assert body["reason"] == "자재지연"
+        assert body["idempotent"] is False
+        assert len(body["affected_batches"]) == 3
+        assert len(body["affected_tasks"]) == 3
+
+    def test_unassign_no_body_uses_default_reason(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-default")
+        res = client.post("/api/pipeline/batch-group/route-g-default/unassign")
+        assert res.status_code == 200, res.text
+        assert res.json()["reason"] == "기타"
+
+    def test_unassign_invalid_reason_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-bad")
+        res = client.post(
+            "/api/pipeline/batch-group/route-g-bad/unassign",
+            json={"reason": "해킹시도"},
+        )
+        assert res.status_code == 400
+
+    def test_unassign_in_progress_returns_400(self, db):
+        from app.infrastructure.models.production_batch import ProductionBatch
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g2")
+        b = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_group == "route-g2")
+            .first()
+        )
+        b.status = "in_progress"
+        db.flush()
+
+        res = client.post(
+            "/api/pipeline/batch-group/route-g2/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 400
+
+    def test_unassign_wip_matched_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-wip", with_wip=True)
+        res = client.post(
+            "/api/pipeline/batch-group/route-g-wip/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 400
+        assert "WIP" in res.json()["detail"]
+
+    def test_unassign_not_found_returns_404(self, db):
+        res = client.post(
+            "/api/pipeline/batch-group/doesnotexist-xyz/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 404

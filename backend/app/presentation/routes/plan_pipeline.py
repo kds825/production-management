@@ -1833,3 +1833,93 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
         }
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3: batch_group 미배정 (unassign) — 단일 트랜잭션 엔드포인트
+#
+# 왜 여기서 commit하는가:
+#   batch_group_lifecycle.unassign_batch_group은 flush만 수행 (Eng Critical #1).
+#   라우트가 서비스 flush 직후 audit_log INSERT를 추가하고 단 한 번만 commit하여,
+#   "unassign 상태 전이 + 감사 로그"가 원자적으로 함께 persist되거나 둘 다 롤백되게 한다.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/batch-group/{batch_group}/unassign",
+    summary="batch_group 전체를 미배정으로 soft-delete (사유 기록)",
+)
+def unassign_batch_group_endpoint(
+    batch_group: str,
+    body: dict | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """단일 트랜잭션: 서비스 flush + audit_log INSERT + commit.
+
+    Body:
+        { "reason": "자재지연" | "설비고장" | "납기재협상" | "기타" }
+        생략 또는 None이면 서비스가 '기타'로 저장.
+
+    Responses:
+        200: { batch_group, affected_batches, affected_tasks, reason, idempotent }
+        400: 상태(planned 외) / WIP 매칭 / reason 검증 오류
+        404: batch_group 없음
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+    from app.services.batch_group_lifecycle import (
+        BatchGroupNotFoundError,
+        BatchGroupReasonError,
+        BatchGroupStatusError,
+        BatchGroupWipMatchedError,
+        unassign_batch_group,
+    )
+
+    reason = (body or {}).get("reason")
+
+    try:
+        result = unassign_batch_group(db, batch_group, reason=reason)
+    except BatchGroupNotFoundError as exc:
+        # 404: 존재하지 않는 batch_group — 상태 전이 없이 즉시 실패
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        BatchGroupStatusError,
+        BatchGroupWipMatchedError,
+        BatchGroupReasonError,
+    ) as exc:
+        # 400: 비즈니스 제약 위반 (상태/WIP/reason) — 서비스는 변경 전에 예외를 던지므로
+        # rollback까지 할 필요는 없으나 세션 상태를 명시적으로 되돌려 다음 쿼리 안전 보장.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # 멱등 호출(이미 모두 unassigned)에는 새 audit row를 남기지 않는다 — 감사 로그가
+    # 실제 상태 전이에 1:1 대응하도록 유지 (중복 '변경 없음' 기록 방지).
+    if not result.get("idempotent"):
+        # run_label은 서비스 결과에 없으므로 첫 affected_batch에서 조회 (정통 소스).
+        # 없으면 'manual' (sm_inventory.py 기존 컨벤션: wip.run_label or "manual").
+        batch_run_label: str | None = None
+        first_batch_id = (
+            result["affected_batches"][0] if result["affected_batches"] else None
+        )
+        if first_batch_id is not None:
+            batch_run_label = (
+                db.query(ProductionBatch.run_label)
+                .filter(ProductionBatch.batch_id == first_batch_id)
+                .scalar()
+            )
+
+        db.add(
+            AuditLog(
+                run_label=batch_run_label or "manual",
+                stage="stage1",
+                action_type="BATCH_GROUP_UNASSIGNED",
+                batch_id=first_batch_id,
+                decision_reason=(
+                    f"batch_group {batch_group} unassigned "
+                    f"(reason={result['reason']}, "
+                    f"tasks={len(result['affected_tasks'])})"
+                ),
+            )
+        )
+
+    db.commit()
+    return result
