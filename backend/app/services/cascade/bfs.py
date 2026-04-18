@@ -34,4 +34,27 @@ def same_eq_prev_end(t: SnapTask, snap: Snap):
 
 
 def successor_tasks(t: SnapTask, snap: Snap) -> list[SnapTask]:
-    raise NotImplementedError
+    """같은 sales_order_line 의 t 이후 공정 (start 기준 정렬).
+
+    successor 조건:
+      - 같은 sales_order_id AND sales_order_line
+      - o.start >= t.end (t 뒤에 시작)
+      - self 제외
+    sales_order_id 또는 sales_order_line 이 None 이면 빈 리스트 반환 (chain 추적 불가).
+
+    조건 `o.start >= t.end` 는 정확히 맞닿은(end==start) 후공정도 포함하여
+    successor chain 에 넣는다. 겹치는 케이스는 `same_equipment_overlapping`
+    에서 처리되므로 여기서는 dedupe 하지 않는다.
+    """
+    if t.sales_order_id is None or t.sales_order_line is None:
+        return []
+    out = [
+        o
+        for o in snap.by_id.values()
+        if o.task_id != t.task_id
+        and o.sales_order_id == t.sales_order_id
+        and o.sales_order_line == t.sales_order_line
+        and o.start >= t.end
+    ]
+    out.sort(key=lambda x: x.start)
+    return out
