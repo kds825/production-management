@@ -1,6 +1,7 @@
 """마스터 데이터 제네릭 CRUD API — 화이트리스트 기반"""
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
 
@@ -95,6 +96,44 @@ def update_record(
     for key, value in body.items():
         if hasattr(row, key):
             setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    return _row_to_dict(row)
+
+
+class SpeedSetupUpdate(BaseModel):
+    """SpeedMaster 셋업 시간 4컬럼 화이트리스트 모델.
+
+    Why: generic PUT /master/speed_master/{id} 는 모든 컬럼을 허용한다.
+    UI 에서 구조 필드(equipment_code, product_type, cross_section,
+    line_speed_*) 오편집을 원천 차단하려고 별도 엔드포인트로 분리.
+    """
+
+    setup_spec_min: float | None = Field(default=None, ge=0)
+    setup_color_min: float | None = Field(default=None, ge=0)
+    setup_compound_min: float | None = Field(default=None, ge=0)
+    setup_start_min: float | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.patch(
+    "/speed_master/{speed_id}/setup-params",
+    summary="SpeedMaster 셋업 시간 4컬럼 편집 (화이트리스트)",
+)
+def patch_speed_setup_params(
+    speed_id: int,
+    body: SpeedSetupUpdate,
+    db: Session = Depends(get_db),
+):
+    row = db.query(SpeedMaster).filter(SpeedMaster.speed_id == speed_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"speed_master id={speed_id} 없음")
+
+    payload = body.model_dump(exclude_unset=True)
+    for key, value in payload.items():
+        setattr(row, key, value)
+
     db.commit()
     db.refresh(row)
     return _row_to_dict(row)
