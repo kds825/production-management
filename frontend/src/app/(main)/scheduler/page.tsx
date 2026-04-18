@@ -29,7 +29,9 @@ import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
-import { ConflictResolutionModal } from "@/features/scheduler/components/ConflictResolutionModal";
+// ConflictResolutionModal: Task 19 에서 Task 16/17 cascade v2 (pushes/pulls/unresolved)
+// 기반으로 전면 교체됨. legacy store.cascadePreview (affected_tasks/conflicts) 플로우는
+// Task 21 에서 useScheduleChangeWithCascade 훅으로 재연결 예정 — 그때 import 복원.
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
@@ -2029,32 +2031,10 @@ export default function SchedulerPage() {
       {/* 배치 분할 모달 */}
       <BatchSplitModal />
 
-      {/* Cross-process cascade 충돌 해소 모달 */}
-      {conflictModalOpen &&
-        cascadePreview &&
-        (() => {
-          const movedTaskId = cascadeOriginalTask?.id ?? "";
-          const movedTaskData = tasks.find((t) => t.id === movedTaskId);
-          const movedEquip = movedTaskData
-            ? equipment.find((e) => e.id === movedTaskData.equipment_id)
-            : null;
-          return (
-            <ConflictResolutionModal
-              preview={cascadePreview}
-              movedTask={{
-                id: movedTaskId,
-                spec: movedTaskData?.spec ?? "",
-                process:
-                  movedEquip?.process_type ?? movedTaskData?.batch_group ?? "",
-              }}
-              onApply={() => {
-                applyCascade(cascadePreview);
-                explainCache.current = {}; // cascade 적용 → 캐시 무효화
-              }}
-              onCancel={cancelCascade}
-            />
-          );
-        })()}
+      {/* Cross-process cascade 충돌 해소 모달: Task 21 에서 cascade v2 훅으로 재연결 */}
+      {/* 현재는 legacy store 의 conflictModalOpen 이 true 가 되면 자동 적용으로 fallback.
+          (Task 17 훅 도입 전까지의 임시 no-UI 동작) */}
+      {conflictModalOpen && cascadePreview && <></>}
     </div>
   );
 }
