@@ -2,6 +2,7 @@
 
 import { Link2 } from "lucide-react";
 import { ChevronRightIcon } from "@heroicons/react/24/outline";
+import { useDraggable } from "@dnd-kit/core";
 
 import { btnPrimary, chipMuted, chipReason } from "@/shared/ui/styles";
 import type { BatchGroupSnapshot } from "../types";
@@ -26,6 +27,25 @@ export function BatchGroupCard({ group }: Props) {
     s.inFlightBatchGroups.has(group.batch_group),
   );
 
+  // Task 3.2: WIP 매칭 검사 — snapshot 에는 task-level 정보가 없으므로
+  // store.tasks 에서 같은 batch_group 의 task 중 wip_matched_id 가 있으면 드래그 차단.
+  const wipMatched = useScheduleStore((s) =>
+    s.tasks.some(
+      (t) => t.batch_group === group.batch_group && t.wip_matched_id != null,
+    ),
+  );
+
+  const disabled = inFlight || wipMatched;
+
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `bg-${group.batch_group}`,
+    disabled,
+    data: {
+      type: "batch_group",
+      group,
+    },
+  });
+
   const firstProcess = group.processes[0];
   // 백엔드가 process_name 을 equipment_group으로 내려보내므로 CSS var 매치가 안 될 수 있음.
   // var(x, fallback) 구문으로 graceful 처리.
@@ -33,6 +53,9 @@ export function BatchGroupCard({ group }: Props) {
 
   return (
     <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
       role="group"
       aria-label={`배치 묶음 ${group.batch_group}, ${group.order_count}수주, 사유: ${group.unassign_reason}`}
       tabIndex={0}
@@ -40,6 +63,8 @@ export function BatchGroupCard({ group }: Props) {
       style={{
         width: 200,
         borderColor: `var(--color-process-${equipmentGroup}, var(--color-border-default))`,
+        opacity: isDragging ? 0.5 : 1,
+        cursor: disabled ? "not-allowed" : isDragging ? "grabbing" : "grab",
       }}
       title={`총 길이: ${group.total_length_m.toLocaleString()} m`}
     >
