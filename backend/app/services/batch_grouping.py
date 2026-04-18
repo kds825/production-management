@@ -30,6 +30,7 @@ from app.infrastructure.models.process_routing import ProcessRouting
 from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.customer_master import CustomerMaster
 from app.infrastructure.models.wip_inventory import WipInventory
+from app.services.constraint_params import ConstraintParams
 
 # WIP 재고 종류별로 해당 재고가 "이미 완료된" 공정 집합
 # 절연재고: 연선+절연까지 완료 → 절연 이전 공정 배치 생성 불필요
@@ -144,6 +145,10 @@ def create_batches(
         "warnings": [],
         "outsource_count": 0,
     }
+
+    # ── ConstraintConfig 스냅샷 프리페치 (4-1 규격교체 fallback 등) ─────────
+    # Why: 루프 내부 fallback 시 재조회로 인한 N+1 방지. 1회 load 후 재사용.
+    constraint_params = ConstraintParams.load(db)
 
     # ── 마스터 데이터 일괄 로드 (N+1 방지) ──────────────────────────────────
     query = db.query(SalesOrder).filter(
@@ -518,7 +523,7 @@ def create_batches(
                 core_setup = (
                     float(core_speed_o.setup_spec_min)
                     if core_speed_o and core_speed_o.setup_spec_min
-                    else 210.0
+                    else constraint_params.get("4-1", "stranding_min")
                 )
                 core_dur = order_qty_o / core_spd if core_spd > 0 else None
                 core_batch = ProductionBatch(
@@ -574,7 +579,7 @@ def create_batches(
                 al_core_setup = (
                     float(al_core_speed_o.setup_spec_min)
                     if al_core_speed_o and al_core_speed_o.setup_spec_min
-                    else 210.0
+                    else constraint_params.get("4-1", "stranding_min")
                 )
                 al_core_dur = order_qty_o / al_core_spd if al_core_spd > 0 else None
                 al_core_batch = ProductionBatch(
