@@ -7,13 +7,15 @@ Eng Critical #1: 이 모듈의 함수는 절대 db.commit()을 호출하지 않�
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
 
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-
+from app.services.cascade.snap import TaskView
 
 # status 리터럴 — 신규 spec 기준. schedule_task 레거시 default('scheduled')와 병존하나
 # 본 모듈은 미배정 전이에만 관여하므로 unassigned 로의 단방향 세팅만 다룬다.
@@ -154,10 +156,6 @@ def unassign_batch_group(
     }
 
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-
-
 @dataclass
 class TaskPosition:
     """restore-at 계산 결과의 단일 task 위치 제안."""
@@ -234,12 +232,11 @@ def compute_restore_at_plan(
     batch_ids = [b.batch_id for b in batches]
     tasks = db.query(ScheduleTask).filter(ScheduleTask.batch_id.in_(batch_ids)).all()
     batch_by_id = {b.batch_id: b for b in batches}
-    # batch_seq → ScheduleTask 매핑 (anchor = 가장 작은 batch_seq)
+    # batch_seq → ScheduleTask 매핑 (anchor = 가장 작은 batch_seq).
+    # batch_id는 batch_ids에서 나왔으므로 batch_by_id에 반드시 존재 — KeyError = 데이터 무결성 위반.
     task_by_batch_seq: dict[int, ScheduleTask] = {}
     for t in tasks:
-        b = batch_by_id.get(t.batch_id)
-        if b is None:
-            continue
+        b = batch_by_id[t.batch_id]  # invariant: batch_id came from batch_ids
         task_by_batch_seq[b.batch_seq] = t
 
     if not task_by_batch_seq:
@@ -279,8 +276,8 @@ def compute_restore_at_plan(
         )
         last_end = new_end
 
-    # 2) cascade-preview-on-snap — snap에는 모든 task (unassigned 포함) 가 들어감
-    # ScheduleTask.task_id 는 int (ORM Integer) — snap 키도 int 그대로 사용.
+    # 2) cascade-preview-on-snap — snap에는 모든 task (unassigned 포함) 가 들어감.
+    # TaskView.task_id 는 str (snap 전역 계약) — str(t.task_id) 로 강제 변환.
     schedule_tasks = db.query(ScheduleTask).all()
     batch_ids_all = {t.batch_id for t in schedule_tasks if t.batch_id is not None}
     batches_all = {
@@ -290,42 +287,32 @@ def compute_restore_at_plan(
         .all()
     }
 
-    class _TaskView:
-        """duck-typed ScheduleTask + batch 결합 뷰 — build_snapshot 계약을 충족."""
-
-        __slots__ = (
-            "task_id",
-            "equipment_code",
-            "start_datetime",
-            "end_datetime",
-            "batch_id",
-            "batch",
+    views = [
+        TaskView(
+            task_id=str(t.task_id),
+            equipment_code=t.equipment_code,
+            start_datetime=t.start_datetime,
+            end_datetime=t.end_datetime,
+            batch_id=t.batch_id,
+            batch=batches_all.get(t.batch_id),
         )
-
-        def __init__(self, t, batch):
-            self.task_id = t.task_id
-            self.equipment_code = t.equipment_code
-            self.start_datetime = t.start_datetime
-            self.end_datetime = t.end_datetime
-            self.batch_id = t.batch_id
-            self.batch = batch
-
-    views = [_TaskView(t, batches_all.get(t.batch_id)) for t in schedule_tasks]
+        for t in schedule_tasks
+    ]
     snap = build_snapshot(views)
 
     # apply — snap.apply()는 no-op(값 변경 없음) 시 ValueError raise.
     # 따라서 실제 변경이 있는 경우에만 호출 (예: anchor가 이미 그 자리에 있으면 skip).
-    # snap 키는 ORM int task_id와 동일 타입으로 접근.
+    # snap 키는 str — str(t.task_id) 로 접근.
     for pos in positions:
         t = task_by_batch_seq[batch_by_id[pos.batch_id].batch_seq]
-        snap_task = snap.by_id[t.task_id]
+        snap_task = snap.by_id[str(t.task_id)]
         if (
             snap_task.start != pos.new_start
             or snap_task.end != pos.new_end
             or snap_task.equipment_code != pos.new_equipment_code
         ):
             snap.apply(
-                t.task_id,
+                str(t.task_id),
                 pos.new_start,
                 pos.new_end,
                 pos.new_equipment_code,
@@ -339,8 +326,8 @@ def compute_restore_at_plan(
     anchor_task = task_by_batch_seq[ordered_seqs[0]]
     cascade_result = plan_cascade_preview_on_snap(
         snap=snap,
-        changed_task_id=anchor_task.task_id,  # int — consistent with snap keys
-        advance_fn=lambda dt, *_a, **_k: dt,  # identity — Task 1.3 에서 재검토
+        changed_task_id=str(anchor_task.task_id),  # str — snap 키 계약 일관성
+        advance_fn=lambda dt: dt,  # identity — Task 1.3 에서 재검토
         reverse_advance_fn=_calendar_reverse_advance,
         horizon_end=horizon_end,
     )
