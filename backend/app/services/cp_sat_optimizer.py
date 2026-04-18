@@ -50,8 +50,6 @@ from app.services.schedule_optimizer import (
     _is_sheath_group,
     _narrow_by_stranding,
     _schedule_multi_equipment,
-    _sheath_group_color_rank,
-    _sheath_group_due_week_int,
     _st_sq,
     align_start_to_predecessor_end,
 )
@@ -799,6 +797,21 @@ def cp_sat_schedule(
     _COLOR_RANK_PAD = 99  # 비시스: 색상 키 무효
     _DUE_WK_PAD = 999999  # 비시스: 주 버킷 무효
 
+    # 시스 색상 묶음 기반 정렬 — 납기 임박 묶음 먼저, 묶음 내 earliest 순
+    from app.services.sheath_cluster import (
+        build_sheath_clusters,
+        cluster_sort_key,
+    )
+
+    _sheath_clusters = build_sheath_clusters(group_meta)
+    _sorted_clusters = sorted(
+        _sheath_clusters, key=lambda c: cluster_sort_key(c, group_meta)
+    )
+    _cluster_rank: dict[str, tuple[int, int]] = {}
+    for ci, _cluster in enumerate(_sorted_clusters):
+        for gi, _gk in enumerate(_cluster.group_keys):
+            _cluster_rank[_gk] = (ci, gi)
+
     def _solved_order_key(gk: str):
         meta = group_meta[gk]
         rep = meta["rep"]
@@ -830,15 +843,18 @@ def cp_sat_schedule(
                 earliest,
                 cust_prio,
             )
-        # 시스: 주 버킷 → 색상 → EDD (납기 우선, 같은 주차 내 색상 묶기)
+        # 시스: 색상 묶음 단위 정렬 (sheath_cluster 기반)
+        # 1차: 묶음 순위 (cluster_sort_key: latest_due → color_rank → ...)
+        # 2차: 묶음 내 그룹 순서 (build 시 group_keys 정렬 → 결정적)
         if _is_sheath_group(gk, meta["batches"]):
+            rank = _cluster_rank.get(gk, (10**9, 10**9))
             return (
                 proc_level,
-                date.max,  # ST 클러스터 필드 (비해당)
+                date.max,
                 0.0,
-                _sheath_group_due_week_int(meta["batches"]),  # 1차: 주 버킷
-                _sheath_group_color_rank(meta["batches"]),  # 2차: 색상
-                earliest,  # 3차: 실제 EDD
+                rank[0],
+                rank[1],
+                earliest,
                 cust_prio,
             )
         # 절연 등 기타 공정: EDD 순
@@ -888,6 +904,13 @@ def cp_sat_schedule(
         )
     first_insul_output: datetime | None = None
     preempted_remainder: list[ProductionBatch] = []  # 선점 분할된 잔여 배치
+
+    # 시스 묶음 기반 append 정책용 — group_key → cluster_id / 설비별 직전 cluster
+    _gk_to_cluster_id: dict[str, str] = {}
+    for _c in _sorted_clusters:
+        for _gk_iter in _c.group_keys:
+            _gk_to_cluster_id[_gk_iter] = _c.cluster_id
+    _prev_cluster_on_eq: dict[str, str] = {}
 
     for gk in solved_order:
         meta = group_meta[gk]
@@ -1027,31 +1050,28 @@ def cp_sat_schedule(
                     if ptask and ptask.end_datetime > earliest:
                         earliest = ptask.end_datetime
 
-        # ── 시스 조건부 append-only: "납기 지키는 선에서 색상 우선" ─────────────
-        # 무조건 append-only 는 timeline 앞쪽의 빈 공간을 낭비해 뒤쪽 그룹이
-        # 수일~수백 시간 밀리고 납기 초과가 누적된다 (실측: gap 최대 436h).
-        #
-        # 조건부 정책:
-        #   1) 현재 그룹을 timeline 마지막 뒤에 붙였을 때(append 시뮬) 납기 초과
-        #      여부를 계산.
-        #   2) 납기 여유 있으면 → append-only 유지 (색상 체인 보존 목적)
-        #   3) 납기 초과 예상이면 → earliest 그대로 두고 _find_available_slot
-        #      이 빈 공간을 사용하도록 허용 (납기 우선)
-        #
-        # 사용자 규칙 "납기 지키는 선에서 색상 우선" 의 정확한 구현.
-        # 색상 교체 비용(수십 분)은 납기 위반(일 단위) 대비 작으므로 납기 보호가
-        # 우선. 납기 여유 있는 그룹(W17/W18 등)에서는 여전히 색상 체인 유지.
+        # ── 시스 묶음 기반 append 정책 ──────────────────────────────────────────
+        # 묶음 내부(같은 cluster_id): 무조건 append → 색상 체인 유지
+        # 묶음 경계(다른 cluster_id): 조건부 append → 납기 초과 예상이면 earliest
+        #   그대로 두고 _find_available_slot 이 빈 공간 사용 (납기 보호)
+        # 색상 교체 비용(수십 분)은 납기 위반(일 단위) 대비 작으므로 경계에서는
+        # 납기 우선. 묶음 내부는 교체 없음이 자명하므로 무조건 append.
         if rep.process_name in ("저압시스", "고압시스"):
+            current_cluster_id = _gk_to_cluster_id.get(gk)
             eq_slots = timeline.get(chosen_eq_code, [])
-            if eq_slots:
+            prev_cluster = _prev_cluster_on_eq.get(chosen_eq_code)
+            if eq_slots and current_cluster_id:
                 last_end = max(slot[1] for slot in eq_slots)
                 append_earliest = max(earliest, last_end)
-                append_end = calculate_end_datetime(
-                    append_earliest, total_dur, db, chosen_eq_code
-                )
-                due = meta["earliest_due"]
-                if not due or append_end.date() <= due:
+                if prev_cluster == current_cluster_id:
                     earliest = append_earliest
+                else:
+                    append_end = calculate_end_datetime(
+                        append_earliest, total_dur, db, chosen_eq_code
+                    )
+                    due = meta["earliest_due"]
+                    if not due or append_end.date() <= due:
+                        earliest = append_earliest
 
         # ── 긴급/중요 배치: 납기 위반 예상 시 선점 분할 시도 ────────────────────
         if (
@@ -1185,6 +1205,12 @@ def cp_sat_schedule(
 
         last_batch_on_equip[chosen_eq_code] = gb[-1]
         tasks_created.append(task)
+
+        # 시스 묶음 기반 append 정책 — 현재 그룹의 cluster_id 로 갱신
+        if rep.process_name in ("저압시스", "고압시스"):
+            _cid = _gk_to_cluster_id.get(gk)
+            if _cid:
+                _prev_cluster_on_eq[chosen_eq_code] = _cid
 
         # 납기 위반 기록 — hard constraint 위반이므로 error 격상
         if meta["earliest_due"] and end_dt.date() > meta["earliest_due"]:
