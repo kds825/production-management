@@ -48,6 +48,7 @@ import {
   getDefaultRange,
 } from "../utils/ganttUtils";
 import { useToastStore } from "@/shared/ui/toastStore";
+import { refreshTasks } from "../hooks/useScheduleData";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -282,6 +283,14 @@ interface ScheduleActions {
     batchGroup: string,
     reason?: UnassignReason,
   ) => Promise<void>;
+
+  /**
+   * 배치 그룹을 원래 자리로 복원 (블로커 B4 — Task 4.4).
+   * - 200 성공: unscheduledItems에서 제거 + refreshTasks()로 Gantt 재렌더링.
+   * - 409 conflict: warning Toast ("원래 자리에 다른 작업이 있습니다") + 인박스 유지.
+   * - inFlightBatchGroups 가드로 중복 호출 차단.
+   */
+  restoreBatchGroup: (batchGroup: string) => Promise<void>;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -1000,6 +1009,67 @@ export const useScheduleStore = create<ScheduleStore>()(
         useToastStore
           .getState()
           .show("미배정 이동 실패. 다시 시도하세요", "error");
+      } finally {
+        set((s) => {
+          s.inFlightBatchGroups.delete(batchGroup);
+        });
+      }
+    },
+
+    /**
+     * 배치 그룹을 원래 자리로 복원 (블로커 B4 — Task 4.4).
+     *
+     * Flow:
+     *   1. in-flight 가드 체크
+     *   2. POST /pipeline/batch-group/{bg}/restore
+     *   3. 200 성공: unscheduledItems에서 해당 batch_group 제거 → refreshTasks()
+     *      호출로 서버의 새로 배치된 tasks를 스토어에 반영하여 Gantt 즉시 재렌더링
+     *   4. 409 conflict: warning Toast + 인박스 유지 (v2에서 재배치 지원 예정)
+     *   5. 기타 실패: error Toast
+     *   6. finally: in-flight 가드 해제
+     */
+    restoreBatchGroup: async (batchGroup: string) => {
+      const state = get();
+      if (state.inFlightBatchGroups.has(batchGroup)) return;
+
+      set((s) => {
+        s.inFlightBatchGroups.add(batchGroup);
+      });
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/batch-group/${encodeURIComponent(batchGroup)}/restore`,
+          { method: "POST" },
+        );
+
+        if (res.status === 409) {
+          useToastStore
+            .getState()
+            .show(
+              "원래 자리에 다른 작업이 있습니다. 재배치는 v2에서 지원 예정입니다.",
+              "warning",
+              6000,
+            );
+          return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        // 성공: 인박스에서 제거 후 서버 tasks 재조회 (블로커 B4 — Gantt 즉시 반영)
+        set((s) => {
+          s.unscheduledItems = s.unscheduledItems.filter(
+            (i) =>
+              !(i.kind === "batch_group" && i.group.batch_group === batchGroup),
+          );
+        });
+        await refreshTasks();
+
+        useToastStore
+          .getState()
+          .show(`${batchGroup} 원래 자리로 복원 완료`, "success");
+        fireReanalysis(get().runLabel);
+      } catch (err) {
+        console.warn("[restoreBatchGroup] 실패:", err);
+        useToastStore.getState().show("복원 실패. 다시 시도하세요", "error");
       } finally {
         set((s) => {
           s.inFlightBatchGroups.delete(batchGroup);
