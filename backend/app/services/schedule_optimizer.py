@@ -26,7 +26,6 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.speed_master import SpeedMaster
-from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.domain.constants import PROCESS_ORDER
 from app.services.calendar_engine import (
@@ -458,17 +457,10 @@ def _run_optimization_once(
     # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
     constraint_params = ConstraintParams.load(db)
 
-    # 용접 시간 (4-4): constraint_config에서 welding_min 읽기
-    welding_cfg = (
-        db.query(ConstraintConfig)
-        .filter(ConstraintConfig.constraint_id == "4-4")
-        .first()
+    # 용접 시간 (4-4): ConstraintParams 통합 경로로 조회 (하위 호환 default 유지)
+    welding_min = constraint_params.get(
+        "4-4", "welding_min", default=_DEFAULT_WELDING_MIN
     )
-    welding_min = _DEFAULT_WELDING_MIN
-    if welding_cfg and welding_cfg.params_json:
-        welding_min = float(
-            welding_cfg.params_json.get("welding_min", _DEFAULT_WELDING_MIN)
-        )
 
     # Load existing tasks (to check overlaps)
     existing_tasks = (

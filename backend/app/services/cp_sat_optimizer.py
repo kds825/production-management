@@ -28,7 +28,6 @@ from ortools.sat.python import cp_model
 from sqlalchemy.orm import Session
 
 from app.domain.constants import PROCESS_ORDER
-from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -489,16 +488,10 @@ def cp_sat_schedule(
     # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
     constraint_params = ConstraintParams.load(db)
 
-    welding_cfg = (
-        db.query(ConstraintConfig)
-        .filter(ConstraintConfig.constraint_id == "4-4")
-        .first()
+    # 용접 시간 (4-4): ConstraintParams 통합 경로로 조회 (하위 호환 default 유지)
+    welding_min = constraint_params.get(
+        "4-4", "welding_min", default=_DEFAULT_WELDING_MIN
     )
-    welding_min = _DEFAULT_WELDING_MIN
-    if welding_cfg and welding_cfg.params_json:
-        welding_min = float(
-            welding_cfg.params_json.get("welding_min", _DEFAULT_WELDING_MIN)
-        )
 
     # SQ → 소선경 매핑 (연선 셋업 3-tier 계산용)
     sq_to_wire_d: dict[int, float] = {
