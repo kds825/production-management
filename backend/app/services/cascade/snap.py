@@ -35,8 +35,27 @@ class SnapTask:
 class Snap:
     by_id: dict[str, SnapTask] = field(default_factory=dict)
 
-    def apply(self, task_id, new_start, new_end, new_equipment_code=None):
+    def apply(
+        self,
+        task_id: str,
+        new_start: datetime,
+        new_end: datetime,
+        new_equipment_code: str | None = None,
+    ) -> None:
+        # NOTE: cascade BFS 는 snap 하나에 대해 단일 스레드 동기 실행을 전제.
+        # 아래 None-guard 는 race 안전하지 않으므로 동시 호출 금지.
         t = self.by_id[task_id]
+        # Fail-fast: cascade BFS 는 실제 변경이 있을 때만 apply 를 호출해야 함.
+        # no-op 호출은 버그 — old_* 가 설정되기 전에 차단 (원본 보존 guard 앞).
+        if (
+            t.start == new_start
+            and t.end == new_end
+            and (new_equipment_code is None or new_equipment_code == t.equipment_code)
+        ):
+            raise ValueError(
+                f"apply() called with no-op change on task_id={task_id}; "
+                f"cascade BFS should only apply real changes."
+            )
         # 최초 원본은 한 번만 보존 (재진입 호출 시 갱신 금지).
         # validators 가 "원본 대비 지연 여부"를 판단할 때 기준점을 단일화하기 위함.
         if t.old_start is None:
@@ -63,22 +82,9 @@ class Snap:
 
 
 def build_snapshot(tasks: Iterable) -> Snap:
-    """ORM ScheduleTask 들을 SnapTask 로 deepcopy 하여 Snap 생성.
+    """ORM ScheduleTask 들을 SnapTask 로 복사하여 Snap 생성.
 
-    주의: Task 4 시점에서는 ORM 통합을 아직 하지 않음 — Task 10 에서 완성.
-    현재는 interface stub 으로 동작만 검증 가능하게 둔다.
+    현재 (Task 4) 는 interface 만 선언. 실구현과 대응 test 는 Task 10 service.py 통합 단계에서
+    DB fixture 와 함께 추가 예정.
     """
-    by_id: dict[str, SnapTask] = {}
-    for t in tasks:
-        batch = getattr(t, "batch", None)
-        by_id[t.task_id] = SnapTask(
-            task_id=t.task_id,
-            equipment_code=t.equipment_code,
-            start=t.start_datetime,
-            end=t.end_datetime,
-            batch_id=t.batch_id,
-            sales_order_id=getattr(batch, "sales_order_id", None),
-            sales_order_line=getattr(batch, "sales_order_line", None),
-            due_date=getattr(batch, "due_date", None),
-        )
-    return Snap(by_id=by_id)
+    raise NotImplementedError("build_snapshot: Task 10 DB 통합에서 구현 예정")

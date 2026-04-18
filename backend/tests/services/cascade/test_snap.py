@@ -8,6 +8,8 @@ apply 재진입 시 최초 원본(old_*) 보존, equipment 조회 시 start 오�
 
 from datetime import datetime
 
+import pytest
+
 from app.services.cascade.snap import Snap, SnapTask
 
 
@@ -85,3 +87,30 @@ def test_changed_tasks_returns_only_modified():
     snap.apply("A", datetime(2026, 4, 20, 10, 0), datetime(2026, 4, 20, 13, 0))
     changed = snap.changed_tasks()
     assert [t.task_id for t in changed] == ["A"]
+
+
+def test_apply_raises_on_no_op():
+    t = _mk("T1", "A", 9, 12)
+    snap = Snap(by_id={"T1": t})
+    with pytest.raises(ValueError, match="no-op change"):
+        snap.apply("T1", datetime(2026, 4, 20, 9, 0), datetime(2026, 4, 20, 12, 0))
+
+
+def test_apply_raises_on_no_op_with_same_equipment():
+    t = _mk("T1", "A", 9, 12)
+    snap = Snap(by_id={"T1": t})
+    with pytest.raises(ValueError, match="no-op change"):
+        snap.apply(
+            "T1",
+            datetime(2026, 4, 20, 9, 0),
+            datetime(2026, 4, 20, 12, 0),
+            new_equipment_code="A",
+        )
+
+
+def test_build_snapshot_raises_not_implemented():
+    """Task 10 에서 실구현 예정."""
+    with pytest.raises(NotImplementedError):
+        from app.services.cascade.snap import build_snapshot
+
+        build_snapshot([])
