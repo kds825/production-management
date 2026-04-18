@@ -1346,6 +1346,13 @@ def _apply_auto_split(
     split_len_raw = sum(float(b.total_length_m or 0) for b in split_off)
     remain_len_raw = sum(float(b.total_length_m or 0) for b in remaining)
 
+    # Eng review 블로커 #1 (Task 5): split 후 각 헤더의 surplus 를 재계산.
+    # 원 헤더 surplus 를 proportional 로 복사하면 틀 단위 올림(ceil) 때문에 오차 발생.
+    # split_len_raw * core_mul = 분할 그룹의 실제 수주 환산량(net) — defect_buffer 는
+    # 개별 배치 total_length_m 에 반영돼 있으면 그대로, 없으면 0 으로 처리됨.
+    split_surplus = max(0.0, split_len - split_len_raw * core_mul)
+    remain_surplus = max(0.0, remain_len - remain_len_raw * core_mul)
+
     total_work = split_len + remain_len
     split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
     remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
@@ -1393,6 +1400,7 @@ def _apply_auto_split(
         stranding_type=header.stranding_type,
         batch_group=new_group,
         spec_raw=header.spec_raw,
+        wip_output_expected_m=split_surplus,  # Task 5: split 후 surplus 재계산
         remarks=(
             f"연선그룹 {len(split_off)}건 {split_lots}틀 / "
             f"수주총량 {split_len_raw:.0f}m → 연선작업량 {split_len:.0f}m"
@@ -1407,6 +1415,7 @@ def _apply_auto_split(
     header.estimated_duration_min = remain_dur
     header.due_date = remain_due
     header.customer_priority = remain_pri
+    header.wip_output_expected_m = remain_surplus  # Task 5: split 후 surplus 재계산
     header.remarks = (
         f"연선그룹 {len(remaining)}건 {remain_lots}틀 / "
         f"수주총량 {remain_len_raw:.0f}m → 연선작업량 {remain_len:.0f}m"
