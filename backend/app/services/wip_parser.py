@@ -1,9 +1,94 @@
 """재공실사 Excel 파일(.xlsx / .xls) 파싱 → WipInventory 레코드 생성"""
 
+import hashlib
+import io as _io
+import json as _json
+
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.wip_inventory import WipInventory
+from app.infrastructure.models.wip_upload_log import WipUploadLog
 from app.services.wip_matching import _extract_sq
+
+
+def _compute_canonical_hash(file_content: bytes) -> str:
+    """Excel 을 파싱한 뒤 key 필드 정렬된 튜플 리스트 기준 SHA-256.
+
+    공백/저장시간/sheet 순서 변경 무관. 동일 내용 → 동일 hash.
+    파일 바이트가 아닌 파싱된 내용 기반이므로 재저장해도 동일 hash.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(_io.BytesIO(file_content), data_only=True)
+    ws = wb.active
+
+    # 헤더 추출 (첫 행)
+    headers = {c.value: c.column for c in ws[1] if c.value}
+
+    canonical_rows = []
+    for row in ws.iter_rows(min_row=2, values_only=False):
+        row_dict = {}
+        for name, col_idx in headers.items():
+            val = row[col_idx - 1].value
+            if isinstance(val, str):
+                val = val.strip()
+            elif isinstance(val, (int, float)):
+                val = float(val)
+            row_dict[str(name).strip()] = val
+        # 완전 빈 row skip
+        if any(v not in (None, "") for v in row_dict.values()):
+            canonical_rows.append(row_dict)
+
+    # deterministic 정렬 (row 순서 무관하게 동일 hash 보장)
+    canonical_rows.sort(
+        key=lambda d: _json.dumps(d, sort_keys=True, ensure_ascii=False)
+    )
+    payload = _json.dumps(canonical_rows, sort_keys=True, ensure_ascii=False).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def parse_wip_excel(
+    file_content: bytes, db: Session, run_label: str | None = None
+) -> dict:
+    """재공실사 Excel 파싱 + 멱등성 체크 (G4).
+
+    동일 canonical_hash 재업로드 시 duplicate=True 를 반환하고
+    WipInventory INSERT 를 건너뜀. 신규 업로드는 WipUploadLog 에 기록.
+    """
+    # ── 멱등성 체크 (G4) ──
+    canonical_hash = _compute_canonical_hash(file_content)
+    raw_hash = hashlib.sha256(file_content).hexdigest()
+
+    existing = db.query(WipUploadLog).filter_by(canonical_hash=canonical_hash).first()
+    if existing:
+        return {
+            "duplicate": True,
+            "existing_upload_id": existing.upload_id,
+            "existing_uploaded_at": (
+                existing.uploaded_at.isoformat() if existing.uploaded_at else None
+            ),
+            "total": 0,
+            "warnings": [f"동일 내용 이미 업로드됨 (upload_id={existing.upload_id})"],
+        }
+
+    # ── 기존 parsing ──
+    result = parse_wip_file(file_content, db, run_label=run_label)
+    result.setdefault("duplicate", False)
+
+    # ── 업로드 log 기록 (반환 전) ──
+    db.add(
+        WipUploadLog(
+            canonical_hash=canonical_hash,
+            raw_file_hash=raw_hash,
+            run_label=run_label,
+            rows_inserted=result["total"],
+            rows_updated=0,
+        )
+    )
+
+    return result
 
 
 def parse_wip_file(
