@@ -242,8 +242,104 @@ def _build_summary(changed: SnapTask, pushes, pulls, unresolved) -> str:
     return ", ".join(parts) + "."
 
 
-# Task 10 에서 DB 통합 — 지금은 stub 유지.
 def plan_cascade_preview(
     task_id, new_start, new_end, new_equipment_code, db
 ) -> CascadePreviewResult:
-    raise NotImplementedError("Task 10 DB 통합에서 구현 예정")
+    """DB 에서 horizon 내 task 를 읽어 cascade 를 계산 (DB 통합 entry).
+
+    흐름:
+      1) DB 에서 모든 ScheduleTask + ProductionBatch 를 조회 → duck-typed 뷰로 결합.
+      2) `build_snapshot` 으로 Snap 구성 → `apply` 로 변경 task 반영.
+      3) `plan_cascade_preview_on_snap` 에 실 calendar `reverse_advance` 주입해 호출.
+
+    horizon: 스냅샷 내 최대 end_datetime + 7일 여유 (validator 가 horizon 초과를 탐지).
+
+    NOTE: forward `advance` 의 경우 프로젝트의 `calculate_end_datetime` 은
+    `(start, duration_min, db, equipment_code)` 시그니처로 duration 이 필요하나, BFS
+    orchestrator 는 "dt 를 근무시간 milestone 으로 nudge" 하는 단일-인자 advance 가
+    필요하다. 적합한 헬퍼가 없어 identity 로 대체 — Task 11+ 라우터 통합에서
+    `get_working_window` 기반 nudge 함수로 보강 예정.
+    """
+    # 지역 import — 순환 의존 방지 (service.py 는 route/DB 레이어에서 import 되므로
+    # 모델 import 는 호출 시점까지 지연).
+    from app.infrastructure.models.schedule_task import ScheduleTask
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.services.calendar_engine import (
+        reverse_advance as _calendar_reverse_advance,
+    )
+
+    # ScheduleTask 에는 batch relationship 이 없어 batch_id 로 직접 조회해 duck-typed 결합.
+    schedule_tasks = db.query(ScheduleTask).all()
+    batch_ids = {t.batch_id for t in schedule_tasks if t.batch_id is not None}
+    batches_by_id = (
+        {
+            b.batch_id: b
+            for b in db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_id.in_(batch_ids))
+            .all()
+        }
+        if batch_ids
+        else {}
+    )
+
+    class _TaskView:
+        """duck-typed ScheduleTask + batch 결합 뷰 — build_snapshot 계약을 충족."""
+
+        __slots__ = (
+            "task_id",
+            "equipment_code",
+            "start_datetime",
+            "end_datetime",
+            "batch_id",
+            "batch",
+        )
+
+        def __init__(self, t, batch):
+            self.task_id = t.task_id
+            self.equipment_code = t.equipment_code
+            self.start_datetime = t.start_datetime
+            self.end_datetime = t.end_datetime
+            self.batch_id = t.batch_id
+            self.batch = batch
+
+    views = [_TaskView(t, batches_by_id.get(t.batch_id)) for t in schedule_tasks]
+    snap = build_snapshot(views)
+
+    # 변경 task 반영 — apply 는 no-op 호출을 거부하므로, DB 값과 동일하면 skip.
+    current = snap.get(task_id)
+    if (
+        current.start != new_start
+        or current.end != new_end
+        or (
+            new_equipment_code is not None
+            and new_equipment_code != current.equipment_code
+        )
+    ):
+        snap.apply(task_id, new_start, new_end, new_equipment_code)
+
+    # horizon: 가장 먼 end + 7일 (빈 스냅샷 대비 fallback).
+    if snap.by_id:
+        horizon_end = max(t.end for t in snap.by_id.values()) + timedelta(days=7)
+    else:
+        horizon_end = new_end + timedelta(days=7)
+
+    def _advance(dt):
+        # forward advance 는 BFS 의 "nudge-to-working-time" 역할. 현재 calendar_engine 에
+        # 단일-인자 헬퍼가 없어 identity 로 대체 (Task 11+ 보강 예정).
+        return dt
+
+    def _reverse_advance(dt, dur):
+        # 변경 task 의 설비(new_equipment_code) 를 context 로 — 같은 SO-line 후공정의
+        # 앞당김을 해당 설비 공정 캘린더로 산출.
+        return _calendar_reverse_advance(
+            dt,
+            dur,
+            ctx={
+                "db": db,
+                "equipment_code": new_equipment_code or current.equipment_code,
+            },
+        )
+
+    return plan_cascade_preview_on_snap(
+        snap, task_id, _advance, _reverse_advance, horizon_end
+    )

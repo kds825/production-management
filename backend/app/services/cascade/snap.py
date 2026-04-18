@@ -82,9 +82,30 @@ class Snap:
 
 
 def build_snapshot(tasks: Iterable) -> Snap:
-    """ORM ScheduleTask 들을 SnapTask 로 복사하여 Snap 생성.
+    """ORM `ScheduleTask` iterable 을 SnapTask 로 변환해 Snap 생성.
 
-    현재 (Task 4) 는 interface 만 선언. 실구현과 대응 test 는 Task 10 service.py 통합 단계에서
-    DB fixture 와 함께 추가 예정.
+    `tasks` 는 SQLAlchemy query 결과 또는 동등한 duck-typed 객체. 각 항목은
+    `task_id`, `equipment_code`, `start_datetime`, `end_datetime`, `batch_id`,
+    `batch` (relationship: sales_order_id, sales_order_line, due_date) 를 노출해야 한다.
+    `batch` 가 None 이거나 필드가 없으면 해당 값은 None 으로 세팅.
+
+    NOTE: 현재 ORM `ScheduleTask` 는 `batch` SQLAlchemy relationship 을 선언하지 않아
+    caller 가 ProductionBatch 를 사전 조회해 duck-typed 로 주입하거나, Task 10 DB wrapper
+    (plan_cascade_preview) 에서 batch 를 lookup 하여 주입하는 방식을 사용한다.
     """
-    raise NotImplementedError("build_snapshot: Task 10 DB 통합에서 구현 예정")
+    by_id: dict[str, SnapTask] = {}
+    for t in tasks:
+        batch = getattr(t, "batch", None)
+        by_id[t.task_id] = SnapTask(
+            task_id=t.task_id,
+            equipment_code=t.equipment_code,
+            start=t.start_datetime,
+            end=t.end_datetime,
+            batch_id=t.batch_id,
+            sales_order_id=getattr(batch, "sales_order_id", None) if batch else None,
+            sales_order_line=getattr(batch, "sales_order_line", None)
+            if batch
+            else None,
+            due_date=getattr(batch, "due_date", None) if batch else None,
+        )
+    return Snap(by_id=by_id)

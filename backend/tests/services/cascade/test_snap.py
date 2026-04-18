@@ -108,9 +108,66 @@ def test_apply_raises_on_no_op_with_same_equipment():
         )
 
 
-def test_build_snapshot_raises_not_implemented():
-    """Task 10 에서 실구현 예정."""
-    with pytest.raises(NotImplementedError):
-        from app.services.cascade.snap import build_snapshot
+class _FakeBatch:
+    """Duck-typed 대체 — ScheduleTask.batch relationship 이 없으므로 caller가
+    사전 조회한 ProductionBatch 를 주입하는 패턴을 테스트로 고정."""
 
-        build_snapshot([])
+    def __init__(self, sales_order_id=None, sales_order_line=None, due_date=None):
+        self.sales_order_id = sales_order_id
+        self.sales_order_line = sales_order_line
+        self.due_date = due_date
+
+
+class _FakeTask:
+    """Duck-typed ScheduleTask 대체. SQLAlchemy 의존 없이 build_snapshot 계약을 검증."""
+
+    def __init__(self, task_id, equipment_code, start, end, batch_id, batch):
+        self.task_id = task_id
+        self.equipment_code = equipment_code
+        self.start_datetime = start
+        self.end_datetime = end
+        self.batch_id = batch_id
+        self.batch = batch
+
+
+def test_build_snapshot_from_duck_typed_rows():
+    from app.services.cascade.snap import build_snapshot
+
+    b = _FakeBatch(
+        sales_order_id="SO-1",
+        sales_order_line=2,
+        due_date=datetime(2026, 4, 30),
+    )
+    row = _FakeTask(
+        "T1",
+        "EQ1",
+        datetime(2026, 4, 20, 9, 0),
+        datetime(2026, 4, 20, 12, 0),
+        "B-1",
+        b,
+    )
+    snap = build_snapshot([row])
+    t = snap.get("T1")
+    assert t.equipment_code == "EQ1"
+    assert t.sales_order_id == "SO-1"
+    assert t.sales_order_line == 2
+    assert t.due_date == datetime(2026, 4, 30)
+
+
+def test_build_snapshot_handles_none_batch():
+    """batch 가 None 이면 SO/due_date 필드는 모두 None — caller 가 batch 를 조회하지 못한 경우."""
+    from app.services.cascade.snap import build_snapshot
+
+    row = _FakeTask(
+        "T1",
+        "EQ1",
+        datetime(2026, 4, 20, 9, 0),
+        datetime(2026, 4, 20, 12, 0),
+        "B-1",
+        None,
+    )
+    snap = build_snapshot([row])
+    t = snap.get("T1")
+    assert t.sales_order_id is None
+    assert t.sales_order_line is None
+    assert t.due_date is None
