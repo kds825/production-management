@@ -4,6 +4,8 @@ Eng review 블로커 #1: 헤더 배치(batch_seq=-1)에만 surplus 계산.
 다른 5개 생성지점은 default 0 유지.
 """
 
+import pytest
+
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
@@ -49,9 +51,13 @@ def test_group_header_has_correct_surplus(db):
     h = headers[0]
     assert float(h.total_length_m or 0) == 1000  # lot 확장 후 생산량
     surplus = float(h.wip_output_expected_m or 0)
-    assert surplus > 0, f"헤더에 surplus 설정돼야 함, 실제={surplus}"
-    # 700m 수주 + defect_buffer (기본 5%) = 735m → 1000 - 735 = 265m
-    assert 200 <= surplus <= 300, f"surplus 범위 벗어남: {surplus}"
+    # 테스트 환경에서 ConstraintConfig 미시드 → defect_buffer_pct 기본 0
+    # 따라서 700m 수주 → net_qty_g=700, surplus = 1000 − 700 = 300m (exact).
+    # 운영 환경에선 defect_buffer(5%) 적용돼 surplus ≈ 265m. 이는 운영 경로 검증이
+    # 별도 필요함을 의미 (OQ for Phase 2). 이 test 는 공식 자체만 검증.
+    assert surplus == pytest.approx(300.0, abs=0.5), (
+        f"예상 surplus 300m (±0.5), 실제={surplus}"
+    )
 
 
 def test_non_header_batch_has_zero_surplus(db):
