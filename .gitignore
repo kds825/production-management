@@ -37,6 +37,5 @@ graphify-out/
 # Superpowers brainstorming artifacts
 .superpowers/
 
-# Playwright test artifacts (per-test output dirs)
-frontend/test-results/*
-!frontend/test-results/.last-run.json
+# Playwright test artifacts
+frontend/test-results/
