@@ -38,7 +38,7 @@ const WEEKEND_COLLAPSED_WIDTH = 8;
  * 단일 lane(겹침 없음) 인 경우 기존 레이아웃과 동일하게 보이고,
  * 겹치는 블록이 있으면 lane 개수만큼 row 가 세로로 늘어난다.
  */
-const LANE_HEIGHT = ROW_HEIGHT;
+export const LANE_HEIGHT = ROW_HEIGHT;
 
 /**
  * Task 22 — cascade preview 응답에서 주어진 task 에 대한 제안(push 또는 pull) 을 찾는다.
