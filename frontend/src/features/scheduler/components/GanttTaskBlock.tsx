@@ -171,6 +171,13 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const previewOffsetMs = useScheduleStore(
     (s) => s.previewOffsets[task.id] ?? 0,
   );
+  // Chain highlight — 선택된 체인 外 블록을 dim.
+  // boolean 만 반환 → Zustand Object.is 로 true/false 뒤집힐 때만 재렌더.
+  // Set identity 변화가 있어도 결과 boolean 이 같으면 재렌더 없음.
+  const isDimmed = useScheduleStore((s) => {
+    if (s.selectedChainIds === null) return false;
+    return !s.selectedChainIds.has(task.id);
+  });
 
   const startTs =
     task.start instanceof Date
@@ -196,11 +203,20 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
   // frozen 배치(진행중/완료)는 드래그 불가
   const isFrozen = isFrozenStatus(task.status);
+  // batch_group 소속 여부: handleDragEnd 에서 type 으로 분기 (Task 4.3 소비)
+  const isBatchGroupTask = task.batch_group != null;
+  // WIP 매칭된 배치는 드래그 불가 (unassign 불가와 동일 조건)
+  const wipMatched = task.wip_matched_id != null;
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
-    data: { type: "task", task, equipmentId: task.equipment_id },
-    disabled: isFrozen || !isEditMode,
+    data: {
+      type: isBatchGroupTask ? "batch_group_task" : "task",
+      task,
+      equipmentId: task.equipment_id,
+      batch_group: task.batch_group ?? null,
+    },
+    disabled: isFrozen || !isEditMode || wipMatched,
   });
 
   // --- 리사이즈 ---
@@ -514,7 +530,15 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         // 깨지지 않는다.
         height: laneH - 8,
         zIndex: ghost ? 6 : isDragging ? 20 : isSelected ? 10 : 2,
-        transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
+        opacity: isDimmed ? 0.4 : 1,
+        // left 트랜지션은 preview 중에만, opacity 는 dim 전환 시 항상 부드럽게.
+        // null 필터링으로 단일/복합 transition 을 동적으로 구성.
+        transition: [
+          previewOffsetPx !== 0 ? "left 0.15s ease-out" : null,
+          "opacity 120ms ease-out",
+        ]
+          .filter(Boolean)
+          .join(", "),
         cursor: ghost
           ? "default"
           : !isEditMode || isFrozen
