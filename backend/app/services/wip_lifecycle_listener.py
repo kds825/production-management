@@ -54,10 +54,20 @@ def _auto_create_expected_wip(mapper, connection, batch):
     if expected <= 0:
         return
 
+    # UI 표시용 spec — cross_section (float) 을 "150SQ" / "1.5SQ" 문자열로 포맷.
+    # spec 컬럼을 비워두면 scheduling-review 페이지에서 규격 컬럼이 "-" 로 표시됨.
+    sq = batch.sq_mm2
+    if sq is None:
+        spec_display = None
+    else:
+        sq_f = float(sq)
+        spec_display = f"{int(sq_f)}SQ" if sq_f.is_integer() else f"{sq_f:g}SQ"
+
     stmt = (
         pg_insert(WipInventory.__table__)
         .values(
             process_stage=_derive_process_stage(batch.process_name),
+            spec=spec_display,
             cross_section=batch.sq_mm2,
             voltage_class=batch.voltage,
             material=batch.conductor_material,
