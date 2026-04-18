@@ -75,7 +75,7 @@ export function SaveModal({ open, edits, onClose, onSaved }: SaveModalProps) {
       if (triggerStage1) {
         // Why: Stage1/update 화면에서 base_date 지정 후 재실행해야 하므로
         // 단순 라우팅 이동. 자동 재실행은 감사 관점에서 위험 (design review M).
-        window.location.href = "/plan-pipeline";
+        window.location.href = "/plan-register";
         return;
       }
       onClose();

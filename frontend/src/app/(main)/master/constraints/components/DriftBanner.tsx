@@ -37,7 +37,7 @@ export function DriftBanner({ refreshKey }: DriftBannerProps) {
         재실행해야 새 계획에 적용됩니다.
       </span>
       <a
-        href="/plan-pipeline"
+        href="/plan-register"
         className="whitespace-nowrap text-blue-600 hover:underline"
       >
         작업지시서 업데이트로 이동 →

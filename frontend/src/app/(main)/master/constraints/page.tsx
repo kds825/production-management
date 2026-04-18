@@ -108,6 +108,33 @@ export default function ConstraintsPage() {
             {constraints.length}개 활성화
           </p>
         </div>
+        {tab === "params" && (
+          <div className="flex items-center gap-2">
+            {hasEdits && (
+              <span className="text-xs font-semibold text-blue-700">
+                {Object.values(editedParams).reduce(
+                  (sum, p) => sum + Object.keys(p).length,
+                  0,
+                )}
+                개 값 변경됨
+              </span>
+            )}
+            <button
+              disabled={!hasEdits}
+              onClick={() => setEditedParams({})}
+              className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              변경 취소
+            </button>
+            <button
+              disabled={!hasEdits}
+              onClick={() => setModalOpen(true)}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              저장
+            </button>
+          </div>
+        )}
       </div>
 
       <DriftBanner refreshKey={driftRefresh} />
@@ -149,22 +176,6 @@ export default function ConstraintsPage() {
             onParamsChange={onParamsChange}
             onRestoreDefault={onRestoreDefault}
           />
-          {hasEdits && (
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                onClick={() => setEditedParams({})}
-                className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600"
-              >
-                변경 취소
-              </button>
-              <button
-                onClick={() => setModalOpen(true)}
-                className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-              >
-                저장
-              </button>
-            </div>
-          )}
         </>
       )}
 
