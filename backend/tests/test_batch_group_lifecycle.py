@@ -15,6 +15,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.batch_group_lifecycle import (
     unassign_batch_group,
+    restore_batch_group,
     BatchGroupReasonError,
     BatchGroupStatusError,
     BatchGroupNotFoundError,
@@ -217,3 +218,76 @@ def test_unassign_preserves_audit_log(db: Session):
     assert audit_after is not None
     assert audit_after.task_id == task.task_id
     assert audit_after.action_type == "TEST_SEED"
+
+
+def test_restore_success_flips_status(db: Session):
+    """unassign → restore 라운드트립: status 복원 + unassign_reason 초기화."""
+    _seed_planned_group(db, "r1")
+    unassign_batch_group(db, "r1", reason="자재지연")
+    db.flush()
+
+    result = restore_batch_group(db, "r1")
+    db.flush()
+
+    assert result["conflicts"] == []
+    assert len(result["restored_tasks"]) == 3
+    assert result["idempotent"] is False
+
+    batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_group == "r1").all()
+    )
+    assert all(b.status == "planned" for b in batches)
+    # unassign_reason은 복원 시 초기화
+    assert all(b.unassign_reason is None for b in batches)
+
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.batch_group == "r1").all()
+    assert all(t.status == "planned" for t in tasks)
+
+
+def test_restore_blocked_if_original_slot_occupied(db: Session):
+    """원래 equipment/시간에 다른 planned task가 있으면 409 — conflicts 반환, 무변경."""
+    # r2를 시드 → unassign
+    _seed_planned_group(db, "r2")
+    unassign_batch_group(db, "r2", reason="자재지연")
+    db.flush()
+
+    # r3를 별도 시드 → 하나의 task를 r2의 첫 task 슬롯으로 이동
+    _seed_planned_group(db, "r3")
+    r2_first_task = (
+        db.query(ScheduleTask)
+        .filter(ScheduleTask.batch_group == "r2")
+        .order_by(ScheduleTask.task_id)
+        .first()
+    )
+    r3_task = db.query(ScheduleTask).filter(ScheduleTask.batch_group == "r3").first()
+    r3_task.equipment_code = r2_first_task.equipment_code
+    r3_task.start_datetime = r2_first_task.start_datetime
+    r3_task.end_datetime = r2_first_task.end_datetime
+    db.flush()
+
+    result = restore_batch_group(db, "r2")
+    assert result["conflicts"] != []
+    assert result["restored_tasks"] == []
+
+    # 무변경 보증: r2는 여전히 unassigned
+    batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_group == "r2").all()
+    )
+    assert all(b.status == "unassigned" for b in batches)
+
+
+def test_restore_idempotent_on_planned(db: Session):
+    """이미 planned인 batch_group에 restore 호출 → no-op, idempotent=True."""
+    _seed_planned_group(db, "r-idempo")
+    # unassign 없이 바로 restore
+    result = restore_batch_group(db, "r-idempo")
+
+    assert result["idempotent"] is True
+    assert result["restored_tasks"] == []
+    assert result["conflicts"] == []
+
+
+def test_restore_not_found(db: Session):
+    """batch_group 없음 → BatchGroupNotFoundError."""
+    with pytest.raises(BatchGroupNotFoundError):
+        restore_batch_group(db, "nonexistent-r")

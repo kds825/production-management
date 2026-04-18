@@ -144,3 +144,110 @@ def unassign_batch_group(
         "reason": effective_reason,
         "idempotent": False,
     }
+
+
+def restore_batch_group(db: Session, batch_group: str) -> dict[str, Any]:
+    """unassigned batch_group을 원래 자리로 복원 (status flip).
+
+    계약 (Eng Critical #2):
+        - status만 전이: unassigned → planned.
+        - equipment_code / start_datetime / end_datetime 은 그대로 — unassign 시
+          보존했으므로 재계산 불필요.
+        - unassign_reason 초기화 (None).
+        - 원래 자리에 이미 다른 planned task가 있으면 conflicts 반환 + 무변경.
+        - 멱등: 이미 planned면 no-op.
+        - flush만, commit은 호출자.
+
+    Returns:
+        {
+            "batch_group": str,
+            "restored_tasks": list[int],   # 성공 시 task_id 배열
+            "conflicts": list[dict],       # 점유 충돌 상세
+            "idempotent": bool,
+        }
+
+    Raises:
+        BatchGroupNotFoundError: batch_group 없음.
+        BatchGroupStatusError: unassigned 외 상태가 혼재.
+    """
+    batches = (
+        db.query(ProductionBatch)
+        .filter(ProductionBatch.batch_group == batch_group)
+        .with_for_update()
+        .all()
+    )
+    if not batches:
+        raise BatchGroupNotFoundError(f"batch_group '{batch_group}' 없음")
+
+    # 멱등: 이미 모두 planned면 no-op
+    if all(b.status == "planned" for b in batches):
+        return {
+            "batch_group": batch_group,
+            "restored_tasks": [],
+            "conflicts": [],
+            "idempotent": True,
+        }
+
+    # 모두 unassigned여야 복원 가능
+    if not all(b.status == "unassigned" for b in batches):
+        raise BatchGroupStatusError(
+            f"unassigned 외 상태 포함: {[(b.batch_id, b.status) for b in batches]}"
+        )
+
+    batch_ids = [b.batch_id for b in batches]
+    tasks = (
+        db.query(ScheduleTask)
+        .filter(ScheduleTask.batch_id.in_(batch_ids))
+        .with_for_update()
+        .all()
+    )
+
+    # 원래 자리 점유 검사 — N+1이나 v1 트래픽상 수용 (Eng Critical #4는 v2 이관)
+    # 자기 자신(task_id 동일)은 제외. 다른 planned task와 시간 겹치면 conflict.
+    conflicts: list[dict[str, Any]] = []
+    for t in tasks:
+        overlap = (
+            db.query(ScheduleTask)
+            .filter(
+                ScheduleTask.equipment_code == t.equipment_code,
+                ScheduleTask.status == "planned",
+                ScheduleTask.start_datetime < t.end_datetime,
+                ScheduleTask.end_datetime > t.start_datetime,
+                ScheduleTask.task_id != t.task_id,
+            )
+            .all()
+        )
+        if overlap:
+            conflicts.append(
+                {
+                    "task_id": t.task_id,
+                    "equipment_code": t.equipment_code,
+                    "start": t.start_datetime.isoformat() if t.start_datetime else None,
+                    "end": t.end_datetime.isoformat() if t.end_datetime else None,
+                    "overlap_with": [o.task_id for o in overlap],
+                }
+            )
+
+    if conflicts:
+        # 아무것도 건드리지 않고 반환. 호출자(라우트)가 409 매핑.
+        return {
+            "batch_group": batch_group,
+            "restored_tasks": [],
+            "conflicts": conflicts,
+            "idempotent": False,
+        }
+
+    for t in tasks:
+        t.status = "planned"
+    for b in batches:
+        b.status = "planned"
+        b.unassign_reason = None
+
+    db.flush()
+
+    return {
+        "batch_group": batch_group,
+        "restored_tasks": [t.task_id for t in tasks],
+        "conflicts": [],
+        "idempotent": False,
+    }
