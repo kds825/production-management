@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useDraggable } from "@dnd-kit/core";
+import { useDraggable, useDroppable, useDndContext } from "@dnd-kit/core";
+import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { InboxItem, Order } from "../types";
 import { BatchGroupCard } from "./BatchGroupCard";
@@ -197,6 +198,20 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
   const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
   const [activeTab, setActiveTab] = useState<EquipmentGroup | "전체">("전체");
 
+  // Task 3.1: inbox dropzone — 드래그된 task/batch_group_task를 미배정으로 되돌리는 drop target.
+  // 실제 drop 처리 로직은 Task 4.3에서 scheduler page에서 연결한다.
+  const { setNodeRef: setDropzoneRef, isOver } = useDroppable({
+    id: "inbox-dropzone",
+    data: { type: "inbox-dropzone" },
+  });
+
+  // active drag의 type을 감지하여 배너 노출 여부를 결정한다.
+  const dndContext = useDndContext();
+  const activeType = dndContext.active?.data.current?.type as
+    | string
+    | undefined;
+  const isTaskDrag = activeType === "task" || activeType === "batch_group_task";
+
   // mock 데이터 제거 — 미배정 작업은 DB 기반 (Stage 2 미실행 시 표시 없음)
 
   // Task 5.4: 렌더링/필터/카운트를 InboxItem union-aware로 전환.
@@ -252,6 +267,27 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
 
   return (
     <div style={{ minHeight: 0 }}>
+      {/* Task 3.1: 드래그 중 노출되는 미배정 drop zone 배너.
+          isTaskDrag가 true일 때만 DOM에 마운트하여 불필요한 droppable 등록을 방지한다. */}
+      {isTaskDrag && (
+        <div
+          ref={setDropzoneRef}
+          role="status"
+          aria-live="polite"
+          className={
+            "mb-2 flex items-center gap-2 px-3 py-2 rounded-md text-xs " +
+            "border-2 border-dashed " +
+            "text-[color:var(--color-brand-primary)] " +
+            "bg-[color:var(--color-bg-muted)] " +
+            (isOver
+              ? "border-[color:var(--color-brand-primary)] opacity-100"
+              : "border-[color:var(--color-border-default)] opacity-80")
+          }
+        >
+          <ArrowDownTrayIcon width={14} height={14} aria-hidden />
+          <span>여기에 놓으면 미배정 작업으로 이동합니다</span>
+        </div>
+      )}
       {/* 탭 바 */}
       <div className="flex items-center gap-1 px-3 pt-2 pb-1 border-b border-gray-100">
         <button
