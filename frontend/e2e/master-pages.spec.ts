@@ -3,14 +3,13 @@ import { test, expect } from "@playwright/test";
 const API = "http://localhost:8000/api";
 
 test.describe("마스터 데이터 페이지", () => {
-  test("제약조건 관리 페이지 로드 + 데이터 표시", async ({ page }) => {
+  test("제약 파라미터 페이지 로드 + 데이터 표시", async ({ page }) => {
     await page.goto("/master/constraints");
-    await expect(page.locator("h1")).toContainText("제약조건 관리");
-    // Wait for data to load
-    await expect(page.locator("text=거래처 우선순위")).toBeVisible({
-      timeout: 10000,
-    });
-    // Check toggle exists
+    await expect(page.locator("h1")).toContainText("제약 파라미터");
+    // Params tab is default — wait for first editable constraint card
+    await expect(page.getByText("4-1").first()).toBeVisible({ timeout: 10000 });
+    // Switch to toggle tab and verify toggle input exists
+    await page.getByRole("button", { name: "제약 on/off" }).click();
     await expect(page.locator("input[type=checkbox]").first()).toBeVisible();
   });
 
