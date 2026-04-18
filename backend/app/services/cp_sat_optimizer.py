@@ -47,8 +47,11 @@ from app.services.schedule_optimizer import (
     _get_drum_winding_min,
     _get_stranding_setup_min,
     _is_core_group,
+    _is_sheath_group,
     _narrow_by_stranding,
     _schedule_multi_equipment,
+    _sheath_group_color_rank,
+    _sheath_group_due_week_int,
     _st_sq,
     align_start_to_predecessor_end,
 )
@@ -780,41 +783,72 @@ def cp_sat_schedule(
     #   CORE/AL-CORE: 공정순 최우선 (ST- 선행)
     #   ST- 연선: 공정순 → 소선경 클러스터 최초납기 → 소선경값 → 그룹 EDD
     #     (같은 소선경 그룹을 연속 배치 → 선재교체 비용 최소화)
-    #   그 외 공정(절연·시스 등): proc_level(공정순) → EDD → 고객 우선순위
+    #   시스(저압/고압): 공정순 → 색상 → 주 버킷(H1/H2) → 실제 EDD
+    #     Why: 색상 교체 시간이 setup 대비 훨씬 길어 (수십 분), 같은 색상을
+    #     연속 생산하는 것이 wall-clock 관점에서 더 유리. solver 가 tardiness
+    #     최소화로 납기 윈도우를 이미 보장하므로, 그 안에서 색상 grouping 은
+    #     post-solve ordering 으로 확정. schedule_optimizer._group_sort_key 의
+    #     시스 분기와 동일 규칙 → 두 optimizer 결과 일관.
+    #   그 외 공정(절연 등): 공정순 → EDD → 고객 우선순위
     #       절연(proc=2)이 시스(proc=4)보다 항상 먼저 스케줄링 → 파이프라인 데이터 등록 보장
-    #   시스 색상 클러스터 정렬 제거 — 납기 준수가 색상 연속성보다 우선
+    #
+    # 모든 분기가 동일 길이 7-tuple 을 반환한다 (color_rank / due_wk 필드에
+    # 비시스 분기는 중립값을 채움). solver.value(start_vars) 는 색상 키가
+    # 이미 클러스터링을 확정하므로 제거.
+    _COLOR_RANK_PAD = 99  # 비시스: 색상 키 무효
+    _DUE_WK_PAD = 999999  # 비시스: 주 버킷 무효
+
     def _solved_order_key(gk: str):
         meta = group_meta[gk]
-        proc_level = PROCESS_ORDER.get(meta["rep"].process_name, 50)
+        rep = meta["rep"]
+        proc_level = PROCESS_ORDER.get(rep.process_name, 50)
+        earliest = meta["earliest_due"] or date.max
+        cust_prio = rep.customer_priority or 99
+
         # CORE/AL-CORE: ST- 선행 공정이므로 반드시 먼저 실행 (date.min으로 최우선)
         if _is_core_group(gk):
             return (
                 proc_level,
                 date.min,  # ST- 그룹보다 항상 앞에 오도록
                 -1.0,
-                meta["earliest_due"] or date.max,
-                meta["rep"].customer_priority or 99,
-                solver.value(start_vars[gk]),
+                _COLOR_RANK_PAD,
+                _DUE_WK_PAD,
+                earliest,
+                cust_prio,
             )
-        if gk.startswith("ST-") and meta["rep"].process_name == "연선":
+        # ST- 연선: 소선경 클러스터 연속 배치
+        if gk.startswith("ST-") and rep.process_name == "연선":
             wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
             cluster_due = wire_d_earliest.get(wd, date.max)
             return (
                 proc_level,
-                cluster_due,  # 소선경 클러스터 최초 납기 (클러스터 우선순위)
-                wd,  # 소선경값 (같은 클러스터 내 안정 정렬 → 연속 배치)
-                meta["earliest_due"] or date.max,  # 그룹 자체 EDD
-                meta["rep"].customer_priority or 99,
-                solver.value(start_vars[gk]),
+                cluster_due,  # 소선경 클러스터 최초 납기
+                wd,  # 소선경값 (같은 클러스터 내 연속 배치)
+                _COLOR_RANK_PAD,
+                _DUE_WK_PAD,
+                earliest,
+                cust_prio,
             )
-        # 절연·시스 등: EDD 순 — 색상 클러스터 우선 정렬 없음 (납기 준수 최우선)
+        # 시스: 색상 → 주 버킷 → EDD (schedule_optimizer 와 동일 규칙)
+        if _is_sheath_group(gk, meta["batches"]):
+            return (
+                proc_level,
+                date.max,  # ST 클러스터 필드 (비해당)
+                0.0,
+                _sheath_group_color_rank(meta["batches"]),  # 1차: 색상
+                _sheath_group_due_week_int(meta["batches"]),  # 2차: 주 버킷
+                earliest,  # 3차: 실제 EDD
+                cust_prio,
+            )
+        # 절연 등 기타 공정: EDD 순
         return (
             proc_level,
-            meta["earliest_due"] or date.max,  # 그룹 자체 EDD
+            earliest,
             0.0,
-            meta["earliest_due"] or date.max,
-            meta["rep"].customer_priority or 99,
-            solver.value(start_vars[gk]),
+            _COLOR_RANK_PAD,
+            _DUE_WK_PAD,
+            earliest,
+            cust_prio,
         )
 
     solved_order = sorted(groups, key=_solved_order_key)
@@ -991,6 +1025,22 @@ def cp_sat_schedule(
                     ptask = next((t for t in tasks_created if t.task_id == pt), None)
                     if ptask and ptask.end_datetime > earliest:
                         earliest = ptask.end_datetime
+
+        # ── 시스 append-only: 색상 체인 보존 ──────────────────────────────────
+        # Why: _find_available_slot 은 earliest 이후 "빈 공간 중 가장 빠른 slot"
+        # 을 찾는다. 시스의 경우 solved_order 가 색상 우선으로 정렬되더라도 앞서
+        # 배치된 그룹이 earliest 지연으로 뒤로 밀리면, 다음 색상 그룹이 이전 빈
+        # 공간으로 끼어들어 timeline 순서에서 색상이 다시 섞인다.
+        # 해결: 시스 그룹은 해당 설비 timeline 마지막 뒤에만 배치하도록 earliest
+        # 를 강제 — solved_order(색상 우선) ≡ timeline 순서를 보장한다.
+        # Tradeoff: 설비 유휴가 약간 늘 수 있으나 색상 교체 비용(수십분) 대비 이득.
+        # 납기 위반은 위반 체커가 감지.
+        if rep.process_name in ("저압시스", "고압시스"):
+            eq_slots = timeline.get(chosen_eq_code, [])
+            if eq_slots:
+                last_end = max(slot[1] for slot in eq_slots)
+                if last_end > earliest:
+                    earliest = last_end
 
         # ── 긴급/중요 배치: 납기 위반 예상 시 선점 분할 시도 ────────────────────
         if (
