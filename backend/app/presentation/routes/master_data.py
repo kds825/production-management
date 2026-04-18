@@ -130,7 +130,9 @@ def patch_speed_setup_params(
     if not row:
         raise HTTPException(status_code=404, detail=f"speed_master id={speed_id} 없음")
 
-    payload = body.model_dump(exclude_unset=True)
+    # Why: exclude_unset 은 {"x": null} 을 거르지 못하므로 exclude_none 도 병용.
+    # 숫자 컬럼에 명시적 null 이 들어와 NULL 로 덮이는 사고를 방지.
+    payload = body.model_dump(exclude_unset=True, exclude_none=True)
     for key, value in payload.items():
         setattr(row, key, value)
 
