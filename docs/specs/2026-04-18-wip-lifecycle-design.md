@@ -457,7 +457,7 @@ DB 마이그레이션: `cd backend && alembic upgrade head`. Preflight check 실
 - **OQ1**: Reconciliation 매칭 허용 오차 초기값 ±10% (DecisionCriteria 에서 조정 가능)
 - **OQ2**: Orphan WIP UI 표시 ("출처미상" 태그) — pwc-design 적용 시 시각 규격 확정
 - **OQ3 해결**: `DrumLotMaster` uniqueness key = **`cross_section` 단일 키** 확정.
-  - 근거: (1) 모델에 `voltage_class`/`material` 컬럼 없음 — `cross_section`, `wire_diameter`, `wire_count`, 생산파라미터만 존재. (2) seed_db.py 14행 모두 `cross_section` 중복 없음 (16~633 SQ, 각 1행). (3) 모든 서비스(`batch_grouping.py` 195/988행, `cp_sat_optimizer.py` 504행, `schedule_optimizer.py` 531행) 이 `float(cross_section)` 단일 키로 dict 빌드. (4) Docker 미기동으로 DB 직접 SELECT 불가 → 모델+시드 실측으로 결정.
+  - 근거: (1) 모델에 `voltage_class`/`material` 컬럼 없음 — `cross_section`, `wire_diameter`, `wire_count`, 생산파라미터만 존재. (2) seed_db.py 14행 모두 `cross_section` 중복 없음 (16~633 SQ, 각 1행). (3) `batch_grouping.py:195, 988` 2곳에서 `dict[float, DrumLotMaster]` 패턴 (`float(cross_section)` 단일 키). 다른 서비스(`cp_sat_optimizer.py:498`, `schedule_optimizer.py:522`)는 `dict[int, float]` — `{int(cross_section): wire_diameter}` 구조로 DrumLotMaster 를 int 키로 참조하며, 이것도 cross_section 단일 키가 고유하다는 근거에 보탬. (4) Docker 미기동으로 DB 직접 SELECT 불가 → 모델+시드 실측으로 결정.
   - Task 13 구현 시 사용할 tuple key 공식: `drum_lots: dict[float, DrumLotMaster] = {float(d.cross_section): d for d in ...}`
 
 ## 17. 유보 (Phase 2+)
