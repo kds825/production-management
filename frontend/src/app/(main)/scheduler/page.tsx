@@ -36,8 +36,12 @@ import { ConflictResolutionModal } from "@/features/scheduler/components/Conflic
 import { useScheduleChangeWithCascade } from "@/features/scheduler/hooks/useScheduleChangeWithCascade";
 import { refreshTasks as refreshScheduleTasks } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
+import { useBatchGroupDrag } from "@/features/scheduler/hooks/useBatchGroupDrag";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
+import { UnassignConfirmModal } from "@/features/scheduler/components/UnassignConfirmModal";
+import { BatchGroupDragPreviewModal } from "@/features/scheduler/components/BatchGroupDragPreviewModal";
+import { useToastStore } from "@/shared/ui/toastStore";
 import {
   xToTime,
   computeTimeBreakdown,
@@ -354,6 +358,20 @@ export default function SchedulerPage() {
       await refreshScheduleTasks();
     },
   });
+
+  // Task 4.3 — batch_group 드래그 orchestration 훅.
+  const bgDrag = useBatchGroupDrag({
+    onCommitted: async () => {
+      await refreshScheduleTasks();
+    },
+  });
+
+  // Task 4.3 — inbox 드롭 UnassignConfirmModal 상태.
+  // skipConfirmFromDrag: "이 세션에서 다시 묻지 않기" 체크 시 즉시 처리.
+  const [unassignFromDragState, setUnassignFromDragState] = useState<{
+    batchGroup: string;
+  } | null>(null);
+  const [skipConfirmFromDrag, setSkipConfirmFromDrag] = useState(false);
 
   // Task 22 — ConflictResolutionModal row hover → 간트 블록 focus-ring 하이라이트.
   // 모달이 열렸을 때만 의미가 있으므로 단순 state 로 관리 (store 에 올릴 필요 없음).
@@ -876,7 +894,37 @@ export default function SchedulerPage() {
 
       const activeData = active.data.current;
       const overData = over.data.current;
-      if (!activeData || !overData) return;
+      if (!activeData) return;
+
+      // --- 분기 1: inbox dropzone 드롭 ---
+      // Task 4.3 — batch_group_task / task 를 미배정 영역으로 드롭 시
+      // UnassignConfirmModal 표시 (skipConfirmFromDrag 시 즉시 처리).
+      if (over.id === "inbox-dropzone") {
+        if (
+          activeData.type === "task" ||
+          activeData.type === "batch_group_task"
+        ) {
+          const task = activeData.task as ScheduleTask | undefined;
+          const bg = task?.batch_group;
+          if (!bg) {
+            useToastStore
+              .getState()
+              .show(
+                "batch_group 에 속하지 않은 task 는 미배정 이동 불가",
+                "warning",
+              );
+            return;
+          }
+          if (skipConfirmFromDrag) {
+            void useScheduleStore.getState().unassignBatchGroup(bg, "기타");
+            return;
+          }
+          setUnassignFromDragState({ batchGroup: bg });
+        }
+        return;
+      }
+
+      if (!overData) return;
 
       // 드롭 대상이 설비 행인지 확인
       if (overData.type !== "equipment-row") return;
@@ -886,6 +934,39 @@ export default function SchedulerPage() {
       // 동적 dayWidth 계산 (컨테이너 너비 기반)
       const MS_PER_DAY = 24 * 60 * 60 * 1000;
       const totalDays = Math.max((range.end - range.start) / MS_PER_DAY, 1);
+
+      // --- 분기 2: BatchGroupCard → equipment-row 드롭 ---
+      // Task 4.3 — 미배정 BatchGroupCard 를 간트 설비 행에 드롭 → useBatchGroupDrag.onDropToEquipment.
+      // anchorStart: 드롭 위치 x → xToTime 변환 (order 분기와 동일 공식).
+      // isOrigin: false 고정 (v2b 에서 원위치 감지 구현 예정).
+      if (activeData.type === "batch_group") {
+        const bgLabel = (
+          activeData.group as { batch_group?: string } | undefined
+        )?.batch_group;
+        if (!bgLabel) return;
+        let anchorStart: Date;
+        const overRect = over.rect;
+        if (event.delta && overRect) {
+          const activatorEvent = event.activatorEvent as MouseEvent;
+          if (activatorEvent) {
+            const dropClientX = activatorEvent.clientX + event.delta.x;
+            const relativeX = dropClientX - overRect.left;
+            const dynamicDayWidth = overRect.width / totalDays;
+            const timestamp = xToTime(relativeX, range.start, dynamicDayWidth);
+            anchorStart = new Date(timestamp);
+          } else {
+            anchorStart = new Date();
+          }
+        } else {
+          anchorStart = new Date();
+        }
+        void bgDrag.onDropToEquipment(bgLabel, {
+          equipmentCode: targetEquipmentId,
+          anchorStart,
+          isOrigin: false,
+        });
+        return;
+      }
 
       // --- 수주를 스케줄러에 드롭 ---
       if (activeData.type === "order") {
@@ -925,8 +1006,12 @@ export default function SchedulerPage() {
         return;
       }
 
-      // --- 기존 작업을 다른 설비로 이동 ---
-      if (activeData.type === "task") {
+      // --- 분기 3: 기존 task / batch_group_task → 단일 task 재배정 (cascade 경유) ---
+      // Task 4.3 — batch_group_task 도 동일 경로 처리. 그룹 전체 이동은 분기 2(batch_group)에서 처리.
+      if (
+        activeData.type === "task" ||
+        activeData.type === "batch_group_task"
+      ) {
         const task = activeData.task as ScheduleTask;
 
         // 현재 작업의 duration을 유지한 채 새 위치로 이동
@@ -989,7 +1074,16 @@ export default function SchedulerPage() {
         }
       }
     },
-    [assignOrder, cascade, zoomLevel, range, isEditMode, equipment],
+    [
+      assignOrder,
+      cascade,
+      zoomLevel,
+      range,
+      isEditMode,
+      equipment,
+      bgDrag,
+      skipConfirmFromDrag,
+    ],
   );
 
   return (
@@ -2140,6 +2234,36 @@ export default function SchedulerPage() {
           onRowHover={setHoveredTaskId}
         />
       )}
+
+      {/* Task 4.3 — inbox 드롭 미배정 확인 모달 */}
+      <UnassignConfirmModal
+        isOpen={!!unassignFromDragState}
+        batchGroup={unassignFromDragState?.batchGroup ?? ""}
+        tasks={
+          unassignFromDragState
+            ? tasks.filter(
+                (t) => t.batch_group === unassignFromDragState.batchGroup,
+              )
+            : []
+        }
+        onConfirm={(reason, dontAskAgain) => {
+          if (unassignFromDragState) {
+            void useScheduleStore
+              .getState()
+              .unassignBatchGroup(unassignFromDragState.batchGroup, reason);
+            if (dontAskAgain) setSkipConfirmFromDrag(true);
+            setUnassignFromDragState(null);
+          }
+        }}
+        onCancel={() => setUnassignFromDragState(null)}
+      />
+
+      {/* Task 4.3 — BatchGroupCard → equipment-row 드롭 preview 확정 모달 */}
+      <BatchGroupDragPreviewModal
+        state={bgDrag.modalState}
+        onApply={() => void bgDrag.applyModal()}
+        onCancel={() => bgDrag.cancelModal()}
+      />
     </div>
   );
 }
