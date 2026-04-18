@@ -95,9 +95,10 @@ export function ChainHighlightOverlay({
       const src = coordMap.get(edge.fromId);
       const dst = coordMap.get(edge.toId);
       if (!src || !dst) continue;
+      // end-to-end 연결: 선공정 끝 → 후공정 끝 (시각적 정돈 — 후공정 시작점 합류 지점이 밀집해 지저분해지는 문제 회피)
       const x1 = src.xRight;
       const y1 = src.yCenter;
-      const x2 = dst.xLeft;
+      const x2 = dst.xRight;
       const y2 = dst.yCenter;
       const d =
         Math.abs(y2 - y1) < Y_STRAIGHT_TOL
