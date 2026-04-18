@@ -508,31 +508,86 @@ export default function SchedulingReviewPage() {
                 ) as SchedulingBatch[]
               }
               wipItems={
+                // 가용 재고 = 예상 제외 (예상은 별도 탭으로 분리)
                 activeProcessTab === "저압연선"
                   ? [
                       ...yeonaeoWip.filter(
-                        (w) => !w.voltage_class.includes("고압"),
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status !== "예상",
                       ),
                       ...insulationWip.filter(
-                        (w) => !w.voltage_class.includes("고압"),
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status !== "예상",
                       ),
                     ]
                   : activeProcessTab === "고압연선"
                     ? [
-                        ...yeonaeoWip.filter((w) =>
-                          w.voltage_class.includes("고압"),
+                        ...yeonaeoWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         ),
-                        ...insulationWip.filter((w) =>
-                          w.voltage_class.includes("고압"),
+                        ...insulationWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         ),
                       ]
                     : activeProcessTab === "저압절연(B100)"
                       ? insulationWip.filter(
-                          (w) => !w.voltage_class.includes("고압"),
+                          (w) =>
+                            !w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         )
                       : activeProcessTab === "고압절연(CV)"
-                        ? insulationWip.filter((w) =>
-                            w.voltage_class.includes("고압"),
+                        ? insulationWip.filter(
+                            (w) =>
+                              w.voltage_class.includes("고압") &&
+                              w.status !== "예상",
+                          )
+                        : undefined
+              }
+              expectedWipItems={
+                // 예상 재고 = 현재 run 의 헤더 배치에서 listener 가 만든 예정 출고분
+                activeProcessTab === "저압연선"
+                  ? [
+                      ...yeonaeoWip.filter(
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status === "예상",
+                      ),
+                      ...insulationWip.filter(
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status === "예상",
+                      ),
+                    ]
+                  : activeProcessTab === "고압연선"
+                    ? [
+                        ...yeonaeoWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        ),
+                        ...insulationWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        ),
+                      ]
+                    : activeProcessTab === "저압절연(B100)"
+                      ? insulationWip.filter(
+                          (w) =>
+                            !w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        )
+                      : activeProcessTab === "고압절연(CV)"
+                        ? insulationWip.filter(
+                            (w) =>
+                              w.voltage_class.includes("고압") &&
+                              w.status === "예상",
                           )
                         : undefined
               }
