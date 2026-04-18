@@ -887,8 +887,8 @@ def create_batches(
 
     batches.sort(key=_sort_key)
 
-    # ── 시스(저압/고압) 전용 2차 정렬: 색상 체인 + 납기 ─────────────────────
-    # A'' 접근안: 동일 색상 인접 주차를 연속 배치하여 체인지오버 최소화.
+    # ── 시스(저압/고압) 전용 2차 정렬: 납기 주차 → 색상 ──────────────────────
+    # 납기 최우선, 같은 주차 내에서만 색상 묶기 (체인지오버 최소화).
     # Python sort 가 stable 이므로 비시스 배치의 상대 순서는 _sort_key 결과 유지.
     def _sheath_chain_key(b: ProductionBatch) -> tuple:
         if b.process_name not in ("저압시스", "고압시스"):
@@ -903,7 +903,7 @@ def create_batches(
         else:
             due_wk_int = 999999
             due_ord = 9999999
-        return (1, color_rank, due_wk_int, due_ord)
+        return (1, due_wk_int, color_rank, due_ord)
 
     batches.sort(key=_sheath_chain_key)
 

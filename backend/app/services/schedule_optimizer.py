@@ -544,17 +544,16 @@ def _run_optimization_once(
     #       파이프라인 보장: 절연(2)이 시스(4)보다 항상 먼저 스케줄링되어야
     #       process_first_output_by_sq에 절연 데이터가 등록된 후 시스가 참조 가능.
     #
-    # 시스 그룹 전용 체인 정렬 (A'' 접근안):
-    #   - 1차: 색상 순위 (_SHEATH_COLOR_RANK: 흑→갈→회→청…)
-    #   - 2차: 납기 ISO 주차 (같은 색상 내 빠른 주차 먼저)
+    # 시스 그룹 전용 체인 정렬:
+    #   - 1차: 납기 주 버킷(H1/H2) — 납기 최우선
+    #   - 2차: 색상 순위 (_SHEATH_COLOR_RANK: 흑→갈→회→청…) — 같은 주차 내 묶기
     #   - 3차: 실제 납기일 (같은 주+색상 내 stable EDD)
-    #   → 색상 체인지오버 최소화가 목표. 동일 EDD 의 다른 색상 두 그룹을
-    #     하나의 chain 으로 묶기 위해 색상을 1차 키로 둔다.
-    #   Tradeoff: 서로 다른 색상 간에서는 납기가 뒤로 밀릴 수 있다.
-    #     예) 청(W15) 이 흑(W16) 뒤로 밀림. 하지만 시스 설비(SH-A120/100) 는
-    #         그룹 수가 제한적(≤ 주당 ~4건)이라 실무적 영향은 미미하며,
-    #         색상 교체로 인한 setup loss(수십 분) 를 절감한다.
-    #     납기 위반은 위반 체커가 warning 으로 감지하므로 보고 가능.
+    #   → 납기를 지키면서 같은 주차 내에서만 색상을 묶어 교체 비용 최소화.
+    #     색상을 1차로 두면 멀리 있는 주차의 같은 색상 그룹이 먼저 끌려와
+    #     급한 납기(다른 색상)가 뒤로 밀리는 현상이 발생해 사용자 룰과 상충.
+    #   Tradeoff: 같은 주차 내에 여러 색상이 있으면 그만큼 교체가 발생한다.
+    #     하지만 시스 설비는 주당 그룹 수가 제한적(≤ ~4건)이라 주차별 교체는
+    #     최대 2~3회 수준으로 수렴. 납기 준수 이득이 더 크다.
     def _group_sort_key(kv):
         gk, gb = kv
         tier = 0 if _is_core_group(gk) else (1 if gk.startswith("ST-") else 2)
@@ -562,15 +561,15 @@ def _run_optimization_once(
         earliest_due = _group_earliest_due(gb)
         cust_prio = gb[0].customer_priority or 99 if gb else 99
 
-        # 시스 체인: 색상 → 주 버킷 → EDD 순으로 정렬키 구성
+        # 시스 체인: 주 버킷 → 색상 → EDD 순으로 정렬키 구성
         if _is_sheath_group(gk, gb):
             return (
                 tier,
                 date.max,  # ST- 클러스터 납기 (비해당)
                 0.0,  # ST- 소선경 (비해당)
                 proc_order,
-                _sheath_group_color_rank(gb),  # 1차: 색상 체인
-                _sheath_group_due_week_int(gb),  # 2차: 주 버킷
+                _sheath_group_due_week_int(gb),  # 1차: 주 버킷 (납기 우선)
+                _sheath_group_color_rank(gb),  # 2차: 색상 (같은 주차 내 묶기)
                 earliest_due,  # 3차: 실제 EDD
                 cust_prio,
             )

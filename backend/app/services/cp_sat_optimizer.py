@@ -783,12 +783,13 @@ def cp_sat_schedule(
     #   CORE/AL-CORE: 공정순 최우선 (ST- 선행)
     #   ST- 연선: 공정순 → 소선경 클러스터 최초납기 → 소선경값 → 그룹 EDD
     #     (같은 소선경 그룹을 연속 배치 → 선재교체 비용 최소화)
-    #   시스(저압/고압): 공정순 → 색상 → 주 버킷(H1/H2) → 실제 EDD
-    #     Why: 색상 교체 시간이 setup 대비 훨씬 길어 (수십 분), 같은 색상을
-    #     연속 생산하는 것이 wall-clock 관점에서 더 유리. solver 가 tardiness
-    #     최소화로 납기 윈도우를 이미 보장하므로, 그 안에서 색상 grouping 은
-    #     post-solve ordering 으로 확정. schedule_optimizer._group_sort_key 의
-    #     시스 분기와 동일 규칙 → 두 optimizer 결과 일관.
+    #   시스(저압/고압): 공정순 → 주 버킷(H1/H2) → 색상 → 실제 EDD
+    #     Why: 시스는 **납기 최우선, 그 다음 색상 우선**. 납기 주차 bucket
+    #     안에서만 색상을 묶어 교체 비용 최소화. 주차가 다르면 납기 순서 유지.
+    #     (색상을 1차로 두면 회 W15 그룹이 갈 W18 뒤로 밀려 11일+ 지연 발생)
+    #     solver 가 tardiness 최소화로 주차 윈도우를 보장하므로, post-solve
+    #     ordering 은 (주차, 색상) 로 안전하게 정렬 가능.
+    #     schedule_optimizer._group_sort_key 의 시스 분기와 동일 규칙.
     #   그 외 공정(절연 등): 공정순 → EDD → 고객 우선순위
     #       절연(proc=2)이 시스(proc=4)보다 항상 먼저 스케줄링 → 파이프라인 데이터 등록 보장
     #
@@ -829,14 +830,14 @@ def cp_sat_schedule(
                 earliest,
                 cust_prio,
             )
-        # 시스: 색상 → 주 버킷 → EDD (schedule_optimizer 와 동일 규칙)
+        # 시스: 주 버킷 → 색상 → EDD (납기 우선, 같은 주차 내 색상 묶기)
         if _is_sheath_group(gk, meta["batches"]):
             return (
                 proc_level,
                 date.max,  # ST 클러스터 필드 (비해당)
                 0.0,
-                _sheath_group_color_rank(meta["batches"]),  # 1차: 색상
-                _sheath_group_due_week_int(meta["batches"]),  # 2차: 주 버킷
+                _sheath_group_due_week_int(meta["batches"]),  # 1차: 주 버킷
+                _sheath_group_color_rank(meta["batches"]),  # 2차: 색상
                 earliest,  # 3차: 실제 EDD
                 cust_prio,
             )
