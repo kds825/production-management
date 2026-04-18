@@ -535,6 +535,41 @@ def _run_optimization_once(
                 if wd not in wire_d_earliest or ed < wire_d_earliest[wd]:
                     wire_d_earliest[wd] = ed
 
+    # ── 시스 색상 묶음 lookup — CP-SAT 와 동일 규칙 ─────────────────────────
+    # 그리디 경로의 batch_groups 는 {gk: [batches...]} 형식이라 묶음 빌더가 기대하는
+    # {gk: {"batches": [...], "earliest_due": ..., "cpsat_dur": ..., "pred_ready": ...}}
+    # 형식으로 wrapping 한 뒤 전달한다.
+    from app.services.sheath_cluster import (
+        build_sheath_clusters,
+        cluster_sort_key,
+    )
+
+    _gm_for_cluster = {
+        gk: {
+            "batches": gb,
+            "earliest_due": _group_earliest_due(gb),
+            "cpsat_dur": int(sum(float(b.estimated_duration_min or 0) for b in gb)),
+            "pred_ready": None,
+        }
+        for gk, gb in batch_groups.items()
+    }
+    _sheath_clusters_g = build_sheath_clusters(_gm_for_cluster)
+    _sorted_clusters_g = sorted(
+        _sheath_clusters_g, key=lambda c: cluster_sort_key(c, _gm_for_cluster)
+    )
+    _cluster_rank_g: dict[str, tuple[int, int]] = {}
+    for _ci, _cluster in enumerate(_sorted_clusters_g):
+        for _gi, _gk_c in enumerate(_cluster.group_keys):
+            _cluster_rank_g[_gk_c] = (_ci, _gi)
+
+    # 설비별 마지막 처리 시스 묶음 ID 추적 — 묶음 내부/경계 append 정책에 사용.
+    # auto_schedule 호출 당 초기화 (모듈 레벨 상태 공유 방지).
+    _gk_to_cluster_id_g: dict[str, str] = {}
+    for _c in _sorted_clusters_g:
+        for _gk_c in _c.group_keys:
+            _gk_to_cluster_id_g[_gk_c] = _c.cluster_id
+    _prev_cluster_on_eq_g: dict[str, str] = {}  # equipment_code → last cluster_id
+
     # ── 그룹 처리 순서 결정 ──────────────────────────────────────────────────
     # 우선순위:
     #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
@@ -561,16 +596,19 @@ def _run_optimization_once(
         earliest_due = _group_earliest_due(gb)
         cust_prio = gb[0].customer_priority or 99 if gb else 99
 
-        # 시스 체인: 주 버킷 → 색상 → EDD 순으로 정렬키 구성
+        # 시스 체인: 묶음 단위 정렬 — CP-SAT _solved_order_key 와 동일 규칙
+        # _cluster_rank_g 는 _group_sort_key 정의 전에 build_sheath_clusters 로 구성된
+        # lookup 테이블로, (cluster_idx, position_in_cluster) 를 제공한다.
         if _is_sheath_group(gk, gb):
+            rank = _cluster_rank_g.get(gk, (10**9, 10**9))
             return (
                 tier,
                 date.max,  # ST- 클러스터 납기 (비해당)
                 0.0,  # ST- 소선경 (비해당)
                 proc_order,
-                _sheath_group_due_week_int(gb),  # 1차: 주 버킷 (납기 우선)
-                _sheath_group_color_rank(gb),  # 2차: 색상 (같은 주차 내 묶기)
-                earliest_due,  # 3차: 실제 EDD
+                rank[0],  # 1차: 묶음 순위 (납기 임박 묶음 먼저)
+                rank[1],  # 2차: 묶음 내 순서
+                earliest_due,  # 3차: 실제 EDD (tiebreak)
                 cust_prio,
             )
 
@@ -891,8 +929,29 @@ def _run_optimization_once(
                         if pred_task and pred_task.end_datetime > earliest:
                             earliest = pred_task.end_datetime
 
+            # ── 시스 묶음 기반 append 정책 (CP-SAT 와 동일) ─────────────────
+            # 묶음 내부: 무조건 append (색상 체인 유지)
+            # 묶음 경계: 조건부 append (납기 초과 예상이면 earliest 유지 →
+            # _find_available_slot 이 빈 공간 사용 → 납기 보호)
+            eq_earliest = earliest
+            if rep.process_name in ("저압시스", "고압시스"):
+                current_cluster_id = _gk_to_cluster_id_g.get(group_key)
+                prev_cluster = _prev_cluster_on_eq_g.get(eq_code)
+                if slots and current_cluster_id:
+                    last_end = max(s[1] for s in slots)
+                    append_earliest = max(eq_earliest, last_end)
+                    if prev_cluster == current_cluster_id:
+                        eq_earliest = append_earliest
+                    else:
+                        append_end = calculate_end_datetime(
+                            append_earliest, eq_total_duration, db, eq_code
+                        )
+                        due = _group_earliest_due(group_batches)
+                        if not due or append_end.date() <= due:
+                            eq_earliest = append_earliest
+
             slot_start = _find_available_slot(
-                earliest, eq_total_duration, slots, db, eq.equipment_code
+                eq_earliest, eq_total_duration, slots, db, eq.equipment_code
             )
 
             if best_start is None or slot_start < best_start:
@@ -1020,6 +1079,12 @@ def _run_optimization_once(
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신 (그룹의 마지막 배치)
         last_batch_on_equip[best_eq.equipment_code] = group_batches[-1]
+
+        # 시스 묶음 기반 append 정책 — 현재 그룹의 cluster_id 로 갱신
+        if rep.process_name in ("저압시스", "고압시스"):
+            _cid_g = _gk_to_cluster_id_g.get(group_key)
+            if _cid_g:
+                _prev_cluster_on_eq_g[best_eq.equipment_code] = _cid_g
 
         tasks_created.append(task)
 
