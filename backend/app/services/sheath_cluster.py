@@ -154,16 +154,36 @@ def compute_cluster_meta(cluster: SheathCluster, groups_meta: dict) -> dict[str,
 
 
 def cluster_sort_key(cluster: SheathCluster, groups_meta: dict) -> tuple:
-    """묶음 정렬 키: (latest_due, color_rank, due_week_int, cluster_id).
+    """묶음 정렬 키:
+    (pred_ready_wmin, latest_due, color_rank, due_week_int, cluster_id).
 
-    1차: latest_due — 납기 임박 묶음 먼저
-    2차: color_rank — 같은 납기면 흑→갈→회→... 순
-    3차: due_week_int — 안전장치
-    4차: cluster_id — 결정적 tiebreak
+    1차: pred_ready_wmin — 선행공정 끝난 순서대로 (설비 idle 최소화).
+         group_meta 에 pred_ready_wmin 이 주입되지 않은 그리디 경로나 테스트
+         에서는 0 으로 떨어져 latest_due 가 실질 primary 로 동작 (호환성).
+    2차: latest_due — 같은 pred_ready 이면 납기 임박 묶음 먼저 (EDD)
+    3차: color_rank — 흑→갈→회→... (같은 납기면 색상 체인 유도)
+    4차: due_week_int — 안전장치
+    5차: cluster_id — 결정적 tiebreak
+
+    Why (2026-04-18 ultrathink): 기존 latest_due primary 는 선행공정이
+    한참 뒤에 끝나는 묶음이 앞에 와서 설비가 수 일 idle 되고, 그 사이 선행
+    공정이 이미 끝난 다른 색상/주차 묶음이 뒤로 밀려 납기 20 건 초과 유발.
+    선행공정 완료 시각을 1차 키로 두면 설비가 비는 순간에 곧바로 처리
+    가능한 묶음이 배치되고, append 정책이 뒤따르는 묶음을 자연스럽게 체인.
     """
     from app.services.batch_grouping import _SHEATH_COLOR_RANK
 
     meta = compute_cluster_meta(cluster, groups_meta)
     latest_due = meta["latest_due"] or date.max
     color_rank = _SHEATH_COLOR_RANK.get(cluster.color, 99)
-    return (latest_due, color_rank, cluster.due_week_int, cluster.cluster_id)
+    pred_ready_wmin = min(
+        (int(groups_meta[gk].get("pred_ready_wmin") or 0) for gk in cluster.group_keys),
+        default=0,
+    )
+    return (
+        pred_ready_wmin,
+        latest_due,
+        color_rank,
+        cluster.due_week_int,
+        cluster.cluster_id,
+    )

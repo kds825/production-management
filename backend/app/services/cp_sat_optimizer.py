@@ -797,11 +797,41 @@ def cp_sat_schedule(
     _COLOR_RANK_PAD = 99  # 비시스: 색상 키 무효
     _DUE_WK_PAD = 999999  # 비시스: 주 버킷 무효
 
-    # 시스 색상 묶음 기반 정렬 — 납기 임박 묶음 먼저, 묶음 내 earliest 순
+    # ── 시스 색상 묶음 기반 정렬 ─────────────────────────────────────────────
+    # 1차 키: 묶음의 pred_ready_wmin (선행공정 first-drum 완료 시각, working-min).
+    #        solver start_vars 값으로 선행공정 그룹의 대략적 완료 시점을 계산해
+    #        "설비가 빨리 사용 가능한 묶음" 부터 처리 → 설비 idle 최소화.
+    # 2차 키: latest_due (같은 pred_ready 이면 납기 순)
+    # 3차 키: color_rank (같은 납기면 색상 체인 유도)
     from app.services.sheath_cluster import (
         build_sheath_clusters,
         cluster_sort_key,
     )
+
+    # 각 그룹의 pred_ready_wmin 계산 (솔버 결과 기반 근사)
+    for _gk, _meta in group_meta.items():
+        _rep = _meta["rep"]
+        _pred_proc = PREDECESSOR_PROCESS.get(_rep.process_name)
+        _meta["pred_ready_wmin"] = 0
+        if not _pred_proc:
+            continue
+        _pred_sq = _meta["sq"]
+        _pred_candidates = [
+            g
+            for g, m in group_meta.items()
+            if m["rep"].process_name == _pred_proc and m["sq"] == _pred_sq
+        ]
+        if not _pred_candidates:
+            continue
+        _best: int | None = None
+        for _pg in _pred_candidates:
+            _pg_start = solver.value(start_vars[_pg])
+            _pg_dur = group_meta[_pg]["cpsat_dur"]
+            _pg_drums = max(int(group_meta[_pg]["rep"].drum_count or 1), 1)
+            _pg_first_drum = _pg_start + max(1, _pg_dur // _pg_drums)
+            if _best is None or _pg_first_drum < _best:
+                _best = _pg_first_drum
+        _meta["pred_ready_wmin"] = _best or 0
 
     _sheath_clusters = build_sheath_clusters(group_meta)
     _sorted_clusters = sorted(
