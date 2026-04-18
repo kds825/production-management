@@ -350,6 +350,10 @@ export default function SchedulerPage() {
     },
   });
 
+  // Task 22 — ConflictResolutionModal row hover → 간트 블록 focus-ring 하이라이트.
+  // 모달이 열렸을 때만 의미가 있으므로 단순 state 로 관리 (store 에 올릴 필요 없음).
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+
   // ── SM재고 실적 모달 상태 ──
   const [showWipModal, setShowWipModal] = useState(false);
   const [wipRunLabel, setWipRunLabel] = useState<string | null>(null);
@@ -1352,6 +1356,8 @@ export default function SchedulerPage() {
                 activeDragGroup={activeDragGroup}
                 activeDragSq={activeDragSq}
                 activeDragMaterial={activeDragMaterial}
+                previewOverlay={cascade.modalState?.preview ?? null}
+                focusedTaskId={hoveredTaskId}
               />
               <ConstraintAlert />
             </div>
@@ -2094,6 +2100,7 @@ export default function SchedulerPage() {
           onApply={cascade.applyModal}
           onClose={cascade.closeModal}
           guidanceShown={cascade.modalState.guidanceShown}
+          onRowHover={setHoveredTaskId}
         />
       )}
     </div>

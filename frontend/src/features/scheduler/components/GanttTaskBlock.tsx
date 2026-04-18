@@ -31,6 +31,17 @@ interface GanttTaskBlockProps {
   lane?: number;
   /** 한 lane 의 세로 높이(px). 기본 ROW_HEIGHT. */
   laneHeight?: number;
+  /**
+   * 고스트 모드(Task 22). Cascade preview 의 제안된 위치를 반투명 dashed 로 오버레이한다.
+   * - 클릭/드래그/리사이즈/팝오버 비활성 (pointer-events:none).
+   * - opacity 0.5 + var(--color-warning) dashed border.
+   * - data-testid 에 "ghost-" 프리픽스 부여.
+   */
+  ghost?: boolean;
+  /**
+   * 간트 블록에 focus-ring outline 을 표시한다(모달 row hover 연동). Task 22.
+   */
+  focused?: boolean;
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -137,6 +148,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   weekendWidth,
   lane,
   laneHeight,
+  ghost,
+  focused,
 }: GanttTaskBlockProps) {
   const ww = weekendWidth ?? dayWidth;
   // lane 스태킹: 동일 행에서 시간 겹치는 블록은 lane 별로 Y축 분리 배치.
@@ -442,19 +455,55 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
     2,
   );
 
+  // Task 22 — ghost mode: 실제 블록 위에 반투명 dashed overlay 로 제안된 변경을 보여준다.
+  // DnD / click / context menu / popover 를 모두 비활성화하여 "표시만" 하는 레이어로 사용.
+  // focused: 모달 row hover 시 focus-ring outline (ghost 여부와 무관하게 동작).
+  const rootDataTestId = ghost ? `ghost-${task.id}` : `gantt-block-${task.id}`;
+  const interactiveHandlers = ghost
+    ? {}
+    : {
+        onClick: handleBlockClick,
+        onDoubleClick: handleDoubleClick,
+        onContextMenu: handleContextMenu,
+        onMouseEnter: () => setShowTimePopover(true),
+        onMouseLeave: () => setShowTimePopover(false),
+      };
+  const ghostStyle: React.CSSProperties = ghost
+    ? {
+        opacity: 0.5,
+        border: "2px dashed var(--color-warning)",
+        borderRadius: 4,
+        pointerEvents: "none",
+        backgroundColor: "transparent",
+      }
+    : {};
+  // focus-ring outline (ghost 가 아닌 실선 블록에만 적용). outline 은 layout 영향 없음.
+  const focusOutline: React.CSSProperties = focused
+    ? {
+        outline: "2px solid var(--color-brand-primary)",
+        outlineOffset: 2,
+        zIndex: 15,
+      }
+    : {};
+
   return (
     <div
-      ref={(node) => {
-        setNodeRef(node);
-        (blockRef as { current: HTMLDivElement | null }).current = node;
-      }}
-      data-draggable
+      ref={
+        ghost
+          ? undefined
+          : (node) => {
+              setNodeRef(node);
+              (blockRef as { current: HTMLDivElement | null }).current = node;
+            }
+      }
+      data-draggable={ghost ? undefined : true}
       data-task-id={task.id}
-      data-testid={`gantt-block-${task.id}`}
+      data-testid={rootDataTestId}
       data-equipment-id={task.equipment_id}
       data-batch-group={task.batch_group ?? ""}
       data-sq-mm2={String(task.sq_mm2 ?? "")}
       data-spec-list-length={String((task.spec_list ?? []).length)}
+      data-ghost={ghost ? "true" : undefined}
       style={{
         position: "absolute",
         left,
@@ -464,20 +513,19 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         // 상수를 통해 전달하므로 laneHeight/ROW_HEIGHT 가 달라져도 블록 높이가
         // 깨지지 않는다.
         height: laneH - 8,
-        zIndex: isDragging ? 20 : isSelected ? 10 : 2,
+        zIndex: ghost ? 6 : isDragging ? 20 : isSelected ? 10 : 2,
         transition: previewOffsetPx !== 0 ? "left 0.15s ease-out" : "none",
-        cursor:
-          !isEditMode || isFrozen
+        cursor: ghost
+          ? "default"
+          : !isEditMode || isFrozen
             ? "default"
             : isDragging
               ? "grabbing"
               : "grab",
+        ...ghostStyle,
+        ...focusOutline,
       }}
-      onClick={handleBlockClick}
-      onDoubleClick={handleDoubleClick}
-      onContextMenu={handleContextMenu}
-      onMouseEnter={() => setShowTimePopover(true)}
-      onMouseLeave={() => setShowTimePopover(false)}
+      {...interactiveHandlers}
     >
       {/* 신규 배치 글로우 애니메이션 keyframes — 컴포넌트당 한 번만 주입 */}
       {isNew && (

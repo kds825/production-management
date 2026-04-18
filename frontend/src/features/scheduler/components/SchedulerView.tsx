@@ -1,6 +1,14 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect, useRef, memo } from "react";
+import {
+  useMemo,
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  memo,
+  Fragment,
+} from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import { useScheduleStore } from "../store/scheduleStore";
@@ -9,6 +17,7 @@ import { GanttTaskBlock } from "./GanttTaskBlock";
 import { TodayMarker } from "./TodayMarker";
 import { useTimelineNavigation } from "../../../shared/hooks/useTimelineNavigation";
 import type { ScheduleTask, Equipment, ViewFilterType } from "../types";
+import type { CascadePreviewResponse, PushEntry } from "../api/cascade.types";
 import {
   SIDEBAR_WIDTH,
   ROW_HEIGHT,
@@ -30,6 +39,25 @@ const WEEKEND_COLLAPSED_WIDTH = 8;
  * 겹치는 블록이 있으면 lane 개수만큼 row 가 세로로 늘어난다.
  */
 const LANE_HEIGHT = ROW_HEIGHT;
+
+/**
+ * Task 22 — cascade preview 응답에서 주어진 task 에 대한 제안(push 또는 pull) 을 찾는다.
+ * push/pull 은 같은 `PushEntry` 구조를 공유하므로 단일 타입으로 반환.
+ *
+ * 왜 helper 로 분리: SchedulerView 내부 loop 에서 불필요한 배열 순회 중복을 방지하고
+ * 단위 테스트 (ghost-overlay) 에서 격리된 계약 검증이 가능해짐.
+ */
+export function getProposalFor(
+  taskId: string,
+  preview: CascadePreviewResponse | null | undefined,
+): PushEntry | null {
+  if (!preview) return null;
+  return (
+    preview.pushes.find((p) => p.task_id === taskId) ??
+    preview.pulls.find((p) => p.task_id === taskId) ??
+    null
+  );
+}
 
 // ----- Droppable Row -----
 
@@ -62,6 +90,10 @@ interface GanttRowProps {
   activeDragSq?: number | null;
   /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
   activeDragMaterial?: string | null;
+  /** Task 22 — cascade preview 가 열려 있으면 해당 응답을 전달. 각 블록별 고스트 렌더 판단용. */
+  previewOverlay?: CascadePreviewResponse | null;
+  /** Task 22 — 모달 row hover 시 설정되는 focus task id (gantt 블록 outline 연동). */
+  focusedTaskId?: string | null;
 }
 
 /**
@@ -82,6 +114,8 @@ const GanttRow = memo(function GanttRow({
   activeDragGroup,
   activeDragSq,
   activeDragMaterial,
+  previewOverlay,
+  focusedTaskId,
 }: GanttRowProps) {
   // 이 행이 드래그 그룹과 호환되는지 판단 (SQ 범위 + 재질 제한 포함)
   const isIncompatible = activeDragGroup
@@ -364,17 +398,41 @@ const GanttRow = memo(function GanttRow({
             }}
           />
         )}
-        {rowTasks.map((task) => (
-          <GanttTaskBlock
-            key={task.id}
-            task={task}
-            rangeStart={rangeStart}
-            dayWidth={dayWidth}
-            weekendWidth={weekendWidth}
-            lane={laneMap[String(task.id)] ?? 0}
-            laneHeight={LANE_HEIGHT}
-          />
-        ))}
+        {rowTasks.map((task) => {
+          // Task 22 — 원본(실선) 블록 + 제안된 위치에 반투명 dashed 고스트 블록.
+          // preview 가 해당 task 에 대한 push/pull 제안을 포함하면 ghost 를 덧붙인다.
+          const proposal = getProposalFor(String(task.id), previewOverlay);
+          const isFocused = focusedTaskId === String(task.id);
+          const lane = laneMap[String(task.id)] ?? 0;
+          return (
+            <Fragment key={task.id}>
+              <GanttTaskBlock
+                task={task}
+                rangeStart={rangeStart}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                lane={lane}
+                laneHeight={LANE_HEIGHT}
+                focused={isFocused}
+              />
+              {proposal && (
+                <GanttTaskBlock
+                  task={{
+                    ...task,
+                    start: new Date(proposal.new_start),
+                    end: new Date(proposal.new_end),
+                  }}
+                  rangeStart={rangeStart}
+                  dayWidth={dayWidth}
+                  weekendWidth={weekendWidth}
+                  lane={lane}
+                  laneHeight={LANE_HEIGHT}
+                  ghost
+                />
+              )}
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
@@ -848,12 +906,24 @@ interface SchedulerViewProps {
   activeDragSq?: number | null;
   /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
   activeDragMaterial?: string | null;
+  /**
+   * Task 22 — cascade preview 가 제시한 변경. 전달되면 각 task 의 원본(실선) 옆에
+   * 반투명(50%) dashed border 고스트를 렌더한다. null/undefined 면 고스트 비활성.
+   */
+  previewOverlay?: CascadePreviewResponse | null;
+  /**
+   * Task 22 — 모달 행 hover 시 설정되는 focus task id. 해당 gantt 블록에
+   * focus-ring outline 을 입혀 어떤 블록이 하이라이트 대상인지 시각 연결한다.
+   */
+  focusedTaskId?: string | null;
 }
 
 export function SchedulerView({
   activeDragGroup,
   activeDragSq,
   activeDragMaterial,
+  previewOverlay,
+  focusedTaskId,
 }: SchedulerViewProps = {}) {
   const equipment = useScheduleStore((s) => s.equipment);
   const tasks = useScheduleStore((s) => s.tasks);
@@ -1091,6 +1161,8 @@ export function SchedulerView({
                   activeDragGroup={activeDragGroup}
                   activeDragSq={activeDragSq}
                   activeDragMaterial={activeDragMaterial}
+                  previewOverlay={previewOverlay}
+                  focusedTaskId={focusedTaskId}
                 />
               ))}
 
