@@ -13,6 +13,13 @@ from app.core.feature_flags import is_cascade_v2_enabled
 from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
 from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
+from app.observability.cascade_logging import log_cascade_request
+from app.observability.metrics import (
+    cascade_feature_flag_state,
+    cascade_preview_duration_seconds,
+    cascade_revert_total,
+    cascade_unresolved_total,
+)
 from app.infrastructure.models.equipment_master import (
     EquipmentMaster as EquipmentMasterModel,
 )
@@ -949,54 +956,94 @@ def cascade_preview_v2(
         스키마로 직렬화.
     """
     # 헤더 게이트: 계약 버전 불일치는 즉시 400 — Pydantic validation 이전 단계.
+    # 관측성 전: 잘못된 헤더는 422/400 레이턴시 측정 대상이 아니므로 metric/log 전 단계에서 차단.
     if x_cascade_api_version != "2":
         raise HTTPException(
             status_code=400,
             detail="X-Cascade-API-Version: 2 header required",
         )
 
-    # Feature flag off: 계약은 유지하되 실제 cascade 계산은 skip.
-    # invalid_equipment reason 을 선택한 이유 — "기능 자체가 꺼져 있어 해소 불가" 를
-    # 프론트가 동일한 unresolved UI 로 처리할 수 있게 하기 위함.
-    if not is_cascade_v2_enabled():
-        return CascadePreviewResponseV2(
-            request_id=str(uuid.uuid4()),
-            summary="cascade v2 disabled",
-            pushes=[],
-            pulls=[],
-            unresolved=[
-                {
-                    "task_id": body.task_id,
-                    "equipment_code": "",
-                    "batch_label": "",
-                    "reason": UnresolvedReason.invalid_equipment.value,
-                    "detail": "cascade v2 disabled",
-                }
-            ],
-            can_auto_resolve=False,
-            iter_count=0,
-            truncated=False,
+    # Task 23: feature flag snapshot + 구조화 로그 + Histogram 측정.
+    # feature_flag gauge 는 요청마다 갱신 → 런타임 ON/OFF 를 대시보드가 즉시 반영.
+    request_id = str(uuid.uuid4())
+    flag_on = is_cascade_v2_enabled()
+    cascade_feature_flag_state.set(1 if flag_on else 0)
+
+    with (
+        cascade_preview_duration_seconds.time(),
+        log_cascade_request(
+            request_id,
+            "/cascade-preview",
+            task_id=body.task_id,
+            new_start=body.new_start.isoformat(),
+            new_end=body.new_end.isoformat(),
+            new_equipment_code=body.new_equipment_code,
+        ) as extra,
+    ):
+        # Feature flag off: 계약은 유지하되 실제 cascade 계산은 skip.
+        # invalid_equipment reason 을 선택한 이유 — "기능 자체가 꺼져 있어 해소 불가" 를
+        # 프론트가 동일한 unresolved UI 로 처리할 수 있게 하기 위함.
+        if not flag_on:
+            extra["feature_disabled"] = True
+            cascade_unresolved_total.labels(
+                reason=UnresolvedReason.invalid_equipment.value
+            ).inc()
+            return CascadePreviewResponseV2(
+                request_id=request_id,
+                summary="cascade v2 disabled",
+                pushes=[],
+                pulls=[],
+                unresolved=[
+                    {
+                        "task_id": body.task_id,
+                        "equipment_code": "",
+                        "batch_label": "",
+                        "reason": UnresolvedReason.invalid_equipment.value,
+                        "detail": "cascade v2 disabled",
+                    }
+                ],
+                can_auto_resolve=False,
+                iter_count=0,
+                truncated=False,
+            )
+
+        # DB 통합 wrapper 호출 — 내부에서 snapshot 구성 + BFS + validators 수행.
+        result = plan_cascade_preview(
+            body.task_id,
+            body.new_start,
+            body.new_end,
+            body.new_equipment_code,
+            db,
         )
 
-    # DB 통합 wrapper 호출 — 내부에서 snapshot 구성 + BFS + validators 수행.
-    result = plan_cascade_preview(
-        body.task_id,
-        body.new_start,
-        body.new_end,
-        body.new_equipment_code,
-        db,
-    )
+        # 로그 관측 필드 — reason histogram 으로 어떤 push 가 주도적인지 파악.
+        extra["pushes_n"] = len(result.pushes)
+        extra["pulls_n"] = len(result.pulls)
+        extra["unresolved_n"] = len(result.unresolved)
+        extra["wave_used"] = result.iter_count
+        extra["truncated"] = result.truncated
+        reason_hist: dict[str, int] = {}
+        for p in result.pushes:
+            r = _reason_to_str(p["reason"])
+            reason_hist[r] = reason_hist.get(r, 0) + 1
+        extra["reason_histogram"] = reason_hist
 
-    return CascadePreviewResponseV2(
-        request_id=result.request_id,
-        summary=result.summary,
-        pushes=[_push_to_schema(p) for p in result.pushes],
-        pulls=[_push_to_schema(p) for p in result.pulls],
-        unresolved=[_unres_to_schema(u) for u in result.unresolved],
-        can_auto_resolve=result.can_auto_resolve,
-        iter_count=result.iter_count,
-        truncated=result.truncated,
-    )
+        # unresolved counter 증가 — reason 라벨별 집계.
+        for u in result.unresolved:
+            cascade_unresolved_total.labels(reason=_reason_to_str(u["reason"])).inc()
+
+        # service 가 반환한 request_id 대신 logged request_id 로 일관성 유지.
+        # (프론트는 이 값을 bulk-update 의 expected_cascade_request_id 로 echo back.)
+        return CascadePreviewResponseV2(
+            request_id=request_id,
+            summary=result.summary,
+            pushes=[_push_to_schema(p) for p in result.pushes],
+            pulls=[_push_to_schema(p) for p in result.pulls],
+            unresolved=[_unres_to_schema(u) for u in result.unresolved],
+            can_auto_resolve=result.can_auto_resolve,
+            iter_count=result.iter_count,
+            truncated=result.truncated,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1108,142 +1155,166 @@ def bulk_update_v2(
     실패 시 rollback (db 세션 레벨) — 위반은 422 이전에 DB 를 건드리지 않으므로 자연스러운
     no-commit 경로가 된다.
     """
-    # ---- 1) Feature flag 가드 ----------------------------------------------
-    if not body.changes:
-        # 빈 요청은 no-op 성공 — change_set 생성은 skip (INSERT 빈 snapshot 낭비 방지).
-        return BulkUpdateSuccess(change_set_id="", updated_task_ids=[])
-    if not is_cascade_v2_enabled() and len(body.changes) > 1:
-        raise _feature_disabled_error(body.changes[0].task_id)
+    # Task 23: 구조화 로그 래핑 — 요청별 request_id 로 correlate. with-block 내부 raise
+    # 는 log_cascade_request 가 status=error 로 마감하며 그대로 전파한다.
+    request_id = str(uuid.uuid4())
+    with log_cascade_request(
+        request_id,
+        "/tasks/bulk-update",
+        n_changes=len(body.changes),
+        expected_cascade_request_id=body.expected_cascade_request_id,
+    ) as extra:
+        # ---- 1) Feature flag 가드 ----------------------------------------------
+        if not body.changes:
+            # 빈 요청은 no-op 성공 — change_set 생성은 skip (INSERT 빈 snapshot 낭비 방지).
+            extra["result"] = "noop_empty"
+            return BulkUpdateSuccess(change_set_id="", updated_task_ids=[])
+        if not is_cascade_v2_enabled() and len(body.changes) > 1:
+            extra["feature_disabled"] = True
+            raise _feature_disabled_error(body.changes[0].task_id)
 
-    # ---- 2) Snap 구성 --------------------------------------------------------
-    # plan_cascade_preview 와 동일한 duck-typed 결합 뷰를 사용 — build_snapshot 이
-    # batch relationship 을 기대하기 때문. N+1 방지 위해 batch 를 사전 조회.
-    tasks = db.query(ScheduleTaskModel).all()
-    batch_ids = {t.batch_id for t in tasks if t.batch_id is not None}
-    batches_by_id = (
-        {
-            b.batch_id: b
-            for b in db.query(ProductionBatchModel)
-            .filter(ProductionBatchModel.batch_id.in_(batch_ids))
-            .all()
-        }
-        if batch_ids
-        else {}
-    )
-
-    class _TaskView:
-        __slots__ = (
-            "task_id",
-            "equipment_code",
-            "start_datetime",
-            "end_datetime",
-            "batch_id",
-            "batch",
+        # ---- 2) Snap 구성 --------------------------------------------------------
+        # plan_cascade_preview 와 동일한 duck-typed 결합 뷰를 사용 — build_snapshot 이
+        # batch relationship 을 기대하기 때문. N+1 방지 위해 batch 를 사전 조회.
+        tasks = db.query(ScheduleTaskModel).all()
+        batch_ids = {t.batch_id for t in tasks if t.batch_id is not None}
+        batches_by_id = (
+            {
+                b.batch_id: b
+                for b in db.query(ProductionBatchModel)
+                .filter(ProductionBatchModel.batch_id.in_(batch_ids))
+                .all()
+            }
+            if batch_ids
+            else {}
         )
 
-        def __init__(self, t, batch):
-            # task_id 를 str 화 — Snap 이 dict key 로 str 비교를 가정.
-            self.task_id = str(t.task_id)
-            self.equipment_code = t.equipment_code
-            self.start_datetime = t.start_datetime
-            self.end_datetime = t.end_datetime
-            self.batch_id = t.batch_id
-            self.batch = batch
-
-    views = [_TaskView(t, batches_by_id.get(t.batch_id)) for t in tasks]
-    snap = build_snapshot(views)
-
-    # ---- 3) 변경 대상 존재 확인 + no-op 필터 -------------------------------
-    # 왜 no-op 필터: Snap.apply 가 no-op 호출을 ValueError 로 거부 (원본 보존 규칙).
-    # 프론트가 cascade-preview 결과를 그대로 재전송했을 때 변경 없는 항목이 섞여 있을 수
-    # 있으므로, 서버 측에서 관대하게 걸러낸다.
-    real_changes = []
-    missing = [c.task_id for c in body.changes if c.task_id not in snap.by_id]
-    if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"task not found: {missing[0]}",
-        )
-    for c in body.changes:
-        cur = snap.by_id[c.task_id]
-        same_time = cur.start == c.new_start and cur.end == c.new_end
-        same_eq = c.new_equipment_code is None or (
-            c.new_equipment_code == cur.equipment_code
-        )
-        if same_time and same_eq:
-            continue  # no-op
-        real_changes.append(c)
-
-    # snapshot_before 는 "실제 변경 대상" 만 캡처 — revert 시 되돌릴 대상과 일치시킴.
-    snapshot_before = {
-        c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
-    }
-
-    # ---- 4) Apply --------------------------------------------------------------
-    for c in real_changes:
-        snap.apply(c.task_id, c.new_start, c.new_end, c.new_equipment_code)
-
-    # ---- 5) 재검증 ------------------------------------------------------------
-    # 순서 중요: same-eq overlap 이 가장 치명적 (설비 이중 점유). predecessor > due_date
-    # 순으로 얕은 위반부터 탐지하는 구조.
-    for check_fn, code in [
-        (find_same_eq_overlap, BulkUpdateErrorCode.VALIDATION_OVERLAP_SAME_EQUIPMENT),
-        (
-            find_predecessor_violation,
-            BulkUpdateErrorCode.VALIDATION_PREDECESSOR_VIOLATION,
-        ),
-        (find_due_date_violation, BulkUpdateErrorCode.VALIDATION_DUE_DATE_VIOLATION),
-    ]:
-        offending = check_fn(snap)
-        if offending is not None:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error_code": code.value,
-                    "offending_task_id": str(offending.task_id),
-                    "detail": (
-                        f"{code.value}: end={offending.end.isoformat()} "
-                        f"equipment={offending.equipment_code}"
-                    ),
-                    # can_retry=True — preview 를 다시 돌리면 해소 가능할 수 있음.
-                    "can_retry": True,
-                },
+        class _TaskView:
+            __slots__ = (
+                "task_id",
+                "equipment_code",
+                "start_datetime",
+                "end_datetime",
+                "batch_id",
+                "batch",
             )
 
-    # ---- 6) Commit -----------------------------------------------------------
-    snapshot_after = {
-        c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
-    }
-    change_set_id = str(uuid.uuid4())
-    updated_ids: list[str] = []
+            def __init__(self, t, batch):
+                # task_id 를 str 화 — Snap 이 dict key 로 str 비교를 가정.
+                self.task_id = str(t.task_id)
+                self.equipment_code = t.equipment_code
+                self.start_datetime = t.start_datetime
+                self.end_datetime = t.end_datetime
+                self.batch_id = t.batch_id
+                self.batch = batch
 
-    for c in real_changes:
-        task_pk = _coerce_task_id(c.task_id)
-        t = db.get(ScheduleTaskModel, task_pk)
-        if t is None:
-            # snap 에 있었지만 DB 조회에서 빠진 경우 — 극히 드물지만 race 가드.
-            continue
-        t.start_datetime = c.new_start
-        t.end_datetime = c.new_end
-        if c.new_equipment_code:
-            t.equipment_code = c.new_equipment_code
-        updated_ids.append(c.task_id)
+        views = [_TaskView(t, batches_by_id.get(t.batch_id)) for t in tasks]
+        snap = build_snapshot(views)
 
-    if real_changes:
-        cs = ScheduleChangeSet(
-            change_set_id=change_set_id,
-            preview_request_id=body.expected_cascade_request_id,
-            snapshot_before=snapshot_before,
-            snapshot_after=snapshot_after,
+        # ---- 3) 변경 대상 존재 확인 + no-op 필터 -------------------------------
+        # 왜 no-op 필터: Snap.apply 가 no-op 호출을 ValueError 로 거부 (원본 보존 규칙).
+        # 프론트가 cascade-preview 결과를 그대로 재전송했을 때 변경 없는 항목이 섞여 있을 수
+        # 있으므로, 서버 측에서 관대하게 걸러낸다.
+        real_changes = []
+        missing = [c.task_id for c in body.changes if c.task_id not in snap.by_id]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"task not found: {missing[0]}",
+            )
+        for c in body.changes:
+            cur = snap.by_id[c.task_id]
+            same_time = cur.start == c.new_start and cur.end == c.new_end
+            same_eq = c.new_equipment_code is None or (
+                c.new_equipment_code == cur.equipment_code
+            )
+            if same_time and same_eq:
+                continue  # no-op
+            real_changes.append(c)
+
+        # snapshot_before 는 "실제 변경 대상" 만 캡처 — revert 시 되돌릴 대상과 일치시킴.
+        snapshot_before = {
+            c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
+        }
+
+        # ---- 4) Apply --------------------------------------------------------------
+        for c in real_changes:
+            snap.apply(c.task_id, c.new_start, c.new_end, c.new_equipment_code)
+
+        # ---- 5) 재검증 ------------------------------------------------------------
+        # 순서 중요: same-eq overlap 이 가장 치명적 (설비 이중 점유). predecessor > due_date
+        # 순으로 얕은 위반부터 탐지하는 구조.
+        for check_fn, code in [
+            (
+                find_same_eq_overlap,
+                BulkUpdateErrorCode.VALIDATION_OVERLAP_SAME_EQUIPMENT,
+            ),
+            (
+                find_predecessor_violation,
+                BulkUpdateErrorCode.VALIDATION_PREDECESSOR_VIOLATION,
+            ),
+            (
+                find_due_date_violation,
+                BulkUpdateErrorCode.VALIDATION_DUE_DATE_VIOLATION,
+            ),
+        ]:
+            offending = check_fn(snap)
+            if offending is not None:
+                extra["validation_error"] = code.value
+                extra["offending_task_id"] = str(offending.task_id)
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error_code": code.value,
+                        "offending_task_id": str(offending.task_id),
+                        "detail": (
+                            f"{code.value}: end={offending.end.isoformat()} "
+                            f"equipment={offending.equipment_code}"
+                        ),
+                        # can_retry=True — preview 를 다시 돌리면 해소 가능할 수 있음.
+                        "can_retry": True,
+                    },
+                )
+
+        # ---- 6) Commit -----------------------------------------------------------
+        snapshot_after = {
+            c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
+        }
+        change_set_id = str(uuid.uuid4())
+        updated_ids: list[str] = []
+
+        for c in real_changes:
+            task_pk = _coerce_task_id(c.task_id)
+            t = db.get(ScheduleTaskModel, task_pk)
+            if t is None:
+                # snap 에 있었지만 DB 조회에서 빠진 경우 — 극히 드물지만 race 가드.
+                continue
+            t.start_datetime = c.new_start
+            t.end_datetime = c.new_end
+            if c.new_equipment_code:
+                t.equipment_code = c.new_equipment_code
+            updated_ids.append(c.task_id)
+
+        if real_changes:
+            cs = ScheduleChangeSet(
+                change_set_id=change_set_id,
+                preview_request_id=body.expected_cascade_request_id,
+                snapshot_before=snapshot_before,
+                snapshot_after=snapshot_after,
+            )
+            db.add(cs)
+        db.commit()
+
+        # 관측 필드: 실제 반영된 변경 수 + change_set_id (undo 상관관계).
+        extra["real_changes_n"] = len(real_changes)
+        extra["updated_task_ids_n"] = len(updated_ids)
+        extra["change_set_id"] = change_set_id if real_changes else ""
+
+        # real_changes 가 없으면 change_set_id 는 빈 문자열 (클라이언트는 undo 대상 없음으로 해석).
+        return BulkUpdateSuccess(
+            change_set_id=change_set_id if real_changes else "",
+            updated_task_ids=updated_ids,
         )
-        db.add(cs)
-    db.commit()
-
-    # real_changes 가 없으면 change_set_id 는 빈 문자열 (클라이언트는 undo 대상 없음으로 해석).
-    return BulkUpdateSuccess(
-        change_set_id=change_set_id if real_changes else "",
-        updated_task_ids=updated_ids,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1267,40 +1338,57 @@ def revert(change_set_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     간 교차 의존성(예: 두 change_set 이 같은 task 를 덮어쓴 경우) 을 해소해야 해서
     비용이 크다. PoC 는 직전 1건만 안전하게 되돌리는 계약으로 단순화.
     """
-    cs = db.get(ScheduleChangeSet, change_set_id)
-    if cs is None:
-        raise HTTPException(status_code=404, detail="change_set_id not found")
+    # Task 23: 구조화 로그 + revert counter by status.
+    # 404/409/200 경로 각각 status label 로 집계 — 대시보드에서 바로 retry 비율 측정.
+    request_id = str(uuid.uuid4())
+    with log_cascade_request(
+        request_id, f"/revert/{change_set_id}", change_set_id=change_set_id
+    ) as extra:
+        cs = db.get(ScheduleChangeSet, change_set_id)
+        if cs is None:
+            cascade_revert_total.labels(status="not_found").inc()
+            extra["revert_status"] = "not_found"
+            raise HTTPException(status_code=404, detail="change_set_id not found")
 
-    # Freshness 검증 — 이 change_set 이후 새 change_set 이 있으면 undo 거부.
-    newer = (
-        db.query(ScheduleChangeSet)
-        .filter(ScheduleChangeSet.created_at > cs.created_at)
-        .order_by(ScheduleChangeSet.created_at.asc())
-        .first()
-    )
-    if newer is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"newer change_set exists: {newer.change_set_id} "
-                f"(created_at={newer.created_at.isoformat()})"
-            ),
+        # Freshness 검증 — 이 change_set 이후 새 change_set 이 있으면 undo 거부.
+        newer = (
+            db.query(ScheduleChangeSet)
+            .filter(ScheduleChangeSet.created_at > cs.created_at)
+            .order_by(ScheduleChangeSet.created_at.asc())
+            .first()
         )
+        if newer is not None:
+            cascade_revert_total.labels(status="conflict").inc()
+            extra["revert_status"] = "conflict"
+            extra["newer_change_set_id"] = newer.change_set_id
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"newer change_set exists: {newer.change_set_id} "
+                    f"(created_at={newer.created_at.isoformat()})"
+                ),
+            )
 
-    # snapshot_before 로 복구 — task_id 키는 bulk_update_v2 가 str 로 저장.
-    # ScheduleTask.task_id 는 Integer PK 이므로 isdigit 이면 int 캐스팅.
-    for task_id_str, snap in (cs.snapshot_before or {}).items():
-        task_pk: Any = int(task_id_str) if task_id_str.isdigit() else task_id_str
-        t = db.get(ScheduleTaskModel, task_pk)
-        if t is None:
-            # 극단적 race — task 가 삭제된 경우 skip (409 보다 관대하게).
-            continue
-        t.start_datetime = datetime.fromisoformat(snap["start"])
-        t.end_datetime = datetime.fromisoformat(snap["end"])
-        if snap.get("equipment_code"):
-            t.equipment_code = snap["equipment_code"]
+        # snapshot_before 로 복구 — task_id 키는 bulk_update_v2 가 str 로 저장.
+        # ScheduleTask.task_id 는 Integer PK 이므로 isdigit 이면 int 캐스팅.
+        restored_n = 0
+        for task_id_str, snap in (cs.snapshot_before or {}).items():
+            task_pk: Any = int(task_id_str) if task_id_str.isdigit() else task_id_str
+            t = db.get(ScheduleTaskModel, task_pk)
+            if t is None:
+                # 극단적 race — task 가 삭제된 경우 skip (409 보다 관대하게).
+                continue
+            t.start_datetime = datetime.fromisoformat(snap["start"])
+            t.end_datetime = datetime.fromisoformat(snap["end"])
+            if snap.get("equipment_code"):
+                t.equipment_code = snap["equipment_code"]
+            restored_n += 1
 
-    # change_set 삭제 — 같은 id 로 재revert 방지 (멱등성 대신 1회 소비 선택).
-    db.delete(cs)
-    db.commit()
-    return {"reverted": True, "change_set_id": change_set_id}
+        # change_set 삭제 — 같은 id 로 재revert 방지 (멱등성 대신 1회 소비 선택).
+        db.delete(cs)
+        db.commit()
+
+        cascade_revert_total.labels(status="success").inc()
+        extra["revert_status"] = "success"
+        extra["restored_n"] = restored_n
+        return {"reverted": True, "change_set_id": change_set_id}

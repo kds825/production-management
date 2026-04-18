@@ -15,3 +15,4 @@ pytest==8.3.0
 pytest-asyncio==0.23.0
 pytest-benchmark>=4.0
 ortools>=9.10
+prometheus-client>=0.20
