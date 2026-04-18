@@ -283,27 +283,17 @@ def plan_cascade_preview(
         else {}
     )
 
-    class _TaskView:
-        """duck-typed ScheduleTask + batch 결합 뷰 — build_snapshot 계약을 충족."""
-
-        __slots__ = (
-            "task_id",
-            "equipment_code",
-            "start_datetime",
-            "end_datetime",
-            "batch_id",
-            "batch",
+    views = [
+        TaskView(
+            task_id=str(t.task_id),
+            equipment_code=t.equipment_code,
+            start_datetime=t.start_datetime,
+            end_datetime=t.end_datetime,
+            batch_id=t.batch_id,
+            batch=batches_by_id.get(t.batch_id),
         )
-
-        def __init__(self, t, batch):
-            self.task_id = t.task_id
-            self.equipment_code = t.equipment_code
-            self.start_datetime = t.start_datetime
-            self.end_datetime = t.end_datetime
-            self.batch_id = t.batch_id
-            self.batch = batch
-
-    views = [_TaskView(t, batches_by_id.get(t.batch_id)) for t in schedule_tasks]
+        for t in schedule_tasks
+    ]
     snap = build_snapshot(views)
 
     # 변경 task 반영 — apply 는 no-op 호출을 거부하므로, DB 값과 동일하면 skip.

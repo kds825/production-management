@@ -17,6 +17,21 @@ from typing import Iterable
 
 
 @dataclass
+class TaskView:
+    """build_snapshot 가 기대하는 최소 duck-type. ORM 엔티티를 래핑할 때 사용.
+
+    task_id 는 str (snap 전역 계약). batch 는 ProductionBatch 또는 None.
+    """
+
+    task_id: str
+    equipment_code: str
+    start_datetime: datetime
+    end_datetime: datetime
+    batch_id: int | None
+    batch: object | None  # ProductionBatch 혹은 None; duck-typed
+
+
+@dataclass
 class SnapTask:
     task_id: str
     equipment_code: str
