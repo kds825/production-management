@@ -331,4 +331,180 @@ test.describe("batch_group 미배정 & 복원 (Phase 6)", () => {
     // 카드는 여전히 유지되어야 함 (409 path 에서는 unscheduledItems 제거 안 함)
     await expect(card).toBeVisible();
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // S5~S8: batch_group 드래그 시나리오
+  // ────────────────────────────────────────────────────────────────────
+
+  test("S5: 간트 블록 드래그 → inbox dropzone → Modal 사유 선택 → 미배정", async ({
+    page,
+  }) => {
+    // 수정 모드 진입 (간트 편집 활성화 버튼)
+    await page.getByRole("button", { name: /수정/ }).first().click();
+
+    const block = page.locator(TASK_BLOCK).first();
+    await expect(block).toBeVisible({ timeout: 10_000 });
+
+    // drag 시작: block 가운데서 mouse down
+    const bb = await block.boundingBox();
+    if (!bb) throw new Error("간트 블록 bounding box 없음");
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
+    await page.mouse.down();
+
+    // 미배정 작업 패널 헤더를 기준으로 dropzone 방향 이동
+    // 작은 이동으로 @dnd-kit activation constraint 를 먼저 충족시킨 뒤 대상으로 이동
+    await page.mouse.move(bb.x + bb.width / 2 + 5, bb.y + bb.height / 2 + 5);
+
+    const inboxHeader = page.getByText("미배정 작업").first();
+    const inboxBB = await inboxHeader.boundingBox();
+    if (inboxBB) {
+      await page.mouse.move(inboxBB.x + 40, inboxBB.y + 100, { steps: 8 });
+    }
+
+    // dropzone 배너 표시 기대
+    await expect(
+      page.getByText("여기에 놓으면 미배정 작업으로 이동합니다"),
+    ).toBeVisible({ timeout: 3000 });
+    await page.mouse.up();
+
+    // Modal 열림
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+    await dialog.locator('input[type="radio"][value="자재지연"]').check();
+    await dialog
+      .getByRole("button", { name: /미배정.*이동|이동/ })
+      .click({ force: true });
+
+    // 미배정 패널 확장 후 BatchGroupCard + 자재지연 배지 노출 확인
+    await expandUnassignedPanel(page);
+    await expect(page.locator(BATCH_CARD).first()).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText(/자재지연/).first()).toBeVisible();
+  });
+
+  test("S6: BatchGroupCard 드래그 → 원위치 즉시 복원 — isOrigin 자동 판정 v2b 이전엔 skip", async ({
+    page,
+  }) => {
+    test.skip(true, "isOrigin 자동 판정은 v2b milestone 전까지 false 고정");
+  });
+
+  test("S7: BatchGroupCard → 다른 설비 레인 → Preview Modal → 적용 → Undo toast", async ({
+    page,
+  }) => {
+    const card = page.locator(BATCH_CARD).first();
+    if (!(await card.isVisible().catch(() => false))) {
+      test.skip(true, "미배정 카드 없음 — S5 선행 필요");
+      return;
+    }
+
+    await page.getByRole("button", { name: /수정/ }).first().click();
+
+    const cardBB = await card.boundingBox();
+    if (!cardBB) throw new Error("card bounding box 없음");
+    await page.mouse.move(
+      cardBB.x + cardBB.width / 2,
+      cardBB.y + cardBB.height / 2,
+    );
+    await page.mouse.down();
+
+    const row = page.locator('[data-type="equipment-row"]').first();
+    const rowBB = await row.boundingBox();
+    if (!rowBB) throw new Error("equipment-row bounding box 없음");
+    // activation constraint 충족을 위한 작은 이동 후 대상 레인으로 이동
+    await page.mouse.move(
+      cardBB.x + cardBB.width / 2 + 5,
+      cardBB.y + cardBB.height / 2 + 5,
+    );
+    await page.mouse.move(rowBB.x + 200, rowBB.y + rowBB.height / 2, {
+      steps: 10,
+    });
+    await page.mouse.up();
+
+    // Preview Modal 표시
+    await expect(
+      page.getByRole("dialog").getByText("재배치 미리보기"),
+    ).toBeVisible({ timeout: 5000 });
+
+    // 적용 버튼 클릭
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "적용" })
+      .click();
+
+    // Undo toast
+    await expect(page.getByText(/재배치 적용 완료/)).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("S8: BatchGroupCard → 공정 불일치 설비 → warning toast + 카드 유지", async ({
+    page,
+  }) => {
+    // invalid_equipment 스텁 — restore-at 가 unresolved 만 반환하도록 가로챔
+    await page.route(
+      "**/api/pipeline/batch-group/*/restore-at",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            batch_group: "x",
+            task_positions: [],
+            pushes: [],
+            pulls: [],
+            unresolved: [
+              {
+                task_id: "1",
+                equipment_code: "",
+                batch_label: "",
+                reason: "invalid_equipment",
+                detail: "mismatch",
+              },
+            ],
+            request_id: "req-s8",
+            can_auto_resolve: false,
+            iter_count: 0,
+            truncated: false,
+          }),
+        });
+      },
+    );
+
+    const card = page.locator(BATCH_CARD).first();
+    if (!(await card.isVisible().catch(() => false))) {
+      test.skip(true, "미배정 카드 없음");
+      return;
+    }
+
+    await page.getByRole("button", { name: /수정/ }).first().click();
+
+    const cardBB = await card.boundingBox();
+    if (!cardBB) throw new Error("card bounding box 없음");
+    await page.mouse.move(
+      cardBB.x + cardBB.width / 2,
+      cardBB.y + cardBB.height / 2,
+    );
+    await page.mouse.down();
+
+    const row = page.locator('[data-type="equipment-row"]').first();
+    const rowBB = await row.boundingBox();
+    if (!rowBB) throw new Error("row bounding box 없음");
+    // activation constraint 충족을 위한 작은 이동 후 대상 레인으로 이동
+    await page.mouse.move(
+      cardBB.x + cardBB.width / 2 + 5,
+      cardBB.y + cardBB.height / 2 + 5,
+    );
+    await page.mouse.move(rowBB.x + 200, rowBB.y + rowBB.height / 2, {
+      steps: 10,
+    });
+    await page.mouse.up();
+
+    // 공정 불일치 warning toast
+    await expect(
+      page.getByText(/선택한 설비가 공정 경로와 맞지 않습니다/),
+    ).toBeVisible({ timeout: 5000 });
+    // 카드는 여전히 DOM 에 존재해야 함
+    await expect(card).toBeVisible();
+  });
 });
