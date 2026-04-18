@@ -1757,19 +1757,70 @@ def delete_run(run_label: str, db: Session = Depends(get_db)):
       (matched_order_id → NULL, status → 사용가능)
     """
     counts = {}
-    for table in ["audit_log", "schedule_task", "production_batch", "sales_order"]:
+
+    # production_batch / wip_inventory / sales_order 는 상호 FK 로 얽혀 있다:
+    #   - wip_inventory.source_batch_id → production_batch.batch_id  (RESTRICT)
+    #   - production_batch.wip_matched_id → wip_inventory.wip_id      (RESTRICT)
+    #   - sales_order.wip_id              → wip_inventory.wip_id      (RESTRICT)
+    # 어느 쪽을 먼저 지워도 다른 쪽이 막는다. 따라서
+    #  (a) 삭제 대상 run 바깥에서 들어오는 FK 는 모두 NULL 로 끊어두고,
+    #  (b) 자식 → 부모 순서로 삭제한다.
+
+    # (a-1) 이 run 의 production_batch → wip_inventory 참조 해제 (동일 run 내부 순환)
+    db.execute(
+        text("UPDATE production_batch SET wip_matched_id = NULL WHERE run_label = :rl"),
+        {"rl": run_label},
+    )
+
+    # (a-2) 다른 run 의 wip_inventory 가 이 run 의 production_batch 를 참조 중이면 NULL 로 끊기
+    db.execute(
+        text(
+            """
+            UPDATE wip_inventory
+            SET source_batch_id = NULL
+            WHERE source_batch_id IN (
+                SELECT batch_id FROM production_batch WHERE run_label = :rl
+            )
+            """
+        ),
+        {"rl": run_label},
+    )
+
+    # (a-3) 다른 run 의 sales_order 가 이 run 의 wip_inventory 를 참조 중이면 NULL 로 끊기
+    db.execute(
+        text(
+            """
+            UPDATE sales_order
+            SET wip_id = NULL
+            WHERE wip_id IN (
+                SELECT wip_id FROM wip_inventory WHERE run_label = :rl
+            )
+            """
+        ),
+        {"rl": run_label},
+    )
+
+    # (b) 자식 → 부모 순으로 삭제한다.
+    #     audit_log / schedule_task / sales_order 는 production_batch·wip_inventory 를 참조하므로 먼저,
+    #     그 다음 wip_inventory, 마지막으로 production_batch.
+    for table in ["audit_log", "schedule_task", "sales_order"]:
         result = db.execute(
             text(f"DELETE FROM {table} WHERE run_label = :rl"),
             {"rl": run_label},
         )
         counts[table] = result.rowcount
 
-    # wip_inventory: run_label 일치 행 삭제
     wip_del = db.execute(
         text("DELETE FROM wip_inventory WHERE run_label = :rl"),
         {"rl": run_label},
     )
     counts["wip_inventory"] = wip_del.rowcount
+
+    pb_del = db.execute(
+        text("DELETE FROM production_batch WHERE run_label = :rl"),
+        {"rl": run_label},
+    )
+    counts["production_batch"] = pb_del.rowcount
 
     # wip_inventory: 이 run에서 매칭(사용완료)됐지만 다른 run_label을 가진 WIP 상태 초기화.
     # production_batch가 이미 삭제됐으므로 wip_matched_id 역참조가 깨진 WIP를 정리한다.
