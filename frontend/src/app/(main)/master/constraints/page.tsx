@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { EDITABLE_CONSTRAINTS, ParamEditor } from "./components/ParamEditor";
+import { DriftBanner } from "./components/DriftBanner";
+import { SaveModal } from "./components/SaveModal";
+import { HistoryTab } from "./components/HistoryTab";
 
 interface Constraint {
   constraint_id: string;
@@ -33,6 +36,8 @@ export default function ConstraintsPage() {
   const [editedParams, setEditedParams] = useState<
     Record<string, Record<string, number>>
   >({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [driftRefresh, setDriftRefresh] = useState(0);
 
   useEffect(() => {
     fetch(`${API}/constraints`)
@@ -105,6 +110,8 @@ export default function ConstraintsPage() {
         </div>
       </div>
 
+      <DriftBanner refreshKey={driftRefresh} />
+
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b">
         {(["params", "toggle", "history"] as Tab[]).map((t) => (
@@ -144,9 +151,8 @@ export default function ConstraintsPage() {
                 변경 취소
               </button>
               <button
-                disabled
-                title="Task 8에서 저장 모달 연결 예정"
-                className="rounded bg-blue-600 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => setModalOpen(true)}
+                className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
               >
                 저장
               </button>
@@ -231,12 +237,26 @@ export default function ConstraintsPage() {
         </div>
       )}
 
-      {/* History tab placeholder — Task 8 에서 HistoryTab 연결 */}
-      {tab === "history" && (
-        <div className="rounded border border-dashed p-8 text-center text-sm text-gray-400">
-          Task 8 에서 HistoryTab 컴포넌트로 대체됩니다.
-        </div>
-      )}
+      {tab === "history" && <HistoryTab />}
+
+      <SaveModal
+        open={modalOpen}
+        edits={editedParams}
+        onClose={() => setModalOpen(false)}
+        onSaved={() => {
+          setEditedParams({});
+          setDriftRefresh(Date.now());
+          // Why: constraints list 도 갱신되어야 이후 편집 시 '수정됨' 배지가 정확
+          fetch(`${API}/constraints`)
+            .then((r) => r.json())
+            .then((data) => {
+              setConstraints(
+                Array.isArray(data) ? data : data.constraints || [],
+              );
+            })
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }
