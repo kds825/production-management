@@ -939,6 +939,12 @@ def _run_optimization_once(
             )
 
         # ── 그룹당 1 schedule_task 생성 ──────────────────────────────────────
+        # 체인 하이라이트 — 본 그룹의 상류 task id 를 predecessor 로 고정.
+        # 같은 group 내 복수 order 가 있어도 대표 order 의 predecessor 로 일관 처리.
+        rep_pred_task_id = predecessor_map.get(
+            (rep.sales_order_id, rep.sales_order_line)
+        )
+
         task = ScheduleTask(
             batch_id=rep.batch_id,  # 대표 배치 ID
             equipment_code=best_eq.equipment_code,
@@ -948,6 +954,7 @@ def _run_optimization_once(
             status="scheduled",
             run_label=run_label,
             batch_group=group_key,
+            predecessor_task_id=rep_pred_task_id,
         )
         db.add(task)
         db.flush()
@@ -1361,6 +1368,12 @@ def _schedule_multi_equipment(
                 hours=1
             )
 
+        # 체인 하이라이트 — 분할 배치에서도 동일 원칙.
+        # 모든 split 서브태스크는 같은 predecessor FK 를 가짐 (상류 group 의 대표 task id).
+        rep_pred_task_id = predecessor_map.get(
+            (rep.sales_order_id, rep.sales_order_line)
+        )
+
         task = ScheduleTask(
             batch_id=rep.batch_id,
             equipment_code=eq_code,
@@ -1370,6 +1383,7 @@ def _schedule_multi_equipment(
             status="scheduled",
             run_label=run_label,
             batch_group=group_key,
+            predecessor_task_id=rep_pred_task_id,
         )
         db.add(task)
         db.flush()
