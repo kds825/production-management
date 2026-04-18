@@ -132,3 +132,19 @@ def test_listener_on_conflict_do_nothing(db, listener_registered):
     wips = db.query(WipInventory).filter_by(source_batch_id=batch.batch_id).all()
     assert len(wips) == 1, "ON CONFLICT DO NOTHING — 중복 삽입 무시"
     _cleanup(db)
+
+
+def test_bulk_save_objects_blocked_for_production_batch(db):
+    """ProductionBatch bulk_save_objects 는 RuntimeError — listener bypass 방지."""
+    b = ProductionBatch(
+        run_label=_RUN_LABEL,
+        process_name="연선",
+        batch_seq=-1,
+        total_length_m=1000,
+        wip_output_expected_m=300,
+        sq_mm2=150,
+        status="planned",
+    )
+    with pytest.raises(RuntimeError, match="bulk.*ProductionBatch.*금지"):
+        db.bulk_save_objects([b])
+    _cleanup(db)

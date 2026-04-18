@@ -14,6 +14,7 @@ import pytest
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
+from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.batch_grouping import create_batches, execute_auto_splits
 
 _RUN_LABEL_SPLIT = "TEST_WIP_SPLIT_T5"
@@ -21,7 +22,16 @@ _LOT_SIZE = 1000.0  # drum_length_m for 162SQ fixture
 
 
 def _cleanup_split_run(db) -> None:
-    """execute_auto_splits 내부 db.commit() 이후 잔여 행 정리."""
+    """execute_auto_splits 내부 db.commit() 이후 잔여 행 정리.
+
+    Why WipInventory 먼저 삭제:
+    T7 listener 자동 등록 이후 연선 헤더(batch_seq=-1) INSERT 시 WipInventory 가
+    자동 생성된다. WipInventory.source_batch_id → ProductionBatch FK 가 있으므로
+    ProductionBatch 삭제 전에 WipInventory 를 먼저 제거해야 FK 위반을 막는다.
+    """
+    db.query(WipInventory).filter(WipInventory.run_label == _RUN_LABEL_SPLIT).delete(
+        synchronize_session=False
+    )
     db.query(ProductionBatch).filter(
         ProductionBatch.run_label == _RUN_LABEL_SPLIT
     ).delete(synchronize_session=False)

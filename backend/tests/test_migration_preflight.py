@@ -12,6 +12,8 @@ Why importlib.util:
 
 import importlib.util
 import pathlib
+from unittest.mock import MagicMock
+
 import pytest
 
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -32,36 +34,29 @@ _preflight_check = _mig._preflight_check
 _rename_status = _mig._rename_status
 
 
-def test_preflight_aborts_on_duplicate_source_batch_id(db):
-    """중복 source_batch_id 있으면 _preflight_check 가 RuntimeError 로 abort."""
-    batch = ProductionBatch(
-        run_label="test_preflight_run",
-        process_name="연선",
-        batch_seq=-999,
-        total_length_m=1000,
-        status="planned",
-    )
-    db.add(batch)
-    db.flush()
+def test_preflight_aborts_on_duplicate_source_batch_id():
+    """중복 source_batch_id 가 있을 때 _preflight_check 가 RuntimeError 로 abort.
 
-    w1 = WipInventory(
-        status="사용가능",
-        source_batch_id=batch.batch_id,
-        total_length_m=100,
-    )
-    w2 = WipInventory(
-        status="사용가능",
-        source_batch_id=batch.batch_id,  # 의도적 중복
-        total_length_m=200,
-    )
-    db.add_all([w1, w2])
-    db.flush()
+    Why mock:
+    T6 에서 UNIQUE partial index(source_batch_id IS NOT NULL)가 이미 DB 에 적용됐으므로
+    실제 DB 에 중복 행을 삽입하는 것 자체가 불가능하다(IntegrityError 발생).
+    _preflight_check 는 "index 생성 전 기존 데이터에 중복이 있는가" 를 검사하는
+    마이그레이션 선행 검사 로직이므로, 해당 로직만 단독으로 검증하는 것이 목적에 부합한다.
+    mock conn 으로 "중복 존재" 시나리오를 재현해 RuntimeError 분기를 검증한다.
+    """
+    # Mock row — source_batch_id=999, count=2 (중복)
+    mock_row = MagicMock()
+    mock_row.source_batch_id = 999
+    mock_row.c = 2
 
-    # Why db.connection(): SA2 에서 Engine.execute() 제거됨.
-    # db.connection() 은 세션의 기존 트랜잭션 내 Connection 을 반환하므로
-    # flush() 로 작성된 미커밋 데이터를 같은 트랜잭션에서 조회 가능.
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = mock_row
+
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+
     with pytest.raises(RuntimeError, match="UNIQUE 제약 위반 가능 데이터 발견"):
-        _preflight_check(db.connection())
+        _preflight_check(mock_conn)
 
 
 def test_preflight_passes_when_no_duplicates(db):
