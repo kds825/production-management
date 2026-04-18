@@ -29,9 +29,12 @@ import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
-// ConflictResolutionModal: Task 19 에서 Task 16/17 cascade v2 (pushes/pulls/unresolved)
-// 기반으로 전면 교체됨. legacy store.cascadePreview (affected_tasks/conflicts) 플로우는
-// Task 21 에서 useScheduleChangeWithCascade 훅으로 재연결 예정 — 그때 import 복원.
+// Task 21 — cascade v2 연결 복원.
+// Task 19 에서 Task 16/17 기반으로 교체된 ConflictResolutionModal 을 `useScheduleChangeWithCascade`
+// 훅으로 재wiring. FEATURE_FLAG_CASCADE_V2 off 경로는 legacyMove 콜백이 기존 store.moveTask 로 fallback.
+import { ConflictResolutionModal } from "@/features/scheduler/components/ConflictResolutionModal";
+import { useScheduleChangeWithCascade } from "@/features/scheduler/hooks/useScheduleChangeWithCascade";
+import { refreshTasks as refreshScheduleTasks } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleData } from "@/features/scheduler/hooks/useScheduleData";
 import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
@@ -308,12 +311,44 @@ export default function SchedulerPage() {
         .map((i) => i.order),
     [unscheduledItems],
   );
-  const cascadePreview = useScheduleStore((s) => s.cascadePreview);
-  const conflictModalOpen = useScheduleStore((s) => s.conflictModalOpen);
-  const cascadeOriginalTask = useScheduleStore((s) => s.cascadeOriginalTask);
-  const applyCascade = useScheduleStore((s) => s.applyCascade);
-  const cancelCascade = useScheduleStore((s) => s.cancelCascade);
+  // Task 21 — legacy cascadePreview/conflictModalOpen/applyCascade/cancelCascade/cascadeOriginalTask
+  // 는 더 이상 이 페이지에서 사용하지 않음. store 자체는 flag off 경로를 위해 유지 (scheduleStore).
   const setRunLabel = useScheduleStore((s) => s.setRunLabel);
+
+  /**
+   * Task 21 — cascade v2 orchestrator 훅.
+   *
+   * - legacyMove: FEATURE_FLAG off 시 기존 store.moveTask 로 fallback.
+   *   ChangeInput (ISO 문자열) → moveTask(taskId, eqId, Date, Date) 시그니처 어댑터.
+   *   new_equipment_code 가 없으면 현재 task 의 equipment_id 를 유지한다.
+   * - onCommitted: bulk-update/revert 성공 후 간트 refetch.
+   */
+  const legacyMoveAdapter = useCallback(
+    (input: {
+      task_id: string;
+      new_start: string;
+      new_end: string;
+      new_equipment_code?: string | null;
+    }) => {
+      const currentTask = tasks.find((t) => t.id === input.task_id);
+      const targetEquipmentId =
+        input.new_equipment_code ?? currentTask?.equipment_id ?? "";
+      moveTask(
+        input.task_id,
+        targetEquipmentId,
+        new Date(input.new_start),
+        new Date(input.new_end),
+      );
+    },
+    [moveTask, tasks],
+  );
+
+  const cascade = useScheduleChangeWithCascade({
+    legacyMove: legacyMoveAdapter,
+    onCommitted: async () => {
+      await refreshScheduleTasks();
+    },
+  });
 
   // ── SM재고 실적 모달 상태 ──
   const [showWipModal, setShowWipModal] = useState(false);
@@ -891,7 +926,23 @@ export default function SchedulerPage() {
         const newStart = new Date(newStartTs);
         const newEnd = new Date(newStartTs + durationMs);
 
-        moveTask(task.id, targetEquipmentId, newStart, newEnd);
+        // Task 21 — cascade v2 훅 경유.
+        // flag on → preview → 모달 승인 → bulk-update.
+        // flag off → legacyMoveAdapter 로 기존 store.moveTask 위임.
+        //
+        // Date → naive ISO ("YYYY-MM-DDTHH:mm:ss"): backend TZ-guard 가 'Z'/'+HH:MM' 을 422 로 reject.
+        // 로컬 타임존을 KST 로 간주하는 프로젝트 전제 아래, UTC 오프셋을 제거한 wall-clock 값을 전송.
+        const toNaiveIso = (d: Date): string => {
+          const tzOffsetMin = d.getTimezoneOffset();
+          const local = new Date(d.getTime() - tzOffsetMin * 60_000);
+          return local.toISOString().slice(0, 19);
+        };
+        cascade.commit({
+          task_id: task.id,
+          new_start: toNaiveIso(newStart),
+          new_end: toNaiveIso(newEnd),
+          new_equipment_code: targetEquipmentId,
+        });
 
         // 블록 변경 → AI explain 캐시 무효화 (영향받는 배치 재분석 필요)
         explainCache.current = {};
@@ -915,7 +966,7 @@ export default function SchedulerPage() {
         }
       }
     },
-    [assignOrder, moveTask, zoomLevel, range, isEditMode, equipment],
+    [assignOrder, cascade, zoomLevel, range, isEditMode, equipment],
   );
 
   return (
@@ -2018,7 +2069,8 @@ export default function SchedulerPage() {
 
       {/* 전역 오버레이 UI */}
       <ContextMenu />
-      <TaskFormModal />
+      {/* Task 21 — TaskFormModal edit 경로에서 cascade 훅 commit 주입. */}
+      <TaskFormModal onSubmitWithCascade={cascade.commit} />
 
       {/* SM재고 실적 모달 */}
       {showWipModal && wipRunLabel && (
@@ -2031,10 +2083,19 @@ export default function SchedulerPage() {
       {/* 배치 분할 모달 */}
       <BatchSplitModal />
 
-      {/* Cross-process cascade 충돌 해소 모달: Task 21 에서 cascade v2 훅으로 재연결 */}
-      {/* 현재는 legacy store 의 conflictModalOpen 이 true 가 되면 자동 적용으로 fallback.
-          (Task 17 훅 도입 전까지의 임시 no-UI 동작) */}
-      {conflictModalOpen && cascadePreview && <></>}
+      {/* Task 21 — cascade v2 충돌 해소 모달.
+          flag on + preview 에 pushes/pulls/unresolved 존재 시에만 open.
+          onManualAdjust 는 수주 상세 라우팅 경로 미확정이므로 undefined (CTA 비표시). */}
+      {cascade.modalState?.open && (
+        <ConflictResolutionModal
+          preview={cascade.modalState.preview}
+          pullToggle={cascade.pullToggle}
+          onPullToggle={cascade.setPullToggle}
+          onApply={cascade.applyModal}
+          onClose={cascade.closeModal}
+          guidanceShown={cascade.modalState.guidanceShown}
+        />
+      )}
     </div>
   );
 }
