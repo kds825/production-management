@@ -61,7 +61,31 @@ export function ContextMenu() {
     };
   }, [contextMenu, closeContextMenu]);
 
-  if (!contextMenu) return null;
+  // 주의: UnassignConfirmModal 은 contextMenu 와 독립적으로 마운트되어야 한다.
+  // "미배정으로 이동" 클릭 시 onClick 핸들러가 먼저 closeContextMenu() 를 호출하여
+  // contextMenu=null 상태가 된 뒤 setUnassignModal(...) 을 호출하는데, 여기서
+  // 컴포넌트 전체가 return null 로 언마운트되면 setState 가 손실되어 모달이
+  // 뜨지 않는다 (Phase 6 E2E 에서 발견된 버그).
+  // 따라서 contextMenu 가 닫혀도 modal 상태만 살아 있으면 modal 은 계속 렌더한다.
+  if (!contextMenu) {
+    return (
+      <UnassignConfirmModal
+        isOpen={!!unassignModal}
+        batchGroup={unassignModal?.batchGroup ?? ""}
+        tasks={unassignModal?.tasks ?? []}
+        onConfirm={(reason: UnassignReason, dontAskAgain: boolean) => {
+          if (unassignModal) {
+            void useScheduleStore
+              .getState()
+              .unassignBatchGroup(unassignModal.batchGroup, reason);
+            if (dontAskAgain) setSkipConfirm(true);
+            setUnassignModal(null);
+          }
+        }}
+        onCancel={() => setUnassignModal(null)}
+      />
+    );
+  }
 
   // 뷰포트 경계 보정 (메뉴가 화면 밖으로 나가지 않도록)
   const menuWidth = 160;
