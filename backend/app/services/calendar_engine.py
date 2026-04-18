@@ -382,6 +382,39 @@ def calculate_start_datetime(
     return end - timedelta(minutes=duration_min)
 
 
+def reverse_advance(
+    dt: datetime,
+    duration: timedelta,
+    ctx: dict | None = None,
+) -> datetime:
+    """`dt` 에서 작업시간 `duration` 을 역방향으로 뺀 시점 반환 — advance 의 mirror.
+
+    주말·비가동·휴식 gap 을 skip 한다. 내부적으로 `calculate_start_datetime`
+    을 재사용해 역방향 캘린더 산술의 단일 진실 소스를 유지한다.
+
+    Parameters
+    ----------
+    dt : datetime
+        역산의 기준이 될 종료시각.
+    duration : timedelta
+        작업시간 길이 (음수/0 은 no-op 으로 `dt` 그대로 반환).
+    ctx : dict | None
+        `{"equipment_code": str | None, "db": Session | None}` 형태.
+        프로젝트의 calendar_engine 은 공정 카테고리를 equipment_code 로
+        유도하므로, 추상 ctx 의 working_hours 같은 필드는 무시된다.
+    """
+    if duration <= timedelta(0):
+        return dt
+
+    ctx = ctx or {}
+    equipment_code = ctx.get("equipment_code")
+    db = ctx.get("db")
+    duration_min = duration.total_seconds() / 60.0
+    return calculate_start_datetime(
+        dt, duration_min, db=db, equipment_code=equipment_code
+    )
+
+
 def _is_last_two_mondays(d: date) -> bool:
     """해당 날짜가 그 달의 마지막 2개 월요일인지 확인."""
     year, month = d.year, d.month

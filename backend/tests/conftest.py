@@ -23,3 +23,15 @@ def db() -> Generator[Session, None, None]:
     finally:
         session.rollback()
         session.close()
+
+
+@pytest.fixture
+def calendar_ctx() -> dict:
+    """calendar_engine.reverse_advance / advance 테스트용 context.
+
+    본 프로젝트 calendar_engine 은 `equipment_code` + optional `db` 를
+    받아 공정별 작업창을 결정한다 (task 명세의 추상 ctx 를 실제 모델에
+    매핑). EX-B100 (저압절연) 은 24h/12h 창 + 휴식 없음 → 역산 검증에
+    가장 깔끔한 baseline.
+    """
+    return {"equipment_code": "EX-B100", "db": None}
