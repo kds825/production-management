@@ -4,11 +4,12 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.feature_flags import is_cascade_v2_enabled
 from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
 from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
@@ -26,7 +27,12 @@ from app.presentation.schemas import (
     ScheduleTaskResponse,
     ScheduleTaskUpdate,
 )
+from app.presentation.schemas.cascade import (
+    CascadePreviewRequest as CascadePreviewRequestV2,
+    CascadePreviewResponse as CascadePreviewResponseV2,
+)
 from app.services.batch_grouping import format_spec_display, extract_sq
+from app.services.cascade import plan_cascade_preview, UnresolvedReason
 from app.services.schedule_optimizer import PREDECESSOR_PROCESS
 
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
@@ -733,7 +739,12 @@ class BulkUpdateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoint: POST /api/schedules/cascade-preview
+# Endpoint: POST /api/schedules/cascade-preview-legacy (v1, legacy)
+#
+# v2 전환(2026-04-18 Task 11): 본 엔드포인트는 `AffectedTask/CascadeConflict` 기반 v1
+# 계약을 유지하는 레거시 경로. 신규 v2 (`/cascade-preview`) 는 Pydantic 스키마
+# (`schemas.cascade`) + 헤더 가드 + FEATURE_FLAG 게이팅 을 적용. 프론트 마이그레이션이
+# 완료되면 제거 대상.
 # ---------------------------------------------------------------------------
 
 
@@ -749,12 +760,12 @@ def _parse_task_id(raw_id: str) -> int:
     return int(suffix)
 
 
-@router.post("/cascade-preview", response_model=CascadePreviewResponse)
-def cascade_preview(
+@router.post("/cascade-preview-legacy", response_model=CascadePreviewResponse)
+def cascade_preview_legacy(
     body: CascadePreviewRequest,
     db: Session = Depends(get_db),
 ) -> CascadePreviewResponse:
-    """이동된 태스크의 후행 공정에 대한 연쇄(cascade) 변경 미리보기.
+    """(legacy v1) 이동된 태스크의 후행 공정에 대한 연쇄(cascade) 변경 미리보기.
 
     같은 수주(sales_order_id)에 속하는 모든 전이적 후행 공정 태스크를 찾고,
     이동 delta 만큼 시간을 밀어낸 뒤 같은 설비의 다른 태스크와 겹침(충돌)을 감지한다.
@@ -875,6 +886,106 @@ def cascade_preview(
         affected_tasks=affected_tasks,
         conflicts=conflicts,
         can_auto_resolve=can_auto_resolve,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/schedules/cascade-preview (v2)
+#
+# Task 11: v2 계약 — 헤더 게이트 + FEATURE_FLAG off 경로 + 새 Pydantic 스키마.
+# - `X-Cascade-API-Version: 2` 헤더 필수 (400 otherwise).
+# - `FEATURE_FLAG_CASCADE_V2` off 시 단일 `invalid_equipment` unresolved 로 응답
+#   (프론트가 legacy 로 fallback 하거나 사용자에게 비활성화 메시지를 노출).
+# - DB 통합 wrapper (Task 10 `plan_cascade_preview`) 를 그대로 호출.
+# ---------------------------------------------------------------------------
+
+
+def _reason_to_str(value) -> str:
+    """Enum / str 혼재 reason 을 일관된 문자열로 직렬화 (프론트 파싱 단순화)."""
+    # service 레이어는 PushReason/UnresolvedReason enum 을 사용하지만, 테스트/확장을
+    # 위해 plain str 도 허용. 둘 다 .value 로 정규화.
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _push_to_schema(d: dict) -> dict:
+    """service 의 push/pull dict → PushEntry 호환 dict 로 reason 정규화."""
+    out = {**d}
+    out["reason"] = _reason_to_str(d["reason"])
+    return out
+
+
+def _unres_to_schema(d: dict) -> dict:
+    """service 의 unresolved dict → UnresolvedEntry 호환 dict 로 reason 정규화."""
+    out = {**d}
+    out["reason"] = _reason_to_str(d["reason"])
+    return out
+
+
+@router.post("/cascade-preview", response_model=CascadePreviewResponseV2)
+def cascade_preview_v2(
+    body: CascadePreviewRequestV2,
+    x_cascade_api_version: str | None = Header(None, alias="X-Cascade-API-Version"),
+    db: Session = Depends(get_db),
+) -> CascadePreviewResponseV2:
+    """v2 cascade preview — 블록 duration 변경의 파급 영향을 계산.
+
+    실행 계약:
+      - 헤더 `X-Cascade-API-Version: 2` 미일치 → 400.
+      - request body 의 `new_start/new_end` 는 naive KST datetime (Pydantic validator
+        가 tz-aware 를 422 로 reject).
+      - `FEATURE_FLAG_CASCADE_V2` off → 단일 invalid_equipment unresolved 로 응답해
+        프론트가 비활성화 상태를 인지하고 legacy fallback 또는 UX 메시지를 표시.
+      - on → `plan_cascade_preview` (Task 10 DB wrapper) 호출 → 결과를 Pydantic
+        스키마로 직렬화.
+    """
+    # 헤더 게이트: 계약 버전 불일치는 즉시 400 — Pydantic validation 이전 단계.
+    if x_cascade_api_version != "2":
+        raise HTTPException(
+            status_code=400,
+            detail="X-Cascade-API-Version: 2 header required",
+        )
+
+    # Feature flag off: 계약은 유지하되 실제 cascade 계산은 skip.
+    # invalid_equipment reason 을 선택한 이유 — "기능 자체가 꺼져 있어 해소 불가" 를
+    # 프론트가 동일한 unresolved UI 로 처리할 수 있게 하기 위함.
+    if not is_cascade_v2_enabled():
+        return CascadePreviewResponseV2(
+            request_id=str(uuid.uuid4()),
+            summary="cascade v2 disabled",
+            pushes=[],
+            pulls=[],
+            unresolved=[
+                {
+                    "task_id": body.task_id,
+                    "equipment_code": "",
+                    "batch_label": "",
+                    "reason": UnresolvedReason.invalid_equipment.value,
+                    "detail": "cascade v2 disabled",
+                }
+            ],
+            can_auto_resolve=False,
+            iter_count=0,
+            truncated=False,
+        )
+
+    # DB 통합 wrapper 호출 — 내부에서 snapshot 구성 + BFS + validators 수행.
+    result = plan_cascade_preview(
+        body.task_id,
+        body.new_start,
+        body.new_end,
+        body.new_equipment_code,
+        db,
+    )
+
+    return CascadePreviewResponseV2(
+        request_id=result.request_id,
+        summary=result.summary,
+        pushes=[_push_to_schema(p) for p in result.pushes],
+        pulls=[_push_to_schema(p) for p in result.pulls],
+        unresolved=[_unres_to_schema(u) for u in result.unresolved],
+        can_auto_resolve=result.can_auto_resolve,
+        iter_count=result.iter_count,
+        truncated=result.truncated,
     )
 
 

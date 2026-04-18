@@ -1,6 +1,11 @@
 """
 Pydantic v2 스키마 — API 요청/응답 직렬화
-도메인 엔티티와 분리하여 표현 계층 책임만 담당
+도메인 엔티티와 분리하여 표현 계층 책임만 담당.
+
+패키지화(2026-04-18): 기존 단일 `schemas.py` 모듈을 디렉터리 패키지로 변환.
+- 기존 `from app.presentation.schemas import X` 호출 호환 유지를 위해 이 파일에
+  base 스키마들을 그대로 둠.
+- cascade 전용 스키마는 `schemas/cascade.py` 서브모듈로 분리 (Task 11).
 """
 
 from datetime import datetime

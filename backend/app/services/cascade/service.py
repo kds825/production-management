@@ -14,8 +14,9 @@ advance_fn / reverse_advance_fn 으로 주입받아 production 과 테스트를 
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import timedelta
 
-from .snap import Snap, SnapTask
+from .snap import Snap, SnapTask, build_snapshot
 from .bfs import same_equipment_overlapping, same_eq_prev_end
 from .validators import validate_due_date, validate_horizon, validate_cycles
 from .pull import propose_for_successors
