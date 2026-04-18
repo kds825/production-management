@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
-import type { ScheduleTask } from "../types";
+import type { Order, ScheduleTask } from "../types";
 import { apiFetch } from "@/shared/api/client";
 
 // ISO datetime-local 형식 (YYYY-MM-DDTHH:mm)
@@ -57,9 +57,19 @@ export function TaskFormModal() {
   const closeTaskFormModal = useScheduleStore((s) => s.closeTaskFormModal);
   const equipment = useScheduleStore((s) => s.equipment);
   const tasks = useScheduleStore((s) => s.tasks);
-  const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
+  const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
   const updateTask = useScheduleStore((s) => s.updateTask);
   const addTask = useScheduleStore((s) => s.addTask);
+
+  // Task 4.2: 모달은 "order" kind만 소비. batch_group kind는 Task 5.4에서
+  // 별도 UI로 처리되므로 이곳에서 필터링한 Order[] 만 사용한다.
+  const orderItems = useMemo<Order[]>(
+    () =>
+      unscheduledItems
+        .filter((i): i is { kind: "order"; order: Order } => i.kind === "order")
+        .map((i) => i.order),
+    [unscheduledItems],
+  );
 
   const [tab, setTab] = useState<Tab>("basic");
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
@@ -124,7 +134,7 @@ export function TaskFormModal() {
   // 수주 선택 시 자동 채우기
   const handleOrderSelect = useCallback(
     (orderId: string) => {
-      const order = unscheduledOrders.find((o) => o.id === orderId);
+      const order = orderItems.find((o) => o.id === orderId);
       if (!order) {
         setForm((prev) => ({ ...prev, order_id: orderId }));
         return;
@@ -139,7 +149,7 @@ export function TaskFormModal() {
         priority: order.priority,
       }));
     },
-    [unscheduledOrders],
+    [orderItems],
   );
 
   function validate(): boolean {
@@ -218,17 +228,14 @@ export function TaskFormModal() {
         };
 
         try {
-          const created = await apiFetch<{ id: string }>(
-            "/schedules/tasks",
-            {
-              method: "POST",
-              body: JSON.stringify({
-                ...newTask,
-                start: startDate.toISOString(),
-                end: endDate.toISOString(),
-              }),
-            },
-          );
+          const created = await apiFetch<{ id: string }>("/schedules/tasks", {
+            method: "POST",
+            body: JSON.stringify({
+              ...newTask,
+              start: startDate.toISOString(),
+              end: endDate.toISOString(),
+            }),
+          });
           newTask.id = created.id ?? newTask.id;
         } catch {
           console.warn("[TaskFormModal] API 생성 실패 (로컬 ID로 추가)");
@@ -324,14 +331,14 @@ export function TaskFormModal() {
 
               {/* 수주번호 / 제품명 */}
               <Field label="수주번호 / 제품명" required error={errors.product}>
-                {unscheduledOrders.length > 0 ? (
+                {orderItems.length > 0 ? (
                   <select
                     value={form.order_id}
                     onChange={(e) => handleOrderSelect(e.target.value)}
                     className={selectClass(false)}
                   >
                     <option value="">수주를 선택하세요</option>
-                    {unscheduledOrders.map((o) => (
+                    {orderItems.map((o) => (
                       <option key={o.id} value={o.id}>
                         {o.order_number} — {o.product}
                       </option>

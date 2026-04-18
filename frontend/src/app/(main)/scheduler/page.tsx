@@ -296,7 +296,16 @@ export default function SchedulerPage() {
   const equipment = useScheduleStore((s) => s.equipment);
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const range = useScheduleStore((s) => s.range);
-  const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
+  const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
+  // Task 4.2: 페이지는 "order" kind 개수만 활용 (CollapsiblePanel count).
+  // batch_group kind 카운트는 Task 5.4에서 별도 집계.
+  const unscheduledOrderItems = useMemo<Order[]>(
+    () =>
+      unscheduledItems
+        .filter((i): i is { kind: "order"; order: Order } => i.kind === "order")
+        .map((i) => i.order),
+    [unscheduledItems],
+  );
   const cascadePreview = useScheduleStore((s) => s.cascadePreview);
   const conflictModalOpen = useScheduleStore((s) => s.conflictModalOpen);
   const cascadeOriginalTask = useScheduleStore((s) => s.cascadeOriginalTask);
@@ -1895,8 +1904,8 @@ export default function SchedulerPage() {
           {/* 하단 미배정 수주 패널 */}
           <CollapsiblePanel
             title="미배정 작업"
-            count={unscheduledOrders.length}
-            defaultExpanded={unscheduledOrders.length > 0}
+            count={unscheduledOrderItems.length}
+            defaultExpanded={unscheduledOrderItems.length > 0}
             onAnimatingChange={setPanelAnimating}
           >
             <OrderInbox isAnimating={panelAnimating} />

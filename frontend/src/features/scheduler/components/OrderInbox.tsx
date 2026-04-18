@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { Order } from "../types";
@@ -193,13 +193,23 @@ interface OrderInboxProps {
  * 장비 그룹별 탭으로 분류하여 렌더링 — CollapsiblePanel 내부에 배치됩니다.
  */
 export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
-  const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
-  const setUnscheduledOrders = useScheduleStore((s) => s.setUnscheduledOrders);
+  const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
   const [activeTab, setActiveTab] = useState<EquipmentGroup | "전체">("전체");
 
   // mock 데이터 제거 — 미배정 작업은 DB 기반 (Stage 2 미실행 시 표시 없음)
 
-  if (unscheduledOrders.length === 0) {
+  // Task 4.2: unscheduledItems는 InboxItem union이므로, 기존 Order[] 로직을
+  // 유지하기 위해 "order" kind만 추출한 어댑터를 만든다.
+  // batch_group kind 렌더링은 Task 5.4에서 추가 예정.
+  const orderItems = useMemo<Order[]>(
+    () =>
+      unscheduledItems
+        .filter((i): i is { kind: "order"; order: Order } => i.kind === "order")
+        .map((i) => i.order),
+    [unscheduledItems],
+  );
+
+  if (orderItems.length === 0) {
     return (
       <div className="flex items-center justify-center px-4 py-3">
         <span className="text-[11px] text-gray-400">
@@ -212,9 +222,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
   // 그룹별 카운트 집계
   const groupCounts = EQUIPMENT_GROUPS.reduce(
     (acc, g) => {
-      acc[g] = unscheduledOrders.filter(
-        (o) => deriveEquipmentGroup(o) === g,
-      ).length;
+      acc[g] = orderItems.filter((o) => deriveEquipmentGroup(o) === g).length;
       return acc;
     },
     {} as Record<EquipmentGroup, number>,
@@ -223,8 +231,8 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
   // 현재 탭에 맞는 주문 필터
   const visibleOrders =
     activeTab === "전체"
-      ? unscheduledOrders
-      : unscheduledOrders.filter((o) => deriveEquipmentGroup(o) === activeTab);
+      ? orderItems
+      : orderItems.filter((o) => deriveEquipmentGroup(o) === activeTab);
 
   const tabColorMap: Record<EquipmentGroup, string> = {
     연선: "#6366F1",
@@ -245,7 +253,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
             color: activeTab === "전체" ? "#FFFFFF" : "#6B7280",
           }}
         >
-          전체 {unscheduledOrders.length}
+          전체 {orderItems.length}
         </button>
         {EQUIPMENT_GROUPS.filter((g) => groupCounts[g] > 0).map((g) => (
           <button

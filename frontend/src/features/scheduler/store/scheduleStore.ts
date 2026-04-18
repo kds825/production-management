@@ -33,6 +33,7 @@ import type {
   LineSpeedEntry,
   ProductionBatch,
   CascadePreview,
+  InboxItem,
 } from "../types";
 import {
   getLineSpeed,
@@ -132,7 +133,17 @@ interface ScheduleState {
   tasks: ScheduleTask[];
   violations: ConstraintViolation[];
   selectedTaskId: string | null;
-  unscheduledOrders: Order[];
+  /**
+   * 미배정 항목 (Task 4.1 union).
+   * - kind "order": 기존 단일 수주 카드
+   * - kind "batch_group": unassign된 배치 그룹 (Task 5.4에서 렌더링 지원)
+   */
+  unscheduledItems: InboxItem[];
+  /**
+   * Task 4.3/4.4에서 사용할 race-condition 가드.
+   * 같은 batch_group이 unassign/restore 중복 호출되지 않도록 in-flight 상태를 추적.
+   */
+  inFlightBatchGroups: Set<string>;
 
   // 라인 속도 데이터 (API에서 로드)
   lineSpeedData: LineSpeedEntry[];
@@ -201,16 +212,16 @@ interface ScheduleActions {
   /**
    * 생산계획등록에서 확정된 배치를 간트 차트에 자동 배치한다.
    * 각 배치를 equipment_group에 맞는 설비에 순차적으로 배치한다.
-   * 배치 실패 항목은 unscheduledOrders에 추가한다.
+   * 배치 실패 항목은 unscheduledItems에 "order" kind로 추가한다.
    */
   syncFromPlanRegister: (batches: ProductionBatch[]) => void;
-  setUnscheduledOrders: (orders: Order[]) => void;
+  setUnscheduledItems: (items: InboxItem[]) => void;
   setLineSpeedData: (data: LineSpeedEntry[]) => void;
 
   /**
    * 수주를 스케줄러에 배정한다.
    * - 라인 속도를 조회하여 종료 시각을 자동 계산한다.
-   * - 해당 수주를 unscheduledOrders에서 제거하고 tasks에 추가한다.
+   * - 해당 수주를 unscheduledItems에서 제거하고 tasks에 추가한다.
    */
   assignOrder: (orderId: string, equipmentId: string, startTime: Date) => void;
 
@@ -278,7 +289,8 @@ export const useScheduleStore = create<ScheduleStore>()(
     tasks: [],
     violations: [],
     selectedTaskId: null,
-    unscheduledOrders: [],
+    unscheduledItems: [],
+    inFlightBatchGroups: new Set<string>(),
     lineSpeedData: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "day",
@@ -454,9 +466,9 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
-    setUnscheduledOrders: (orders) => {
+    setUnscheduledItems: (items) => {
       set((state) => {
-        state.unscheduledOrders = orders;
+        state.unscheduledItems = items;
       });
     },
 
@@ -468,9 +480,14 @@ export const useScheduleStore = create<ScheduleStore>()(
 
     // 수주 → 스케줄 작업 배정
     assignOrder: (orderId, equipmentId, startTime) => {
-      const { unscheduledOrders, lineSpeedData } = get();
-      const order = unscheduledOrders.find((o) => o.id === orderId);
-      if (!order) return;
+      const { unscheduledItems, lineSpeedData } = get();
+      // union narrowing: "order" kind만 대상으로 삼고 id 매칭
+      const orderItem = unscheduledItems.find(
+        (i): i is { kind: "order"; order: Order } =>
+          i.kind === "order" && i.order.id === orderId,
+      );
+      if (!orderItem) return;
+      const order = orderItem.order;
 
       // 라인 속도 조회
       const lineSpeed = getLineSpeed(
@@ -511,8 +528,9 @@ export const useScheduleStore = create<ScheduleStore>()(
 
       set((state) => {
         state.tasks.push(newTask);
-        state.unscheduledOrders = state.unscheduledOrders.filter(
-          (o) => o.id !== orderId,
+        // "order" kind 중 해당 id만 제거. batch_group kind는 그대로 유지.
+        state.unscheduledItems = state.unscheduledItems.filter(
+          (i) => !(i.kind === "order" && i.order.id === orderId),
         );
 
         // cascade push: 새 작업이 기존 작업과 겹치면 뒤로 밀기
@@ -848,7 +866,10 @@ export const useScheduleStore = create<ScheduleStore>()(
 
       set((state) => {
         state.tasks.push(...newTasks);
-        state.unscheduledOrders.push(...failedOrders);
+        // 실패 수주는 "order" kind로 wrap하여 unscheduledItems에 추가.
+        state.unscheduledItems.push(
+          ...failedOrders.map((o) => ({ kind: "order" as const, order: o })),
+        );
         state.isEditMode = true;
 
         // 동기화 후 range를 tasks 시간 범위의 앞 2주로 자동 설정
