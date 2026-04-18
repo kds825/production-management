@@ -34,6 +34,7 @@ from app.services.calendar_engine import (
     calculate_start_datetime,
 )
 from app.services.audit_logger import log_decision
+from app.services.constraint_params import ConstraintParams, resolve_color_change_min
 from app.services.jit_scheduling import apply_jit_delay
 from app.exceptions import SchedulerOverlapError
 
@@ -454,6 +455,9 @@ def _run_optimization_once(
     for sr in speed_records:
         speed_map[(sr.equipment_code, float(sr.cross_section or 0))] = sr
 
+    # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
+    constraint_params = ConstraintParams.load(db)
+
     # 용접 시간 (4-4): constraint_config에서 welding_min 읽기
     welding_cfg = (
         db.query(ConstraintConfig)
@@ -814,8 +818,10 @@ def _run_optimization_once(
                         .filter(SpeedMaster.equipment_code == eq.equipment_code)
                         .first()
                     )
-                    color_change_min = (
-                        float(sm_color[0] or 120.0) if sm_color else 120.0
+                    sm_color_val = sm_color[0] if sm_color else None
+                    color_change_min = resolve_color_change_min(
+                        sm_color_min=sm_color_val,
+                        params=constraint_params,
                     )
             eq_total_duration += color_change_min
 

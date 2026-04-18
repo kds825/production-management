@@ -36,6 +36,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.services.audit_logger import log_decision
 from app.services.calendar_engine import calculate_end_datetime
+from app.services.constraint_params import ConstraintParams, resolve_color_change_min
 from app.services.schedule_optimizer import (
     PREDECESSOR_PROCESS,
     _DEFAULT_WELDING_MIN,
@@ -484,6 +485,9 @@ def cp_sat_schedule(
         (sr.equipment_code, float(sr.cross_section or 0)): sr
         for sr in db.query(SpeedMaster).all()
     }
+
+    # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
+    constraint_params = ConstraintParams.load(db)
 
     welding_cfg = (
         db.query(ConstraintConfig)
@@ -937,7 +941,11 @@ def cp_sat_schedule(
                     .filter(SpeedMaster.equipment_code == chosen_eq_code)
                     .first()
                 )
-                color_change_min = float(sm_c[0] or 120.0) if sm_c else 120.0
+                sm_c_val = sm_c[0] if sm_c else None
+                color_change_min = resolve_color_change_min(
+                    sm_color_min=sm_c_val,
+                    params=constraint_params,
+                )
 
         total_dur = (
             meta["work_dur"] + actual_setup + meta["drum_wind"] + color_change_min

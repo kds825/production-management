@@ -50,3 +50,20 @@ class ConstraintParams:
                 f"ConstraintConfig '{constraint_id}' params_json key '{key}' missing."
             )
         return float(row[key])
+
+
+def resolve_color_change_min(
+    sm_color_min: float | None,
+    params: "ConstraintParams",
+) -> float:
+    """색상교체 시간 결정.
+
+    Why: schedule_optimizer 와 cp_sat_optimizer 양쪽에서 동일 규칙을 쓰기 위해
+    이 모듈에 둠. 두 스케줄러가 각자 구현하면 드리프트 위험.
+
+    - SpeedMaster.setup_color_min 이 None 이면 ConstraintConfig 4-2 fallback.
+    - 0.0 은 '값 없음' 이 아닌 '0분 허용' 으로 처리 (시맨틱 교정).
+    """
+    if sm_color_min is None:
+        return params.get("4-2", "sheath_color_min")
+    return float(sm_color_min)
