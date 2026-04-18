@@ -1192,6 +1192,7 @@ export default function SchedulerPage() {
                 <tr style={{ backgroundColor: "#FEE2E2" }}>
                   {[
                     "지연",
+                    "상태",
                     "설비",
                     "규격",
                     "거래처",
@@ -1231,6 +1232,23 @@ export default function SchedulerPage() {
                       style={{ color: "#DC2626", whiteSpace: "nowrap" }}
                     >
                       +{lateDays}일
+                    </td>
+                    <td
+                      className="px-3 py-1.5"
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {t.status === "unassigned" ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+                          style={{ backgroundColor: "#9CA3AF" }}
+                        >
+                          미배치
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-[10px]">
+                          배치됨
+                        </span>
+                      )}
                     </td>
                     <td
                       className="px-3 py-1.5 text-gray-600"
