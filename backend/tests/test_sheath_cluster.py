@@ -57,6 +57,35 @@ def test_build_clusters_groups_by_category_week_color():
     assert "A120_흑_2026W15H2" in by_id
 
 
+def test_build_clusters_orders_group_keys_by_edd_within_cluster():
+    # 같은 W16H2 갈 cluster 에 속하지만 due 가 다른 3 그룹.
+    # 알파벳 순(150 < 300 < 400) 이 아니라 EDD 순으로 정렬되어야 한다.
+    groups_meta = {
+        "A100_갈_2026W16H2_150SQ": {
+            "batches": [_FakeBatch("저압시스", "갈", date(2026, 4, 17))],
+            "earliest_due": date(2026, 4, 17),
+        },
+        "A100_갈_2026W16H2_300SQ": {
+            "batches": [_FakeBatch("저압시스", "갈", date(2026, 4, 19))],
+            "earliest_due": date(2026, 4, 19),
+        },
+        "A100_갈_2026W16H2_400SQ": {
+            "batches": [_FakeBatch("저압시스", "갈", date(2026, 4, 17))],
+            "earliest_due": date(2026, 4, 17),
+        },
+    }
+    clusters = build_sheath_clusters(groups_meta)
+    assert len(clusters) == 1
+    gks = clusters[0].group_keys
+    # due 4/17 두 그룹이 앞에, due 4/19 그룹이 뒤에.
+    # 같은 due 내에서는 알파벳 tiebreak (150 < 400).
+    assert gks == [
+        "A100_갈_2026W16H2_150SQ",
+        "A100_갈_2026W16H2_400SQ",
+        "A100_갈_2026W16H2_300SQ",
+    ]
+
+
 def test_build_clusters_excludes_non_sheath_groups():
     groups_meta = {
         "연선_120SQ": {"batches": [_FakeBatch("연선", None, date(2026, 4, 10))]},

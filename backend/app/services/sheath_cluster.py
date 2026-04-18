@@ -90,18 +90,33 @@ def build_sheath_clusters(groups_meta: dict) -> list[SheathCluster]:
         bucket[key].append(gk)
         rep_of.setdefault(key, (rep, due_wk_tok))
 
+    def _gk_edd(gk: str) -> date:
+        """그룹의 earliest_due — 우선 meta 저장값, 없으면 batches 에서 계산."""
+        m = groups_meta.get(gk) or {}
+        ed = m.get("earliest_due")
+        if ed is not None:
+            return ed
+        dues = [b.due_date for b in (m.get("batches") or []) if b.due_date]
+        return min(dues) if dues else date.max
+
     clusters: list[SheathCluster] = []
     for (cat, due_wk, color), gks in bucket.items():
         _, due_wk_tok = rep_of[(cat, due_wk, color)]
         color_safe = color.replace("/", "_")
         cluster_id = f"{cat}_{color_safe}_{due_wk_tok}"
+        # Why EDD primary within cluster: 같은 week-bucket·색상 클러스터 내부의 그룹들
+        # 은 due 가 다를 수 있음(예: 4/17 Friday 와 4/19 Sunday 모두 W16H2).
+        # 알파벳 순(150SQ < 300SQ < 400SQ) 으로 배치하면 due 4/17 의 400SQ 가
+        # due 4/19 의 300SQ 뒤로 밀려 납기 초과 + 긴 batch 가 주말 걸침 → 뒤따르는
+        # cluster 전체 cascade. EDD 를 1차로 두면 같은 color chain 을 유지하면서
+        # 납기 순서를 보장.
         clusters.append(
             SheathCluster(
                 cluster_id=cluster_id,
                 equipment_category=cat,
                 color=color,
                 due_week_int=due_wk,
-                group_keys=sorted(gks),
+                group_keys=sorted(gks, key=lambda g: (_gk_edd(g), g)),
             )
         )
     return clusters
@@ -155,21 +170,21 @@ def compute_cluster_meta(cluster: SheathCluster, groups_meta: dict) -> dict[str,
 
 def cluster_sort_key(cluster: SheathCluster, groups_meta: dict) -> tuple:
     """묶음 정렬 키:
-    (pred_ready_wmin, latest_due, color_rank, due_week_int, cluster_id).
+    (latest_due, pred_ready_wmin, color_rank, due_week_int, cluster_id).
 
-    1차: pred_ready_wmin — 선행공정 끝난 순서대로 (설비 idle 최소화).
-         group_meta 에 pred_ready_wmin 이 주입되지 않은 그리디 경로나 테스트
-         에서는 0 으로 떨어져 latest_due 가 실질 primary 로 동작 (호환성).
-    2차: latest_due — 같은 pred_ready 이면 납기 임박 묶음 먼저 (EDD)
-    3차: color_rank — 흑→갈→회→... (같은 납기면 색상 체인 유도)
+    1차: latest_due — 납기 임박/오버듀 묶음을 앞으로 (납기 최우선)
+    2차: pred_ready_wmin — 같은 납기 내에서 선행공정 빨리 끝난 묶음 먼저
+         (설비 idle 최소화)
+    3차: color_rank — 흑→갈→회→... (같은 납기·pred면 색상 체인 유도)
     4차: due_week_int — 안전장치
     5차: cluster_id — 결정적 tiebreak
 
-    Why (2026-04-18 ultrathink): 기존 latest_due primary 는 선행공정이
-    한참 뒤에 끝나는 묶음이 앞에 와서 설비가 수 일 idle 되고, 그 사이 선행
-    공정이 이미 끝난 다른 색상/주차 묶음이 뒤로 밀려 납기 20 건 초과 유발.
-    선행공정 완료 시각을 1차 키로 두면 설비가 비는 순간에 곧바로 처리
-    가능한 묶음이 배치되고, append 정책이 뒤따르는 묶음을 자연스럽게 체인.
+    Why (2026-04-18 3rd iteration): 잠시 pred_ready_wmin 을 1차로 두었으나,
+    solver 가 이미 초과된 납기(overdue)의 선행공정을 idle 최소화 차원에서
+    뒤로 미루면서 pred_ready_wmin 이 매우 커지고, 결과적으로 긴급한 cluster
+    가 sort 맨 뒤로 가서 +9 일 초과 등 심각한 regression 발생 (실측).
+    → latest_due 를 다시 primary 로 두어 납기 순서 보장. pred_ready_wmin
+       은 같은 납기 내 tiebreak 로만 사용 (idle 최소화 효과).
     """
     from app.services.batch_grouping import _SHEATH_COLOR_RANK
 
@@ -181,8 +196,8 @@ def cluster_sort_key(cluster: SheathCluster, groups_meta: dict) -> tuple:
         default=0,
     )
     return (
-        pred_ready_wmin,
         latest_due,
+        pred_ready_wmin,
         color_rank,
         cluster.due_week_int,
         cluster.cluster_id,

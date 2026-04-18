@@ -873,15 +873,23 @@ def cp_sat_schedule(
                 earliest,
                 cust_prio,
             )
-        # 시스: 색상 묶음 단위 정렬 (sheath_cluster 기반)
-        # 1차: 묶음 순위 (cluster_sort_key: latest_due → color_rank → ...)
-        # 2차: 묶음 내 그룹 순서 (build 시 group_keys 정렬 → 결정적)
+        # 시스: CP-SAT 의 start_var 를 primary 로 사용 (solver 의 tardiness/idle
+        # 최소화 결정을 존중) → 빈 설비 idle 을 achievable future 클러스터로 채우게.
+        # Why: cluster_rank (latest_due primary) 는 overdue 클러스터를 앞에 두어
+        # achievable 클러스터의 idle-gap 활용 기회를 놓친다. 예: W17H1 흑 25 의
+        # pred 가 4/9 ready 지만 SH-A120 의 4/7~4/10 gap 대신 W16H2 흑 뒤(4/21)
+        # 에 배치되어 납기 초과. solver 는 chain_terms 로 color chain 도 선호하므로
+        # start_var 순서는 (a) 공정 선후, (b) tardiness 최소, (c) color chain 을
+        # 모두 반영한 결정이다.
+        # Tiebreak: cluster_rank 로 같은 시각에 여러 그룹이 올 때 색상 체인 유지.
         if _is_sheath_group(gk, meta["batches"]):
             rank = _cluster_rank.get(gk, (10**9, 10**9))
+            start_val = int(solver.value(start_vars[gk]))
             return (
                 proc_level,
                 date.max,
                 0.0,
+                start_val,
                 rank[0],
                 rank[1],
                 earliest,
@@ -1102,6 +1110,41 @@ def cp_sat_schedule(
                     due = meta["earliest_due"]
                     if not due or append_end.date() <= due:
                         earliest = append_earliest
+
+        # ── 시스 weekend-aware: 긴 batch 가 주말에 걸치면 다음 업무일 시작 ─────
+        # 실측 버그: 금요일 20:00 시작 갈 400SQ 가 주말 60h idle 후 월요일 11:00
+        # 종료 → 뒤따르는 8 개 묶음 모두 +1~+4 일 late. 긴 batch(>4h)가 금요일
+        # 오후 늦게 시작해 주말에 걸치는 것으로 예측되면 earliest 를 다음 월요일
+        # 08:00 으로 밀어 주말 걸침 회피. 설비 idle 약간 증가하나 뒤따르는 묶음
+        # 전체 지연 회피로 순이득.
+        if rep.process_name in ("저압시스", "고압시스"):
+            # 임시 end 계산: 현재 earliest 에 append 시 언제 끝나는가
+            _tentative_end = calculate_end_datetime(
+                earliest, total_dur, db, chosen_eq_code
+            )
+            _cross_weekend = False
+            _d = earliest.date()
+            while _d < _tentative_end.date():
+                if _d.weekday() >= 5:  # 토/일
+                    _cross_weekend = True
+                    break
+                _d += timedelta(days=1)
+            if _cross_weekend and total_dur > 240:
+                # 긴 batch 가 주말 걸침 → 다음 월요일 08:00 으로 이동
+                _e = earliest
+                while _e.weekday() >= 5:
+                    _e = _e.replace(
+                        hour=8, minute=0, second=0, microsecond=0
+                    ) + timedelta(days=1)
+                if _e.weekday() == 4 and _e.hour >= 17:  # 금 17시 이후면 월요일로
+                    _e = _e.replace(
+                        hour=8, minute=0, second=0, microsecond=0
+                    ) + timedelta(days=(7 - _e.weekday()) % 7 or 3)
+                # Due 초과 우려시만 적용 (납기 지킬 수 있는 그룹만 회피)
+                _new_end = calculate_end_datetime(_e, total_dur, db, chosen_eq_code)
+                due = meta["earliest_due"]
+                if not due or _new_end.date() <= due:
+                    earliest = _e
 
         # ── 긴급/중요 배치: 납기 위반 예상 시 선점 분할 시도 ────────────────────
         if (
