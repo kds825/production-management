@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { useScheduleStore } from "../store/scheduleStore";
-import type { Order } from "../types";
+import type { InboxItem, Order } from "../types";
+import { BatchGroupCard } from "./BatchGroupCard";
 
 /** 장비 그룹 목록 — 순서 고정 */
 const EQUIPMENT_GROUPS = ["연선", "B100", "A100", "A120"] as const;
@@ -198,18 +199,24 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
 
   // mock 데이터 제거 — 미배정 작업은 DB 기반 (Stage 2 미실행 시 표시 없음)
 
-  // Task 4.2: unscheduledItems는 InboxItem union이므로, 기존 Order[] 로직을
-  // 유지하기 위해 "order" kind만 추출한 어댑터를 만든다.
-  // batch_group kind 렌더링은 Task 5.4에서 추가 예정.
-  const orderItems = useMemo<Order[]>(
-    () =>
-      unscheduledItems
-        .filter((i): i is { kind: "order"; order: Order } => i.kind === "order")
-        .map((i) => i.order),
-    [unscheduledItems],
-  );
+  // Task 5.4: 렌더링/필터/카운트를 InboxItem union-aware로 전환.
+  // Task 4.2가 도입한 orderItems 어댑터는 이 파일 내부에서는 더 이상 쓰이지 않아 제거.
+  // TaskFormModal / scheduleStore 는 각자 자체적으로 unscheduledItems에서 order kind를 추출한다.
+  // union-aware 그룹 분류: order는 deriveEquipmentGroup, batch_group은 첫 공정의 equipment_group.
+  // batch_group의 equipment_group이 EQUIPMENT_GROUPS에 없으면 어느 탭에도 집계되지 않음 (전체 탭에만 표시).
+  function itemEquipmentGroup(item: InboxItem): EquipmentGroup | null {
+    if (item.kind === "order") {
+      return deriveEquipmentGroup(item.order);
+    }
+    const firstProcess = item.group.processes[0];
+    const g = firstProcess?.equipment_group;
+    if (g && (EQUIPMENT_GROUPS as readonly string[]).includes(g)) {
+      return g as EquipmentGroup;
+    }
+    return null;
+  }
 
-  if (orderItems.length === 0) {
+  if (unscheduledItems.length === 0) {
     return (
       <div className="flex items-center justify-center px-4 py-3">
         <span className="text-[11px] text-gray-400">
@@ -219,20 +226,22 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
     );
   }
 
-  // 그룹별 카운트 집계
+  // 그룹별 카운트 집계 (union-aware)
   const groupCounts = EQUIPMENT_GROUPS.reduce(
     (acc, g) => {
-      acc[g] = orderItems.filter((o) => deriveEquipmentGroup(o) === g).length;
+      acc[g] = unscheduledItems.filter(
+        (i) => itemEquipmentGroup(i) === g,
+      ).length;
       return acc;
     },
     {} as Record<EquipmentGroup, number>,
   );
 
-  // 현재 탭에 맞는 주문 필터
-  const visibleOrders =
+  // 현재 탭에 맞는 항목 필터 (union-aware)
+  const visibleItems: InboxItem[] =
     activeTab === "전체"
-      ? orderItems
-      : orderItems.filter((o) => deriveEquipmentGroup(o) === activeTab);
+      ? unscheduledItems
+      : unscheduledItems.filter((i) => itemEquipmentGroup(i) === activeTab);
 
   const tabColorMap: Record<EquipmentGroup, string> = {
     연선: "#6366F1",
@@ -253,7 +262,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
             color: activeTab === "전체" ? "#FFFFFF" : "#6B7280",
           }}
         >
-          전체 {orderItems.length}
+          전체 {unscheduledItems.length}
         </button>
         {EQUIPMENT_GROUPS.filter((g) => groupCounts[g] > 0).map((g) => (
           <button
@@ -275,10 +284,21 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
         className="flex flex-row gap-2 px-3 py-2 overflow-x-auto"
         style={{ minHeight: 0 }}
       >
-        {visibleOrders.map((order) => (
-          <OrderCard key={order.id} order={order} disableDrag={isAnimating} />
-        ))}
-        {visibleOrders.length === 0 && (
+        {visibleItems.map((item) =>
+          item.kind === "order" ? (
+            <OrderCard
+              key={`order-${item.order.id}`}
+              order={item.order}
+              disableDrag={isAnimating}
+            />
+          ) : (
+            <BatchGroupCard
+              key={`bg-${item.group.batch_group}`}
+              group={item.group}
+            />
+          ),
+        )}
+        {visibleItems.length === 0 && (
           <span className="text-[11px] text-gray-400 self-center">
             해당 그룹의 미배정 작업이 없습니다
           </span>
