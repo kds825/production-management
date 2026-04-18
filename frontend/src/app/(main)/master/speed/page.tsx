@@ -25,6 +25,20 @@ type SetupField =
   | "setup_compound_min"
   | "setup_start_min";
 
+/**
+ * setup_spec_min 이 ConstraintConfig 4-1 로 관리되는 행인지 판정.
+ * Why: 4 공정(연선/저압절연/저압시스/고압절연)은 /master/constraints 4-1 이
+ * authoritative 이므로, 이 행의 setup_spec_min 편집은 스케줄러에서 무시됨.
+ * 혼선 방지를 위해 UI 에서 해당 셀을 숨기고 4-1 로 이동 힌트를 노출한다.
+ * 장비 prefix 로 판정: ST-*(연선), EX-*(저압절연/고압절연CV), SH-A100/A120(저압시스).
+ */
+function isSpecMinManagedBy41(equipment_code: string): boolean {
+  if (equipment_code.startsWith("ST-")) return true;
+  if (equipment_code.startsWith("EX-")) return true;
+  if (equipment_code === "SH-A100" || equipment_code === "SH-A120") return true;
+  return false;
+}
+
 export default function SpeedPage() {
   const [speeds, setSpeeds] = useState<SpeedRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,9 +110,16 @@ export default function SpeedPage() {
       <DriftBanner refreshKey={driftRefresh} />
 
       <p className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-        이 장비·SQ 조합의 <b>실제 값</b> 을 편집합니다. 값이 있으면 이 값이 우선
-        적용되고, 없으면 <code>/master/constraints</code> 의 공정 기본값
-        (4-1/4-2) 이 fallback 으로 사용됩니다.
+        이 장비·SQ 조합의 <b>실제 값</b> 을 편집합니다.
+        연선/저압절연/저압시스/고압절연의 <b>규격교체</b> 는{" "}
+        <a
+          href="/master/constraints"
+          className="text-blue-700 underline hover:text-blue-900"
+        >
+          제약 파라미터 4-1
+        </a>{" "}
+        에서 관리됩니다 (이 표에서 편집 불가). 색상교체 등 나머지 값은 없으면
+        4-2 등이 fallback 으로 사용됩니다.
       </p>
 
       <div className="overflow-x-auto rounded-lg border">
@@ -131,10 +152,20 @@ export default function SpeedPage() {
                   {s.line_speed_mpm || "미기재"}
                 </td>
                 <td className="px-2 py-1 text-right">
-                  <NumberCell
-                    value={Number(s.setup_spec_min ?? 0)}
-                    onSave={(v) => saveCell(s.speed_id, "setup_spec_min", v)}
-                  />
+                  {isSpecMinManagedBy41(s.equipment_code) ? (
+                    <a
+                      href="/master/constraints"
+                      title="이 공정의 규격교체는 제약 파라미터 4-1 에서 관리됩니다"
+                      className="block rounded bg-gray-50 px-2 py-1 text-xs text-gray-400 hover:bg-blue-50 hover:text-blue-600"
+                    >
+                      4-1 에서 관리 →
+                    </a>
+                  ) : (
+                    <NumberCell
+                      value={Number(s.setup_spec_min ?? 0)}
+                      onSave={(v) => saveCell(s.speed_id, "setup_spec_min", v)}
+                    />
+                  )}
                 </td>
                 <td className="px-2 py-1 text-right">
                   <NumberCell
