@@ -15,6 +15,7 @@ import { useScheduleStore } from "../store/scheduleStore";
 import { EquipmentSidebar } from "./EquipmentSidebar";
 import { GanttTaskBlock } from "./GanttTaskBlock";
 import { TodayMarker } from "./TodayMarker";
+import { ChainHighlightOverlay } from "./ChainHighlightOverlay";
 import { useTimelineNavigation } from "../../../shared/hooks/useTimelineNavigation";
 import type { ScheduleTask, Equipment, ViewFilterType } from "../types";
 import type { CascadePreviewResponse, PushEntry } from "../api/cascade.types";
@@ -1071,7 +1072,38 @@ export function SchedulerView({
   }, []);
 
   const handleSelectionEnd = useCallback(() => {
-    // 선택 유지 (우클릭 대기용) — 우클릭 핸들러에서 clear
+    // Task 9 Step 3 — "순수 click" (pointer 이동 < 5px) 으로 판정되면 선택된 task 를 해제.
+    // range-drag (>= 5px) 은 그대로 유지해 우클릭 prefill 경로를 보존.
+    // 블록 click 은 GanttRow:223 의 `data-draggable` 필터로 sharedSelection 자체가 새로 set
+    // 되지 않으므로 이 deselect 경로를 타지 않는다.
+    const sel = sharedSelection;
+    if (sel && Math.abs(sel.currentX - sel.startX) < 5) {
+      const { selectedTaskId, selectTask } = useScheduleStore.getState();
+      if (selectedTaskId !== null) selectTask(null);
+      setSharedSelection(null);
+    }
+    // sel 이 없거나 range-drag 인 경우엔 기존처럼 선택 유지 (우클릭 대기용).
+  }, [sharedSelection]);
+
+  // Task 9 Step 2 — Esc 로 chain-highlight 해제.
+  // INPUT/TEXTAREA/contentEditable 에서 Esc 는 무시 (모달 닫기 등 기존 동작 방해 방지).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const { selectedTaskId, selectTask } = useScheduleStore.getState();
+      if (selectedTaskId !== null) selectTask(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   return (
@@ -1142,8 +1174,11 @@ export function SchedulerView({
               />
             </div>
 
-            {/* 설비 행 */}
-            <div style={{ position: "relative", zIndex: 1 }}>
+            {/* 설비 행 — data-testid="timeline-bg" 는 E2E Step 3.5 편의용 (기능 영향 없음) */}
+            <div
+              data-testid="timeline-bg"
+              style={{ position: "relative", zIndex: 1 }}
+            >
               {visibleEquipment.map((eq) => (
                 <GanttRow
                   key={eq.id}
@@ -1173,6 +1208,18 @@ export function SchedulerView({
                     : "선택한 필터에 해당하는 설비가 없습니다"}
                 </div>
               )}
+
+              {/* Task 9 — chain highlight 오버레이. store 의 selectedChainIds/selectedArrows 를
+                  구독해 좌표 SVG 를 렌더. selectedChainIds === null 이면 조기 리턴. */}
+              <ChainHighlightOverlay
+                tasks={tasks}
+                visibleEquipment={visibleEquipment}
+                rangeStart={rangeStart}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalWidth={timelineWidth + SIDEBAR_WIDTH}
+                totalHeight={totalHeight}
+              />
             </div>
           </div>
         </div>{" "}
