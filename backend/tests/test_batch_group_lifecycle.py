@@ -386,3 +386,61 @@ def test_compute_restore_at_plan_not_found(db: Session):
             anchor_equipment_code="DS-C11D",
             anchor_start=datetime(2026, 4, 25, 9, 0),
         )
+
+
+def test_compute_restore_at_plan_single_task(db: Session):
+    """batch_seq=1 하나만 존재하는 batch_group → downstream 루프 미실행 경로 검증.
+
+    엣지 케이스: 단일 공정 batch_group (예: 시스만 있는 경우). anchor 계산 이후
+    downstream 이 비어 last_end 업데이트 루프가 동작하지 않는 분기를 커버.
+    """
+    from app.services.batch_group_lifecycle import compute_restore_at_plan
+
+    # 단일 batch_seq 시드 — _seed_planned_group은 3공정이라 인라인 구성
+    b = ProductionBatch(
+        run_label="rl-rp-single",
+        sales_order_id="ORD-1",
+        sales_order_line=1,
+        process_name="연선",
+        batch_seq=1,
+        status="planned",
+        spec_raw="25SQ",
+        sq_mm2=25,
+        total_length_m=1000.0,
+        drum_count=1,
+        drum_length_m=1000.0,
+        batch_group="rp-single",
+        wip_matched_id=None,
+    )
+    db.add(b)
+    db.flush()
+    t = ScheduleTask(
+        batch_id=b.batch_id,
+        equipment_code="DS-C11D",
+        start_datetime=datetime(2026, 4, 20, 8, 0),
+        end_datetime=datetime(2026, 4, 20, 10, 0),
+        status="planned",
+        batch_group="rp-single",
+        run_label="rl-rp-single",
+    )
+    db.add(t)
+    db.flush()
+
+    unassign_batch_group(db, "rp-single", reason="자재지연")
+    db.flush()
+
+    anchor_start = datetime(2026, 4, 25, 9, 0)
+    result = compute_restore_at_plan(
+        db,
+        batch_group="rp-single",
+        anchor_equipment_code="DS-N11D",
+        anchor_start=anchor_start,
+    )
+
+    assert len(result.task_positions) == 1
+    anchor = result.task_positions[0]
+    assert anchor.is_anchor is True
+    assert anchor.new_equipment_code == "DS-N11D"
+    assert anchor.new_start == anchor_start
+    # duration 2h 보존
+    assert anchor.new_end == datetime(2026, 4, 25, 11, 0)
