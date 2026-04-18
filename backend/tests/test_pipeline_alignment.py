@@ -125,6 +125,62 @@ def test_delays_start_when_predecessor_ends_later(monkeypatch):
     assert aligned_end == datetime(2026, 4, 17, 8, 0)
 
 
+def test_tail_offset_applies_even_when_phase1_did_not_shift_start(monkeypatch):
+    """aligned_end bumped by Phase 1 에서도 tail_offset 이 적용되어야 TIE 방지.
+
+    시나리오: scheduler 가 first-drum overlap 으로 start 를 이미 밀어놓은 상태.
+    reverse_start ≤ current_start 이므로 Phase 1 에서 start 는 그대로.
+    하지만 current_end < pred_end 면 aligned_end 가 pred_end 로 bump 되면서
+    tail 없이 정확히 pred_end 에 정렬 → TIE. 이 케이스도 shift 되어야 한다.
+    """
+    from app.services import schedule_optimizer
+
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "calculate_start_datetime",
+        lambda end, dur, db, eq: end - timedelta(minutes=dur),
+    )
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "calculate_end_datetime",
+        lambda start, dur, db, eq: start + timedelta(minutes=dur),
+    )
+    monkeypatch.setattr(
+        schedule_optimizer,
+        "_find_available_slot",
+        lambda earliest, dur, slots, db, eq: earliest,
+    )
+
+    # current_start 가 이미 지연돼 있고 current_end 가 pred_end 직전
+    current_start = datetime(2026, 4, 13, 8, 0)
+    duration_min = 2 * 24 * 60  # 2일
+    current_end = current_start + timedelta(minutes=duration_min)  # 4/15 08:00
+    pred_end = datetime(2026, 4, 15, 10, 0)  # 2h 뒤
+    tail = 30
+
+    aligned_start, aligned_end = schedule_optimizer.align_start_to_predecessor_end(
+        process_name="고압시스",
+        pred_proc="고압절연",
+        group_sqs={300},
+        process_end_by_sq={("고압절연", 300): pred_end},
+        current_start=current_start,
+        current_end=current_end,
+        duration_min=duration_min,
+        tail_offset_min=tail,
+        slots=[],
+        db=_mock_db(),
+        equipment_code="SH-A150",
+    )
+
+    # 불변식: aligned_end > pred_end (STRICTLY later, not equal)
+    assert aligned_end > pred_end, (
+        f"TIE: aligned_end {aligned_end} == pred_end {pred_end} "
+        f"(tail_offset={tail} min should make it strictly later)"
+    )
+    # 블록 폭 유지
+    assert (aligned_end - aligned_start).total_seconds() / 60 == duration_min
+
+
 def test_tail_offset_shifts_end_strictly_after_pred_end(monkeypatch):
     """tail_offset_min > 0 이면 aligned_end 가 pred_end 이후로 이동 (물리 정합).
 
