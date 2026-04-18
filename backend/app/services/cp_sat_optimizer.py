@@ -1027,21 +1027,31 @@ def cp_sat_schedule(
                     if ptask and ptask.end_datetime > earliest:
                         earliest = ptask.end_datetime
 
-        # ── 시스 append-only: 색상 체인 보존 ──────────────────────────────────
-        # Why: _find_available_slot 은 earliest 이후 "빈 공간 중 가장 빠른 slot"
-        # 을 찾는다. 시스의 경우 solved_order 가 색상 우선으로 정렬되더라도 앞서
-        # 배치된 그룹이 earliest 지연으로 뒤로 밀리면, 다음 색상 그룹이 이전 빈
-        # 공간으로 끼어들어 timeline 순서에서 색상이 다시 섞인다.
-        # 해결: 시스 그룹은 해당 설비 timeline 마지막 뒤에만 배치하도록 earliest
-        # 를 강제 — solved_order(색상 우선) ≡ timeline 순서를 보장한다.
-        # Tradeoff: 설비 유휴가 약간 늘 수 있으나 색상 교체 비용(수십분) 대비 이득.
-        # 납기 위반은 위반 체커가 감지.
+        # ── 시스 조건부 append-only: "납기 지키는 선에서 색상 우선" ─────────────
+        # 무조건 append-only 는 timeline 앞쪽의 빈 공간을 낭비해 뒤쪽 그룹이
+        # 수일~수백 시간 밀리고 납기 초과가 누적된다 (실측: gap 최대 436h).
+        #
+        # 조건부 정책:
+        #   1) 현재 그룹을 timeline 마지막 뒤에 붙였을 때(append 시뮬) 납기 초과
+        #      여부를 계산.
+        #   2) 납기 여유 있으면 → append-only 유지 (색상 체인 보존 목적)
+        #   3) 납기 초과 예상이면 → earliest 그대로 두고 _find_available_slot
+        #      이 빈 공간을 사용하도록 허용 (납기 우선)
+        #
+        # 사용자 규칙 "납기 지키는 선에서 색상 우선" 의 정확한 구현.
+        # 색상 교체 비용(수십 분)은 납기 위반(일 단위) 대비 작으므로 납기 보호가
+        # 우선. 납기 여유 있는 그룹(W17/W18 등)에서는 여전히 색상 체인 유지.
         if rep.process_name in ("저압시스", "고압시스"):
             eq_slots = timeline.get(chosen_eq_code, [])
             if eq_slots:
                 last_end = max(slot[1] for slot in eq_slots)
-                if last_end > earliest:
-                    earliest = last_end
+                append_earliest = max(earliest, last_end)
+                append_end = calculate_end_datetime(
+                    append_earliest, total_dur, db, chosen_eq_code
+                )
+                due = meta["earliest_due"]
+                if not due or append_end.date() <= due:
+                    earliest = append_earliest
 
         # ── 긴급/중요 배치: 납기 위반 예상 시 선점 분할 시도 ────────────────────
         if (
