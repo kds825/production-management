@@ -42,6 +42,10 @@ import {
   xToTime,
   computeTimeBreakdown,
 } from "@/features/scheduler/utils/ganttUtils";
+import {
+  filterEquipmentByView,
+  taskMatchesViewFilter,
+} from "@/features/scheduler/utils/viewFilter";
 import { calcConvertedQty } from "@/shared/utils/batchGrouping";
 
 /** 드래그 중인 아이템 정보 */
@@ -299,6 +303,7 @@ export default function SchedulerPage() {
   const clearPreviewOffsets = useScheduleStore((s) => s.clearPreviewOffsets);
   const tasks = useScheduleStore((s) => s.tasks);
   const equipment = useScheduleStore((s) => s.equipment);
+  const viewFilter = useScheduleStore((s) => s.viewFilter);
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const range = useScheduleStore((s) => s.range);
   const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
@@ -412,9 +417,23 @@ export default function SchedulerPage() {
   // ── 납기 초과 패널 상태 ──
   const [showLatePanel, setShowLatePanel] = useState(false);
 
-  // 납기 초과 태스크: 배치 종료 시각 > 납기일 자정
+  // 납기 초과 태스크: 배치 종료 시각 > 납기일 자정.
+  // 뷰 필터(전체/저압만/고압만/공정별) 에 반응 — 필터에서 제외된 설비의 task 는 카운트·목록에서 빠짐.
+  const visibleEquipmentIds = useMemo(
+    () =>
+      new Set(
+        filterEquipmentByView(
+          equipment,
+          viewFilter.filterType,
+          viewFilter.filterValue,
+        ).map((eq) => eq.id),
+      ),
+    [equipment, viewFilter.filterType, viewFilter.filterValue],
+  );
+
   const lateTasks = useMemo(() => {
     return tasks
+      .filter((t) => taskMatchesViewFilter(t, visibleEquipmentIds))
       .filter((t) => {
         if (!t.delivery_date) return false;
         const dd =
@@ -442,7 +461,7 @@ export default function SchedulerPage() {
         return { task: t, lateDays };
       })
       .sort((a, b) => b.lateDays - a.lateDays);
-  }, [tasks]);
+  }, [tasks, visibleEquipmentIds]);
 
   // 자동배열 실행 — 최신 런 라벨을 먼저 조회한 뒤 stage2 호출
   const handleAutoSchedule = useCallback(async () => {
