@@ -537,3 +537,82 @@ class TestBatchGroupSnapshotsRoute:
         # s2는 planned 상태이므로 응답에 없어야 함
         snap_s2 = next((g for g in groups if g["batch_group"] == "snap-s2"), None)
         assert snap_s2 is None
+
+
+class TestBatchGroupRestoreAtRoutes:
+    """POST /api/pipeline/batch-group/{bg}/restore-at — anchor 기준 재배치 preview."""
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_restore_at_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "ra-1")
+        client.post(
+            "/api/pipeline/batch-group/ra-1/unassign",
+            json={"reason": "자재지연"},
+        )
+        res = client.post(
+            "/api/pipeline/batch-group/ra-1/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["batch_group"] == "ra-1"
+        assert len(body["task_positions"]) == 3
+        assert body["task_positions"][0]["is_anchor"] is True
+
+    def test_restore_at_status_error_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        # planned 상태(미unassign) 그룹에 restore_at 시도 → BatchGroupStatusError → 400
+        _seed_planned_group(db, "ra-2")
+        res = client.post(
+            "/api/pipeline/batch-group/ra-2/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 400
+
+    def test_restore_at_not_found_returns_404(self):
+        res = client.post(
+            "/api/pipeline/batch-group/nonexistent-ra/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 404
+
+    def test_restore_at_bad_body_returns_422(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "ra-3")
+        client.post(
+            "/api/pipeline/batch-group/ra-3/unassign",
+            json={"reason": "자재지연"},
+        )
+        # anchor_start 누락 → Pydantic 422
+        res = client.post(
+            "/api/pipeline/batch-group/ra-3/restore-at",
+            json={"anchor_equipment_code": "DS-C11D"},
+        )
+        assert res.status_code == 422

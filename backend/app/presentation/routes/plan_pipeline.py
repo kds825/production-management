@@ -2009,6 +2009,65 @@ def restore_batch_group_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# POST /pipeline/batch-group/{bg}/restore-at — anchor 기준 재배치 preview (Task 1.2)
+#
+# no-mutation preview: 서비스가 flush/commit 없이 계산 결과만 반환한다.
+# 프론트가 CascadePreviewModal로 렌더 후 확정 시 bulk-update-v2로 일괄 반영.
+# ---------------------------------------------------------------------------
+
+
+from app.presentation.schemas.restore_at import RestoreAtRequest, RestoreAtResponse
+from app.services.batch_group_lifecycle import (
+    BatchGroupNotFoundError,
+    BatchGroupStatusError,
+    compute_restore_at_plan,
+)
+
+
+@router.post(
+    "/batch-group/{batch_group}/restore-at",
+    summary="unassigned batch_group 을 anchor 위치 기준으로 재배치 preview (no mutation)",
+)
+def restore_batch_group_at_endpoint(
+    batch_group: str,
+    body: RestoreAtRequest,
+    db: Session = Depends(get_db),
+) -> RestoreAtResponse:
+    """no-mutation preview — 프론트가 이 결과를 CascadePreviewModal 로 렌더 →
+    확정 시 bulk-update-v2 로 일괄 반영.
+
+    Responses:
+        200: RestoreAtResponse (task_positions + cascade-preview-v2 호환 필드)
+        400: unassigned 외 상태 혼재 (BatchGroupStatusError)
+        404: batch_group 없음 (BatchGroupNotFoundError)
+        422: body 검증 실패 (Pydantic)
+    """
+    try:
+        result = compute_restore_at_plan(
+            db,
+            batch_group=batch_group,
+            anchor_equipment_code=body.anchor_equipment_code,
+            anchor_start=body.anchor_start,
+        )
+    except BatchGroupNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BatchGroupStatusError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RestoreAtResponse(
+        batch_group=result.batch_group,
+        task_positions=[tp.__dict__ for tp in result.task_positions],
+        pushes=result.pushes,
+        pulls=result.pulls,
+        unresolved=result.unresolved,
+        request_id=result.request_id,
+        can_auto_resolve=result.can_auto_resolve,
+        iter_count=result.iter_count,
+        truncated=result.truncated,
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /pipeline/batch-group-snapshots — unassigned batch_group 목록 (Task 3.3)
 #
 # 프론트 OrderInbox가 새로고침 시 호출. batch_group 단위 집계 + unassign_reason 포함.
