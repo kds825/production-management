@@ -1244,3 +1244,63 @@ def bulk_update_v2(
         change_set_id=change_set_id if real_changes else "",
         updated_task_ids=updated_ids,
     )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/schedules/revert/{change_set_id}
+#
+# Task 14: Undo — 가장 최근 change_set 1건만 되돌림.
+#
+# 계약:
+#   - 404: 알 수 없는 change_set_id.
+#   - 409: 이 change_set 이후 더 최근 change_set 이 존재 (freshness 실패).
+#          PoC 단계에서는 최근 1건만 undo 스코프 — 중간 revert 는 일관성을 깰 수 있어 거부.
+#   - 200: snapshot_before 로 task.start/end/equipment_code 복구 → change_set 삭제 후 커밋.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/revert/{change_set_id}")
+def revert(change_set_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """change_set 한 건을 undo — snapshot_before 값을 schedule_task 에 재적용.
+
+    왜 "최신 1건만": 여러 change_set 을 역순으로 뒤로 감는 full history 는 스냅샷
+    간 교차 의존성(예: 두 change_set 이 같은 task 를 덮어쓴 경우) 을 해소해야 해서
+    비용이 크다. PoC 는 직전 1건만 안전하게 되돌리는 계약으로 단순화.
+    """
+    cs = db.get(ScheduleChangeSet, change_set_id)
+    if cs is None:
+        raise HTTPException(status_code=404, detail="change_set_id not found")
+
+    # Freshness 검증 — 이 change_set 이후 새 change_set 이 있으면 undo 거부.
+    newer = (
+        db.query(ScheduleChangeSet)
+        .filter(ScheduleChangeSet.created_at > cs.created_at)
+        .order_by(ScheduleChangeSet.created_at.asc())
+        .first()
+    )
+    if newer is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"newer change_set exists: {newer.change_set_id} "
+                f"(created_at={newer.created_at.isoformat()})"
+            ),
+        )
+
+    # snapshot_before 로 복구 — task_id 키는 bulk_update_v2 가 str 로 저장.
+    # ScheduleTask.task_id 는 Integer PK 이므로 isdigit 이면 int 캐스팅.
+    for task_id_str, snap in (cs.snapshot_before or {}).items():
+        task_pk: Any = int(task_id_str) if task_id_str.isdigit() else task_id_str
+        t = db.get(ScheduleTaskModel, task_pk)
+        if t is None:
+            # 극단적 race — task 가 삭제된 경우 skip (409 보다 관대하게).
+            continue
+        t.start_datetime = datetime.fromisoformat(snap["start"])
+        t.end_datetime = datetime.fromisoformat(snap["end"])
+        if snap.get("equipment_code"):
+            t.equipment_code = snap["equipment_code"]
+
+    # change_set 삭제 — 같은 id 로 재revert 방지 (멱등성 대신 1회 소비 선택).
+    db.delete(cs)
+    db.commit()
+    return {"reverted": True, "change_set_id": change_set_id}
