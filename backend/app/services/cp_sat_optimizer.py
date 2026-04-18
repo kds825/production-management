@@ -1055,6 +1055,11 @@ def cp_sat_schedule(
                 hours=1
             )
 
+        # 체인 하이라이트 — 대표 order 의 상류 task id 를 predecessor 로 기록
+        rep_pred_task_id = predecessor_map.get(
+            (rep.sales_order_id, rep.sales_order_line)
+        )
+
         task = ScheduleTask(
             batch_id=rep.batch_id,
             equipment_code=chosen_eq_code,
@@ -1064,6 +1069,7 @@ def cp_sat_schedule(
             status="scheduled",
             run_label=run_label,
             batch_group=gk,
+            predecessor_task_id=rep_pred_task_id,
         )
         db.add(task)
         db.flush()
@@ -1164,6 +1170,11 @@ def cp_sat_schedule(
                 hours=1
             )
 
+        # 체인 하이라이트 — 잔여 배치도 같은 (order, line) 의 predecessor 계보 유지
+        rem_pred_task_id = predecessor_map.get(
+            (rem_b.sales_order_id, rem_b.sales_order_line)
+        )
+
         rem_task = ScheduleTask(
             batch_id=rem_b.batch_id,
             equipment_code=eq_code,
@@ -1173,6 +1184,7 @@ def cp_sat_schedule(
             status="scheduled",
             run_label=run_label,
             batch_group=rem_b.batch_group,
+            predecessor_task_id=rem_pred_task_id,
         )
         db.add(rem_task)
         db.flush()
