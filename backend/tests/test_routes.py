@@ -416,3 +416,124 @@ class TestBatchGroupUnassignRoutes:
             json={"reason": "자재지연"},
         )
         assert res.status_code == 404
+
+
+class TestBatchGroupRestoreRoutes:
+    """POST /api/pipeline/batch-group/{bg}/restore 단일 트랜잭션 검증.
+
+    DI override 이유는 TestBatchGroupUnassignRoutes와 동일 — conftest rollback이
+    실 DB 오염을 막을 수 있도록 테스트 세션을 주입하고 commit을 flush로 치환한다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_restore_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "rr1")
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/rr1/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        res = client.post("/api/pipeline/batch-group/rr1/restore")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert len(body["restored_tasks"]) == 3
+        assert body["conflicts"] == []
+        assert body["idempotent"] is False
+
+    def test_restore_conflict_returns_409(self, db):
+        from app.infrastructure.models.schedule_task import ScheduleTask
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "rr2")
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/rr2/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        # 다른 group의 task를 rr2의 첫 task 슬롯으로 이동시켜 충돌 유도
+        _seed_planned_group(db, "rr3")
+        rr2_first_task = (
+            db.query(ScheduleTask)
+            .filter(ScheduleTask.batch_group == "rr2")
+            .order_by(ScheduleTask.task_id)
+            .first()
+        )
+        rr3_task = (
+            db.query(ScheduleTask).filter(ScheduleTask.batch_group == "rr3").first()
+        )
+        rr3_task.equipment_code = rr2_first_task.equipment_code
+        rr3_task.start_datetime = rr2_first_task.start_datetime
+        rr3_task.end_datetime = rr2_first_task.end_datetime
+        db.flush()
+
+        res = client.post("/api/pipeline/batch-group/rr2/restore")
+        assert res.status_code == 409, res.text
+        detail = res.json().get("detail")
+        assert isinstance(detail, dict) and "conflicts" in detail
+        assert len(detail["conflicts"]) >= 1
+
+    def test_restore_not_found_returns_404(self, db):
+        res = client.post("/api/pipeline/batch-group/nonexistent-rr/restore")
+        assert res.status_code == 404
+
+
+class TestBatchGroupSnapshotsRoute:
+    """GET /api/pipeline/batch-group-snapshots — unassigned 목록 + 사유."""
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_list_unassigned_snapshots_includes_reason(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "snap-s1")
+        _seed_planned_group(db, "snap-s2")
+        # s1만 unassign
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/snap-s1/unassign",
+            json={"reason": "설비고장"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        res = client.get("/api/pipeline/batch-group-snapshots")
+        assert res.status_code == 200, res.text
+        groups = res.json()["groups"]
+        snap_s1 = next((g for g in groups if g["batch_group"] == "snap-s1"), None)
+        assert snap_s1 is not None, "snap-s1 not in response"
+        assert snap_s1["unassign_reason"] == "설비고장"
+        assert snap_s1["order_count"] == 3  # 3 batches (연선/절연/시스)
+        assert len(snap_s1["processes"]) == 3
+
+        # s2는 planned 상태이므로 응답에 없어야 함
+        snap_s2 = next((g for g in groups if g["batch_group"] == "snap-s2"), None)
+        assert snap_s2 is None

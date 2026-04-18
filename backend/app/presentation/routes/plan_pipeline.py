@@ -1923,3 +1923,136 @@ def unassign_batch_group_endpoint(
 
     db.commit()
     return result
+
+
+# ---------------------------------------------------------------------------
+# POST /pipeline/batch-group/{bg}/restore — unassigned → planned 복원 (Task 3.3)
+#
+# 왜 단일 트랜잭션:
+#   batch_group_lifecycle.restore_batch_group은 flush만 수행 (Eng Critical #2).
+#   라우트가 서비스 flush 직후 audit_log INSERT를 추가하고 한 번만 commit하여,
+#   "상태 복원 + 감사 로그"가 원자적으로 persist 되거나 둘 다 롤백되게 한다.
+#
+# conflicts가 있을 경우:
+#   서비스는 mutate하지 않고 반환하므로 commit/rollback 없이 바로 409로 매핑.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/batch-group/{batch_group}/restore",
+    summary="unassigned batch_group을 원래 자리로 복원 (status flip)",
+)
+def restore_batch_group_endpoint(
+    batch_group: str, db: Session = Depends(get_db)
+) -> dict:
+    """단일 트랜잭션: 서비스 flush → audit_log INSERT → commit.
+
+    Responses:
+        200: 성공 — restored_tasks 배열 (멱등이면 빈 배열)
+        404: batch_group 없음
+        400: unassigned 외 상태 혼재
+        409: 원래 자리 점유됨 — detail.conflicts 에 상세 반환
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+    from app.services.batch_group_lifecycle import (
+        BatchGroupNotFoundError,
+        BatchGroupStatusError,
+        restore_batch_group,
+    )
+
+    try:
+        result = restore_batch_group(db, batch_group)
+    except BatchGroupNotFoundError as exc:
+        # 404: 존재하지 않는 batch_group — 상태 전이 없이 즉시 실패
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BatchGroupStatusError as exc:
+        # 400: planned 외 상태 혼재 — 서비스가 변경 전 예외 throw. 세션 clean 유지.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if result["conflicts"]:
+        # 서비스는 아무것도 mutate하지 않고 반환 — commit 하지 않아도 세션 clean.
+        # detail은 dict로 전달해 프론트가 conflicts 배열을 바로 파싱할 수 있게 함.
+        raise HTTPException(
+            status_code=409,
+            detail={"conflicts": result["conflicts"]},
+        )
+
+    # 멱등 호출(이미 모두 planned)에는 새 audit row를 남기지 않는다 — 감사 로그가
+    # 실제 상태 전이에 1:1 대응하도록 유지 (unassign 엔드포인트와 동일 규칙).
+    if not result.get("idempotent"):
+        # run_label은 서비스 결과에 없으므로 복원된 batch 중 하나에서 조회.
+        # 없으면 'manual' (unassign 엔드포인트와 동일 컨벤션).
+        batch = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_group == batch_group)
+            .first()
+        )
+        run_label = (batch.run_label if batch else None) or "manual"
+        first_batch_id = batch.batch_id if batch else None
+
+        db.add(
+            AuditLog(
+                run_label=run_label,
+                stage="stage1",
+                action_type="BATCH_GROUP_RESTORED",
+                batch_id=first_batch_id,
+                decision_reason=(
+                    f"batch_group {batch_group} restored, "
+                    f"tasks={len(result['restored_tasks'])}"
+                ),
+            )
+        )
+
+    db.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /pipeline/batch-group-snapshots — unassigned batch_group 목록 (Task 3.3)
+#
+# 프론트 OrderInbox가 새로고침 시 호출. batch_group 단위 집계 + unassign_reason 포함.
+#
+# equipment_group 관련:
+#   백엔드 ProductionBatch에는 equipment_group 컬럼이 없다 (Task 3.1 검증).
+#   process_name을 그대로 노출하고, 프론트의 toEquipmentGroup(process_name, batch_group)
+#   헬퍼가 canonicalize 한다 — 백엔드/프론트 계약 단순화.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/batch-group-snapshots",
+    summary="unassigned 상태 batch_group 목록 (사유 + 공정체인 포함)",
+)
+def list_batch_group_snapshots(db: Session = Depends(get_db)) -> dict:
+    """Returns: { "groups": [BatchGroupSnapshot] } — 프론트 OrderInbox 용."""
+    rows = (
+        db.query(ProductionBatch).filter(ProductionBatch.status == "unassigned").all()
+    )
+    groups: dict[str, dict] = {}
+    for b in rows:
+        g = groups.setdefault(
+            b.batch_group,
+            {
+                "batch_group": b.batch_group,
+                "customer": b.customer_name or "",
+                "spec": b.spec_raw or "",
+                "color": b.sheath_color or "",
+                "total_length_m": 0.0,
+                "delivery_date": b.due_date.isoformat() if b.due_date else "",
+                "processes": [],
+                "order_count": 0,
+                "unassign_reason": b.unassign_reason or "기타",
+            },
+        )
+        g["total_length_m"] += float(b.total_length_m or 0)
+        g["order_count"] += 1
+        # equipment_group은 백엔드 모델에 없음 — process_name을 그대로 노출.
+        # 프론트의 toEquipmentGroup(process_name, batch_group)이 canonicalize.
+        g["processes"].append(
+            {
+                "process": b.process_name or "",
+                "equipment_group": b.process_name or "",
+            }
+        )
+    return {"groups": list(groups.values())}
