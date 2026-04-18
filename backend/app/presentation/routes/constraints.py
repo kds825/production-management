@@ -9,6 +9,7 @@ from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.constraint_config_history import ConstraintConfigHistory
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
+from app.infrastructure.models.speed_master import SpeedMaster
 from app.presentation.schemas import (
     ConstraintValidateRequest,
     ConstraintValidateResponse,
@@ -116,17 +117,16 @@ def list_constraints(db: Session = Depends(get_db)):
 # NOTE: /drift-status 는 /{constraint_id}/history 보다 먼저 선언해야 한다.
 # FastAPI 는 선언 순서대로 매칭하므로, 동적 경로(`{constraint_id}`) 보다
 # 리터럴 경로(`drift-status`) 가 앞에 있어야 리터럴이 우선 매칭된다.
-@router.get("/drift-status", summary="ConstraintConfig 편집 후 재실행 필요 여부")
+@router.get(
+    "/drift-status", summary="ConstraintConfig/SpeedMaster 편집 후 재실행 필요 여부"
+)
 def get_drift_status(db: Session = Depends(get_db)):
     """Silent drift 방지 — UI 상단 배너 트리거.
 
-    Why: ConstraintConfig 최신 updated_at 이 ScheduleTask 최신 created_at 보다
-    나중이면 'dirty' 로 판단. ScheduleTask.created_at 을 '마지막 auto_schedule
-    실행 시각' 프록시로 사용.
+    Why: ConstraintConfig 또는 SpeedMaster 최신 updated_at 이 ScheduleTask
+    최신 created_at 보다 나중이면 'dirty'. ScheduleTask.created_at 을
+    '마지막 auto_schedule 실행 시각' 프록시로 사용.
     """
-    latest_constraint = db.query(func.max(ConstraintConfig.updated_at)).scalar()
-    latest_schedule = db.query(func.max(ScheduleTask.created_at)).scalar()
-
     # Why: ConstraintConfig.updated_at 은 tz-aware (UTC), ScheduleTask.created_at
     # 은 naive (datetime.utcnow) — 직접 비교하면 TypeError. aware 쪽을 UTC 로
     # 변환 후 tzinfo 를 제거해 양쪽 모두 naive-UTC 로 맞춘다.
@@ -137,20 +137,27 @@ def get_drift_status(db: Session = Depends(get_db)):
             return dt
         return dt.astimezone(_tz.utc).replace(tzinfo=None)
 
-    lc_cmp = _to_naive_utc(latest_constraint)
-    ls_cmp = _to_naive_utc(latest_schedule)
+    latest_constraint = db.query(func.max(ConstraintConfig.updated_at)).scalar()
+    latest_speed = db.query(func.max(SpeedMaster.updated_at)).scalar()
+    latest_schedule = db.query(func.max(ScheduleTask.created_at)).scalar()
 
-    if lc_cmp is None:
+    candidates = [x for x in (latest_constraint, latest_speed) if x is not None]
+    latest_edit = max(candidates) if candidates else None
+
+    if latest_edit is None:
         dirty = False
-    elif ls_cmp is None:
+    elif latest_schedule is None:
         dirty = True
     else:
-        dirty = lc_cmp > ls_cmp
+        dirty = _to_naive_utc(latest_edit) > latest_schedule
 
     return {
         "dirty": dirty,
         "latest_constraint_updated_at": (
             latest_constraint.isoformat() if latest_constraint else None
+        ),
+        "latest_speed_master_updated_at": (
+            latest_speed.isoformat() if latest_speed else None
         ),
         "latest_schedule_run_at": (
             latest_schedule.isoformat() if latest_schedule else None
