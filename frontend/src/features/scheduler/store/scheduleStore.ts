@@ -20,6 +20,11 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { enableMapSet } from "immer";
+
+// Set/Map 을 immer draft 내에서 mutate 하려면 플러그인 활성화가 필요.
+// inFlightBatchGroups (Set<string>) 이 Set 이므로 모듈 로드 시 1회 호출.
+enableMapSet();
 import type {
   Equipment,
   Order,
@@ -34,12 +39,15 @@ import type {
   ProductionBatch,
   CascadePreview,
   InboxItem,
+  BatchGroupSnapshot,
+  UnassignReason,
 } from "../types";
 import {
   getLineSpeed,
   calculateTaskEnd,
   getDefaultRange,
 } from "../utils/ganttUtils";
+import { useToastStore } from "@/shared/ui/toastStore";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -264,6 +272,16 @@ interface ScheduleActions {
 
   // run_label 설정 — 스케줄러 페이지 초기화 시 호출
   setRunLabel: (runLabel: string | null) => void;
+
+  /**
+   * 배치 그룹을 unassign — tasks에서 제거하고 unscheduledItems에 BatchGroupSnapshot을 추가.
+   * - 낙관적 업데이트 후 API 실패 시 롤백.
+   * - inFlightBatchGroups 가드로 중복 호출 차단.
+   */
+  unassignBatchGroup: (
+    batchGroup: string,
+    reason?: UnassignReason,
+  ) => Promise<void>;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -900,6 +918,93 @@ export const useScheduleStore = create<ScheduleStore>()(
       set((state) => {
         state.runLabel = runLabel;
       });
+    },
+
+    /**
+     * 배치 그룹 unassign — 낙관적 업데이트 + API 호출 + 실패 시 롤백.
+     *
+     * Flow:
+     *   1. 가드 체크(중복 in-flight / 빈 타겟 / non-planned 상태 포함 시 즉시 리턴)
+     *   2. BatchGroupSnapshot 합성 + tasks → unscheduledItems 이동 (낙관적)
+     *   3. POST /pipeline/batch-group/{bg}/unassign with { reason }
+     *   4. 성공: success Toast + fireReanalysis
+     *      실패: 롤백 + error Toast
+     *   5. finally: in-flight guard 해제
+     */
+    unassignBatchGroup: async (
+      batchGroup: string,
+      reason: UnassignReason = "기타",
+    ) => {
+      const state = get();
+      if (state.inFlightBatchGroups.has(batchGroup)) return;
+
+      const targets = state.tasks.filter((t) => t.batch_group === batchGroup);
+      if (targets.length === 0) return;
+      // 진행중/완료 배치는 unassign 불가 — planned 상태만 허용
+      if (targets.some((t) => t.status !== "planned")) return;
+
+      // BatchGroupSnapshot 합성 — 프론트 측 즉시 반영용 (서버가 생성한 스냅샷은
+      // 다음 reanalysis/refresh 시 덮어써짐)
+      const snapshot: BatchGroupSnapshot = {
+        batch_group: batchGroup,
+        customer: targets[0].customer || "",
+        spec: targets[0].spec,
+        color: targets[0].color || "",
+        total_length_m: targets.reduce((s, t) => s + (t.volume_m || 0), 0),
+        delivery_date: targets[0].delivery_date
+          ? new Date(targets[0].delivery_date).toISOString()
+          : "",
+        processes: targets.map((t) => ({
+          process: t.product || "",
+          equipment_group: t.equipment_id,
+        })),
+        order_count: new Set(targets.map((t) => t.order_id)).size,
+        unassign_reason: reason,
+      };
+
+      // 롤백용 원본 스냅샷 (shallow clone 으로 족함 — 내부 Date/primitive 만 사용)
+      const rollbackTasks = targets.map((t) => ({ ...t }));
+
+      // 낙관적 업데이트
+      set((s) => {
+        s.inFlightBatchGroups.add(batchGroup);
+        s.tasks = s.tasks.filter((t) => t.batch_group !== batchGroup);
+        s.unscheduledItems.push({ kind: "batch_group", group: snapshot });
+      });
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/batch-group/${encodeURIComponent(batchGroup)}/unassign`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason }),
+          },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        useToastStore
+          .getState()
+          .show(`${batchGroup} 미배정으로 이동 (사유: ${reason})`, "success");
+
+        fireReanalysis(get().runLabel);
+      } catch (err) {
+        console.warn("[unassignBatchGroup] 롤백:", err);
+        set((s) => {
+          s.tasks.push(...rollbackTasks);
+          s.unscheduledItems = s.unscheduledItems.filter(
+            (i) =>
+              !(i.kind === "batch_group" && i.group.batch_group === batchGroup),
+          );
+        });
+        useToastStore
+          .getState()
+          .show("미배정 이동 실패. 다시 시도하세요", "error");
+      } finally {
+        set((s) => {
+          s.inFlightBatchGroups.delete(batchGroup);
+        });
+      }
     },
   })),
 );
