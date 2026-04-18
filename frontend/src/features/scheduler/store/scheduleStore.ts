@@ -47,6 +47,7 @@ import {
   calculateTaskEnd,
   getDefaultRange,
 } from "../utils/ganttUtils";
+import { buildChain, type ArrowEdge } from "../utils/chainGraph";
 import { useToastStore } from "@/shared/ui/toastStore";
 import { refreshTasks } from "../hooks/useScheduleData";
 
@@ -142,6 +143,18 @@ interface ScheduleState {
   tasks: ScheduleTask[];
   violations: ConstraintViolation[];
   selectedTaskId: string | null;
+  /**
+   * 선택된 블록이 속한 생산 체인 task id 집합.
+   * - `null`: 선택 없음 OR orphan (chain size ≤ 1) — R6 에 따라 dim 미적용.
+   * - `Set<string>`: 체인 外 블록을 dim 처리할 때 사용.
+   * selectTask() 가 chainGraph.buildChain() 결과를 캐싱해 overlay 와 공유한다.
+   */
+  selectedChainIds: Set<string> | null;
+  /**
+   * 선택된 체인의 화살표 엣지(src→dst) 목록. Overlay 가 SVG path 를 그릴 때 사용.
+   * store 가 저장함으로써 overlay 에서 buildChain 재호출(double BFS)을 회피.
+   */
+  selectedArrows: ArrowEdge[];
   /**
    * 미배정 항목 (Task 4.1 union).
    * - kind "order": 기존 단일 수주 카드
@@ -325,6 +338,8 @@ export const useScheduleStore = create<ScheduleStore>()(
     tasks: [],
     violations: [],
     selectedTaskId: null,
+    selectedChainIds: null,
+    selectedArrows: [],
     unscheduledItems: [],
     inFlightBatchGroups: new Set<string>(),
     lineSpeedData: [],
@@ -472,9 +487,34 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
+    /**
+     * 블록 선택 시 chainGraph.buildChain() 을 **단일 호출**해 chainIds+arrows 를
+     * 동시에 저장한다 (overlay 쪽 double BFS 회피 — v3 Architecture).
+     *
+     * R6 규칙: 체인 크기 ≤ 1 (고아 task) 인 경우 selectedChainIds = null 로 저장해
+     * overlay/block dim 경로가 "선택 없음"과 동일하게 동작하도록 한다.
+     *
+     * 주의: buildChain 이 반환하는 Set<string> 을 **immer draft 내부에서 재구성하지
+     * 않고** 평면 set({...}) 으로 주입한다. immer 는 Set 을 deep-freeze 하지 않으므로
+     * 외부에서 build 된 Set 을 그대로 저장하는 것이 안전하고 불필요 복제를 피함.
+     */
     selectTask: (taskId) => {
-      set((state) => {
-        state.selectedTaskId = taskId;
+      if (taskId === null) {
+        set({
+          selectedTaskId: null,
+          selectedChainIds: null,
+          selectedArrows: [],
+        });
+        return;
+      }
+      const state = get();
+      const result = buildChain(taskId, state.tasks, state.equipment);
+      // R6: chain size ≤ 1 → dim 생략 신호 = selectedChainIds null
+      const chainIds = result.chainIds.size > 1 ? result.chainIds : null;
+      set({
+        selectedTaskId: taskId,
+        selectedChainIds: chainIds,
+        selectedArrows: result.arrows,
       });
     },
 
