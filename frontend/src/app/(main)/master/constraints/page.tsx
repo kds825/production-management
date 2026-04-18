@@ -136,6 +136,13 @@ export default function ConstraintsPage() {
       {/* Params tab */}
       {tab === "params" && (
         <>
+          <p className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            공정별 기본값입니다. 특정 장비·SQ 조합에 실제 값이 필요하면{" "}
+            <a href="/master/speed" className="text-blue-600 hover:underline">
+              선속 마스터
+            </a>{" "}
+            에서 편집하세요 (row 값이 있으면 여기 기본값보다 우선 적용됩니다).
+          </p>
           <ParamEditor
             constraints={editorConstraints}
             editedParams={editedParams}

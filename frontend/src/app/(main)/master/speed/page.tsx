@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { NumberCell } from "./components/NumberCell";
+import { DriftBanner } from "../constraints/components/DriftBanner";
 
 interface SpeedRecord {
   speed_id: number;
@@ -28,6 +29,7 @@ export default function SpeedPage() {
   const [speeds, setSpeeds] = useState<SpeedRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [driftRefresh, setDriftRefresh] = useState(0);
 
   useEffect(() => {
     fetch(`${API}/master/speed_master`)
@@ -64,6 +66,7 @@ export default function SpeedPage() {
     setSpeeds((prev) =>
       prev.map((s) => (s.speed_id === speed_id ? { ...s, ...updated } : s)),
     );
+    setDriftRefresh(Date.now());
   };
 
   const filtered = filter
@@ -89,6 +92,8 @@ export default function SpeedPage() {
           className="rounded-md border px-3 py-1.5 text-sm"
         />
       </div>
+
+      <DriftBanner refreshKey={driftRefresh} />
 
       <p className="mb-3 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
         이 장비·SQ 조합의 <b>실제 값</b> 을 편집합니다. 값이 있으면 이 값이 우선
