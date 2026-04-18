@@ -93,6 +93,10 @@ class ScheduleTaskResponse(BaseModel):
     # 시스(SH-*) 배치 블록에서 같은 batch_group 에 묶인 수주들의 SQ 규격 목록.
     # 예: ['50SQ', '100SQ']. 비시스 task 는 None — 프론트가 존재 여부로 분기.
     spec_list: Optional[list[str]] = None
+    # production_batch.wip_matched_id (FK → wip_inventory.wip_id).
+    # 프론트 ContextMenu(Task 5.2) "미배정으로 이동" disabled 판정용 — WIP 매칭된
+    # 배치는 재고로 대체된 공정이라 해제 불가. None 이면 일반 생산 배치.
+    wip_matched_id: Optional[int] = None
 
 
 class ScheduleTaskCreate(BaseModel):

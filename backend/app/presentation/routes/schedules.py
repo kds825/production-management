@@ -174,6 +174,9 @@ def _db_task_to_response(
         sq_mm2=sq_mm2 if sq_mm2 else None,
         lot_count=lot_count,
         spec_list=spec_list,
+        # WIP 매칭 FK를 그대로 노출 — 프론트 ContextMenu "미배정으로 이동"
+        # disabled 판정에 사용 (Task 5.2). None 이면 일반 생산 배치.
+        wip_matched_id=batch.wip_matched_id,
     )
 
 
