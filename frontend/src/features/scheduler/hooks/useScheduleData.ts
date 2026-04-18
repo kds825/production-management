@@ -113,6 +113,10 @@ export function useScheduleData() {
         setTasks(tasks);
         setLineSpeedData(lineSpeeds);
 
+        // Task 4.5: unassign된 BatchGroupSnapshot을 로드하여 인박스 복원.
+        // fire-and-forget — 실패해도 초기 로드를 block 하지 않음.
+        void useScheduleStore.getState().loadBatchGroupSnapshots();
+
         // 계획 기준일자로 간트 뷰 자동 이동 — 가장 이른 task 시작 시각 기준
         if (tasks.length > 0) {
           const minStart = Math.min(...tasks.map((t) => t.start.getTime()));

@@ -291,6 +291,15 @@ interface ScheduleActions {
    * - inFlightBatchGroups 가드로 중복 호출 차단.
    */
   restoreBatchGroup: (batchGroup: string) => Promise<void>;
+
+  /**
+   * 서버에서 unassign된 배치 그룹 스냅샷을 조회하여 unscheduledItems의
+   * batch_group 부분을 멱등(idempotent)하게 교체한다 (Task 4.5).
+   * - 페이지 새로고침 시 BatchGroupCard 목록을 복원하는 용도.
+   * - order kind는 보존되고, batch_group kind만 서버 응답으로 교체됨.
+   * - 실패 시 조용히 리턴 (warn 로그만 남김) — 초기 로드 방해 금지.
+   */
+  loadBatchGroupSnapshots: () => Promise<void>;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -1074,6 +1083,36 @@ export const useScheduleStore = create<ScheduleStore>()(
         set((s) => {
           s.inFlightBatchGroups.delete(batchGroup);
         });
+      }
+    },
+
+    /**
+     * 서버의 batch-group-snapshots 를 조회하여 unscheduledItems의 batch_group
+     * 부분만 멱등 replace (Task 4.5).
+     *
+     * 멱등 전략: order kind는 그대로 유지, batch_group kind만 서버 응답으로 덮어씀.
+     * 초기 로드에서만 호출되므로 race-condition 가드는 불필요 (useEffect deps [])
+     * 실패 시 조용히 리턴 — 페이지 초기 로드를 block 하지 않도록 graceful fallback.
+     */
+    loadBatchGroupSnapshots: async () => {
+      try {
+        const res = await fetch(`${API_BASE}/pipeline/batch-group-snapshots`);
+        if (!res.ok) return;
+        const body = await res.json();
+        const groups = (body.groups ?? []) as BatchGroupSnapshot[];
+        set((s) => {
+          // order kind는 보존, batch_group kind만 서버 응답으로 교체
+          const orderItems = s.unscheduledItems.filter(
+            (i) => i.kind === "order",
+          );
+          const groupItems = groups.map((g) => ({
+            kind: "batch_group" as const,
+            group: g,
+          }));
+          s.unscheduledItems = [...orderItems, ...groupItems];
+        });
+      } catch (err) {
+        console.warn("[loadBatchGroupSnapshots] 실패:", err);
       }
     },
   })),
