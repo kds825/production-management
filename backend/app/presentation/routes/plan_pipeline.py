@@ -24,6 +24,7 @@ from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
 from app.services.wip_matching import match_wip
+from app.services.wip_promotion import _promote_expected_to_estimated
 
 logger = logging.getLogger(__name__)
 
@@ -1587,6 +1588,12 @@ def update_batch_status(batch_id: int, body: dict, db: Session = Depends(get_db)
     if header:
         header.status = new_status
 
+    # WIP 예상 → 실적_추정 승격: completed 전환 시만 동작, 나머지는 no-op
+    _promote_expected_to_estimated(batch.batch_id, new_status, db)
+    if header and header.batch_id != batch.batch_id:
+        # cascade: header 도 함께 completed 로 전환됐으므로 header WIP 도 승격
+        _promote_expected_to_estimated(header.batch_id, new_status, db)
+
     db.commit()
     return {
         "batch_id": batch_id,
@@ -1633,6 +1640,10 @@ def update_batch(batch_id: int, body: dict, db: Session = Depends(get_db)):
     if "drum_count" in body or "drum_length_m" in body:
         batch.total_length_m = float(batch.drum_length_m or 0) * (batch.drum_count or 1)
 
+    # WIP 예상 → 실적_추정 승격: status 필드가 있을 때만, completed 여부는 헬퍼가 판단
+    if "status" in body:
+        _promote_expected_to_estimated(batch.batch_id, body["status"], db)
+
     db.commit()
     return {"batch_id": batch_id, "updated": list(body.keys())}
 
@@ -1669,6 +1680,8 @@ def update_batch_group_status(
     for b in batches:
         b.status = new_status
         updated_ids.append(b.batch_id)
+        # WIP 예상 → 실적_추정 승격: completed 전환 시만 동작, 나머지는 no-op
+        _promote_expected_to_estimated(b.batch_id, new_status, db)
 
     db.commit()
     return {

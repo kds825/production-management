@@ -1,10 +1,12 @@
 """T2 promotion helper — 배치 completed 시 WIP 예상 → 실적_추정 승격.
 
-Task 9 — 헬퍼 단위테스트만. 3 endpoint 통합은 Task 10.
+Task 9 — 헬퍼 단위테스트 (Part A).
+Task 10 — 3 endpoint 통합 테스트 (Part B).
 """
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
@@ -39,6 +41,7 @@ def _seed_batch_with_wip(db) -> ProductionBatch:
         voltage="0.6/1kV",
         conductor_material="CU",
         status="planned",
+        batch_group=_RUN_LABEL,  # bulk endpoint 테스트에서 조회 가능하도록
     )
     db.add(batch)
     db.flush()
@@ -111,3 +114,91 @@ def test_promote_no_op_when_no_wip(db):
     ok = _promote_expected_to_estimated(b.batch_id, "completed", db)
     assert ok is False
     _cleanup(db)
+
+
+# ---------------------------------------------------------------------------
+# Part B — endpoint 통합 테스트 (Task 10)
+# TestClient 는 자체 DB 세션을 사용하므로 데이터를 커밋 후 호출하고,
+# db.expire_all() 로 세션 캐시를 갱신해 엔드포인트의 변경을 확인한다.
+# ---------------------------------------------------------------------------
+
+_CLIENT: TestClient | None = None
+
+
+def _get_client() -> TestClient:
+    """모듈 레벨 싱글턴 — FastAPI app import 는 한 번만."""
+    global _CLIENT
+    if _CLIENT is None:
+        from app.main import app
+
+        _CLIENT = TestClient(app)
+    return _CLIENT
+
+
+def test_single_endpoint_triggers_promotion(db):
+    """PATCH /api/pipeline/batch/{id}/status → completed 시 WIP 승격."""
+    _cleanup(db)
+    client = _get_client()
+    batch = _seed_batch_with_wip(db)
+    db.commit()  # TestClient 세션에서 읽을 수 있도록 커밋
+
+    try:
+        resp = client.patch(
+            f"/api/pipeline/batch/{batch.batch_id}/status",
+            json={"status": "completed"},
+        )
+        assert resp.status_code == 200, f"resp={resp.status_code} body={resp.text}"
+
+        db.expire_all()
+        wip = db.query(WipInventory).filter_by(source_batch_id=batch.batch_id).first()
+        assert wip is not None, "WIP 행이 존재해야 함"
+        assert wip.status == "실적_추정", f"승격 실패: wip.status={wip.status}"
+    finally:
+        _cleanup(db)
+
+
+def test_bulk_endpoint_triggers_promotion(db):
+    """PATCH /api/pipeline/batch-group/{grp}/status → completed 시 WIP 승격."""
+    _cleanup(db)
+    client = _get_client()
+    batch = _seed_batch_with_wip(db)
+    db.commit()
+
+    # batch_group 이 없으면 run_label 로 대체 (헤더 배치는 batch_group 자동 설정될 수도 있음)
+    grp = batch.batch_group or batch.run_label
+
+    try:
+        resp = client.patch(
+            f"/api/pipeline/batch-group/{grp}/status",
+            json={"status": "completed"},
+        )
+        assert resp.status_code == 200, f"resp={resp.status_code} body={resp.text}"
+
+        db.expire_all()
+        wip = db.query(WipInventory).filter_by(source_batch_id=batch.batch_id).first()
+        assert wip is not None, "WIP 행이 존재해야 함"
+        assert wip.status == "실적_추정", f"승격 실패: wip.status={wip.status}"
+    finally:
+        _cleanup(db)
+
+
+def test_freeform_endpoint_triggers_promotion(db):
+    """PATCH /api/pipeline/batch/{id} body 에 status 포함 → completed 시 WIP 승격."""
+    _cleanup(db)
+    client = _get_client()
+    batch = _seed_batch_with_wip(db)
+    db.commit()
+
+    try:
+        resp = client.patch(
+            f"/api/pipeline/batch/{batch.batch_id}",
+            json={"status": "completed"},
+        )
+        assert resp.status_code == 200, f"resp={resp.status_code} body={resp.text}"
+
+        db.expire_all()
+        wip = db.query(WipInventory).filter_by(source_batch_id=batch.batch_id).first()
+        assert wip is not None, "WIP 행이 존재해야 함"
+        assert wip.status == "실적_추정", f"승격 실패: wip.status={wip.status}"
+    finally:
+        _cleanup(db)
