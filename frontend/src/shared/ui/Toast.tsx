@@ -52,6 +52,18 @@ export function ToastContainer() {
             <span className="text-xs flex-1 text-[color:var(--color-text-primary)]">
               {t.message}
             </span>
+            {t.action ? (
+              <button
+                // Undo 등 action 버튼. 실행 후 자동 dismiss — 사용자가 또 ×를 누를 필요 없게.
+                onClick={() => {
+                  t.action!.onClick();
+                  dismiss(t.id);
+                }}
+                className="text-xs font-medium px-2 py-1 rounded border border-current hover:bg-[color:var(--color-bg-hover)] transition"
+              >
+                {t.action.label}
+              </button>
+            ) : null}
             <button
               onClick={() => dismiss(t.id)}
               aria-label="닫기"
