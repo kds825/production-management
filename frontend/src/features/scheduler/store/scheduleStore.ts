@@ -958,8 +958,12 @@ export const useScheduleStore = create<ScheduleStore>()(
 
       const targets = state.tasks.filter((t) => t.batch_group === batchGroup);
       if (targets.length === 0) return;
-      // 진행중/완료 배치는 unassign 불가 — planned 상태만 허용
-      if (targets.some((t) => t.status !== "planned")) return;
+      // 진행중/완료 배치는 unassign 불가. planned/scheduled 둘 다 허용
+      // (scheduled는 스케줄러 레거시 default — 의미상 "아직 시작 안 함" 동일).
+      if (
+        targets.some((t) => t.status !== "planned" && t.status !== "scheduled")
+      )
+        return;
 
       // BatchGroupSnapshot 합성 — 프론트 측 즉시 반영용 (서버가 생성한 스냅샷은
       // 다음 reanalysis/refresh 시 덮어써짐)

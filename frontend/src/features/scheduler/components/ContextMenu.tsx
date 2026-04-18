@@ -262,14 +262,17 @@ export function ContextMenu() {
                   const groupTasks = tasks.filter(
                     (t) => t.batch_group === selectedTask.batch_group,
                   );
-                  const hasNonPlanned = groupTasks.some(
-                    (t) => t.status !== "planned",
+                  // planned/scheduled 모두 미배정 가능 — scheduled는 스케줄러 레거시
+                  // default 이며 의미상 "아직 시작 안 함"으로 동일 취급.
+                  // in_progress/completed 만 disable 대상.
+                  const hasNonUnassignable = groupTasks.some(
+                    (t) => t.status !== "planned" && t.status !== "scheduled",
                   );
                   const hasWipMatched = groupTasks.some(
                     (t) => t.wip_matched_id != null,
                   );
-                  const disabled = hasNonPlanned || hasWipMatched;
-                  const tooltip = hasNonPlanned
+                  const disabled = hasNonUnassignable || hasWipMatched;
+                  const tooltip = hasNonUnassignable
                     ? "진행중인 공정 포함 — 먼저 계획으로 되돌리세요"
                     : hasWipMatched
                       ? "WIP 매칭된 묶음은 이동할 수 없습니다"

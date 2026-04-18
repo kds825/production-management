@@ -26,6 +26,11 @@ VALID_REASONS: frozenset[str] = frozenset(
     ["자재지연", "설비고장", "납기재협상", "기타"]
 )
 
+# 미배정 가능한 배치 상태 — 스케줄러가 'scheduled'를 default로 쓰던 레거시와
+# neutral spec의 'planned'를 모두 허용. 의미상 둘 다 "아직 시작 안 함"이므로
+# 미배정 가능. 향후 스케줄러 vocabulary 통일 시 'scheduled' 제거로 되돌림.
+UNASSIGNABLE_STATUSES: tuple[str, ...] = ("planned", "scheduled")
+
 # 기본 reason — spec에 따라 reason 누락 시 '기타'로 저장 (DB 레거시 NULL과 구분)
 _DEFAULT_REASON: str = "기타"
 
@@ -107,11 +112,14 @@ def unassign_batch_group(
             "idempotent": True,
         }
 
-    # 상태 검증 — planned만 허용 (in_progress/completed는 소급 미배정 불가)
-    invalid = [b for b in batches if b.status != "planned"]
+    # 상태 검증 — planned/scheduled 허용 (scheduled는 스케줄러 레거시 default;
+    # 의미상 동일하게 "아직 시작 안 함"이므로 둘 다 미배정 가능).
+    # in_progress/completed는 진행중/완료이므로 소급 미배정 불가.
+    invalid = [b for b in batches if b.status not in UNASSIGNABLE_STATUSES]
     if invalid:
         raise BatchGroupStatusError(
-            f"planned 외 상태 포함: {[(b.batch_id, b.status) for b in invalid]}"
+            f"planned/scheduled 외 상태 포함: "
+            f"{[(b.batch_id, b.status) for b in invalid]}"
         )
 
     # WIP 매칭 검증 (Spec Q7) — 재고 상태 무결성 유지

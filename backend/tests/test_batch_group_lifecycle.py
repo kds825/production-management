@@ -110,6 +110,36 @@ def test_unassign_with_reason_sets_status_and_reason(db: Session):
     assert all(t.start_datetime is not None for t in tasks)
 
 
+def test_unassign_accepts_scheduled_status(db: Session):
+    """scheduled (레거시 default)도 planned와 동일하게 미배정 가능해야 한다.
+
+    왜: 스케줄러(schedule_optimizer.py / cp_sat_optimizer.py)가 신규 배치를
+    status='scheduled'로 저장하는 레거시 vocabulary를 쓰므로, unassign 경로가
+    'planned' 만 허용하면 실제 데이터에서 전부 블록된다.
+    """
+    _seed_planned_group(db, "g-sch")
+    # Flip all batches/tasks to scheduled to mimic scheduler output
+    batches = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_group == "g-sch").all()
+    )
+    for b in batches:
+        b.status = "scheduled"
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.batch_group == "g-sch").all()
+    for t in tasks:
+        t.status = "scheduled"
+    db.flush()
+
+    result = unassign_batch_group(db, "g-sch", reason="자재지연")
+    db.flush()
+
+    assert result["reason"] == "자재지연"
+    assert result["idempotent"] is False
+    batches_after = (
+        db.query(ProductionBatch).filter(ProductionBatch.batch_group == "g-sch").all()
+    )
+    assert all(b.status == "unassigned" for b in batches_after)
+
+
 def test_unassign_without_reason_uses_default(db: Session):
     """reason=None으로 호출 시 기본값 '기타'가 쓰인다."""
     _seed_planned_group(db, "g-no-reason")
