@@ -415,6 +415,11 @@ def create_batches(
         # 스케줄러가 불필요한 연선 작업을 배정하지 않도록.
         if not skip_strand_work:
             header_duration_g = work_qty_g / line_speed_g if line_speed_g else None
+            # wip_output_expected_m: 틀단위 생산량(work_qty_g)에서 실제 필요량(net_qty_g)을
+            # 빼면 연선 후 잉여(SM재고 예정)가 된다. defect_buffer는 net_qty_g에 이미 포함.
+            # 이 값은 헤더 배치(batch_seq=-1)에서만 계산한다.
+            # Task 6 Listener가 wip_output_expected_m > 0 조건으로 예상 WIP를 자동 생성한다.
+            header_wip_surplus_g = max(0.0, work_qty_g - net_qty_g)
             header_batch = ProductionBatch(
                 run_label=run_label,
                 sales_order_id=rep_order_g.order_id,
@@ -447,12 +452,15 @@ def create_batches(
                 wip_matched_id=None,
                 spec_raw=rep_order_g.spec_raw,
                 batch_group=strand_batch_group,
+                wip_output_expected_m=header_wip_surplus_g,
             )
             batches.append(header_batch)
 
         # ── 수주별 연선 배치 생성 (display용) ────────────────────────────────
         # scheduling-review·Excel 수주 단위 행 표시용.
         # estimated_duration_min=None — 스케줄러는 헤더 배치(seq=-1) duration 사용.
+        # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+        # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
         for order in orders_g:
             order_qty_o: float = float(order.ordered_qty_m or 0) * (
                 1.0 + defect_buffer_pct
@@ -513,6 +521,8 @@ def create_batches(
 
             # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 수주 단위로 생성
             # WIP 전량 활용 시 코어 선행 배치도 불요
+            # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+            # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
             if is_61strand_g and conductor_material_o == "CU" and not skip_strand_work:
                 core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
                 core_spd = (
@@ -568,6 +578,8 @@ def create_batches(
             # AL 61연선(633SQ 등) — AL 7연선 코어 선행 배치 (AL6BO 설비)
             # 633SQ 고압 케이블은 CU 도체 + AL 시스 구조이므로,
             # AL 시스용 7연선 코어를 AL6BO에서 별도 생산해야 한다.
+            # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+            # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
             if is_61strand_g and conductor_material_o == "AL" and not skip_strand_work:
                 # AL6BO speed_master가 없으면 T6B0 기준 fallback
                 al_core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
@@ -776,6 +788,8 @@ def create_batches(
 
                 remarks: str | None = f"틀{lot_idx}" if len(lot_items) > 1 else None
 
+                # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+                # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
                 batch = ProductionBatch(
                     run_label=run_label,
                     sales_order_id=order.order_id,
