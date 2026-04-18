@@ -321,3 +321,68 @@ def test_restore_not_found(db: Session):
     """batch_group 없음 → BatchGroupNotFoundError."""
     with pytest.raises(BatchGroupNotFoundError):
         restore_batch_group(db, "nonexistent-r")
+
+
+# ---------------------------------------------------------------------------
+# compute_restore_at_plan — Task 1.1
+# ---------------------------------------------------------------------------
+
+
+def test_compute_restore_at_plan_success(db: Session):
+    """unassigned batch_group 복원 시 anchor 위치 기준 downstream 자동 배치."""
+    from app.services.batch_group_lifecycle import (
+        compute_restore_at_plan,
+        RestoreAtPlanResult,
+    )
+    from datetime import datetime
+
+    _seed_planned_group(db, "rp-1")
+    unassign_batch_group(db, "rp-1", reason="자재지연")
+    db.flush()
+
+    anchor_start = datetime(2026, 4, 25, 9, 0)
+    result: RestoreAtPlanResult = compute_restore_at_plan(
+        db,
+        batch_group="rp-1",
+        anchor_equipment_code="DS-C11D",
+        anchor_start=anchor_start,
+    )
+
+    assert result.batch_group == "rp-1"
+    assert result.unresolved == []
+    assert len(result.task_positions) == 3
+    anchor = next(tp for tp in result.task_positions if tp.is_anchor)
+    assert anchor.new_equipment_code == "DS-C11D"
+    assert anchor.new_start == anchor_start
+    downstream = [tp for tp in result.task_positions if not tp.is_anchor]
+    for tp in downstream:
+        assert tp.new_start >= anchor.new_end
+
+
+def test_compute_restore_at_plan_not_all_unassigned(db: Session):
+    """일부가 planned 인 batch_group 에 restore_at 시도 → BatchGroupStatusError."""
+    from app.services.batch_group_lifecycle import compute_restore_at_plan
+    from datetime import datetime
+
+    _seed_planned_group(db, "rp-2")
+
+    with pytest.raises(BatchGroupStatusError):
+        compute_restore_at_plan(
+            db,
+            batch_group="rp-2",
+            anchor_equipment_code="DS-C11D",
+            anchor_start=datetime(2026, 4, 25, 9, 0),
+        )
+
+
+def test_compute_restore_at_plan_not_found(db: Session):
+    from app.services.batch_group_lifecycle import compute_restore_at_plan
+    from datetime import datetime
+
+    with pytest.raises(BatchGroupNotFoundError):
+        compute_restore_at_plan(
+            db,
+            batch_group="nonexistent-rp",
+            anchor_equipment_code="DS-C11D",
+            anchor_start=datetime(2026, 4, 25, 9, 0),
+        )
