@@ -30,7 +30,7 @@ from app.infrastructure.models.process_routing import ProcessRouting
 from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.customer_master import CustomerMaster
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.constraint_params import ConstraintParams
+from app.services.constraint_params import ConstraintParams, resolve_spec_setup_min
 
 # WIP 재고 종류별로 해당 재고가 "이미 완료된" 공정 집합
 # 절연재고: 연선+절연까지 완료 → 절연 이전 공정 배치 생성 불필요
@@ -397,10 +397,16 @@ def create_batches(
             if rep_speed_g and rep_speed_g.line_speed_mpm
             else None
         )
-        setup_time_g = (
-            float(rep_speed_g.setup_spec_min)
-            if rep_speed_g and rep_speed_g.setup_spec_min
-            else 0.0
+        # 연선 헤더 배치 (batch_seq=-1) — ConstraintConfig 4-1 stranding_min 우선.
+        # SpeedMaster.setup_spec_min 은 이 공정에선 무시 (UI 4-1 편집이 즉시 반영되게).
+        setup_time_g = resolve_spec_setup_min(
+            process_name="연선",
+            sm_spec_min=(
+                float(rep_speed_g.setup_spec_min)
+                if rep_speed_g and rep_speed_g.setup_spec_min is not None
+                else None
+            ),
+            params=constraint_params,
         )
         rep_item_g = _find_item(rep_order_g, items)
         rep_material_g = _infer_material(rep_order_g)
@@ -473,10 +479,15 @@ def create_batches(
                 if speed_o and speed_o.line_speed_mpm
                 else None
             )
-            setup_time_o = (
-                float(speed_o.setup_spec_min)
-                if speed_o and speed_o.setup_spec_min
-                else 0.0
+            # 연선 strand_batch (batch_seq=1) — 동일하게 4-1 stranding_min 우선.
+            setup_time_o = resolve_spec_setup_min(
+                process_name="연선",
+                sm_spec_min=(
+                    float(speed_o.setup_spec_min)
+                    if speed_o and speed_o.setup_spec_min is not None
+                    else None
+                ),
+                params=constraint_params,
             )
 
             matched_wip_o = wip_by_order_line.get(
@@ -530,10 +541,14 @@ def create_batches(
                     if core_speed_o and core_speed_o.line_speed_mpm
                     else 25.0
                 )
-                core_setup = (
-                    float(core_speed_o.setup_spec_min)
-                    if core_speed_o and core_speed_o.setup_spec_min
-                    else constraint_params.get("4-1", "stranding_min")
+                core_setup = resolve_spec_setup_min(
+                    process_name="연선",
+                    sm_spec_min=(
+                        float(core_speed_o.setup_spec_min)
+                        if core_speed_o and core_speed_o.setup_spec_min is not None
+                        else None
+                    ),
+                    params=constraint_params,
                 )
                 core_dur = order_qty_o / core_spd if core_spd > 0 else None
                 core_batch = ProductionBatch(
@@ -588,10 +603,15 @@ def create_batches(
                     if al_core_speed_o and al_core_speed_o.line_speed_mpm
                     else 25.0
                 )
-                al_core_setup = (
-                    float(al_core_speed_o.setup_spec_min)
-                    if al_core_speed_o and al_core_speed_o.setup_spec_min
-                    else constraint_params.get("4-1", "stranding_min")
+                al_core_setup = resolve_spec_setup_min(
+                    process_name="연선",
+                    sm_spec_min=(
+                        float(al_core_speed_o.setup_spec_min)
+                        if al_core_speed_o
+                        and al_core_speed_o.setup_spec_min is not None
+                        else None
+                    ),
+                    params=constraint_params,
                 )
                 al_core_dur = order_qty_o / al_core_spd if al_core_spd > 0 else None
                 al_core_batch = ProductionBatch(
@@ -772,10 +792,14 @@ def create_batches(
                 if speed_info and speed_info.line_speed_mpm is not None
                 else None
             )
-            setup_time: float = (
-                float(speed_info.setup_spec_min)
-                if speed_info and speed_info.setup_spec_min is not None
-                else 0.0
+            setup_time: float = resolve_spec_setup_min(
+                process_name=process_name,
+                sm_spec_min=(
+                    float(speed_info.setup_spec_min)
+                    if speed_info and speed_info.setup_spec_min is not None
+                    else None
+                ),
+                params=constraint_params,
             )
 
             for lot_idx, (lot_length, lot_drums) in enumerate(lot_items, start=1):
