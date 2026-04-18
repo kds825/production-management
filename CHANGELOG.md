@@ -2,6 +2,18 @@
 
 변경사항 요약. 상세 설계는 `docs/specs/`, 구현 플랜은 `docs/plans/` 참조.
 
+## 2026-04-18 — SpeedMaster 셋업 시간 인라인 편집
+
+- `/master/speed` 페이지에서 `setup_spec_min` / `setup_color_min` / `setup_compound_min` / `setup_start_min` 4 컬럼 인라인 편집 (onBlur autosave)
+- Pydantic 화이트리스트 PATCH `/master/speed_master/{id}/setup-params` — 구조 필드(`equipment_code` 등) 편집 차단, 음수 거부, null 덮어쓰기 차단
+- `SpeedMaster.updated_at` 컬럼 추가 → `/constraints/drift-status` 에 포함 → SpeedMaster 편집 후에도 재실행 배너 ON
+- `/master/constraints` 파라미터 탭에 "row 값 있으면 우선" 안내문 → 두 화면 역할 명확화
+- **우선순위 규칙 명문화**: `SpeedMaster row 값 > ConstraintConfig 4-x 공정 기본값`
+- 4-3 드럼 권취 편집 과제 흡수 — `setup_start_min` 편집으로 해결
+- 범위 밖: row 신규 추가/삭제, 일괄 편집, 변경 이력 UI, 구조 필드 편집
+- 스펙: `docs/specs/2026-04-18-speedmaster-setup-edit-design.md`
+- 플랜: `docs/plans/2026-04-18-speedmaster-setup-edit.md`
+
 ## 2026-04-18 — ConstraintConfig 파라미터 UI 편집 (4-1/4-2/4-4)
 
 - `/master/constraints` 페이지 **"파라미터" 탭** 추가 — 규격교체(4-1), 색상교체(4-2), 용접(4-4) 시간을 UI 에서 편집 가능
