@@ -2,6 +2,7 @@
 
 from sqlalchemy.orm import Session
 
+from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.services.audit_logger import log_decision
@@ -66,53 +67,68 @@ def update_wip_actual(wip_id: int, actual_length_m: float, db: Session) -> dict:
 
 
 def create_shortage_batches(run_label: str, db: Session) -> dict:
-    """부족분에 대한 추가 생산 배치 자동 생성.
+    """부족분에 대한 추가 생산 배치 자동 생성. 틀단 확장 + listener 경유 recursion.
 
-    variance_m < 0 인 실적 WIP을 스캔하여 부족량만큼 신규 배치를 생성한다.
-    1m 미만의 오차는 절삭 손실 범위로 보고 무시한다.
+    Task 13 rewrite (Eng review 블로커 #1 동기, 틀단 원칙 준수):
+    - status 필터: '실사_확정' (T2 에서 legacy '실적' → '실사_확정' rename 완료)
+    - DrumLotMaster.lot_stranding 기준 work_qty 확장 (math.ceil)
+    - batch_seq=-1 + process_name="연선" 설정 → T6 listener 가 새 예상 WIP 자동 생성 (recursion)
+    - DrumLotMaster uniqueness = cross_section 단일 (T1 research)
     """
+    import math
+
     shortages = (
         db.query(WipInventory)
         .filter(
             WipInventory.run_label == run_label,
             WipInventory.variance_m < 0,
-            WipInventory.status == "실적",
+            WipInventory.status == "실사_확정",
         )
         .all()
     )
 
+    # DrumLotMaster dict[float, float]  — key=cross_section, value=lot_stranding
+    drum_lots: dict[float, float] = {}
+    for lot in db.query(DrumLotMaster).all():
+        if lot.cross_section is None:
+            continue
+        drum_lots[float(lot.cross_section)] = float(lot.lot_stranding or 0)
+
     created = 0
     for wip in shortages:
-        shortage = abs(float(wip.variance_m))
-        if shortage < 1:  # 1m 미만 오차는 무시
+        shortage = abs(float(wip.variance_m or 0))
+        if shortage < 1:  # 1m 미만 오차 무시
             continue
 
-        # 원래 이 WIP을 사용하려던 배치 정보를 참조해 배치 속성을 최대한 복원
-        original_batch = None
-        if wip.source_batch_id:
-            original_batch = (
-                db.query(ProductionBatch)
-                .filter(ProductionBatch.batch_id == wip.source_batch_id)
-                .first()
-            )
+        sq = float(wip.cross_section) if wip.cross_section else None
+        lot_size = drum_lots.get(sq) if sq is not None else None
+
+        if lot_size and lot_size > 0:
+            lot_count = math.ceil(shortage / lot_size)
+            work_qty = lot_count * lot_size
+            wip_output = work_qty - shortage  # 신규 잉여 — listener 가 예상 WIP 생성
+        else:
+            # DrumLotMaster 미등록 SQ — 폴백 (잉여 없이 shortage 만 생산)
+            work_qty = shortage
+            wip_output = 0
 
         batch = ProductionBatch(
             run_label=run_label,
             sales_order_id=wip.matched_order_id,
-            process_name=(
-                original_batch.process_name
-                if original_batch
-                else wip.process_stage or "연선"
-            ),
-            total_length_m=shortage,
-            sq_mm2=wip.cross_section,
-            core_count=1,
+            process_name="연선",
+            batch_seq=-1,
+            total_length_m=work_qty,
+            wip_output_expected_m=wip_output,
+            sq_mm2=sq,
+            voltage=wip.voltage_class,
+            conductor_material=wip.material,
             core_colors=wip.core_colors,
             customer_name="SM재고 부족분",
             status="planned",
-            remarks=f"SM부족 보정: WIP#{wip.wip_id} 부족 {shortage}m",
-            conductor_material=wip.material,
-            voltage=wip.voltage_class,
+            remarks=(
+                f"SM부족 보정: WIP#{wip.wip_id} 부족 {shortage}m → "
+                f"lot 확장 {work_qty}m, 신규 잉여 {wip_output}m"
+            ),
         )
         db.add(batch)
         created += 1
