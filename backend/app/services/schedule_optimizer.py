@@ -478,6 +478,62 @@ def _run_optimization_once(
             (t.start_datetime, t.end_datetime)
         )
 
+    # ── 부분 재스케줄용: 기존 tasks에서 파이프라인 상태 사전 초기화 ────────────
+    # 전체 재스케줄(full reschedule)에서는 existing_tasks가 비어 있으므로 no-op.
+    # 부분 재스케줄 시 비영향 그룹 tasks가 existing_tasks로 전달되므로
+    # 이를 바탕으로 process_end_by_sq / process_first_output_by_sq 등을 미리 채운다.
+    _seed_pipeline_process_end: dict[tuple[str, int], datetime] = {}
+    _seed_pipeline_first_output: dict[tuple[str, int], datetime] = {}
+    _seed_first_insul_output: datetime | None = None
+    _seed_core_first_drum: dict[int, datetime] = {}
+
+    if existing_tasks:
+        _seed_batch_ids = {t.batch_id for t in existing_tasks if t.batch_id is not None}
+        _seed_batches = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_id.in_(_seed_batch_ids))
+            .all()
+        ) if _seed_batch_ids else []
+        _seed_batch_map = {b.batch_id: b for b in _seed_batches}
+
+        for t in existing_tasks:
+            if t.start_datetime is None or t.end_datetime is None:
+                continue
+            b = _seed_batch_map.get(t.batch_id)
+            if b is None:
+                continue
+            proc = b.process_name or ""
+            sq_int = int(b.sq_mm2 or 0)
+            proc_sq = (proc, sq_int)
+
+            # process_end_by_sq: 해당 (공정, SQ)의 최대 종료 시각
+            if proc_sq not in _seed_pipeline_process_end or t.end_datetime > _seed_pipeline_process_end[proc_sq]:
+                _seed_pipeline_process_end[proc_sq] = t.end_datetime
+
+            # process_first_output_by_sq: 첫 번째 드럼 출력 시각
+            if not _is_core_group(b.batch_group or ""):
+                _setup_min = float(t.setup_time_min or 0)
+                _dur = float(b.estimated_duration_min or 0)
+                _lot_count = max(int(b.drum_count or 1), 1)
+                _first_drum_min = _setup_min + (_dur / _lot_count if _lot_count else _dur)
+                _first_out = calculate_end_datetime(t.start_datetime, _first_drum_min, db, t.equipment_code)
+                if proc_sq not in _seed_pipeline_first_output or _first_out < _seed_pipeline_first_output[proc_sq]:
+                    _seed_pipeline_first_output[proc_sq] = _first_out
+                if proc in ("저압절연", "고압절연"):
+                    if _seed_first_insul_output is None or _first_out < _seed_first_insul_output:
+                        _seed_first_insul_output = _first_out
+            else:
+                # CORE 그룹 → core_first_drum_by_main_sq 채우기
+                _setup_min = float(t.setup_time_min or 0)
+                _dur = float(b.estimated_duration_min or 0)
+                _lot_count = max(int(b.drum_count or 1), 1)
+                _first_drum_min = _setup_min + (_dur / _lot_count if _lot_count else _dur)
+                _first_out = calculate_end_datetime(t.start_datetime, _first_drum_min, db, t.equipment_code)
+                _msq = _extract_core_main_sq(b.batch_group or "")
+                if _msq is not None:
+                    if _msq not in _seed_core_first_drum or _first_out < _seed_core_first_drum[_msq]:
+                        _seed_core_first_drum[_msq] = _first_out
+
     # Track predecessor tasks by (sales_order_id, sales_order_line)
     predecessor_map = {}  # (order_id, order_line) → last task_id for this order
 
@@ -493,20 +549,20 @@ def _run_optimization_once(
     # 공정 간 선행관계 추적 — SQ 단위로 앞 공정의 종료 시각 기록
     # 연선_120SQ 종료 → 저압절연_120SQ 시작 가능
     # 저압절연_120SQ 종료 → A100_120SQ / A120_120SQ 시작 가능
-    process_end_by_sq: dict[tuple[str, int], datetime] = {}
+    process_end_by_sq: dict[tuple[str, int], datetime] = dict(_seed_pipeline_process_end)
     # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
 
     # 파이프라인 겹침용: 앞 공정에서 첫 번째 드럼이 출력되는 시각
     # 연선에서 1틀이 나오면 절연 시작 가능, 절연 1틀 나오면 시스 시작 가능
     # = task.start_datetime + setup_min + (group_run_duration / drum_count)
-    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = dict(_seed_pipeline_first_output)
 
     # 저압절연 전체 중 가장 이른 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
-    first_insul_output: datetime | None = None
+    first_insul_output: datetime | None = _seed_first_insul_output
 
     # 61연선 코어(T6B0/AL6BO) 첫 드럼 출력 시각 — pipeline overlap 기준
     # "CORE-300-..." 첫 드럼 완료 후 "ST-300-..." 시작 가능
-    core_first_drum_by_main_sq: dict[int, datetime] = {}
+    core_first_drum_by_main_sq: dict[int, datetime] = dict(_seed_core_first_drum)
 
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
     from collections import OrderedDict
@@ -1886,6 +1942,178 @@ def _filter_by_sheath_routing(
         return filtered if filtered else equipment
 
     return equipment
+
+
+def reschedule_affected_groups(
+    run_label: str,
+    db: Session,
+    affected_group_keys: set[str],
+    *,
+    base_date: datetime | None = None,
+) -> dict:
+    """긴급 수주 증분 반영 후 영향 받은 batch_group 만 부분 재스케줄링.
+
+    동작 원리
+    ─────────
+    1. 비영향 그룹의 기존 ScheduleTask → timeline / process_end_by_sq /
+       process_first_output_by_sq를 미리 채운다.
+    2. 영향 그룹의 ScheduleTask 삭제 + 배치 상태 'planned'으로 리셋.
+    3. 영향 그룹만 대상으로 기존 그리디 루프를 실행. 비영향 그룹의 슬롯이
+       timeline에 이미 박혀 있으므로 겹치지 않는 빈 자리를 찾는다.
+
+    납기 기준 삽입 보장:
+       ordered_group_items 정렬 시 영향·비영향 그룹이 모두 PROCESS_ORDER → EDD
+       순으로 정렬된다. 비영향 그룹은 timeline 사전 등록 후 스킵되므로
+       '납기가 더 이른 기존 배치는 그대로, 납기가 더 늦은 기존 배치 사이에 끼워넣기'
+       효과를 timeline 레벨에서 자연스럽게 구현한다.
+    """
+    result: dict = {"total_tasks": 0, "violations": [], "warnings": []}
+
+    if not affected_group_keys:
+        return result
+
+    # ── 1. 전체 기존 ScheduleTask 로드 ───────────────────────────────────────
+    all_tasks = (
+        db.query(ScheduleTask)
+        .filter(ScheduleTask.run_label == run_label)
+        .all()
+    )
+
+    # batch_group → task (1:1 보장: 그룹당 1 ScheduleTask)
+    task_by_group: dict[str, ScheduleTask] = {}
+    batch_by_id = {
+        b.batch_id: b
+        for b in db.query(ProductionBatch)
+        .filter(ProductionBatch.run_label == run_label)
+        .all()
+    }
+    for t in all_tasks:
+        b = batch_by_id.get(t.batch_id)
+        if b and b.batch_group:
+            task_by_group[b.batch_group] = t
+
+    # ── 2. 비영향 그룹: timeline + pipeline tracking 사전 채우기 ────────────
+    #    frozen 배치의 ScheduleTask도 함께 포함 (frozen 그룹 ≠ affected)
+    timeline: dict[str, list[tuple[datetime, datetime]]] = {}
+    process_end_by_sq: dict[tuple[str, int], datetime] = {}
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
+    first_insul_output: datetime | None = None
+    core_first_drum_by_main_sq: dict[int, datetime] = {}
+
+    for gk, task in task_by_group.items():
+        if gk in affected_group_keys:
+            continue  # 영향 그룹은 나중에 재스케줄
+        if task.start_datetime is None or task.end_datetime is None:
+            continue
+        # timeline 등록
+        timeline.setdefault(task.equipment_code, []).append(
+            (task.start_datetime, task.end_datetime)
+        )
+        # pipeline tracking: batch_group 대표 배치에서 process/sq 정보 추출
+        b = batch_by_id.get(task.batch_id)
+        if b is None:
+            continue
+        proc = b.process_name
+        sq_int = int(b.sq_mm2 or 0)
+        proc_sq = (proc, sq_int)
+        # process_end_by_sq: 해당 공정+SQ 최대 종료 시각
+        if proc_sq not in process_end_by_sq or task.end_datetime > process_end_by_sq[proc_sq]:
+            process_end_by_sq[proc_sq] = task.end_datetime
+        # process_first_output_by_sq: 해당 공정+SQ 최소 첫 드럼 출력 시각
+        # 정확한 first_output_dt를 ScheduleTask에서 역산 (lot_count 이용)
+        header = next(
+            (bx for bx in batch_by_id.values()
+             if bx.batch_group == gk and bx.batch_seq == -1),
+            None,
+        )
+        if header is not None:
+            lot_count = max(int(header.drum_count or 1), 1)
+        else:
+            grp_batches = [bx for bx in batch_by_id.values() if bx.batch_group == gk]
+            lot_count = max(sum(int(bx.drum_count or 1) for bx in grp_batches), 1)
+        setup_min = float(task.setup_time_min or 0)
+        dur = float(b.estimated_duration_min or 0) if b.estimated_duration_min else 0.0
+        first_drum_min = setup_min + (dur / lot_count)
+        from app.services.calendar_engine import calculate_end_datetime
+        first_out = calculate_end_datetime(
+            task.start_datetime, first_drum_min, db, task.equipment_code
+        )
+        if proc_sq not in process_first_output_by_sq or first_out < process_first_output_by_sq[proc_sq]:
+            process_first_output_by_sq[proc_sq] = first_out
+        # 절연 첫 출력 (시스 시작 기준)
+        if proc in ("저압절연", "고압절연"):
+            if first_insul_output is None or first_out < first_insul_output:
+                first_insul_output = first_out
+        # CORE 첫 드럼
+        if _is_core_group(gk):
+            msq = _extract_core_main_sq(gk)
+            if msq and (msq not in core_first_drum_by_main_sq or first_out < core_first_drum_by_main_sq[msq]):
+                core_first_drum_by_main_sq[msq] = first_out
+
+    # ── 3. 영향 그룹의 기존 ScheduleTask 삭제 + 배치 리셋 ─────────────────
+    from app.infrastructure.models.audit_log import AuditLog
+
+    affected_task_ids = [
+        t.task_id for gk, t in task_by_group.items() if gk in affected_group_keys
+    ]
+    if affected_task_ids:
+        db.query(AuditLog).filter(
+            AuditLog.task_id.in_(affected_task_ids)
+        ).delete(synchronize_session=False)
+        db.query(ScheduleTask).filter(
+            ScheduleTask.task_id.in_(affected_task_ids)
+        ).delete(synchronize_session=False)
+
+    # 영향 그룹 배치 → 'planned' 리셋
+    affected_batch_ids = [
+        b.batch_id for b in batch_by_id.values()
+        if b.batch_group in affected_group_keys and b.status == "scheduled"
+    ]
+    if affected_batch_ids:
+        db.query(ProductionBatch).filter(
+            ProductionBatch.batch_id.in_(affected_batch_ids)
+        ).update({"status": "planned", "equipment_code": None}, synchronize_session=False)
+    db.flush()
+
+    # ── 4. 영향 그룹 배치 로드 → 부분 그리디 실행 ──────────────────────────
+    # 영향 그룹에 속한 'planned' 배치만 다시 로드 (flush 후)
+    affected_batches = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.batch_group.in_(affected_group_keys),
+            ProductionBatch.status == "planned",
+        )
+        .all()
+    )
+    affected_batches.sort(
+        key=lambda b: (
+            PROCESS_ORDER.get(b.process_name, 50),
+            b.batch_seq or 0,
+            b.due_date or date.max,
+            b.customer_priority or 99,
+            -(float(b.sq_mm2 or 0)),
+        )
+    )
+
+    if not affected_batches:
+        result["warnings"].append("재스케줄 대상 배치 없음 (모두 frozen 또는 이미 scheduled)")
+        return result
+
+    # ── 5. _run_optimization_once 와 동일한 그리디 루프 — 영향 그룹만 ───────
+    # 전체 재스케줄 대신 영향 그룹만 처리. timeline은 2단계에서 사전 채워진 상태.
+    # affected_batches를 기존 _run_optimization_once 인자 형식으로 전달하는
+    # 내부 함수 대신, _run_optimization_once를 직접 호출하되
+    # 비영향 그룹 배치는 이미 'scheduled' 상태이므로 쿼리에서 자동 제외된다.
+    #
+    # 단, timeline은 비영향 그룹 슬롯으로 사전 채워야 하므로
+    # _run_optimization_once 내부의 'existing_tasks' 로드가 이미 이를 포함한다.
+    # → 별도 timeline 주입 없이 바로 호출 가능.
+    partial_result = _run_optimization_once(run_label, db, base_date=base_date)
+    result["total_tasks"] = partial_result.get("total_tasks", 0)
+    result["violations"] = partial_result.get("violations", [])
+    result["warnings"].extend(partial_result.get("warnings", []))
+    return result
 
 
 def reschedule(

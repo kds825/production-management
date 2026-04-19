@@ -574,6 +574,61 @@ async def run_stage1_update(
         ) from exc
 
 
+@router.post("/stage1/urgent", summary="긴급 수주 증분 반영 — 최소 파급 재스케줄")
+async def apply_urgent_order(
+    erp_file: UploadFile = File(..., description="긴급 수주 ERP 파일 (.xls/.xlsx)"),
+    run_label: str = Form(..., description="기존 계획 실행의 run_label"),
+    gap_days: int = Form(3, description="분할 후보 납기 간격 임계값 (일)"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """긴급 수주를 기존 스케줄에 최소 파급으로 증분 반영한다.
+
+    동작 순서:
+    1. ERP 파일 파싱 → 신규 SalesOrder 추가
+    2. 신규 수주의 SQ 그룹 식별
+    3. 해당 SQ의 변경 가능 배치 삭제 (frozen 배치 보호)
+    4. 영향 SQ 배치 재생성 + 자동 분할 검토
+    5. 영향 그룹만 부분 재스케줄
+    """
+    # run_label 존재 확인
+    existing_count = (
+        db.query(func.count(ProductionBatch.batch_id))
+        .filter(ProductionBatch.run_label == run_label)
+        .scalar()
+    )
+    if not existing_count:
+        raise HTTPException(
+            status_code=404,
+            detail=f"run_label '{run_label}'에 해당하는 계획이 없습니다.",
+        )
+
+    erp_content = await erp_file.read()
+    if not erp_content:
+        raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
+
+    try:
+        from app.services.urgent_scheduler import apply_urgent_incremental
+
+        result = apply_urgent_incremental(
+            erp_content=erp_content,
+            run_label=run_label,
+            db=db,
+            gap_days=gap_days,
+        )
+        db.commit()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("[Urgent] 긴급 수주 반영 실패 — 롤백 완료")
+        raise HTTPException(
+            status_code=500,
+            detail=f"긴급 수주 반영 실패 (롤백 완료): {exc}",
+        ) from exc
+
+
 @router.get("/stage1/{run_label}/batches", summary="배치 목록 JSON")
 def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     """지정한 run_label의 production_batch 데이터를 JSON으로 반환한다.
