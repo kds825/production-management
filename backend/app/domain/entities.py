@@ -32,6 +32,10 @@ class TaskStatus(str, Enum):
     WIP_COMPLETE = "wip_complete"
     COMPLETED = "completed"
     DELAYED = "delayed"
+    # 생산계획자가 우클릭 → "미배정으로 이동" 한 batch_group 의 task/batch.
+    # soft-delete: equipment_code / start_datetime / end_datetime 은 보존되며
+    # "계획으로 복원" 시 status 만 PLANNED 로 다시 flip.
+    UNASSIGNED = "unassigned"
 
 
 @dataclass

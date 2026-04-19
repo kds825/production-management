@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.exceptions import SchedulerOverlapError
 from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
@@ -22,8 +23,8 @@ from app.services.constraint_checker import validate_all  # noqa: F401 — used 
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
-from app.services.cp_sat_optimizer import cp_sat_schedule  # CP-SAT 최적화 엔진
 from app.services.wip_matching import match_wip
+from app.services.wip_promotion import _promote_expected_to_estimated
 
 logger = logging.getLogger(__name__)
 
@@ -277,36 +278,58 @@ async def run_stage1_update(
         mutable_scheduled_ids: set[int] = set()
 
         if cutoff_date:
-            cutoff_dt = datetime(cutoff_date.year, cutoff_date.month, cutoff_date.day, 0, 0, 0)
+            cutoff_dt = datetime(
+                cutoff_date.year, cutoff_date.month, cutoff_date.day, 0, 0, 0
+            )
             # 기준일자 이전 ScheduleTask 의 batch_id → soft_frozen 대상
             before_task_batch_ids: set[int] = {
                 r[0]
-                for r in db.query(ScheduleTask.batch_id).filter(
+                for r in db.query(ScheduleTask.batch_id)
+                .filter(
                     ScheduleTask.run_label == run_label,
                     ScheduleTask.start_datetime.isnot(None),
                     ScheduleTask.start_datetime < cutoff_dt,
-                ).all()
+                )
+                .all()
             }
-            all_scheduled = db.query(ProductionBatch).filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status == "scheduled",
-            ).all()
-            hard_frozen = db.query(ProductionBatch).filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status.in_(["in_progress", "completed", "wip_complete"]),
-            ).all()
+            all_scheduled = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.status == "scheduled",
+                )
+                .all()
+            )
+            hard_frozen = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.status.in_(
+                        ["in_progress", "completed", "wip_complete"]
+                    ),
+                )
+                .all()
+            )
             # 기준일자 이전 scheduled → frozen
-            soft_frozen = [b for b in all_scheduled if b.batch_id in before_task_batch_ids]
+            soft_frozen = [
+                b for b in all_scheduled if b.batch_id in before_task_batch_ids
+            ]
             # 기준일자 이후(또는 태스크 없는) scheduled → mutable: 삭제 후 재생성
-            mutable_scheduled = [b for b in all_scheduled if b.batch_id not in before_task_batch_ids]
+            mutable_scheduled = [
+                b for b in all_scheduled if b.batch_id not in before_task_batch_ids
+            ]
             mutable_scheduled_ids = {b.batch_id for b in mutable_scheduled}
             frozen = hard_frozen + soft_frozen
         else:
             # base_date 미지정: 기존 동작 — planned 외 모든 상태 동결
-            frozen = db.query(ProductionBatch).filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status != "planned",
-            ).all()
+            frozen = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.status != "planned",
+                )
+                .all()
+            )
 
         # frozen orders: batch_seq >= 1인 실제 수주 배치에서 추출
         frozen_order_keys: set[tuple] = {
@@ -353,7 +376,9 @@ async def run_stage1_update(
             )
         unprotected_planned = planned_query.all()
         # 삭제 대상 2: 기준일자 이후 mutable scheduled 배치 (재생성 대상)
-        delete_batch_ids = {b.batch_id for b in unprotected_planned} | mutable_scheduled_ids
+        delete_batch_ids = {
+            b.batch_id for b in unprotected_planned
+        } | mutable_scheduled_ids
 
         deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
         if delete_batch_ids:
@@ -548,7 +573,6 @@ def list_batches(run_label: str, db: Session = Depends(get_db)) -> list[dict]:
     COLOR_ORDER = {"흑": 0, "갈": 1, "회": 2, "청": 3, "녹/황": 4, "흑/적": 5}
 
     from app.infrastructure.models.sales_order import SalesOrder
-    from app.infrastructure.models.wip_inventory import WipInventory
 
     # production_batch + sales_order + wip_inventory JOIN
     rows = (
@@ -635,7 +659,6 @@ def list_wip_inventory(run_label: str, db: Session = Depends(get_db)) -> list[di
     - run_label에 해당하는 모든 WIP 재고 (status 무관)
     - production_batch.wip_matched_id 로 어떤 배치에 매칭됐는지 batch_id / batch_group 포함
     """
-    from app.infrastructure.models.wip_inventory import WipInventory
     from app.infrastructure.models.sales_order import SalesOrder
     from sqlalchemy import or_
 
@@ -849,20 +872,38 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
             schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
             schedule_result["engine"] = "greedy"
         else:
-            # CP-SAT 시도 → 실패(INFEASIBLE / 타임아웃) 시 그리디 폴백
-            schedule_result = cp_sat_schedule(run_label, db, base_date=base_date_dt)
-            schedule_result["engine"] = "cpsat"
-            if schedule_result["solver_status"] not in ("OPTIMAL", "FEASIBLE"):
-                schedule_result["warnings"].append(
-                    "CP-SAT 솔버 미해결 — 그리디 방식으로 재시도합니다"
-                )
-                # 이미 wip_complete 처리된 배치가 있으므로 그리디를 그대로 이어 실행
-                fallback = auto_schedule(run_label, db, base_date=base_date_dt)
-                fallback["engine"] = "greedy_fallback"
-                fallback["warnings"] = (
-                    schedule_result["warnings"] + fallback.get("warnings", [])
-                )
-                schedule_result = fallback
+            # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
+            # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
+            # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
+            schedule_result = auto_schedule(
+                run_label, db, use_cpsat=True, base_date=base_date_dt
+            )
+            # solver_status 가 OPTIMAL/FEASIBLE 이 아니면 내부에서 greedy 로 폴백된 것.
+            # 엔진 라벨은 그에 맞춰 분기.
+            if schedule_result.get("solver_status") in ("OPTIMAL", "FEASIBLE"):
+                schedule_result["engine"] = "cpsat"
+            else:
+                schedule_result["engine"] = "greedy_fallback"
+    except SchedulerOverlapError as exc:
+        # 왜 200: 이 예외는 '겹침 재시도 실패' 비즈니스 시그널이지 서버 장애가 아니다.
+        # 프론트가 overlap_alert=True 플래그로 경고 배너를 표시할 수 있도록 성공 코드로 반환.
+        # DB rollback 은 auto_schedule 내부에서 이미 수행됨(기존 스케줄 불변).
+        db.rollback()
+        logger.warning(
+            "stage2 overlap alert — run_label=%s attempts=%s violations=%s",
+            run_label,
+            exc.attempts,
+            len(exc.violations),
+        )
+        return {
+            "run_label": run_label,
+            "status": "overlap_alert",
+            "overlap_alert": True,
+            "message": str(exc),
+            "violations": exc.violations,
+            "total_violations": len(exc.violations),
+            "attempts": exc.attempts,
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"스케줄링 실패: {exc}") from exc
 
@@ -880,6 +921,8 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
         "schedule": schedule_result,
         "violations": violations,
         "total_violations": len(violations),
+        # 정상 경로에서도 플래그를 내려보내 프론트가 분기 조건을 단순화할 수 있게 한다.
+        "overlap_alert": False,
     }
 
 
@@ -954,6 +997,7 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
 
     # WIP 재고 수량 조회 — 연선/절연재고 사용 배치는 net qty에서 차감해야 함
     from app.infrastructure.models.wip_inventory import WipInventory as WipModel
+
     wip_ids = [b.wip_matched_id for b in batches if b.wip_matched_id is not None]
     wip_qty_map: dict[int, float] = {}
     wip_stage_map2: dict[int, str] = {}
@@ -973,7 +1017,9 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
         wip_stage = wip_stage_map2.get(b.wip_matched_id, "") if b.wip_matched_id else ""
         # 이 배치의 공정이 WIP에 의해 커버되는 경우에만 차감
         # 예: 절연재고 WIP + 절연 공정 → 차감 / 절연재고 WIP + 시스 공정 → 차감 안 함
-        is_wip = bool(wip_stage) and (b.process_name or "") in _WIP_COVERED_PROCESSES.get(wip_stage, set())
+        is_wip = bool(wip_stage) and (
+            b.process_name or ""
+        ) in _WIP_COVERED_PROCESSES.get(wip_stage, set())
         wip_len = wip_qty_map.get(b.wip_matched_id, 0.0) if is_wip else 0.0
         net_len = max(raw_len - wip_len, 0.0)
         return {
@@ -989,8 +1035,8 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
             "drum_length_m": float(b.drum_length_m or 0),
             "drum_count": b.drum_count or 1,
             "total_length_m": raw_len,
-            "wip_length_m": wip_len,        # WIP 재고 커버량
-            "net_length_m": net_len,         # 실제 작업지시량 (WIP 제외)
+            "wip_length_m": wip_len,  # WIP 재고 커버량
+            "net_length_m": net_len,  # 실제 작업지시량 (WIP 제외)
             "wip_matched_id": b.wip_matched_id,
             "wip_stage": wip_stage or None,
             "product_group": b.product_group or "",
@@ -1182,12 +1228,14 @@ def split_batch_group(
         wip_len_by_id: dict[int, float] = {}  # wip_id → WIP 재고량 (cable m)
         if all_wip_ids:
             wip_rows = (
-                db.query(WipModel.wip_id, WipModel.process_stage, WipModel.total_length_m)
+                db.query(
+                    WipModel.wip_id, WipModel.process_stage, WipModel.total_length_m
+                )
                 .filter(WipModel.wip_id.in_(all_wip_ids))
                 .all()
             )
-            wip_stage_map  = {wid: (ps or "") for wid, ps, _ in wip_rows}
-            wip_len_by_id  = {wid: float(tl or 0) for wid, _, tl in wip_rows}
+            wip_stage_map = {wid: (ps or "") for wid, ps, _ in wip_rows}
+            wip_len_by_id = {wid: float(tl or 0) for wid, _, tl in wip_rows}
 
         def _is_wip_strand(b: ProductionBatch) -> bool:
             """연선/절연재고 WIP 사용 배치"""
@@ -1245,7 +1293,9 @@ def split_batch_group(
             """
             budget = wip_budget_m
             selected = []
-            for b in sorted(candidates, key=lambda b: float(b.total_length_m or 0), reverse=True):
+            for b in sorted(
+                candidates, key=lambda b: float(b.total_length_m or 0), reverse=True
+            ):
                 sz = float(b.total_length_m or 0)
                 if sz <= budget:
                     selected.append(b)
@@ -1253,32 +1303,34 @@ def split_batch_group(
             return selected
 
         if lot_size > 0:
-            wip_in_split  = [b for b in split_off if _is_wip_strand(b)]
-            wip_in_remain = [b for b in remaining  if _is_wip_strand(b)]
-            non_wip_split  = [b for b in split_off if not _is_wip_strand(b)]
+            wip_in_split = [b for b in split_off if _is_wip_strand(b)]
+            wip_in_remain = [b for b in remaining if _is_wip_strand(b)]
+            non_wip_split = [b for b in split_off if not _is_wip_strand(b)]
             non_wip_remain = [b for b in remaining if not _is_wip_strand(b)]
 
             # 현재 net (WIP 공유 합계 기준 차감)
-            base_split_net  = _group_net(split_off)
+            base_split_net = _group_net(split_off)
             base_remain_net = _group_net(remaining)
             lots_current = _lot_count(base_split_net) + _lot_count(base_remain_net)
 
             # wip_id 별로 묶기
             wip_ids_in_remain = set(b.wip_matched_id for b in wip_in_remain)
-            wip_ids_in_split  = set(b.wip_matched_id for b in wip_in_split)
+            wip_ids_in_split = set(b.wip_matched_id for b in wip_in_split)
 
             # 시나리오 A: remain WIP 전부 → split
             # 각 wip_id별 WIP 예산 내에서 split 비-WIP 배치를 선택해 수신
             avail_for_A = list(non_wip_split)  # 수신 후보 (중복 배정 방지용)
             plan_A: list[tuple[int, list]] = []  # (wip_id, 수신배치 목록)
-            sim_split_A  = base_split_net
+            sim_split_A = base_split_net
             sim_remain_A = base_remain_net
 
             for wid in wip_ids_in_remain:
                 wip_qty_m = wip_len_by_id.get(wid, 0.0)  # cable m
                 src_batches = [b for b in wip_in_remain if b.wip_matched_id == wid]
                 # remain_net: WIP 해제 → 해당 배치들이 full 생산으로 복귀
-                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                src_total = (
+                    sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                )
                 covered_now = max(0.0, src_total - wip_qty_m * core_mul)
                 sim_remain_A += src_total - covered_now  # = min(src_total, wip_qty*cm)
                 # split_net: WIP 예산 내에서 수신 배치 선택
@@ -1289,20 +1341,22 @@ def split_batch_group(
                 for r in recvs:
                     avail_for_A.remove(r)
 
-            sim_split_A  = max(0.0, sim_split_A)
+            sim_split_A = max(0.0, sim_split_A)
             sim_remain_A = max(0.0, sim_remain_A)
             lots_A = _lot_count(sim_split_A) + _lot_count(sim_remain_A)
 
             # 시나리오 B: split WIP 전부 → remain
             avail_for_B = list(non_wip_remain)
             plan_B: list[tuple[int, list]] = []
-            sim_split_B  = base_split_net
+            sim_split_B = base_split_net
             sim_remain_B = base_remain_net
 
             for wid in wip_ids_in_split:
                 wip_qty_m = wip_len_by_id.get(wid, 0.0)
                 src_batches = [b for b in wip_in_split if b.wip_matched_id == wid]
-                src_total = sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                src_total = (
+                    sum(float(b.total_length_m or 0) for b in src_batches) * core_mul
+                )
                 covered_now = max(0.0, src_total - wip_qty_m * core_mul)
                 sim_split_B += src_total - covered_now
                 recvs = _select_receivers(avail_for_B, wip_qty_m)
@@ -1312,7 +1366,7 @@ def split_batch_group(
                 for r in recvs:
                     avail_for_B.remove(r)
 
-            sim_split_B  = max(0.0, sim_split_B)
+            sim_split_B = max(0.0, sim_split_B)
             sim_remain_B = max(0.0, sim_remain_B)
             lots_B = _lot_count(sim_split_B) + _lot_count(sim_remain_B)
 
@@ -1359,8 +1413,12 @@ def split_batch_group(
         split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
         remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
 
-        split_due = min((b.due_date for b in split_off if b.due_date), default=header.due_date)
-        remain_due = min((b.due_date for b in remaining if b.due_date), default=header.due_date)
+        split_due = min(
+            (b.due_date for b in split_off if b.due_date), default=header.due_date
+        )
+        remain_due = min(
+            (b.due_date for b in remaining if b.due_date), default=header.due_date
+        )
         split_pri = min((b.customer_priority or 99 for b in split_off), default=99)
         remain_pri = min((b.customer_priority or 99 for b in remaining), default=99)
 
@@ -1370,8 +1428,12 @@ def split_batch_group(
         # 신규 그룹 헤더 생성
         new_header = ProductionBatch(
             run_label=header.run_label,
-            sales_order_id=split_off[0].sales_order_id if split_off else header.sales_order_id,
-            sales_order_line=split_off[0].sales_order_line if split_off else header.sales_order_line,
+            sales_order_id=split_off[0].sales_order_id
+            if split_off
+            else header.sales_order_id,
+            sales_order_line=split_off[0].sales_order_line
+            if split_off
+            else header.sales_order_line,
             item_code=header.item_code,
             routing_code=header.routing_code,
             process_name=header.process_name,
@@ -1384,7 +1446,9 @@ def split_batch_group(
             core_count=header.core_count,
             core_colors=header.core_colors,
             sheath_color=header.sheath_color,
-            customer_name=split_off[0].customer_name if split_off else header.customer_name,
+            customer_name=split_off[0].customer_name
+            if split_off
+            else header.customer_name,
             due_date=split_due,
             customer_priority=split_pri,
             line_speed_mpm=header.line_speed_mpm,
@@ -1524,6 +1588,12 @@ def update_batch_status(batch_id: int, body: dict, db: Session = Depends(get_db)
     if header:
         header.status = new_status
 
+    # WIP 예상 → 실적_추정 승격: completed 전환 시만 동작, 나머지는 no-op
+    _promote_expected_to_estimated(batch.batch_id, new_status, db)
+    if header and header.batch_id != batch.batch_id:
+        # cascade: header 도 함께 completed 로 전환됐으므로 header WIP 도 승격
+        _promote_expected_to_estimated(header.batch_id, new_status, db)
+
     db.commit()
     return {
         "batch_id": batch_id,
@@ -1570,6 +1640,10 @@ def update_batch(batch_id: int, body: dict, db: Session = Depends(get_db)):
     if "drum_count" in body or "drum_length_m" in body:
         batch.total_length_m = float(batch.drum_length_m or 0) * (batch.drum_count or 1)
 
+    # WIP 예상 → 실적_추정 승격: status 필드가 있을 때만, completed 여부는 헬퍼가 판단
+    if "status" in body:
+        _promote_expected_to_estimated(batch.batch_id, body["status"], db)
+
     db.commit()
     return {"batch_id": batch_id, "updated": list(body.keys())}
 
@@ -1606,6 +1680,8 @@ def update_batch_group_status(
     for b in batches:
         b.status = new_status
         updated_ids.append(b.batch_id)
+        # WIP 예상 → 실적_추정 승격: completed 전환 시만 동작, 나머지는 no-op
+        _promote_expected_to_estimated(b.batch_id, new_status, db)
 
     db.commit()
     return {
@@ -1622,7 +1698,6 @@ def get_batch_status_summary(db: Session = Depends(get_db)):
 
     업로드 전 확인 모달에서 사용: frozen 배치 수, planned 배치 수, WIP 현황.
     """
-    from app.infrastructure.models.wip_inventory import WipInventory
 
     # 상태별 배치 수 집계 (batch_seq >= 1인 실제 배치만, -1은 그룹 헤더)
     status_counts = (
@@ -1682,19 +1757,70 @@ def delete_run(run_label: str, db: Session = Depends(get_db)):
       (matched_order_id → NULL, status → 사용가능)
     """
     counts = {}
-    for table in ["audit_log", "schedule_task", "production_batch", "sales_order"]:
+
+    # production_batch / wip_inventory / sales_order 는 상호 FK 로 얽혀 있다:
+    #   - wip_inventory.source_batch_id → production_batch.batch_id  (RESTRICT)
+    #   - production_batch.wip_matched_id → wip_inventory.wip_id      (RESTRICT)
+    #   - sales_order.wip_id              → wip_inventory.wip_id      (RESTRICT)
+    # 어느 쪽을 먼저 지워도 다른 쪽이 막는다. 따라서
+    #  (a) 삭제 대상 run 바깥에서 들어오는 FK 는 모두 NULL 로 끊어두고,
+    #  (b) 자식 → 부모 순서로 삭제한다.
+
+    # (a-1) 이 run 의 production_batch → wip_inventory 참조 해제 (동일 run 내부 순환)
+    db.execute(
+        text("UPDATE production_batch SET wip_matched_id = NULL WHERE run_label = :rl"),
+        {"rl": run_label},
+    )
+
+    # (a-2) 다른 run 의 wip_inventory 가 이 run 의 production_batch 를 참조 중이면 NULL 로 끊기
+    db.execute(
+        text(
+            """
+            UPDATE wip_inventory
+            SET source_batch_id = NULL
+            WHERE source_batch_id IN (
+                SELECT batch_id FROM production_batch WHERE run_label = :rl
+            )
+            """
+        ),
+        {"rl": run_label},
+    )
+
+    # (a-3) 다른 run 의 sales_order 가 이 run 의 wip_inventory 를 참조 중이면 NULL 로 끊기
+    db.execute(
+        text(
+            """
+            UPDATE sales_order
+            SET wip_id = NULL
+            WHERE wip_id IN (
+                SELECT wip_id FROM wip_inventory WHERE run_label = :rl
+            )
+            """
+        ),
+        {"rl": run_label},
+    )
+
+    # (b) 자식 → 부모 순으로 삭제한다.
+    #     audit_log / schedule_task / sales_order 는 production_batch·wip_inventory 를 참조하므로 먼저,
+    #     그 다음 wip_inventory, 마지막으로 production_batch.
+    for table in ["audit_log", "schedule_task", "sales_order"]:
         result = db.execute(
             text(f"DELETE FROM {table} WHERE run_label = :rl"),
             {"rl": run_label},
         )
         counts[table] = result.rowcount
 
-    # wip_inventory: run_label 일치 행 삭제
     wip_del = db.execute(
         text("DELETE FROM wip_inventory WHERE run_label = :rl"),
         {"rl": run_label},
     )
     counts["wip_inventory"] = wip_del.rowcount
+
+    pb_del = db.execute(
+        text("DELETE FROM production_batch WHERE run_label = :rl"),
+        {"rl": run_label},
+    )
+    counts["production_batch"] = pb_del.rowcount
 
     # wip_inventory: 이 run에서 매칭(사용완료)됐지만 다른 run_label을 가진 WIP 상태 초기화.
     # production_batch가 이미 삭제됐으므로 wip_matched_id 역참조가 깨진 WIP를 정리한다.
@@ -1771,3 +1897,285 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
         }
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3: batch_group 미배정 (unassign) — 단일 트랜잭션 엔드포인트
+#
+# 왜 여기서 commit하는가:
+#   batch_group_lifecycle.unassign_batch_group은 flush만 수행 (Eng Critical #1).
+#   라우트가 서비스 flush 직후 audit_log INSERT를 추가하고 단 한 번만 commit하여,
+#   "unassign 상태 전이 + 감사 로그"가 원자적으로 함께 persist되거나 둘 다 롤백되게 한다.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/batch-group/{batch_group}/unassign",
+    summary="batch_group 전체를 미배정으로 soft-delete (사유 기록)",
+)
+def unassign_batch_group_endpoint(
+    batch_group: str,
+    body: dict | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """단일 트랜잭션: 서비스 flush + audit_log INSERT + commit.
+
+    Body:
+        { "reason": "자재지연" | "설비고장" | "납기재협상" | "기타" }
+        생략 또는 None이면 서비스가 '기타'로 저장.
+
+    Responses:
+        200: { batch_group, affected_batches, affected_tasks, reason, idempotent }
+        400: 상태(planned 외) / WIP 매칭 / reason 검증 오류
+        404: batch_group 없음
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+    from app.services.batch_group_lifecycle import (
+        BatchGroupNotFoundError,
+        BatchGroupReasonError,
+        BatchGroupStatusError,
+        BatchGroupWipMatchedError,
+        unassign_batch_group,
+    )
+
+    reason = (body or {}).get("reason")
+
+    try:
+        result = unassign_batch_group(db, batch_group, reason=reason)
+    except BatchGroupNotFoundError as exc:
+        # 404: 존재하지 않는 batch_group — 상태 전이 없이 즉시 실패
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        BatchGroupStatusError,
+        BatchGroupWipMatchedError,
+        BatchGroupReasonError,
+    ) as exc:
+        # 400: 비즈니스 제약 위반 (상태/WIP/reason) — 서비스는 변경 전에 예외를 던지므로
+        # rollback까지 할 필요는 없으나 세션 상태를 명시적으로 되돌려 다음 쿼리 안전 보장.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # 멱등 호출(이미 모두 unassigned)에는 새 audit row를 남기지 않는다 — 감사 로그가
+    # 실제 상태 전이에 1:1 대응하도록 유지 (중복 '변경 없음' 기록 방지).
+    if not result.get("idempotent"):
+        # run_label은 서비스 결과에 없으므로 첫 affected_batch에서 조회 (정통 소스).
+        # 없으면 'manual' (sm_inventory.py 기존 컨벤션: wip.run_label or "manual").
+        batch_run_label: str | None = None
+        first_batch_id = (
+            result["affected_batches"][0] if result["affected_batches"] else None
+        )
+        if first_batch_id is not None:
+            batch_run_label = (
+                db.query(ProductionBatch.run_label)
+                .filter(ProductionBatch.batch_id == first_batch_id)
+                .scalar()
+            )
+
+        db.add(
+            AuditLog(
+                run_label=batch_run_label or "manual",
+                stage="stage1",
+                action_type="BATCH_GROUP_UNASSIGNED",
+                batch_id=first_batch_id,
+                decision_reason=(
+                    f"batch_group {batch_group} unassigned "
+                    f"(reason={result['reason']}, "
+                    f"tasks={len(result['affected_tasks'])})"
+                ),
+            )
+        )
+
+    db.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# POST /pipeline/batch-group/{bg}/restore — unassigned → planned 복원 (Task 3.3)
+#
+# 왜 단일 트랜잭션:
+#   batch_group_lifecycle.restore_batch_group은 flush만 수행 (Eng Critical #2).
+#   라우트가 서비스 flush 직후 audit_log INSERT를 추가하고 한 번만 commit하여,
+#   "상태 복원 + 감사 로그"가 원자적으로 persist 되거나 둘 다 롤백되게 한다.
+#
+# conflicts가 있을 경우:
+#   서비스는 mutate하지 않고 반환하므로 commit/rollback 없이 바로 409로 매핑.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/batch-group/{batch_group}/restore",
+    summary="unassigned batch_group을 원래 자리로 복원 (status flip)",
+)
+def restore_batch_group_endpoint(
+    batch_group: str, db: Session = Depends(get_db)
+) -> dict:
+    """단일 트랜잭션: 서비스 flush → audit_log INSERT → commit.
+
+    Responses:
+        200: 성공 — restored_tasks 배열 (멱등이면 빈 배열)
+        404: batch_group 없음
+        400: unassigned 외 상태 혼재
+        409: 원래 자리 점유됨 — detail.conflicts 에 상세 반환
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+    from app.services.batch_group_lifecycle import (
+        BatchGroupNotFoundError,
+        BatchGroupStatusError,
+        restore_batch_group,
+    )
+
+    try:
+        result = restore_batch_group(db, batch_group)
+    except BatchGroupNotFoundError as exc:
+        # 404: 존재하지 않는 batch_group — 상태 전이 없이 즉시 실패
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BatchGroupStatusError as exc:
+        # 400: planned 외 상태 혼재 — 서비스가 변경 전 예외 throw. 세션 clean 유지.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if result["conflicts"]:
+        # 서비스는 아무것도 mutate하지 않고 반환 — commit 하지 않아도 세션 clean.
+        # detail은 dict로 전달해 프론트가 conflicts 배열을 바로 파싱할 수 있게 함.
+        raise HTTPException(
+            status_code=409,
+            detail={"conflicts": result["conflicts"]},
+        )
+
+    # 멱등 호출(이미 모두 planned)에는 새 audit row를 남기지 않는다 — 감사 로그가
+    # 실제 상태 전이에 1:1 대응하도록 유지 (unassign 엔드포인트와 동일 규칙).
+    if not result.get("idempotent"):
+        # run_label은 서비스 결과에 없으므로 복원된 batch 중 하나에서 조회.
+        # 없으면 'manual' (unassign 엔드포인트와 동일 컨벤션).
+        batch = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_group == batch_group)
+            .first()
+        )
+        run_label = (batch.run_label if batch else None) or "manual"
+        first_batch_id = batch.batch_id if batch else None
+
+        db.add(
+            AuditLog(
+                run_label=run_label,
+                stage="stage1",
+                action_type="BATCH_GROUP_RESTORED",
+                batch_id=first_batch_id,
+                decision_reason=(
+                    f"batch_group {batch_group} restored, "
+                    f"tasks={len(result['restored_tasks'])}"
+                ),
+            )
+        )
+
+    db.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# POST /pipeline/batch-group/{bg}/restore-at — anchor 기준 재배치 preview (Task 1.2)
+#
+# no-mutation preview: 서비스가 flush/commit 없이 계산 결과만 반환한다.
+# 프론트가 CascadePreviewModal로 렌더 후 확정 시 bulk-update-v2로 일괄 반영.
+# ---------------------------------------------------------------------------
+
+
+from app.presentation.schemas.restore_at import RestoreAtRequest, RestoreAtResponse
+from app.services.batch_group_lifecycle import (
+    BatchGroupNotFoundError,
+    BatchGroupStatusError,
+    compute_restore_at_plan,
+)
+
+
+@router.post(
+    "/batch-group/{batch_group}/restore-at",
+    summary="unassigned batch_group 을 anchor 위치 기준으로 재배치 preview (no mutation)",
+)
+def restore_batch_group_at_endpoint(
+    batch_group: str,
+    body: RestoreAtRequest,
+    db: Session = Depends(get_db),
+) -> RestoreAtResponse:
+    """no-mutation preview — 프론트가 이 결과를 CascadePreviewModal 로 렌더 →
+    확정 시 bulk-update-v2 로 일괄 반영.
+
+    Responses:
+        200: RestoreAtResponse (task_positions + cascade-preview-v2 호환 필드)
+        400: unassigned 외 상태 혼재 (BatchGroupStatusError)
+        404: batch_group 없음 (BatchGroupNotFoundError)
+        422: body 검증 실패 (Pydantic)
+    """
+    try:
+        result = compute_restore_at_plan(
+            db,
+            batch_group=batch_group,
+            anchor_equipment_code=body.anchor_equipment_code,
+            anchor_start=body.anchor_start,
+        )
+    except BatchGroupNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BatchGroupStatusError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RestoreAtResponse(
+        batch_group=result.batch_group,
+        task_positions=[tp.__dict__ for tp in result.task_positions],
+        pushes=result.pushes,
+        pulls=result.pulls,
+        unresolved=result.unresolved,
+        request_id=result.request_id,
+        can_auto_resolve=result.can_auto_resolve,
+        iter_count=result.iter_count,
+        truncated=result.truncated,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /pipeline/batch-group-snapshots — unassigned batch_group 목록 (Task 3.3)
+#
+# 프론트 OrderInbox가 새로고침 시 호출. batch_group 단위 집계 + unassign_reason 포함.
+#
+# equipment_group 관련:
+#   백엔드 ProductionBatch에는 equipment_group 컬럼이 없다 (Task 3.1 검증).
+#   process_name을 그대로 노출하고, 프론트의 toEquipmentGroup(process_name, batch_group)
+#   헬퍼가 canonicalize 한다 — 백엔드/프론트 계약 단순화.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/batch-group-snapshots",
+    summary="unassigned 상태 batch_group 목록 (사유 + 공정체인 포함)",
+)
+def list_batch_group_snapshots(db: Session = Depends(get_db)) -> dict:
+    """Returns: { "groups": [BatchGroupSnapshot] } — 프론트 OrderInbox 용."""
+    rows = (
+        db.query(ProductionBatch).filter(ProductionBatch.status == "unassigned").all()
+    )
+    groups: dict[str, dict] = {}
+    for b in rows:
+        g = groups.setdefault(
+            b.batch_group,
+            {
+                "batch_group": b.batch_group,
+                "customer": b.customer_name or "",
+                "spec": b.spec_raw or "",
+                "color": b.sheath_color or "",
+                "total_length_m": 0.0,
+                "delivery_date": b.due_date.isoformat() if b.due_date else "",
+                "processes": [],
+                "order_count": 0,
+                "unassign_reason": b.unassign_reason or "기타",
+            },
+        )
+        g["total_length_m"] += float(b.total_length_m or 0)
+        g["order_count"] += 1
+        # equipment_group은 백엔드 모델에 없음 — process_name을 그대로 노출.
+        # 프론트의 toEquipmentGroup(process_name, batch_group)이 canonicalize.
+        g["processes"].append(
+            {
+                "process": b.process_name or "",
+                "equipment_group": b.process_name or "",
+            }
+        )
+    return {"groups": list(groups.values())}

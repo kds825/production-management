@@ -14,6 +14,8 @@ from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.audit_log import AuditLog
+from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
+from app.infrastructure.models.wip_upload_log import WipUploadLog
 
 __all__ = [
     "CustomerMaster",
@@ -30,4 +32,6 @@ __all__ = [
     "ProductionBatch",
     "ScheduleTask",
     "AuditLog",
+    "ScheduleChangeSet",
+    "WipUploadLog",
 ]

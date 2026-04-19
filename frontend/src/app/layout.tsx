@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+import { ToastContainer } from "@/shared/ui/Toast";
 
 const notoSansKR = Noto_Sans_KR({
   subsets: ["latin"],
@@ -27,6 +28,7 @@ export default function RootLayout({
     <html lang="ko" className={notoSansKR.variable}>
       <body className="bg-gray-50 text-gray-900 antialiased min-h-screen font-sans">
         {children}
+        <ToastContainer />
       </body>
     </html>
   );

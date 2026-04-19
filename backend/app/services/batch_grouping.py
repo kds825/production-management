@@ -18,7 +18,7 @@
 
 import math
 import re
-from datetime import date
+from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.sales_order import SalesOrder
@@ -30,6 +30,7 @@ from app.infrastructure.models.process_routing import ProcessRouting
 from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.customer_master import CustomerMaster
 from app.infrastructure.models.wip_inventory import WipInventory
+from app.services.constraint_params import ConstraintParams, resolve_spec_setup_min
 
 # WIP 재고 종류별로 해당 재고가 "이미 완료된" 공정 집합
 # 절연재고: 연선+절연까지 완료 → 절연 이전 공정 배치 생성 불필요
@@ -40,8 +41,75 @@ _WIP_COVERED_PROCESSES: dict[str, set[str]] = {
     "연선재고": {"신선", "연선"},
     "절연재고": {"신선", "연선", "저압절연", "고압절연"},
     "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
-    "완제품":   {"신선", "연선", "저압절연", "고압절연", "연합", "T/P", "저압시스", "고압시스"},
+    "완제품": {
+        "신선",
+        "연선",
+        "저압절연",
+        "고압절연",
+        "연합",
+        "T/P",
+        "저압시스",
+        "고압시스",
+    },
 }
+
+# 시스 색상 정렬 우선순위 (A120: 흑·청·흑/적 / A100: 갈·회·녹/황 등)
+# 현장에서 자주 쓰이는 색상일수록 앞에 배치 → 긴 체인 형성 확률 ↑
+_SHEATH_COLOR_RANK: dict[str, int] = {
+    "흑": 1,
+    "갈": 2,
+    "회": 3,
+    "청": 4,
+    "녹": 5,
+    "녹/황": 5,
+    "백": 6,
+    "적": 7,
+    "흑/적": 8,
+}
+
+# 고내화(TFR-8(...)) 감지 패턴 — 괄호 앞 공백 허용, 대소문자 무관
+# 의도: "TFR-8(830℃/120min)", "tfr-8 (...)" 등 변형도 동일 그룹으로 묶도록
+# 모듈 레벨에서 한 번만 컴파일 → 배치별 호출 시 재컴파일 비용 0
+_TFR8_PATTERN = re.compile(r"TFR-8\s*\(", re.IGNORECASE)
+
+# A120 설비로 라우팅되는 시스 색상군 (현장 룰). 그 외는 A100.
+_A120_COLORS = ("흑", "청", "흑/적")
+
+
+def _compose_sheath_group_key(
+    *,
+    proc: str,
+    color: str | None,
+    due_date: date | None,
+    sq: int | float | None,
+) -> str:
+    """시스 배치 그룹 키 생성 — 색상 + 반주차(H1/H2) bucket + SQ 접미.
+
+    왜 이 조합인가:
+    - **색상**: 같은 색상을 연속 생산해 교체 시간 최소화 (`_sheath_chain_key` 체인).
+    - **반주차(H1/H2)**: 같은 주 내 월·목 납기 차이도 별도 그룹으로 분리 → EDD 보장.
+    - **SQ 접미**: 회사 수기 양식처럼 같은 색상/주차 내에서도 규격(120/240 등)이
+      다르면 별도 런으로 분할한다. 과거에는 다중 SQ가 하나의 그룹으로 합쳐져
+      간트에 단일 블록으로 보였지만, 현장은 규격별 생산이 기본 단위다.
+    - 슬래시(`/`)가 들어간 색상(예: 흑/적, 녹/황)은 underscore 로 치환해 키로 사용.
+
+    색상 체인 연속성은 `_sheath_chain_key` 가 색상+납기만 보고 정렬하므로 SQ 분할
+    후에도 stable sort 로 자연 보존된다 (같은 색상·같은 주차 그룹이 인접 배치됨).
+    """
+    color_str = (color or "").strip()
+    color_key = color_str.replace("/", "_") if color_str else "기타"
+    sq_key = int(sq or 0)
+    if proc == "저압시스":
+        if due_date:
+            yr, wk, wday = due_date.isocalendar()
+            half = "H1" if wday <= 3 else "H2"
+            due_bucket = f"{yr}W{wk:02d}{half}"
+        else:
+            due_bucket = "9999W99X"
+        eq_prefix = "A120" if color_str in _A120_COLORS else "A100"
+        return f"{eq_prefix}_{color_key}_{due_bucket}_{sq_key}SQ"
+    # 고압시스 — 색상 + SQ (실질 633SQ 단일이나 일관성 위해 접미 유지)
+    return f"{proc}_{color_key}_{sq_key}SQ"
 
 
 def create_batches(
@@ -77,6 +145,10 @@ def create_batches(
         "warnings": [],
         "outsource_count": 0,
     }
+
+    # ── ConstraintConfig 스냅샷 프리페치 (4-1 규격교체 fallback 등) ─────────
+    # Why: 루프 내부 fallback 시 재조회로 인한 N+1 방지. 1회 load 후 재사용.
+    constraint_params = ConstraintParams.load(db)
 
     # ── 마스터 데이터 일괄 로드 (N+1 방지) ──────────────────────────────────
     query = db.query(SalesOrder).filter(
@@ -325,10 +397,16 @@ def create_batches(
             if rep_speed_g and rep_speed_g.line_speed_mpm
             else None
         )
-        setup_time_g = (
-            float(rep_speed_g.setup_spec_min)
-            if rep_speed_g and rep_speed_g.setup_spec_min
-            else 0.0
+        # 연선 헤더 배치 (batch_seq=-1) — ConstraintConfig 4-1 stranding_min 우선.
+        # SpeedMaster.setup_spec_min 은 이 공정에선 무시 (UI 4-1 편집이 즉시 반영되게).
+        setup_time_g = resolve_spec_setup_min(
+            process_name="연선",
+            sm_spec_min=(
+                float(rep_speed_g.setup_spec_min)
+                if rep_speed_g and rep_speed_g.setup_spec_min is not None
+                else None
+            ),
+            params=constraint_params,
         )
         rep_item_g = _find_item(rep_order_g, items)
         rep_material_g = _infer_material(rep_order_g)
@@ -343,6 +421,11 @@ def create_batches(
         # 스케줄러가 불필요한 연선 작업을 배정하지 않도록.
         if not skip_strand_work:
             header_duration_g = work_qty_g / line_speed_g if line_speed_g else None
+            # wip_output_expected_m: 틀단위 생산량(work_qty_g)에서 실제 필요량(net_qty_g)을
+            # 빼면 연선 후 잉여(SM재고 예정)가 된다. defect_buffer는 net_qty_g에 이미 포함.
+            # 이 값은 헤더 배치(batch_seq=-1)에서만 계산한다.
+            # Task 6 Listener가 wip_output_expected_m > 0 조건으로 예상 WIP를 자동 생성한다.
+            header_wip_surplus_g = max(0.0, work_qty_g - net_qty_g)
             header_batch = ProductionBatch(
                 run_label=run_label,
                 sales_order_id=rep_order_g.order_id,
@@ -375,12 +458,15 @@ def create_batches(
                 wip_matched_id=None,
                 spec_raw=rep_order_g.spec_raw,
                 batch_group=strand_batch_group,
+                wip_output_expected_m=header_wip_surplus_g,
             )
             batches.append(header_batch)
 
         # ── 수주별 연선 배치 생성 (display용) ────────────────────────────────
         # scheduling-review·Excel 수주 단위 행 표시용.
         # estimated_duration_min=None — 스케줄러는 헤더 배치(seq=-1) duration 사용.
+        # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+        # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
         for order in orders_g:
             order_qty_o: float = float(order.ordered_qty_m or 0) * (
                 1.0 + defect_buffer_pct
@@ -393,10 +479,15 @@ def create_batches(
                 if speed_o and speed_o.line_speed_mpm
                 else None
             )
-            setup_time_o = (
-                float(speed_o.setup_spec_min)
-                if speed_o and speed_o.setup_spec_min
-                else 0.0
+            # 연선 strand_batch (batch_seq=1) — 동일하게 4-1 stranding_min 우선.
+            setup_time_o = resolve_spec_setup_min(
+                process_name="연선",
+                sm_spec_min=(
+                    float(speed_o.setup_spec_min)
+                    if speed_o and speed_o.setup_spec_min is not None
+                    else None
+                ),
+                params=constraint_params,
             )
 
             matched_wip_o = wip_by_order_line.get(
@@ -441,6 +532,8 @@ def create_batches(
 
             # 61연선(300SQ+ CU) — 7연선 코어 선행 배치도 수주 단위로 생성
             # WIP 전량 활용 시 코어 선행 배치도 불요
+            # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+            # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
             if is_61strand_g and conductor_material_o == "CU" and not skip_strand_work:
                 core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
                 core_spd = (
@@ -448,10 +541,14 @@ def create_batches(
                     if core_speed_o and core_speed_o.line_speed_mpm
                     else 25.0
                 )
-                core_setup = (
-                    float(core_speed_o.setup_spec_min)
-                    if core_speed_o and core_speed_o.setup_spec_min
-                    else 210.0
+                core_setup = resolve_spec_setup_min(
+                    process_name="연선",
+                    sm_spec_min=(
+                        float(core_speed_o.setup_spec_min)
+                        if core_speed_o and core_speed_o.setup_spec_min is not None
+                        else None
+                    ),
+                    params=constraint_params,
                 )
                 core_dur = order_qty_o / core_spd if core_spd > 0 else None
                 core_batch = ProductionBatch(
@@ -463,9 +560,8 @@ def create_batches(
                     process_name="연선",
                     batch_seq=0,
                     drum_count=int(order.drum_count or 1),
-                    drum_length_m=float(order.drum_length_m or 0) or (
-                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
-                    ),
+                    drum_length_m=float(order.drum_length_m or 0)
+                    or (float(order.ordered_qty_m or 0) / int(order.drum_count or 1)),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # T6BO SQ 범위(≤35) 매칭용 — 실제 선심 소선경 기준
@@ -497,6 +593,8 @@ def create_batches(
             # AL 61연선(633SQ 등) — AL 7연선 코어 선행 배치 (AL6BO 설비)
             # 633SQ 고압 케이블은 CU 도체 + AL 시스 구조이므로,
             # AL 시스용 7연선 코어를 AL6BO에서 별도 생산해야 한다.
+            # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+            # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
             if is_61strand_g and conductor_material_o == "AL" and not skip_strand_work:
                 # AL6BO speed_master가 없으면 T6B0 기준 fallback
                 al_core_speed_o = _find_speed(speed_lookup, "연선", order, 35.0)
@@ -505,10 +603,15 @@ def create_batches(
                     if al_core_speed_o and al_core_speed_o.line_speed_mpm
                     else 25.0
                 )
-                al_core_setup = (
-                    float(al_core_speed_o.setup_spec_min)
-                    if al_core_speed_o and al_core_speed_o.setup_spec_min
-                    else 210.0
+                al_core_setup = resolve_spec_setup_min(
+                    process_name="연선",
+                    sm_spec_min=(
+                        float(al_core_speed_o.setup_spec_min)
+                        if al_core_speed_o
+                        and al_core_speed_o.setup_spec_min is not None
+                        else None
+                    ),
+                    params=constraint_params,
                 )
                 al_core_dur = order_qty_o / al_core_spd if al_core_spd > 0 else None
                 al_core_batch = ProductionBatch(
@@ -520,9 +623,8 @@ def create_batches(
                     process_name="연선",
                     batch_seq=0,
                     drum_count=int(order.drum_count or 1),
-                    drum_length_m=float(order.drum_length_m or 0) or (
-                        float(order.ordered_qty_m or 0) / int(order.drum_count or 1)
-                    ),
+                    drum_length_m=float(order.drum_length_m or 0)
+                    or (float(order.ordered_qty_m or 0) / int(order.drum_count or 1)),
                     total_length_m=float(order.ordered_qty_m or 0),
                     extra_length_m=0,
                     sq_mm2=35,  # AL6BO SQ 범위(25~50) 매칭용
@@ -680,7 +782,9 @@ def create_batches(
                 continue
             # WIP 재고가 이 공정을 이미 커버하면 배치 생성 불필요
             # 예: 절연재고 → 절연 공정 배치 생략 / 연선재고 → 절연은 그대로 생성
-            if wip_stage and process_name in _WIP_COVERED_PROCESSES.get(wip_stage, set()):
+            if wip_stage and process_name in _WIP_COVERED_PROCESSES.get(
+                wip_stage, set()
+            ):
                 continue
             speed_info = _find_speed(speed_lookup, process_name, order, sq)
             line_speed = (
@@ -688,10 +792,14 @@ def create_batches(
                 if speed_info and speed_info.line_speed_mpm is not None
                 else None
             )
-            setup_time: float = (
-                float(speed_info.setup_spec_min)
-                if speed_info and speed_info.setup_spec_min is not None
-                else 0.0
+            setup_time: float = resolve_spec_setup_min(
+                process_name=process_name,
+                sm_spec_min=(
+                    float(speed_info.setup_spec_min)
+                    if speed_info and speed_info.setup_spec_min is not None
+                    else None
+                ),
+                params=constraint_params,
             )
 
             for lot_idx, (lot_length, lot_drums) in enumerate(lot_items, start=1):
@@ -704,6 +812,8 @@ def create_batches(
 
                 remarks: str | None = f"틀{lot_idx}" if len(lot_items) > 1 else None
 
+                # wip_output_expected_m 은 헤더 전용 (batch_seq == -1 AND "연선"). 여기선 default 0.
+                # Listener (Task 6) 가 batch_seq 로 gate 하므로 이 배치는 WIP auto-create 안 됨.
                 batch = ProductionBatch(
                     run_label=run_label,
                     sales_order_id=order.order_id,
@@ -777,6 +887,26 @@ def create_batches(
 
     batches.sort(key=_sort_key)
 
+    # ── 시스(저압/고압) 전용 2차 정렬: 납기 주차 → 색상 ──────────────────────
+    # 납기 최우선, 같은 주차 내에서만 색상 묶기 (체인지오버 최소화).
+    # Python sort 가 stable 이므로 비시스 배치의 상대 순서는 _sort_key 결과 유지.
+    def _sheath_chain_key(b: ProductionBatch) -> tuple:
+        if b.process_name not in ("저압시스", "고압시스"):
+            # 비시스는 고정 키 → 원순서 유지 (stable sort)
+            return (0, 0, 0, 0)
+        color = (b.sheath_color or "").strip() or "기타"
+        color_rank = _SHEATH_COLOR_RANK.get(color, 99)
+        if b.due_date:
+            yr, wk, _ = b.due_date.isocalendar()
+            due_wk_int = yr * 100 + wk
+            due_ord = b.due_date.toordinal()
+        else:
+            due_wk_int = 999999
+            due_ord = 9999999
+        return (1, due_wk_int, color_rank, due_ord)
+
+    batches.sort(key=_sheath_chain_key)
+
     # ── 배치 그룹 부여 ─────────────────────────────────────────────────────────
     # 같은 (process_name, sq_mm2)를 하나의 batch_group으로 묶는다.
     # 원본 계획서의 "120SQ--->1틀(연선5285)" 묶음 = 1 batch_group = 1 간트 블록.
@@ -788,31 +918,28 @@ def create_batches(
         group_key = f"{proc}_{sq_key}SQ"
 
         # 저압절연: 고내화 제품군(TFR-8(…))은 일반 제품과 혼합 생산 불가 → 별도 그룹
-        if proc == "저압절연" and "TFR-8(" in (b.product_group or ""):
+        # 공백/대소문자 변형("tfr-8 (", "TFR-8 (830℃/120min)" 등) 전부 커버
+        if (
+            proc == "저압절연"
+            and b.product_group
+            and _TFR8_PATTERN.search(b.product_group)
+        ):
             group_key = f"{proc}_{sq_key}SQ_고내화"
 
-        # 시스: 색상 + 납기 주차 기준으로 묶음
-        # 동일 색상을 연속 생산하여 색상 교체를 최소화하되,
-        # 납기 주차가 다른 수주는 별도 배치로 분리 — 납기 준수 우선.
-        # (절연 완료 시점 근사: 납기가 급할수록 절연도 일찍 끝남 → 시스도 일찍 가능)
+        # 시스: 색상 + 반주차(H1/H2) + SQ 기준으로 묶음 (`_compose_sheath_group_key`)
+        # - 같은 색상은 연속 생산해 색상 교체 최소화
+        # - 같은 주 내 월·목 납기 차이도 H1/H2 분리 → EDD 우선 보장
+        # - 규격(SQ)이 다르면 별도 런으로 분할 → 회사 수기 양식 일치
         # 설비 라우팅: A120(흑/청/흑적) vs A100(갈/회/녹/황 등).
-        # 고압시스는 단일 SQ(633)이므로 색상만 사용.
+        # 색상 체인 연속성은 `_sheath_chain_key` 가 색상+납기만 보므로 SQ 분할 후에도
+        # stable sort 로 보존됨 (같은 색상 그룹이 인접 배치).
         if proc in ("저압시스", "고압시스"):
-            color = (b.sheath_color or "").strip()
-            color_key = color.replace("/", "_") if color else "기타"
-            if proc == "저압시스":
-                # 납기 ISO 주차로 분할 기준 결정
-                if b.due_date:
-                    _yr, _wk, _ = b.due_date.isocalendar()
-                    _due_wk = f"{_yr}W{_wk:02d}"
-                else:
-                    _due_wk = "9999W99"
-                if color in ("흑", "청", "흑/적"):
-                    group_key = f"A120_{color_key}_{_due_wk}"
-                else:
-                    group_key = f"A100_{color_key}_{_due_wk}"
-            else:
-                group_key = f"{proc}_{color_key}"
+            group_key = _compose_sheath_group_key(
+                proc=proc,
+                color=b.sheath_color,
+                due_date=b.due_date,
+                sq=b.sq_mm2,
+            )
 
         # CORE-/ST- 등 Phase 1에서 이미 할당된 batch_group은 보존
         if b.batch_group:
@@ -1015,6 +1142,43 @@ def detect_split_candidates(
             # 실제로 드럼이 1개로 수렴하면 분할 불필요
             continue
 
+        # ── Overload 사전 판정 (2026-04-18 추가, 2026-04-18 개선) ────────────
+        # 헤더의 duration vs 납기 가용시간 비교 — 드럼 간 gap 무관하게 작동해야
+        # 하므로 merge/gap filter 이전에 판정. PDF "1안 수정 5틀→3+2" 패턴.
+        #
+        # 가용시간 계산: calendar_engine 의 _PROCESS_HOURS 를 설비 카테고리별로
+        # 누적. Mon-Thu 22h + Fri 14h + 토일 0h 의 정확한 weekday 가중치 적용.
+        # 이전 근사값 (days × 20h) 은 주말 포함 calendar day 에 20h 를 곱해
+        # 주말 있는 구간에서 40h 이상 과대 추정되던 bias 수정.
+        # drum_count >= 3 에만 적용 (단일/2틀 분할 의미 없음).
+        is_overload = False
+        overload_reason = ""
+        if header.due_date and header.estimated_duration_min and lot_count >= 3:
+            from app.services.calendar_engine import (
+                _PROCESS_HOURS as _CAL_HOURS,
+                _get_category as _cal_cat,
+            )
+
+            _cat = _cal_cat(header.equipment_code)
+            _hours_tbl = _CAL_HOURS.get(_cat, _CAL_HOURS["default"])
+            _available_hr = 0.0
+            _day = date.today()
+            _due = header.due_date
+            if _due > _day:
+                while _day < _due:
+                    _available_hr += _hours_tbl[_day.weekday()]
+                    _day += timedelta(days=1)
+                _required_hr = float(header.estimated_duration_min) / 60.0
+                if _required_hr > _available_hr and _available_hr > 0:
+                    is_overload = True
+                    _days_cal = (header.due_date - date.today()).days
+                    overload_reason = (
+                        f"설비 과부하 — {header.equipment_code or _cat} 기준 "
+                        f"납기 {header.due_date} 까지 {_days_cal}일 "
+                        f"(실가동 {_available_hr:.0f}h) < 배치 요구 "
+                        f"{_required_hr:.0f}h"
+                    )
+
         # ── 드럼 간 납기 간격 계산 ───────────────────────────────────────────
         gaps: list[int] = []
         for i in range(len(drums) - 1):
@@ -1031,26 +1195,27 @@ def detect_split_candidates(
             gaps.append(gap)
 
         max_gap = max(gaps) if gaps else 0
-        if max_gap < gap_days:
+        # overload 은 납기 gap 무관하게 분할 대상. 아니면 기존 임계치(gap_days).
+        if not is_overload and max_gap < gap_days:
             continue
 
-        # ── gap=0 연속 드럼을 하나의 청크로 병합 ─────────────────────────────
-        # greedy 분할로 소량이 별도 드럼으로 넘어갈 수 있다 (예: 835m).
-        # gap=0이면 같은 납기 그룹이므로 하나의 제안 청크로 합산한다.
-        merged_chunks: list[list[ProductionBatch]] = [drums[0]]
-        merged_gaps: list[int] = []
-        for i, gap_val in enumerate(gaps):
-            if gap_val == 0:
-                # 이전 청크에 병합
-                merged_chunks[-1].extend(drums[i + 1])
-            else:
-                merged_gaps.append(gap_val)
-                merged_chunks.append(drums[i + 1])
-        gaps = merged_gaps
-        drums = merged_chunks
+        if not is_overload:
+            # ── gap=0 연속 드럼을 하나의 청크로 병합 (기존 로직) ─────────────
+            # overload 케이스는 개별 드럼 유지 (ceil(N/2) 분할 지점을 정확히
+            # 잡기 위함).
+            merged_chunks: list[list[ProductionBatch]] = [drums[0]]
+            merged_gaps: list[int] = []
+            for i, gap_val in enumerate(gaps):
+                if gap_val == 0:
+                    merged_chunks[-1].extend(drums[i + 1])
+                else:
+                    merged_gaps.append(gap_val)
+                    merged_chunks.append(drums[i + 1])
+            gaps = merged_gaps
+            drums = merged_chunks
 
-        if len(drums) <= 1:
-            continue
+            if len(drums) <= 1:
+                continue
 
         # ── 분할 제안 구성 ────────────────────────────────────────────────────
         today = date.today()
@@ -1064,7 +1229,9 @@ def detect_split_candidates(
             min_priority = min((b.customer_priority or 99 for b in drum), default=99)
             earliest_due = min(dues) if dues else None
             days_until = (earliest_due - today).days if earliest_due else 999
-            is_urgent = min_priority <= 7 or (earliest_due is not None and days_until <= 7)
+            is_urgent = min_priority <= 7 or (
+                earliest_due is not None and days_until <= 7
+            )
             if i >= 2 and is_urgent:
                 has_urgent_in_later_drum = True
 
@@ -1097,12 +1264,15 @@ def detect_split_candidates(
                 }
             )
 
-        auto_split_recommended = has_urgent_in_later_drum
-        urgency_reason = (
-            f"후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
-            if auto_split_recommended
-            else ""
-        )
+        auto_split_recommended = has_urgent_in_later_drum or is_overload
+        urgency_reason_parts: list[str] = []
+        if has_urgent_in_later_drum:
+            urgency_reason_parts.append(
+                "후순위 드럼에 긴급/납기임박 수주 포함 (우선순위≤7 또는 납기7일 이내)"
+            )
+        if is_overload:
+            urgency_reason_parts.append(overload_reason)
+        urgency_reason = " / ".join(urgency_reason_parts)
 
         eq_code = header.equipment_code
         load_hours = (
@@ -1124,6 +1294,8 @@ def detect_split_candidates(
                 "drum_details": drum_details,
                 "auto_split_recommended": auto_split_recommended,
                 "urgency_reason": urgency_reason,
+                "is_overload": is_overload,
+                "has_urgent_in_later_drum": has_urgent_in_later_drum,
             }
         )
 
@@ -1198,20 +1370,35 @@ def _apply_auto_split(
     split_len_raw = sum(float(b.total_length_m or 0) for b in split_off)
     remain_len_raw = sum(float(b.total_length_m or 0) for b in remaining)
 
+    # Eng review 블로커 #1 (Task 5): split 후 각 헤더의 surplus 를 재계산.
+    # 원 헤더 surplus 를 proportional 로 복사하면 틀 단위 올림(ceil) 때문에 오차 발생.
+    # split_len_raw * core_mul = 분할 그룹의 실제 수주 환산량(net) — defect_buffer 는
+    # 개별 배치 total_length_m 에 반영돼 있으면 그대로, 없으면 0 으로 처리됨.
+    split_surplus = max(0.0, split_len - split_len_raw * core_mul)
+    remain_surplus = max(0.0, remain_len - remain_len_raw * core_mul)
+
     total_work = split_len + remain_len
     split_dur = orig_dur * split_len / total_work if total_work > 0 else 0
     remain_dur = orig_dur * remain_len / total_work if total_work > 0 else 0
 
-    split_due = min((b.due_date for b in split_off if b.due_date), default=header.due_date)
-    remain_due = min((b.due_date for b in remaining if b.due_date), default=header.due_date)
+    split_due = min(
+        (b.due_date for b in split_off if b.due_date), default=header.due_date
+    )
+    remain_due = min(
+        (b.due_date for b in remaining if b.due_date), default=header.due_date
+    )
     split_pri = min((b.customer_priority or 99 for b in split_off), default=99)
     remain_pri = min((b.customer_priority or 99 for b in remaining), default=99)
 
     # 신규 그룹 헤더 생성
     new_header = ProductionBatch(
         run_label=header.run_label,
-        sales_order_id=split_off[0].sales_order_id if split_off else header.sales_order_id,
-        sales_order_line=split_off[0].sales_order_line if split_off else header.sales_order_line,
+        sales_order_id=split_off[0].sales_order_id
+        if split_off
+        else header.sales_order_id,
+        sales_order_line=split_off[0].sales_order_line
+        if split_off
+        else header.sales_order_line,
         item_code=header.item_code,
         routing_code=header.routing_code,
         process_name=header.process_name,
@@ -1237,6 +1424,7 @@ def _apply_auto_split(
         stranding_type=header.stranding_type,
         batch_group=new_group,
         spec_raw=header.spec_raw,
+        wip_output_expected_m=split_surplus,  # Task 5: split 후 surplus 재계산
         remarks=(
             f"연선그룹 {len(split_off)}건 {split_lots}틀 / "
             f"수주총량 {split_len_raw:.0f}m → 연선작업량 {split_len:.0f}m"
@@ -1251,6 +1439,7 @@ def _apply_auto_split(
     header.estimated_duration_min = remain_dur
     header.due_date = remain_due
     header.customer_priority = remain_pri
+    header.wip_output_expected_m = remain_surplus  # Task 5: split 후 surplus 재계산
     header.remarks = (
         f"연선그룹 {len(remaining)}건 {remain_lots}틀 / "
         f"수주총량 {remain_len_raw:.0f}m → 연선작업량 {remain_len:.0f}m"
@@ -1301,9 +1490,19 @@ def execute_auto_splits(
         if len(proposed) < 2:
             continue
 
-        # proposed_splits[1:] 의 batch_ids 수집
+        # Split boundary:
+        # - is_overload: ceil(N/2) 지점으로 균형 분할 (PDF "5틀→3+2" 패턴).
+        #   먼저 처리되어야 할 초기 드럼이 더 많도록 앞쪽에 우선 배치.
+        # - 단순 긴급(has_urgent_in_later_drum only): 기존 동작 유지,
+        #   proposed_splits[1:] 전부를 뒤로 이동 (앞 드럼만 단독 보존).
+        N = len(proposed)
+        if c.get("is_overload"):
+            split_idx = (N + 1) // 2  # 3→2, 4→2, 5→3
+        else:
+            split_idx = 1
+
         split_ids: list[int] = []
-        for chunk in proposed[1:]:
+        for chunk in proposed[split_idx:]:
             split_ids.extend(chunk.get("batch_ids") or [])
 
         if not split_ids:
@@ -1505,7 +1704,10 @@ def _find_speed(
         "고압시스": ["SH-A150", "SH-B100"],
         "연선": ["ST-T6B0", "ST-AL6BO", "ST-54BO1", "ST-54BO2", "ST-54BO3", "ST-30BO"],
         "신선": ["WD-A100"],
-        "연합": ["AS-A100"],
+        # CA-12BO (소단면 1.5~6), CA-4BO (35~95), CA-LU (Laying Up 35~150) 순회.
+        # 이전 버그: "AS-A100" 은 equipment_master 에 없는 설비 — 37/37 batch 가
+        # line_speed_mpm=None 으로 저장되던 회귀.
+        "연합": ["CA-12BO", "CA-4BO", "CA-LU"],
         "T/P": ["TP-2"],
     }
 

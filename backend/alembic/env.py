@@ -14,7 +14,9 @@ from app.infrastructure.database import Base
 from app.infrastructure import models  # noqa: F401 — 모델 등록용
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# ConfigParser가 %를 보간 토큰으로 해석하므로, URL에 url-encoded 문자
+# (%40, %21 등 비밀번호 특수문자)가 있으면 ValueError가 난다. %%로 이스케이프.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -962,30 +962,101 @@ def _speed_master():
     # ── 7-G. T/P 공정 선속 (TFR-8 고내화) ──
     # T/P(Tape/Padding): 내화층 권포 공정. TP-1/TP-2(일반, 최대 60Ø), TP-GD(강대, 최대 100Ø)
     # 선속은 드럼 외경에 따라 달라지나 SQ 기준 근사값 사용. setup 180분(규격교체).
+    # A2′ 보수 값. A2 라운드의 (16→40...400→10) 은 PDF slot 을 pure work 로 오해한
+    # 결과. 스케줄러 wallclock 이 PDF 에 비해 너무 빨라져 A2′ 에서 하향.
     tp_data = [
         # (cross_section, line_speed_mpm, setup_spec_min)
-        (16, 40, 180),
-        (25, 38, 180),
-        (35, 35, 180),
-        (50, 32, 180),
-        (70, 28, 180),
-        (95, 25, 180),
-        (120, 22, 180),
-        (150, 20, 180),
-        (185, 18, 180),
-        (240, 15, 180),
-        (300, 12, 180),
-        (400, 10, 180),
+        (16, 25, 180),
+        (25, 24, 180),
+        (35, 22, 180),
+        (50, 20, 180),
+        (70, 18, 180),
+        (95, 16, 180),
+        (120, 14, 180),
+        (150, 13, 180),
+        (185, 12, 180),
+        (240, 10, 180),
+        (300, 9, 180),
+        (400, 8, 180),
     ]
-    for sq, speed, setup in tp_data:
+    # TP-1(일반 60Ø) / TP-GD(강대 100Ø) 동일 속도표 공유. TP-2 는 운영 DB 에
+    # 역사적으로 EX-B100 값이 들어가 있으나 스케줄러가 미배정하므로 seed 레벨에서는
+    # 정상값(tp_data)을 제공. fresh seed 시 TP-2 값이 정상화된다.
+    for tp_eq in ("TP-1", "TP-2", "TP-GD"):
+        for sq, speed, setup in tp_data:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=tp_eq,
+                    product_type="T/P",
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=setup,
+                )
+            )
+
+    # ── 7-H. 연선(ST-*) 빈 설비 보수 seed (A2′) ──
+    # Why: 기존 DB 에 값이 있는 ST-54BO1/2/3, ST-T6B0 는 수동 입력으로 들어간
+    # 값이고 PDF slot 기준 역산값(11.7mpm 대)과 정합 가능성이 있어 seed 에
+    # 포함하지 않음. fresh seed 시 해당 설비는 비어 있어 fallback(10) 경로
+    # 로 가며, 이는 PoC 에서 수동 /api/master 입력으로 보정한다.
+    # 빈 설비(ST-AL6BO, ST-30BO, ST-44BO, ST-1150BC)만 보수 값으로 seed.
+    stranding_speeds = [
+        ("ST-AL6BO", "7연선 AL", [(25, 13), (35, 12), (50, 10)]),
+        ("ST-30BO", "19연선 AL", [(70, 12), (95, 11), (120, 10)]),
+        (
+            "ST-44BO",
+            "19연선 AL",
+            [(70, 12), (95, 11), (120, 10), (150, 10), (185, 9), (240, 8)],
+        ),
+        ("ST-1150BC", "B/C AL", [(4, 20), (6, 18), (10, 15), (16, 13)]),
+    ]
+    for eq_code, ptype, sq_speeds in stranding_speeds:
+        for sq, speed in sq_speeds:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=eq_code,
+                    product_type=ptype,
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=210,
+                )
+            )
+
+    # ── 7-I. 연합(CA-*) 선속 ──
+    # 연합 공정: 다심 꼬기. 설비 range_unit 이 Ø 이지만 SpeedMaster cross_section
+    # 은 SQ 공통 키로 저장 (스케줄러 조회 키와 일치).
+    # A2′ 보수 값 (A2 원본 대비 40~60% 하향, fallback(10) 탈출 수준)
+    coupling_speeds = [
+        ("CA-12BO", [(1.5, 20), (2.5, 18), (4, 15), (6, 13)]),
+        ("CA-4BO", [(35, 13), (50, 12), (70, 11), (95, 10)]),
+        ("CA-LU", [(35, 15), (50, 13), (70, 12), (95, 11), (120, 10), (150, 9)]),
+    ]
+    for eq_code, sq_speeds in coupling_speeds:
+        for sq, speed in sq_speeds:
+            rows.append(
+                SpeedMaster(
+                    equipment_code=eq_code,
+                    product_type="연합",
+                    cross_section=sq,
+                    line_speed_mpm=speed,
+                    line_speed_hr=speed * 60,
+                    setup_spec_min=120,
+                )
+            )
+
+    # ── 7-J. 고압시스 SH-B100 (저용량, range_max=50Ø) — A2′ 보수 값 ──
+    b100_hp_sheath = [(16, 6.0), (25, 5.5), (35, 5.0), (50, 4.5)]
+    for sq, spd in b100_hp_sheath:
         rows.append(
             SpeedMaster(
-                equipment_code="TP-1",
-                product_type="T/P",
+                equipment_code="SH-B100",
+                product_type="고압시스 저용량",
                 cross_section=sq,
-                line_speed_mpm=speed,
-                line_speed_hr=speed * 60,
-                setup_spec_min=setup,
+                line_speed_mpm=spd,
+                line_speed_hr=round(spd * 60, 1),
+                setup_spec_min=30,
             )
         )
 

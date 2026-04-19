@@ -1,282 +1,345 @@
 "use client";
 
-import { createPortal } from "react-dom";
-import type { CascadePreview } from "../types";
+/**
+ * Task 16 cascade preview 응답을 섹션별 (충돌 해소 / 앞당김 제안 / 해소 불가) 로
+ * 렌더링하는 모달.
+ *
+ * 설계 원칙:
+ * - 색상은 전부 `--color-*` CSS 변수 경유 (raw hex 금지).  프로젝트 globals.css 정의 토큰:
+ *   `--color-danger` (🔴/⛔), `--color-warning` (🟡), `--color-brand-primary`,
+ *   `--color-text-primary/secondary`, `--color-bg-elevated/muted`, `--color-border-default`.
+ * - Reason code → 한국어 라벨은 `reasonLabels.ts` 에 dictionary 로 분리 (테스트 가능).
+ * - props 는 Task 17 의 `useScheduleChangeWithCascade` hook 출력과 1:1 호환.
+ *
+ * 렌더 조건:
+ * - `preview.pushes/pulls/unresolved` 각 배열이 비어 있으면 해당 섹션 미표시.
+ * - `preview.unresolved` 가 있으면 "적용" 버튼 disabled (auto-resolve 불가).
+ * - `guidanceShown` true 면 422 재시도 상한 초과 배너 표시 + apply disabled.
+ * - `onManualAdjust` 가 주어지면 unresolved 행에 "수동 조정 진입" 버튼 노출.
+ */
 
-interface ConflictResolutionModalProps {
-  preview: CascadePreview;
-  movedTask: { id: string; spec: string; process: string };
+import type {
+  CascadePreviewResponse,
+  PushEntry,
+  UnresolvedEntry,
+} from "../api/cascade.types";
+import { UNRESOLVED_REASON_LABEL, labelForReason } from "./reasonLabels";
+
+interface Props {
+  preview: CascadePreviewResponse;
+  pullToggle: boolean;
+  onPullToggle: (v: boolean) => void;
   onApply: () => void;
-  onCancel: () => void;
+  onClose: () => void;
+  /** 해소불가 task 의 수동조정 딥링크 핸들러. undefined 면 버튼 미표시. */
+  onManualAdjust?: (taskId: string) => void;
+  /** 422 재시도 상한 도달 시 guidance 배너 노출. */
+  guidanceShown?: boolean;
+  /** row hover 시 간트 하이라이트 연동 (Task 22 — optional). */
+  onRowHover?: (taskId: string | null) => void;
 }
 
-/** 날짜를 "M/D HH:mm" 형식으로 포맷 */
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString("ko-KR", {
+/** 날짜를 "M/D HH:mm" 형식으로 포맷 — locale ko-KR 은 24h 시간 사용. */
+const fmt = (iso: string) =>
+  new Date(iso).toLocaleString("ko-KR", {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
-}
 
 /**
- * 선행 공정 이동 시 후행 공정에 대한 영향을 표시하고
- * 사용자에게 일괄 적용 또는 취소를 선택하게 하는 모달.
+ * 이동 전후 시각 차이를 "+Nh" / "-Nh" 로 표현.
+ * 3600_000 == ms in hour. 소수 1자리 — 블록 분할 최소 단위가 0.5h.
  */
+const deltaH = (oldIso: string, newIso: string) => {
+  const diff =
+    (new Date(newIso).getTime() - new Date(oldIso).getTime()) / 3_600_000;
+  const sign = diff >= 0 ? "+" : "";
+  return `${sign}${diff.toFixed(1)}h`;
+};
+
+function Row({
+  entry,
+  onHover,
+}: {
+  entry: PushEntry;
+  onHover?: (id: string | null) => void;
+}) {
+  return (
+    <tr
+      onMouseEnter={() => onHover?.(entry.task_id)}
+      onMouseLeave={() => onHover?.(null)}
+      className="kbi-modal-row border-b border-[color:var(--color-border-muted)]"
+    >
+      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-primary)]">
+        {entry.batch_label}
+      </td>
+      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
+        {entry.equipment_code}
+      </td>
+      <td className="px-2 py-1.5 text-[11px]">
+        <span className="text-[color:var(--color-text-tertiary)]">
+          {fmt(entry.old_start)}
+        </span>
+        <span className="text-[color:var(--color-text-tertiary)]"> → </span>
+        <span className="font-medium text-[color:var(--color-brand-primary)]">
+          {fmt(entry.new_start)}
+        </span>
+      </td>
+      <td className="px-2 py-1.5 text-[11px] font-mono text-[color:var(--color-text-primary)]">
+        {deltaH(entry.old_start, entry.new_start)}
+      </td>
+      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
+        {labelForReason(entry.reason)}
+      </td>
+    </tr>
+  );
+}
+
+function UnresolvedRow({
+  entry,
+  onManualAdjust,
+}: {
+  entry: UnresolvedEntry;
+  onManualAdjust?: (id: string) => void;
+}) {
+  return (
+    <li className="kbi-modal-unresolved-row flex flex-col gap-0.5 px-3 py-2 border-b border-[color:var(--color-border-muted)]">
+      <div className="flex items-center gap-2">
+        <strong className="text-[11px] text-[color:var(--color-text-primary)]">
+          {entry.batch_label || entry.task_id}
+        </strong>
+        <span className="kbi-modal-unresolved-reason text-[10px] text-[color:var(--color-danger)]">
+          {UNRESOLVED_REASON_LABEL[entry.reason] ?? entry.reason}
+        </span>
+      </div>
+      {entry.detail && (
+        <span className="kbi-modal-unresolved-detail text-[10px] text-[color:var(--color-text-tertiary)]">
+          {entry.detail}
+        </span>
+      )}
+      {onManualAdjust && (
+        <button
+          type="button"
+          onClick={() => onManualAdjust(entry.task_id)}
+          className="kbi-modal-cta self-start text-[11px] font-medium px-2 py-1 rounded border border-[color:var(--color-danger)] text-[color:var(--color-danger)] hover:bg-[color:var(--color-bg-muted)] transition-colors"
+        >
+          수동 조정 진입
+        </button>
+      )}
+    </li>
+  );
+}
+
 export function ConflictResolutionModal({
   preview,
-  movedTask,
+  pullToggle,
+  onPullToggle,
   onApply,
-  onCancel,
-}: ConflictResolutionModalProps) {
-  const { affected_tasks, conflicts } = preview;
+  onClose,
+  onManualAdjust,
+  guidanceShown,
+  onRowHover,
+}: Props) {
+  // 적용 가능 조건: unresolved 없음 + guidance 배너 미노출.
+  const canApply = preview.unresolved.length === 0 && !guidanceShown;
+  const hasPushes = preview.pushes.length > 0;
+  const hasPulls = preview.pulls.length > 0;
+  const hasUnresolved = preview.unresolved.length > 0;
 
-  const modalContent = (
+  // "적용" 버튼 서브텍스트 — 몇 건 재배치/앞당김/해소불가인지 요약.
+  const subtext = [
+    hasPushes && `+${preview.pushes.length}건 재배치`,
+    hasPulls && pullToggle && `-${preview.pulls.length}건 앞당김`,
+    hasUnresolved && `${preview.unresolved.length}건 해소불가`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 99999,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "rgba(0,0,0,0.4)",
-      }}
-      onClick={onCancel}
+      role="dialog"
+      aria-labelledby="kbi-conflict-title"
+      className="kbi-modal fixed inset-0 z-[99999] flex items-center justify-center bg-[color:var(--color-overlay)]"
+      onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="rounded-lg shadow-xl"
-        style={{
-          backgroundColor: "#FFFFFF",
-          minWidth: 480,
-          maxWidth: 600,
-          maxHeight: "80vh",
-          display: "flex",
-          flexDirection: "column",
-          border: "1px solid #E5E7EB",
-        }}
+        className="bg-[color:var(--color-bg-elevated)] rounded-lg shadow-xl flex flex-col border border-[color:var(--color-border-default)]"
+        style={{ minWidth: 560, maxWidth: 720, maxHeight: "85vh" }}
       >
-        {/* 헤더 */}
-        <div
-          className="flex items-center gap-2 px-5 py-3 rounded-t-lg"
-          style={{ backgroundColor: "#4A2C2A" }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="#FCD34D"
-            style={{ flexShrink: 0 }}
+        <header className="kbi-modal-header px-5 py-3 border-b border-[color:var(--color-border-default)]">
+          <h2
+            id="kbi-conflict-title"
+            className="text-sm font-semibold text-[color:var(--color-text-primary)]"
           >
-            <path d="M8 1L1 14h14L8 1zm0 2.5l5.5 9.5h-11L8 3.5zM7.25 7v3.5h1.5V7h-1.5zm0 4.5v1.5h1.5v-1.5h-1.5z" />
-          </svg>
-          <span className="text-sm font-semibold text-white">
-            선행 공정 이동으로 후행 작업에 영향
-          </span>
-        </div>
+            배치 변경 확인
+          </h2>
+        </header>
 
-        {/* 본문 */}
         <div
-          className="px-5 py-4 flex-1 overflow-y-auto"
-          style={{ maxHeight: "60vh" }}
+          className="px-5 py-4 flex-1 overflow-y-auto flex flex-col gap-3"
+          style={{ maxHeight: "65vh" }}
         >
-          {/* 이동 대상 정보 */}
-          <div
-            className="flex items-center gap-2 mb-4 px-3 py-2 rounded"
-            style={{ backgroundColor: "#FDF2F2", border: "1px solid #F3D5D5" }}
-          >
+          {preview.summary && (
+            <p className="kbi-modal-summary text-xs text-[color:var(--color-text-secondary)]">
+              {preview.summary}
+            </p>
+          )}
+
+          {guidanceShown && (
             <div
-              className="w-1 h-8 rounded-sm"
-              style={{ backgroundColor: "#C41230" }}
-            />
-            <div className="flex flex-col">
-              <span
-                className="text-[11px] font-medium"
-                style={{ color: "#9CA3AF" }}
-              >
-                이동 대상
-              </span>
-              <span
-                className="text-sm font-semibold"
-                style={{ color: "#1F2937" }}
-              >
-                {movedTask.process} {movedTask.spec}
-              </span>
-            </div>
-          </div>
-
-          {/* 영향받는 작업 목록 */}
-          {affected_tasks.length > 0 && (
-            <div className="mb-4">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span
-                  className="text-xs font-semibold"
-                  style={{ color: "#1F2937" }}
-                >
-                  영향받는 작업
-                </span>
-                <span
-                  className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                  style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
-                >
-                  {affected_tasks.length}건
-                </span>
-              </div>
-              <div
-                className="rounded border"
-                style={{ borderColor: "#E5E7EB" }}
-              >
-                {affected_tasks.map((task, idx) => (
-                  <div
-                    key={task.task_id}
-                    className="flex items-center justify-between px-3 py-2"
-                    style={{
-                      borderBottom:
-                        idx < affected_tasks.length - 1
-                          ? "1px solid #F3F4F6"
-                          : "none",
-                    }}
-                  >
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="text-[11px] font-semibold"
-                          style={{ color: "#1F2937" }}
-                        >
-                          {task.process}
-                        </span>
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded font-mono"
-                          style={{
-                            backgroundColor: "#F3F4F6",
-                            color: "#6B7280",
-                          }}
-                        >
-                          {task.equipment}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-gray-400">
-                        {task.reason}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 text-[11px]">
-                      <span style={{ color: "#9CA3AF" }}>
-                        {fmtDate(task.old_start)}
-                      </span>
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="#9CA3AF"
-                      >
-                        <path d="M6 3l5 5-5 5V3z" />
-                      </svg>
-                      <span
-                        className="font-medium"
-                        style={{ color: "#C41230" }}
-                      >
-                        {fmtDate(task.new_start)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              role="alert"
+              className="kbi-modal-guidance px-3 py-2 rounded border border-[color:var(--color-warning)] text-[11px] text-[color:var(--color-warning)] bg-[color:var(--color-bg-muted)]"
+            >
+              자동 해소에 실패했습니다. 수동 조정이 필요합니다.
             </div>
           )}
 
-          {/* 충돌 섹션 */}
-          {conflicts.length > 0 && (
-            <div className="mb-2">
-              <div className="flex items-center gap-1.5 mb-2">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="#D97706">
-                  <path d="M8 1L1 14h14L8 1zm0 2.5l5.5 9.5h-11L8 3.5zM7.25 7v3.5h1.5V7h-1.5zm0 4.5v1.5h1.5v-1.5h-1.5z" />
-                </svg>
-                <span
-                  className="text-xs font-semibold"
-                  style={{ color: "#92400E" }}
-                >
-                  충돌 {conflicts.length}건
-                </span>
-              </div>
-              <div
-                className="rounded border"
-                style={{
-                  borderColor: "#FCD34D",
-                  backgroundColor: "#FFFBEB",
-                }}
+          {hasPushes && (
+            <section
+              aria-labelledby="sec-push"
+              className="kbi-modal-section kbi-modal-section--push"
+            >
+              <h3
+                id="sec-push"
+                className="flex items-center gap-1.5 text-xs font-semibold mb-1.5 text-[color:var(--color-text-primary)]"
               >
-                {conflicts.map((conflict, idx) => (
-                  <div
-                    key={`${conflict.task_id}-${conflict.conflict_with}`}
-                    className="px-3 py-2"
-                    style={{
-                      borderBottom:
-                        idx < conflicts.length - 1
-                          ? "1px solid #FEF3C7"
-                          : "none",
-                    }}
-                  >
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span
-                        className="text-[11px] font-medium"
-                        style={{ color: "#1F2937" }}
-                      >
-                        {conflict.equipment}
-                      </span>
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded"
-                        style={{
-                          backgroundColor: "#FEE2E2",
-                          color: "#DC2626",
-                        }}
-                      >
-                        {conflict.overlap_min}분 겹침
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-gray-500">
-                      {conflict.task_id} 이동 시 {conflict.equipment}에서 기존
-                      작업({conflict.conflict_with})과 겹침
-                      {conflict.resolution === "push_forward" &&
-                        " -- 기존 작업을 뒤로 밀어서 해소"}
-                    </p>
-                  </div>
-                ))}
+                <span
+                  className="kbi-modal-icon-negative inline-block w-2 h-2 rounded-full bg-[color:var(--color-danger)]"
+                  aria-hidden="true"
+                />
+                충돌 해소 ({preview.pushes.length})
+              </h3>
+              <table className="w-full text-left border border-[color:var(--color-border-default)] rounded">
+                <thead className="bg-[color:var(--color-bg-muted)]">
+                  <tr className="text-[10px] text-[color:var(--color-text-secondary)]">
+                    <th className="px-2 py-1 font-medium">배치</th>
+                    <th className="px-2 py-1 font-medium">설비</th>
+                    <th className="px-2 py-1 font-medium">시간 변경</th>
+                    <th className="px-2 py-1 font-medium">Δ</th>
+                    <th className="px-2 py-1 font-medium">사유</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.pushes.map((p) => (
+                    <Row
+                      key={`push-${p.task_id}`}
+                      entry={p}
+                      onHover={onRowHover}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {hasPulls && (
+            <section
+              aria-labelledby="sec-pull"
+              className="kbi-modal-section kbi-modal-section--pull"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <h3
+                  id="sec-pull"
+                  className="flex items-center gap-1.5 text-xs font-semibold text-[color:var(--color-text-primary)]"
+                >
+                  <span
+                    className="kbi-modal-icon-warning inline-block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[8px] border-l-transparent border-r-transparent border-b-[color:var(--color-warning)]"
+                    aria-hidden="true"
+                  />
+                  앞당김 제안 ({preview.pulls.length})
+                </h3>
+                <label className="kbi-modal-pull-toggle flex items-center gap-1.5 text-[11px] text-[color:var(--color-text-secondary)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pullToggle}
+                    onChange={(e) => onPullToggle(e.target.checked)}
+                    aria-label="Pull 제안을 적용에 포함"
+                  />
+                  <span>Pull 포함</span>
+                </label>
               </div>
-            </div>
+              <table className="w-full text-left border border-[color:var(--color-border-default)] rounded">
+                <thead className="bg-[color:var(--color-bg-muted)]">
+                  <tr className="text-[10px] text-[color:var(--color-text-secondary)]">
+                    <th className="px-2 py-1 font-medium">배치</th>
+                    <th className="px-2 py-1 font-medium">설비</th>
+                    <th className="px-2 py-1 font-medium">시간 변경</th>
+                    <th className="px-2 py-1 font-medium">Δ</th>
+                    <th className="px-2 py-1 font-medium">사유</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.pulls.map((p) => (
+                    <Row
+                      key={`pull-${p.task_id}`}
+                      entry={p}
+                      onHover={onRowHover}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {hasUnresolved && (
+            <section
+              aria-labelledby="sec-unres"
+              className="kbi-modal-section kbi-modal-section--unresolved"
+            >
+              <h3
+                id="sec-unres"
+                className="flex items-center gap-1.5 text-xs font-semibold mb-1.5 text-[color:var(--color-danger)]"
+              >
+                <span
+                  className="kbi-modal-icon-negative-strong inline-block text-[color:var(--color-danger)] font-bold"
+                  aria-hidden="true"
+                >
+                  ✕
+                </span>
+                해소 불가 ({preview.unresolved.length})
+              </h3>
+              <ul className="border border-[color:var(--color-border-default)] rounded bg-[color:var(--color-bg-muted)]">
+                {preview.unresolved.map((u) => (
+                  <UnresolvedRow
+                    key={u.task_id}
+                    entry={u}
+                    onManualAdjust={onManualAdjust}
+                  />
+                ))}
+              </ul>
+            </section>
           )}
         </div>
 
-        {/* 하단 버튼 영역 */}
-        <div
-          className="flex justify-end gap-2 px-5 py-3 border-t"
-          style={{ borderColor: "#E5E7EB" }}
-        >
+        <footer className="kbi-modal-footer flex justify-end items-center gap-2 px-5 py-3 border-t border-[color:var(--color-border-default)]">
           <button
-            onClick={onCancel}
-            className="px-4 py-2 text-xs font-medium rounded-md transition-colors"
-            style={{
-              border: "1px solid #E5E7EB",
-              color: "#6B7280",
-              backgroundColor: "#FFFFFF",
-            }}
+            type="button"
+            onClick={onClose}
+            className="kbi-button-secondary px-4 py-2 text-xs font-medium rounded-md border border-[color:var(--color-border-default)] text-[color:var(--color-text-secondary)] bg-[color:var(--color-bg-elevated)] hover:bg-[color:var(--color-bg-muted)] transition-colors"
           >
-            취소
+            닫기
           </button>
           <button
+            type="button"
             onClick={onApply}
-            className="px-4 py-2 text-xs font-medium rounded-md text-white transition-colors"
-            style={{ backgroundColor: "#C41230" }}
+            disabled={!canApply}
+            className="kbi-button-primary flex flex-col items-center px-4 py-2 text-xs font-medium rounded-md text-[color:var(--color-text-inverse)] bg-[color:var(--color-brand-primary)] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            전체 적용
+            <span>적용</span>
+            {subtext && (
+              <span className="kbi-button-subtext text-[10px] opacity-80 mt-0.5">
+                {subtext}
+              </span>
+            )}
           </button>
-        </div>
+        </footer>
       </div>
     </div>
   );
-
-  if (typeof document === "undefined") return null;
-  return createPortal(modalContent, document.body);
 }
+
+// Default export 호환
+export default ConflictResolutionModal;

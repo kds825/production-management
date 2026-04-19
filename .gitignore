@@ -13,6 +13,7 @@ frontend/out/
 .env.local
 .env.*.local
 frontend/.env.local
+backend/.env.bak*
 
 # OS
 .DS_Store
@@ -31,3 +32,10 @@ docs/superpowers/
 Documents/
 Preparation/
 .gstack/
+graphify-out/
+
+# Superpowers brainstorming artifacts
+.superpowers/
+
+# Playwright test artifacts
+frontend/test-results/

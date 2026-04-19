@@ -2,6 +2,7 @@
 API 엔드포인트 통합 테스트 — TestClient로 실제 HTTP 요청/응답 검증
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -310,3 +311,308 @@ class TestProcessRouteRoutes:
         # 모든 규격에 insulation, jacketing 속도 존재
         assert "insulation" in speed["speeds"]
         assert "jacketing" in speed["speeds"]
+
+
+# ---------------------------------------------------------------------------
+# batch_group 미배정 (Task 2.3) — POST /api/pipeline/batch-group/{bg}/unassign
+# ---------------------------------------------------------------------------
+
+
+class TestBatchGroupUnassignRoutes:
+    """POST /api/pipeline/batch-group/{bg}/unassign 단일 트랜잭션 검증.
+
+    Why DI override:
+        conftest의 db 픽스처는 teardown에서 rollback하여 실 DB 오염을 막는다.
+        라우트가 get_db로 새 세션을 열면 (1) seed된 flush 전용 데이터가 안 보이고,
+        (2) 라우트의 db.commit()이 실 DB에 영구 반영되어 rollback이 무의미해진다.
+        → app.dependency_overrides[get_db]로 테스트 세션을 주입하고,
+          db.commit을 db.flush로 치환하여 conftest rollback 범위 안에서 검증.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        """라우트가 쓸 세션을 테스트의 db 픽스처로 강제. commit은 flush로 치환."""
+        from app.infrastructure.database import get_db
+
+        # commit을 flush로 치환 — 실 DB 영구반영 차단, 세션 내 가시성은 유지
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_unassign_with_reason_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g1")
+        res = client.post(
+            "/api/pipeline/batch-group/route-g1/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["batch_group"] == "route-g1"
+        assert body["reason"] == "자재지연"
+        assert body["idempotent"] is False
+        assert len(body["affected_batches"]) == 3
+        assert len(body["affected_tasks"]) == 3
+
+    def test_unassign_no_body_uses_default_reason(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-default")
+        res = client.post("/api/pipeline/batch-group/route-g-default/unassign")
+        assert res.status_code == 200, res.text
+        assert res.json()["reason"] == "기타"
+
+    def test_unassign_invalid_reason_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-bad")
+        res = client.post(
+            "/api/pipeline/batch-group/route-g-bad/unassign",
+            json={"reason": "해킹시도"},
+        )
+        assert res.status_code == 400
+
+    def test_unassign_in_progress_returns_400(self, db):
+        from app.infrastructure.models.production_batch import ProductionBatch
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g2")
+        b = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_group == "route-g2")
+            .first()
+        )
+        b.status = "in_progress"
+        db.flush()
+
+        res = client.post(
+            "/api/pipeline/batch-group/route-g2/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 400
+
+    def test_unassign_wip_matched_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "route-g-wip", with_wip=True)
+        res = client.post(
+            "/api/pipeline/batch-group/route-g-wip/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 400
+        assert "WIP" in res.json()["detail"]
+
+    def test_unassign_not_found_returns_404(self, db):
+        res = client.post(
+            "/api/pipeline/batch-group/doesnotexist-xyz/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert res.status_code == 404
+
+
+class TestBatchGroupRestoreRoutes:
+    """POST /api/pipeline/batch-group/{bg}/restore 단일 트랜잭션 검증.
+
+    DI override 이유는 TestBatchGroupUnassignRoutes와 동일 — conftest rollback이
+    실 DB 오염을 막을 수 있도록 테스트 세션을 주입하고 commit을 flush로 치환한다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_restore_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "rr1")
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/rr1/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        res = client.post("/api/pipeline/batch-group/rr1/restore")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert len(body["restored_tasks"]) == 3
+        assert body["conflicts"] == []
+        assert body["idempotent"] is False
+
+    def test_restore_conflict_returns_409(self, db):
+        from app.infrastructure.models.schedule_task import ScheduleTask
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "rr2")
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/rr2/unassign",
+            json={"reason": "자재지연"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        # 다른 group의 task를 rr2의 첫 task 슬롯으로 이동시켜 충돌 유도
+        _seed_planned_group(db, "rr3")
+        rr2_first_task = (
+            db.query(ScheduleTask)
+            .filter(ScheduleTask.batch_group == "rr2")
+            .order_by(ScheduleTask.task_id)
+            .first()
+        )
+        rr3_task = (
+            db.query(ScheduleTask).filter(ScheduleTask.batch_group == "rr3").first()
+        )
+        rr3_task.equipment_code = rr2_first_task.equipment_code
+        rr3_task.start_datetime = rr2_first_task.start_datetime
+        rr3_task.end_datetime = rr2_first_task.end_datetime
+        db.flush()
+
+        res = client.post("/api/pipeline/batch-group/rr2/restore")
+        assert res.status_code == 409, res.text
+        detail = res.json().get("detail")
+        assert isinstance(detail, dict) and "conflicts" in detail
+        assert len(detail["conflicts"]) >= 1
+
+    def test_restore_not_found_returns_404(self, db):
+        res = client.post("/api/pipeline/batch-group/nonexistent-rr/restore")
+        assert res.status_code == 404
+
+
+class TestBatchGroupSnapshotsRoute:
+    """GET /api/pipeline/batch-group-snapshots — unassigned 목록 + 사유."""
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_list_unassigned_snapshots_includes_reason(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "snap-s1")
+        _seed_planned_group(db, "snap-s2")
+        # s1만 unassign
+        unassign_res = client.post(
+            "/api/pipeline/batch-group/snap-s1/unassign",
+            json={"reason": "설비고장"},
+        )
+        assert unassign_res.status_code == 200, unassign_res.text
+
+        res = client.get("/api/pipeline/batch-group-snapshots")
+        assert res.status_code == 200, res.text
+        groups = res.json()["groups"]
+        snap_s1 = next((g for g in groups if g["batch_group"] == "snap-s1"), None)
+        assert snap_s1 is not None, "snap-s1 not in response"
+        assert snap_s1["unassign_reason"] == "설비고장"
+        assert snap_s1["order_count"] == 3  # 3 batches (연선/절연/시스)
+        assert len(snap_s1["processes"]) == 3
+
+        # s2는 planned 상태이므로 응답에 없어야 함
+        snap_s2 = next((g for g in groups if g["batch_group"] == "snap-s2"), None)
+        assert snap_s2 is None
+
+
+class TestBatchGroupRestoreAtRoutes:
+    """POST /api/pipeline/batch-group/{bg}/restore-at — anchor 기준 재배치 preview."""
+
+    @pytest.fixture(autouse=True)
+    def _override_db(self, db):
+        from app.infrastructure.database import get_db
+
+        db.commit = db.flush  # type: ignore[method-assign]
+
+        def _override():
+            yield db
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    def test_restore_at_success(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "ra-1")
+        client.post(
+            "/api/pipeline/batch-group/ra-1/unassign",
+            json={"reason": "자재지연"},
+        )
+        res = client.post(
+            "/api/pipeline/batch-group/ra-1/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["batch_group"] == "ra-1"
+        assert len(body["task_positions"]) == 3
+        assert body["task_positions"][0]["is_anchor"] is True
+
+    def test_restore_at_status_error_returns_400(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        # planned 상태(미unassign) 그룹에 restore_at 시도 → BatchGroupStatusError → 400
+        _seed_planned_group(db, "ra-2")
+        res = client.post(
+            "/api/pipeline/batch-group/ra-2/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 400
+
+    def test_restore_at_not_found_returns_404(self):
+        res = client.post(
+            "/api/pipeline/batch-group/nonexistent-ra/restore-at",
+            json={
+                "anchor_equipment_code": "DS-C11D",
+                "anchor_start": "2026-04-25T09:00:00",
+            },
+        )
+        assert res.status_code == 404
+
+    def test_restore_at_bad_body_returns_422(self, db):
+        from tests.test_batch_group_lifecycle import _seed_planned_group
+
+        _seed_planned_group(db, "ra-3")
+        client.post(
+            "/api/pipeline/batch-group/ra-3/unassign",
+            json={"reason": "자재지연"},
+        )
+        # anchor_start 누락 → Pydantic 422
+        res = client.post(
+            "/api/pipeline/batch-group/ra-3/restore-at",
+            json={"anchor_equipment_code": "DS-C11D"},
+        )
+        assert res.status_code == 422

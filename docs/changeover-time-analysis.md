@@ -125,3 +125,20 @@ SpeedMaster에 이들 코드로 등록된 행도 없다.
 > 연선/연합 공정은 SpeedMaster 데이터가 아예 누락되어 셋업 시간이 0으로 처리되고,
 > 저압시스/고압시스의 규격교체 시간은 참조 기준보다 낮게 설정되어 있다.
 > PoC 범위에서는 주요 병목 공정(절연, 시스 색상교체)의 정확도에 집중한 것으로 보인다.
+
+---
+
+## 2026-04-18 업데이트 — UI 편집 지원
+
+본 문서가 지적한 시드 불일치(연선 210 vs 참조 240) 는 **UI 편집으로 정정 가능**하다.
+`/master/constraints` 의 "파라미터" 탭에서 `4-1 stranding_min` 을 240 으로 변경하면 다음 자동배열부터
+반영된다 (또는 저장 모달의 "지금 기존 계획에도 반영" 선택).
+
+다만 **SpeedMaster 연선 row 누락**(여기서 지적된 근본 원인) 은 여전히 별도 과제로 남아 있다.
+ConstraintConfig 4-1 은 SpeedMaster 값이 없을 때 fallback 만 제공하므로, 향후 SpeedMaster 에
+연선 장비·SQ 조합이 채워지면 장비별 override 가 우선한다.
+
+관련:
+
+- 스펙: `docs/specs/2026-04-18-constraint-config-params-ui-design.md`
+- 플랜: `docs/plans/2026-04-18-constraint-config-params-ui.md`

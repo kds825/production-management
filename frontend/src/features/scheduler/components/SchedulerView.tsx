@@ -1,14 +1,24 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect, useRef, memo } from "react";
+import {
+  useMemo,
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  memo,
+  Fragment,
+} from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import { useScheduleStore } from "../store/scheduleStore";
 import { EquipmentSidebar } from "./EquipmentSidebar";
 import { GanttTaskBlock } from "./GanttTaskBlock";
 import { TodayMarker } from "./TodayMarker";
+import { ChainHighlightOverlay } from "./ChainHighlightOverlay";
 import { useTimelineNavigation } from "../../../shared/hooks/useTimelineNavigation";
 import type { ScheduleTask, Equipment, ViewFilterType } from "../types";
+import type { CascadePreviewResponse, PushEntry } from "../api/cascade.types";
 import {
   SIDEBAR_WIDTH,
   ROW_HEIGHT,
@@ -20,8 +30,35 @@ import {
   isWeekend,
   generateDays,
 } from "../utils/ganttUtils";
+import { assignLanes, getLaneCount } from "../utils/laneAssign";
 
 const WEEKEND_COLLAPSED_WIDTH = 8;
+
+/**
+ * 한 lane(Y축 칸) 의 높이. ROW_HEIGHT 와 동일하게 두어
+ * 단일 lane(겹침 없음) 인 경우 기존 레이아웃과 동일하게 보이고,
+ * 겹치는 블록이 있으면 lane 개수만큼 row 가 세로로 늘어난다.
+ */
+export const LANE_HEIGHT = ROW_HEIGHT;
+
+/**
+ * Task 22 — cascade preview 응답에서 주어진 task 에 대한 제안(push 또는 pull) 을 찾는다.
+ * push/pull 은 같은 `PushEntry` 구조를 공유하므로 단일 타입으로 반환.
+ *
+ * 왜 helper 로 분리: SchedulerView 내부 loop 에서 불필요한 배열 순회 중복을 방지하고
+ * 단위 테스트 (ghost-overlay) 에서 격리된 계약 검증이 가능해짐.
+ */
+export function getProposalFor(
+  taskId: string,
+  preview: CascadePreviewResponse | null | undefined,
+): PushEntry | null {
+  if (!preview) return null;
+  return (
+    preview.pushes.find((p) => p.task_id === taskId) ??
+    preview.pulls.find((p) => p.task_id === taskId) ??
+    null
+  );
+}
 
 // ----- Droppable Row -----
 
@@ -54,6 +91,10 @@ interface GanttRowProps {
   activeDragSq?: number | null;
   /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
   activeDragMaterial?: string | null;
+  /** Task 22 — cascade preview 가 열려 있으면 해당 응답을 전달. 각 블록별 고스트 렌더 판단용. */
+  previewOverlay?: CascadePreviewResponse | null;
+  /** Task 22 — 모달 row hover 시 설정되는 focus task id (gantt 블록 outline 연동). */
+  focusedTaskId?: string | null;
 }
 
 /**
@@ -74,6 +115,8 @@ const GanttRow = memo(function GanttRow({
   activeDragGroup,
   activeDragSq,
   activeDragMaterial,
+  previewOverlay,
+  focusedTaskId,
 }: GanttRowProps) {
   // 이 행이 드래그 그룹과 호환되는지 판단 (SQ 범위 + 재질 제한 포함)
   const isIncompatible = activeDragGroup
@@ -113,6 +156,29 @@ const GanttRow = memo(function GanttRow({
       return tEnd >= rangeStart && tStart <= rangeEnd;
     });
   }, [tasks, equipment.id, rangeStart, rangeEnd]);
+
+  // --- Y축 lane 스태킹 (안전망) ---
+  // 동일 설비 행에서 시간 겹치는 블록은 lane 을 분리해 세로로 쌓는다.
+  // 백엔드(CP-SAT Task 7-9)가 겹침을 방지하지만, 엣지 케이스 대비 UI 최후 방어선.
+  const { laneMap, laneCount } = useMemo(() => {
+    if (rowTasks.length === 0) {
+      return { laneMap: {} as Record<string, number>, laneCount: 1 };
+    }
+    const inputs = rowTasks.map((t) => ({
+      id: t.id,
+      start:
+        t.start instanceof Date
+          ? t.start.getTime()
+          : new Date(t.start).getTime(),
+      end: t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime(),
+    }));
+    const out = assignLanes(inputs);
+    const lm: Record<string, number> = {};
+    for (const a of out) lm[String(a.id)] = a.lane;
+    return { laneMap: lm, laneCount: getLaneCount(out) };
+  }, [rowTasks]);
+
+  const rowPixelHeight = Math.max(ROW_HEIGHT, laneCount * LANE_HEIGHT);
 
   // 이 행에 대한 선택 상태만 추출
   const selection =
@@ -251,7 +317,7 @@ const GanttRow = memo(function GanttRow({
         display: "flex",
         width: "100%",
         borderBottom: "1px solid #E5E7EB",
-        minHeight: ROW_HEIGHT,
+        minHeight: rowPixelHeight,
       }}
     >
       {/* 사이드바: 설비 정보 — sticky */}
@@ -265,7 +331,7 @@ const GanttRow = memo(function GanttRow({
           zIndex: 3,
           backgroundColor: "#FFFFFF",
           borderRight: "1px solid #E5E7EB",
-          height: ROW_HEIGHT,
+          height: rowPixelHeight,
         }}
       >
         <EquipmentSidebar equipment={equipment} />
@@ -284,7 +350,7 @@ const GanttRow = memo(function GanttRow({
           flex: 1,
           // overflow:hidden으로 내부 요소가 타임라인 밖으로 나가지 않도록
           overflow: "hidden",
-          height: ROW_HEIGHT,
+          height: rowPixelHeight,
           backgroundColor: isIncompatible
             ? "rgba(107, 114, 128, 0.12)"
             : isOver
@@ -333,15 +399,41 @@ const GanttRow = memo(function GanttRow({
             }}
           />
         )}
-        {rowTasks.map((task) => (
-          <GanttTaskBlock
-            key={task.id}
-            task={task}
-            rangeStart={rangeStart}
-            dayWidth={dayWidth}
-            weekendWidth={weekendWidth}
-          />
-        ))}
+        {rowTasks.map((task) => {
+          // Task 22 — 원본(실선) 블록 + 제안된 위치에 반투명 dashed 고스트 블록.
+          // preview 가 해당 task 에 대한 push/pull 제안을 포함하면 ghost 를 덧붙인다.
+          const proposal = getProposalFor(String(task.id), previewOverlay);
+          const isFocused = focusedTaskId === String(task.id);
+          const lane = laneMap[String(task.id)] ?? 0;
+          return (
+            <Fragment key={task.id}>
+              <GanttTaskBlock
+                task={task}
+                rangeStart={rangeStart}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                lane={lane}
+                laneHeight={LANE_HEIGHT}
+                focused={isFocused}
+              />
+              {proposal && (
+                <GanttTaskBlock
+                  task={{
+                    ...task,
+                    start: new Date(proposal.new_start),
+                    end: new Date(proposal.new_end),
+                  }}
+                  rangeStart={rangeStart}
+                  dayWidth={dayWidth}
+                  weekendWidth={weekendWidth}
+                  lane={lane}
+                  laneHeight={LANE_HEIGHT}
+                  ghost
+                />
+              )}
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
@@ -406,7 +498,8 @@ function DateHeader({
       const d = new Date(ts);
       // 자정(0시)은 이미 날짜 레이블로 표시되므로 건너뜀
       if (d.getHours() !== 0) {
-        const left = timeToXAdj(ts, rangeStart, dayWidth, weekendWidth) + SIDEBAR_WIDTH;
+        const left =
+          timeToXAdj(ts, rangeStart, dayWidth, weekendWidth) + SIDEBAR_WIDTH;
         markers.push({
           left,
           label: `${String(d.getHours()).padStart(2, "0")}:00`,
@@ -451,7 +544,12 @@ function DateHeader({
       {/* 날짜 레이블 영역 — 사이드바 오른쪽부터 클리핑 */}
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
         {days.map((day, idx) => {
-          const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+          const left = timeToXAdj(
+            day.timestamp,
+            rangeStart,
+            dayWidth,
+            weekendWidth,
+          );
           const weekend = isWeekend(day.date);
           const colWidth = weekend ? weekendWidth : dayWidth;
           const dow = day.date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
@@ -586,7 +684,12 @@ function WeekendOverlay({
     for (const day of days) {
       if (isWeekend(day.date)) {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+        const left = timeToXAdj(
+          day.timestamp,
+          rangeStart,
+          dayWidth,
+          weekendWidth,
+        );
         cols.push({ left, width: weekendWidth });
       }
     }
@@ -598,6 +701,7 @@ function WeekendOverlay({
       {weekendCols.map((col, idx) => (
         <div
           key={idx}
+          data-weekend="true"
           style={{
             position: "absolute",
             top: 0,
@@ -649,7 +753,12 @@ function GridLines({
     <>
       {days.map((day, idx) => {
         // SIDEBAR_WIDTH 없이 타임라인 내 상대 좌표로 배치
-        const left = timeToXAdj(day.timestamp, rangeStart, dayWidth, weekendWidth);
+        const left = timeToXAdj(
+          day.timestamp,
+          rangeStart,
+          dayWidth,
+          weekendWidth,
+        );
         return (
           <div
             key={idx}
@@ -798,12 +907,24 @@ interface SchedulerViewProps {
   activeDragSq?: number | null;
   /** 드래그 중인 아이템의 도체 재질 (CU | AL) */
   activeDragMaterial?: string | null;
+  /**
+   * Task 22 — cascade preview 가 제시한 변경. 전달되면 각 task 의 원본(실선) 옆에
+   * 반투명(50%) dashed border 고스트를 렌더한다. null/undefined 면 고스트 비활성.
+   */
+  previewOverlay?: CascadePreviewResponse | null;
+  /**
+   * Task 22 — 모달 행 hover 시 설정되는 focus task id. 해당 gantt 블록에
+   * focus-ring outline 을 입혀 어떤 블록이 하이라이트 대상인지 시각 연결한다.
+   */
+  focusedTaskId?: string | null;
 }
 
 export function SchedulerView({
   activeDragGroup,
   activeDragSq,
   activeDragMaterial,
+  previewOverlay,
+  focusedTaskId,
 }: SchedulerViewProps = {}) {
   const equipment = useScheduleStore((s) => s.equipment);
   const tasks = useScheduleStore((s) => s.tasks);
@@ -830,16 +951,18 @@ export function SchedulerView({
   );
 
   const visibleEquipment = useMemo(
-    () => hideEmpty
-      ? filteredEquipment.filter((eq) => equipmentWithTasks.has(eq.id))
-      : filteredEquipment,
+    () =>
+      hideEmpty
+        ? filteredEquipment.filter((eq) => equipmentWithTasks.has(eq.id))
+        : filteredEquipment,
     [filteredEquipment, hideEmpty, equipmentWithTasks],
   );
 
   const hiddenEquipment = useMemo(
-    () => hideEmpty
-      ? filteredEquipment.filter((eq) => !equipmentWithTasks.has(eq.id))
-      : [],
+    () =>
+      hideEmpty
+        ? filteredEquipment.filter((eq) => !equipmentWithTasks.has(eq.id))
+        : [],
     [filteredEquipment, hideEmpty, equipmentWithTasks],
   );
 
@@ -873,7 +996,10 @@ export function SchedulerView({
   let dayWidth: number;
   if (hideWeekends) {
     const allDays = generateDays(rangeStart, rangeEnd);
-    const weekdayCount = Math.max(allDays.filter((d) => !isWeekend(d.date)).length, 1);
+    const weekdayCount = Math.max(
+      allDays.filter((d) => !isWeekend(d.date)).length,
+      1,
+    );
     const weekendCount = allDays.length - weekdayCount;
     const fitWidth = Math.max(
       (availableWidth - weekendCount * WEEKEND_COLLAPSED_WIDTH) / weekdayCount,
@@ -881,14 +1007,54 @@ export function SchedulerView({
     );
     dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, fitWidth);
   } else {
-    dayWidth = Math.max(DAY_WIDTH_MAP[zoomLevel] * dayWidthScale, availableWidth / totalDays);
+    dayWidth = Math.max(
+      DAY_WIDTH_MAP[zoomLevel] * dayWidthScale,
+      availableWidth / totalDays,
+    );
   }
   const weekendWidth = hideWeekends ? WEEKEND_COLLAPSED_WIDTH : dayWidth;
-  const timelineWidth = timelineWidthAdj(rangeStart, rangeEnd, dayWidth, weekendWidth);
+  const timelineWidth = timelineWidthAdj(
+    rangeStart,
+    rangeEnd,
+    dayWidth,
+    weekendWidth,
+  );
   const totalContentWidth = SIDEBAR_WIDTH + timelineWidth;
 
-  // 전체 높이 (설비 수 * 행 높이)
-  const totalHeight = visibleEquipment.length * ROW_HEIGHT;
+  // 전체 높이 — 각 설비 행의 실제 lane 수를 반영해야 주말/그리드/오늘 마커가
+  // 늘어난 row 전체를 덮을 수 있다. 기본은 ROW_HEIGHT, 겹침 있는 행은 laneCount*LANE_HEIGHT.
+  const totalHeight = useMemo(() => {
+    let sum = 0;
+    for (const eq of visibleEquipment) {
+      const eqTasks = tasks.filter((t) => {
+        if (t.equipment_id !== eq.id) return false;
+        const tStart =
+          t.start instanceof Date
+            ? t.start.getTime()
+            : new Date(t.start).getTime();
+        const tEnd =
+          t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime();
+        return tEnd >= rangeStart && tStart <= rangeEnd;
+      });
+      if (eqTasks.length === 0) {
+        sum += ROW_HEIGHT;
+        continue;
+      }
+      const out = assignLanes(
+        eqTasks.map((t) => ({
+          id: t.id,
+          start:
+            t.start instanceof Date
+              ? t.start.getTime()
+              : new Date(t.start).getTime(),
+          end:
+            t.end instanceof Date ? t.end.getTime() : new Date(t.end).getTime(),
+        })),
+      );
+      sum += Math.max(ROW_HEIGHT, getLaneCount(out) * LANE_HEIGHT);
+    }
+    return sum;
+  }, [visibleEquipment, tasks, rangeStart, rangeEnd]);
 
   // 패닝 훅 — overflow-auto 컨테이너에 연결
   const scrollContainerRef = useTimelineNavigation(dayWidth);
@@ -906,7 +1072,38 @@ export function SchedulerView({
   }, []);
 
   const handleSelectionEnd = useCallback(() => {
-    // 선택 유지 (우클릭 대기용) — 우클릭 핸들러에서 clear
+    // Task 9 Step 3 — "순수 click" (pointer 이동 < 5px) 으로 판정되면 선택된 task 를 해제.
+    // range-drag (>= 5px) 은 그대로 유지해 우클릭 prefill 경로를 보존.
+    // 블록 click 은 GanttRow:223 의 `data-draggable` 필터로 sharedSelection 자체가 새로 set
+    // 되지 않으므로 이 deselect 경로를 타지 않는다.
+    const sel = sharedSelection;
+    if (sel && Math.abs(sel.currentX - sel.startX) < 5) {
+      const { selectedTaskId, selectTask } = useScheduleStore.getState();
+      if (selectedTaskId !== null) selectTask(null);
+      setSharedSelection(null);
+    }
+    // sel 이 없거나 range-drag 인 경우엔 기존처럼 선택 유지 (우클릭 대기용).
+  }, [sharedSelection]);
+
+  // Task 9 Step 2 — Esc 로 chain-highlight 해제.
+  // INPUT/TEXTAREA/contentEditable 에서 Esc 는 무시 (모달 닫기 등 기존 동작 방해 방지).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const { selectedTaskId, selectTask } = useScheduleStore.getState();
+      if (selectedTaskId !== null) selectTask(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   return (
@@ -922,94 +1119,111 @@ export function SchedulerView({
       >
         {/* 전체 콘텐츠 너비 — 이 div가 가로 스크롤 범위를 결정 */}
         <div style={{ width: totalContentWidth }}>
+          {/* 날짜 헤더 */}
+          <DateHeader
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            dayWidth={dayWidth}
+            weekendWidth={weekendWidth}
+            timelineWidth={timelineWidth}
+          />
 
-        {/* 날짜 헤더 */}
-        <DateHeader
-          rangeStart={rangeStart}
-          rangeEnd={rangeEnd}
-          dayWidth={dayWidth}
-          weekendWidth={weekendWidth}
-          timelineWidth={timelineWidth}
-        />
-
-        {/* 행 영역 (설비 + 작업 블록) */}
-        <div
-          style={{
-            position: "relative",
-            minHeight: totalHeight || 128,
-          }}
-        >
-          {/* 주말 배경 — 사이드바 너비만큼 오프셋 */}
+          {/* 행 영역 (설비 + 작업 블록) */}
           <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: SIDEBAR_WIDTH,
-              right: 0,
-              bottom: 0,
-              overflow: "hidden",
-              pointerEvents: "none",
+              position: "relative",
+              minHeight: totalHeight || 128,
             }}
           >
-            <WeekendOverlay
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-
-            {/* 수직 그리드 라인 */}
-            <GridLines
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-
-            {/* 오늘 마커 */}
-            <TodayMarker
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              dayWidth={dayWidth}
-              weekendWidth={weekendWidth}
-              totalHeight={Math.max(totalHeight, 128)}
-            />
-          </div>
-
-          {/* 설비 행 */}
-          <div style={{ position: "relative", zIndex: 1 }}>
-            {visibleEquipment.map((eq) => (
-              <GanttRow
-                key={eq.id}
-                equipment={eq}
-                tasks={tasks}
+            {/* 주말 배경 — 사이드바 너비만큼 오프셋 */}
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: SIDEBAR_WIDTH,
+                right: 0,
+                bottom: 0,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            >
+              <WeekendOverlay
                 rangeStart={rangeStart}
                 rangeEnd={rangeEnd}
                 dayWidth={dayWidth}
                 weekendWidth={weekendWidth}
-                timelineWidth={timelineWidth}
-                sharedSelection={sharedSelection}
-                onSelectionStart={handleSelectionStart}
-                onSelectionMove={handleSelectionMove}
-                onSelectionEnd={handleSelectionEnd}
-                activeDragGroup={activeDragGroup}
-                activeDragSq={activeDragSq}
-                activeDragMaterial={activeDragMaterial}
+                totalHeight={Math.max(totalHeight, 128)}
               />
-            ))}
 
-            {visibleEquipment.length === 0 && (
-              <div className="flex items-center justify-center h-32 text-sm text-gray-400">
-                {equipment.length === 0
-                  ? "설비 데이터를 불러오는 중..."
-                  : "선택한 필터에 해당하는 설비가 없습니다"}
-              </div>
-            )}
+              {/* 수직 그리드 라인 */}
+              <GridLines
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalHeight={Math.max(totalHeight, 128)}
+              />
+
+              {/* 오늘 마커 */}
+              <TodayMarker
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalHeight={Math.max(totalHeight, 128)}
+              />
+            </div>
+
+            {/* 설비 행 — data-testid="timeline-bg" 는 E2E Step 3.5 편의용 (기능 영향 없음) */}
+            <div
+              data-testid="timeline-bg"
+              style={{ position: "relative", zIndex: 1 }}
+            >
+              {visibleEquipment.map((eq) => (
+                <GanttRow
+                  key={eq.id}
+                  equipment={eq}
+                  tasks={tasks}
+                  rangeStart={rangeStart}
+                  rangeEnd={rangeEnd}
+                  dayWidth={dayWidth}
+                  weekendWidth={weekendWidth}
+                  timelineWidth={timelineWidth}
+                  sharedSelection={sharedSelection}
+                  onSelectionStart={handleSelectionStart}
+                  onSelectionMove={handleSelectionMove}
+                  onSelectionEnd={handleSelectionEnd}
+                  activeDragGroup={activeDragGroup}
+                  activeDragSq={activeDragSq}
+                  activeDragMaterial={activeDragMaterial}
+                  previewOverlay={previewOverlay}
+                  focusedTaskId={focusedTaskId}
+                />
+              ))}
+
+              {visibleEquipment.length === 0 && (
+                <div className="flex items-center justify-center h-32 text-sm text-gray-400">
+                  {equipment.length === 0
+                    ? "설비 데이터를 불러오는 중..."
+                    : "선택한 필터에 해당하는 설비가 없습니다"}
+                </div>
+              )}
+
+              {/* Task 9 — chain highlight 오버레이. store 의 selectedChainIds/selectedArrows 를
+                  구독해 좌표 SVG 를 렌더. selectedChainIds === null 이면 조기 리턴. */}
+              <ChainHighlightOverlay
+                tasks={tasks}
+                visibleEquipment={visibleEquipment}
+                rangeStart={rangeStart}
+                dayWidth={dayWidth}
+                weekendWidth={weekendWidth}
+                totalWidth={timelineWidth + SIDEBAR_WIDTH}
+                totalHeight={totalHeight}
+              />
+            </div>
           </div>
-        </div>
-        </div> {/* totalContentWidth wrapper */}
+        </div>{" "}
+        {/* totalContentWidth wrapper */}
       </div>
 
       {/* 숨김 설비 토글 바 */}
@@ -1031,7 +1245,10 @@ export function SchedulerView({
           <span className="text-gray-300 select-none">|</span>
 
           <button
-            onClick={() => { setHideEmpty((v) => !v); setShowHiddenList(false); }}
+            onClick={() => {
+              setHideEmpty((v) => !v);
+              setShowHiddenList(false);
+            }}
             className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 hover:text-gray-900 transition-colors"
           >
             <span>{hideEmpty ? "▶" : "▼"}</span>

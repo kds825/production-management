@@ -18,6 +18,28 @@
   --kbi-red-dark: #9e0e27;
   --kbi-brown: #4a2c2a;
   --kbi-gold: #d4a574;
+
+  /* v3 Phase 0: design tokens — batch_group unassign/restore UI 기반
+   * 모든 프로젝트 UI 색상은 이 변수 경유. raw hex 하드코딩 금지. */
+  --color-brand-primary: #c41230;
+  --color-text-primary: #111827;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-text-inverse: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-muted: #f3f4f6;
+  --color-bg-disabled: #f9fafb;
+  --color-border-default: #e5e7eb;
+  --color-border-muted: #f3f4f6;
+  --color-overlay: rgba(0, 0, 0, 0.3);
+  --color-success: #059669;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  /* 공정별 pastel 토큰 — 한글 키는 의도적 (업무 도메인 용어 1:1 매핑) */
+  --color-process-연선: #a5b4fc;
+  --color-process-B100: #67e8f9;
+  --color-process-A100: #6ee7b7;
+  --color-process-A120: #fcd34d;
 }
 
 body {

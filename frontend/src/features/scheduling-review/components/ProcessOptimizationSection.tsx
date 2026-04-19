@@ -13,7 +13,11 @@ interface ProcessOptimizationSectionProps {
   batches: SchedulingBatch[];
   wipItems?: WipItem[];
   wipTitle?: string;
+  /** 예상 재고 — 현재 run 의 헤더 배치에서 listener 가 만든 예정 출고분 */
+  expectedWipItems?: WipItem[];
 }
+
+type WipTab = "available" | "expected";
 
 export function ProcessOptimizationSection({
   sectionNumber,
@@ -22,9 +26,11 @@ export function ProcessOptimizationSection({
   batches,
   wipItems,
   wipTitle,
+  expectedWipItems,
 }: ProcessOptimizationSectionProps) {
   const hasWip = wipItems !== undefined && wipTitle;
   const [wipExpanded, setWipExpanded] = useState(true);
+  const [wipTab, setWipTab] = useState<WipTab>("available");
   const [highlightedBatchIds, setHighlightedBatchIds] = useState<Set<string>>(
     new Set(),
   );
@@ -56,6 +62,20 @@ export function ProcessOptimizationSection({
       })),
     [wipItems, wipBatchMap],
   );
+
+  const enhancedExpectedWipItems = useMemo(
+    () =>
+      expectedWipItems?.map((w) => ({
+        ...w,
+        matchedBatchIds:
+          wipBatchMap.get(w.wip_id) ??
+          (w.matchedBatchId ? [w.matchedBatchId] : []),
+      })),
+    [expectedWipItems, wipBatchMap],
+  );
+
+  const hasExpected =
+    expectedWipItems !== undefined && expectedWipItems.length > 0;
 
   const handleWipClick = useCallback(
     (matchedBatchIds: string[]) => {
@@ -161,13 +181,62 @@ export function ProcessOptimizationSection({
 
         {hasWip && wipExpanded && (
           <div ref={wipTableRef} style={{ flex: "0 0 268px", minWidth: 0 }}>
-            <WipInventoryTable
-              title={wipTitle}
-              items={enhancedWipItems ?? wipItems ?? []}
-              onWipClick={handleWipClick}
-              activeWipId={activeWipId}
-              showProcessStage={processGroup === "연선"}
-            />
+            {hasExpected && (
+              <div
+                className="flex mb-2"
+                style={{
+                  borderBottom: "1px solid #E5E7EB",
+                }}
+              >
+                {(
+                  [
+                    {
+                      key: "available" as WipTab,
+                      label: "가용 재고",
+                      count: wipItems!.length,
+                    },
+                    {
+                      key: "expected" as WipTab,
+                      label: "예상 재고",
+                      count: expectedWipItems!.length,
+                    },
+                  ] as const
+                ).map((t) => {
+                  const active = wipTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      onClick={() => setWipTab(t.key)}
+                      className="flex-1 text-[11px] font-semibold py-1.5 transition-colors"
+                      style={{
+                        color: active ? "#C41230" : "#6B7280",
+                        borderBottom: `2px solid ${active ? "#C41230" : "transparent"}`,
+                        backgroundColor: "transparent",
+                      }}
+                    >
+                      {t.label} ({t.count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {wipTab === "expected" && hasExpected ? (
+              <WipInventoryTable
+                title={`${wipTitle} — 예정 출고분`}
+                items={enhancedExpectedWipItems ?? expectedWipItems ?? []}
+                onWipClick={handleWipClick}
+                activeWipId={activeWipId}
+                showProcessStage={processGroup === "연선"}
+              />
+            ) : (
+              <WipInventoryTable
+                title={wipTitle}
+                items={enhancedWipItems ?? wipItems ?? []}
+                onWipClick={handleWipClick}
+                activeWipId={activeWipId}
+                showProcessStage={processGroup === "연선"}
+              />
+            )}
           </div>
         )}
       </div>

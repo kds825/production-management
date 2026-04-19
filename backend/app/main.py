@@ -2,8 +2,9 @@
 KBI Production Scheduler — FastAPI 애플리케이션 진입점
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import settings
 from app.presentation.routes import audit  # noqa: F401
@@ -14,6 +15,10 @@ from app.presentation.routes import orders  # noqa: F401
 from app.presentation.routes import plan_pipeline  # noqa: F401
 from app.presentation.routes import process_routes  # noqa: F401
 from app.presentation.routes import schedules  # noqa: F401
+
+# Task 23: observability 모듈 import — prometheus Histogram/Counter/Gauge 가
+# import 시점에 default registry 에 등록되어 `/metrics` 가 바로 노출함.
+from app.observability import metrics  # noqa: F401
 
 app = FastAPI(
     title=settings.APP_TITLE,
@@ -45,3 +50,17 @@ app.include_router(audit.router, prefix="/api")
 def health_check() -> dict[str, str]:
     """서버 상태 확인"""
     return {"status": "ok", "service": settings.APP_TITLE}
+
+
+# ---------------------------------------------------------------------------
+# Task 23: /metrics — Prometheus scrape endpoint.
+#
+# 관측/모니터링 파이프라인(Grafana/Loki 등)이 직접 수집할 수 있도록 기본
+# global registry 의 모든 메트릭을 text exposition format 으로 제공한다.
+# 왜 /api prefix 없이: 외부 모니터링 툴은 관례적으로 "/metrics" 를 기대하므로
+# 표준 경로를 유지.
+# ---------------------------------------------------------------------------
+@app.get("/metrics", tags=["관측성"])
+def prometheus_metrics() -> Response:
+    """Prometheus text exposition format 으로 현재 메트릭 스냅샷을 반환."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
