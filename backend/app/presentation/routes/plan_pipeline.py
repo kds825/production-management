@@ -382,6 +382,19 @@ async def run_stage1_update(
 
         deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
         if delete_batch_ids:
+            # FK 선해제: production_batch ↔ wip_inventory 순환 참조 끊기
+            # (a) 삭제 대상 배치의 wip_matched_id → NULL
+            db.query(ProductionBatch).filter(
+                ProductionBatch.batch_id.in_(delete_batch_ids)
+            ).update({"wip_matched_id": None}, synchronize_session=False)
+            # (b) wip_inventory.source_batch_id → NULL (삭제 대상 배치를 가리키는 행)
+            db.execute(
+                text(
+                    "UPDATE wip_inventory SET source_batch_id = NULL"
+                    " WHERE source_batch_id = ANY(:ids)"
+                ),
+                {"ids": list(delete_batch_ids)},
+            )
             # FK 순서 1: audit_log
             deleted_counts["audit_log"] = (
                 db.query(AuditLog)
