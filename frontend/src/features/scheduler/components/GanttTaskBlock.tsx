@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
 import type { ScheduleTask } from "../types";
@@ -46,12 +46,6 @@ interface GanttTaskBlockProps {
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 const NEW_BATCH_WINDOW_MS = 5 * 60 * 1000; // 5분 이내 생성된 배치는 "신규"로 간주
-
-/** created_at이 현재 시각 기준 5분 이내이면 신규 배치로 판별 */
-function isNewBatch(createdAt: Date | undefined): boolean {
-  if (!createdAt) return false;
-  return Date.now() - createdAt.getTime() < NEW_BATCH_WINDOW_MS;
-}
 
 /**
  * 주말(토 00:00 ~ 월 00:00)을 건너뛰어 연속 평일 구간 배열을 반환한다.
@@ -409,7 +403,12 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const isSelected = selectedTaskId === task.id;
 
   // 증분 업데이트 후 신규 생성된 배치 여부 — created_at 기준 5분 이내
-  const isNew = isNewBatch(task.created_at);
+  // Date.now()를 렌더 중에 쓰면 SSR/CSR 값이 달라 hydration mismatch 발생 → useEffect로 클라이언트에서만 계산
+  const [isNew, setIsNew] = useState(false);
+  useEffect(() => {
+    if (!task.created_at) return;
+    setIsNew(Date.now() - new Date(task.created_at).getTime() < NEW_BATCH_WINDOW_MS);
+  }, [task.created_at]);
 
   // --- 시간 구성 팝오버 (호버) ---
   const [showTimePopover, setShowTimePopover] = useState(false);
