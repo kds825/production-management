@@ -229,12 +229,19 @@ def apply_urgent_incremental(
                 old_end.strftime("%m/%d %H:%M"),
                 new_end.strftime("%m/%d %H:%M"),
             )
-            # 연장으로 인한 다음 배치 겹침 경고 (자동 해결하지 않음)
-            overlap_warn = _check_overlap_after(
-                run_label, task, new_end, db
+            # 연장으로 인해 뒤 배치들과 겹치면 cascade로 밀어냄
+            push_count = _cascade_push_tasks(
+                run_label=run_label,
+                equipment_code=task.equipment_code,
+                from_task_start=task.start_datetime,
+                new_boundary=new_end,
+                db=db,
+                warnings=result["warnings"],
             )
-            if overlap_warn:
-                result["warnings"].append(overlap_warn)
+            if push_count:
+                result["warnings"].append(
+                    f"{bg} 연장으로 {task.equipment_code} 후속 배치 {push_count}개 밀어냄"
+                )
 
         # 신규 긴급 배치를 scheduled 상태로 전환 (그룹 ScheduleTask가 커버)
         for b in new_batch_by_group.get(bg, []):
@@ -357,35 +364,112 @@ def _find_group_task(
     )
 
 
-def _check_overlap_after(
+def _cascade_push_tasks(
     run_label: str,
-    task: ScheduleTask,
-    new_end: "datetime",
+    equipment_code: str,
+    from_task_start: "datetime",
+    new_boundary: "datetime",
     db: Session,
-) -> str | None:
-    """연장된 task 이후 같은 설비의 다음 task와 겹치면 경고 문자열 반환."""
-    from app.infrastructure.models.production_batch import ProductionBatch as PB
+    warnings: list,
+) -> int:
+    """from_task_start 이후 시작하는 같은 설비의 ScheduleTask를 겹치지 않게 밀어낸다.
 
-    next_task = (
+    new_boundary(= 연장된 배치의 새 end_datetime) 이전에 시작하는 후속 배치부터
+    도미노처럼 순서대로 밀어낸다. frozen 배치에서 멈추고 경고를 남긴다.
+
+    Returns: 밀어낸 ScheduleTask 수
+    """
+    from app.services.calendar_engine import calculate_end_datetime
+
+    current_boundary = new_boundary
+    pushed = 0
+
+    # from_task_start 이후 시작하는 배치들을 start_datetime 오름차순으로 조회
+    # (한 번에 전체 로드 후 in-memory 처리 → 루프 내 start_datetime 변경에 영향 없음)
+    tasks_after = (
         db.query(ScheduleTask)
         .filter(
             ScheduleTask.run_label == run_label,
-            ScheduleTask.equipment_code == task.equipment_code,
-            ScheduleTask.task_id != task.task_id,
-            ScheduleTask.start_datetime >= task.start_datetime,
-            ScheduleTask.start_datetime < new_end,
+            ScheduleTask.equipment_code == equipment_code,
+            ScheduleTask.start_datetime > from_task_start,
         )
         .order_by(ScheduleTask.start_datetime.asc())
-        .first()
+        .all()
     )
-    if next_task:
-        batch = db.query(PB).filter(PB.batch_id == next_task.batch_id).first()
-        bg = (batch.batch_group or "?") if batch else "?"
-        return (
-            f"[{task.equipment_code}] 연장으로 인해 다음 배치({bg})와 겹칩니다 "
-            f"({next_task.start_datetime.strftime('%m/%d %H:%M')}). 수동 조정 권장."
+
+    for task in tasks_after:
+        # 이미 current_boundary 이후에 시작하면 겹침 없음 → 종료
+        if task.start_datetime >= current_boundary:
+            break
+
+        # frozen 배치는 밀어낼 수 없음
+        batch = (
+            db.query(ProductionBatch)
+            .filter(ProductionBatch.batch_id == task.batch_id)
+            .first()
         )
-    return None
+        if batch and batch.status in _FROZEN_STATUSES:
+            warnings.append(
+                f"[{equipment_code}] frozen 배치({batch.batch_group or '?'}) 겹침 — "
+                "수동 조정 필요"
+            )
+            break
+
+        # 총 작업시간(분) 계산 후 밀어냄
+        total_min = _compute_task_total_min(task, batch, run_label, db)
+        old_start = task.start_datetime
+        task.start_datetime = current_boundary
+        task.end_datetime = calculate_end_datetime(
+            current_boundary, total_min, db, equipment_code
+        )
+        current_boundary = task.end_datetime
+        pushed += 1
+
+        bg_label = (batch.batch_group or "?") if batch else "?"
+        logger.info(
+            "[Urgent cascade] %s %s: %s → %s",
+            equipment_code,
+            bg_label,
+            old_start.strftime("%m/%d %H:%M"),
+            task.start_datetime.strftime("%m/%d %H:%M"),
+        )
+
+    return pushed
+
+
+def _compute_task_total_min(
+    task: ScheduleTask,
+    batch: ProductionBatch | None,
+    run_label: str,
+    db: Session,
+) -> float:
+    """ScheduleTask의 총 작업시간(분) = setup + work. batch_group 데이터 기준 재산출."""
+    setup_min = float(task.setup_time_min or 0)
+
+    if batch and batch.batch_group:
+        all_batches = (
+            db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.batch_group == batch.batch_group,
+            )
+            .all()
+        )
+        header = next((b for b in all_batches if b.batch_seq == -1), None)
+        if header is not None:
+            work_min = float(header.estimated_duration_min or 0)
+        else:
+            work_min = sum(
+                float(b.estimated_duration_min or 0)
+                for b in all_batches
+                if b.batch_seq != -1
+            )
+    else:
+        # 배치 정보 없음: wall-clock 길이로 근사 (setup 제외)
+        delta_sec = (task.end_datetime - task.start_datetime).total_seconds()
+        work_min = max(delta_sec / 60.0 - setup_min, 0)
+
+    return setup_min + work_min
 
 
 def _collect_split_children(
