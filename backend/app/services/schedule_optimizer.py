@@ -608,15 +608,32 @@ def _purge_run_tasks(db: Session, run_label: str) -> None:
     #    참조하는 audit row 를 insert" 하려다 FK violation 이 발생한다.
     db.flush()
 
-    # 1. AuditLog 먼저 — FK 무결성 (audit_log.task_id → schedule_task.task_id)
+    # 1. Frozen 배치 식별 — 물리 시작/완료된 배치의 ScheduleTask 는 보존해야
+    # Gantt 에 해당 시간 슬롯이 계속 표시되고, 재최적화 시 overlap 회피 정보도 보존된다.
+    frozen_batch_ids = {
+        row[0]
+        for row in db.query(ProductionBatch.batch_id)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.status.in_(["in_progress", "completed", "wip_complete"]),
+        )
+        .all()
+    }
+
+    # 2. AuditLog 먼저 — FK 무결성 (audit_log.task_id → schedule_task.task_id).
+    #    Frozen task 의 audit 은 삭제되지만, preserved task 자체는 남으므로
+    #    FK 참조가 끊어져도 무방 (AuditLog → ScheduleTask 방향이라 역방향 영향 없음).
     db.query(AuditLog).filter(AuditLog.run_label == run_label).delete(
         synchronize_session=False
     )
-    # 2. ScheduleTask
-    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
-        synchronize_session=False
-    )
-    # 3. 배치 상태 리셋
+    # 3. ScheduleTask — frozen 배치 제외하고 삭제
+    task_delete_q = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label)
+    if frozen_batch_ids:
+        task_delete_q = task_delete_q.filter(
+            ~ScheduleTask.batch_id.in_(frozen_batch_ids)
+        )
+    task_delete_q.delete(synchronize_session=False)
+    # 4. 배치 상태 리셋 — scheduled → planned (frozen 은 건드리지 않음)
     db.query(ProductionBatch).filter(
         ProductionBatch.run_label == run_label,
         ProductionBatch.status == "scheduled",

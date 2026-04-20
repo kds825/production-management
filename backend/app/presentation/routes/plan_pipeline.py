@@ -215,17 +215,23 @@ async def run_stage1_update(
     ),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Stage 1 증분/전체 업데이트 — Freeze & Rebuild.
+    """Stage 1 증분/전체 업데이트 — 신규 run_label 발급 + Freeze 복제.
 
-    frozen 기준은 상태(status)만 사용한다.
-      frozen  : in_progress / completed / wip_complete (물리적으로 시작/완료됨)
-      mutable : planned + scheduled 전부 → 삭제 후 재생성
-    아직 물리 시작되지 않은 scheduled 배치도 업데이트된 수주와 함께 재배치 대상.
-    run_label은 parent_run_label을 그대로 재사용하여 create_batches 필터링 호환성을 유지한다.
+    이전 설계와의 차이:
+      - parent_run_label 을 재사용하지 않고, 매 호출마다 new_run_label (타임스탬프)
+        을 새로 발급한다. 이전 run 의 ProductionBatch / ScheduleTask 는
+        그대로 보존 → 버전 비교 가능.
+      - frozen (in_progress / completed / wip_complete) 배치와 그 수주의 다른 공정
+        배치, 해당 ScheduleTask 를 new_run_label 로 복제 (parent_run_label 기록).
+      - 중복 배치 방지: frozen_order_keys 는 status-only 로 계산 (batch_seq 필터 제거).
+        create_batches 가 frozen_order_keys 를 수신해 해당 수주는 재배치하지 않는다.
+      - SalesOrder 의 PK 는 (order_id, order_line) 이라 run_label 버전 불가.
+        비동결 SalesOrder 는 new_run_label 로 forward-roll (UPDATE) 하고, 동결
+        SalesOrder 는 parent run_label 을 그대로 유지해 list_runs 외주 집계를 보존.
 
     upload_mode:
-    - "incremental": 기존 수주를 유지하고 새 수주만 추가
-    - "full": 동결 수주 외 전부 삭제 후 새 파일로 교체
+      - "incremental": 기존 수주를 유지하고 새 수주만 추가
+      - "full": 동결 수주 외 전부 삭제 후 새 파일로 교체
     """
     # ── 입력 검증 ─────────────────────────────────────────────────────────────
     if upload_mode not in ("incremental", "full"):
@@ -241,234 +247,217 @@ async def run_stage1_update(
             .order_by(ProductionBatch.created_at.desc())
             .first()
         )
-        if latest:
-            parent_run_label = latest[0]
-        else:
-            # 기존 계획이 없으면 새로 생성 (레거시 모드처럼 동작)
-            parent_run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+        parent_run_label = latest[0] if latest else None
 
     # parent_run_label에 해당하는 배치가 존재하는지 확인
-    existing_count = (
-        db.query(func.count(ProductionBatch.batch_id))
-        .filter(ProductionBatch.run_label == parent_run_label)
-        .scalar()
-    )
+    existing_count = 0
+    if parent_run_label:
+        existing_count = (
+            db.query(func.count(ProductionBatch.batch_id))
+            .filter(ProductionBatch.run_label == parent_run_label)
+            .scalar()
+        )
     if not existing_count and upload_mode == "incremental":
         raise HTTPException(
             status_code=404,
             detail="증분 업데이트할 기존 계획이 없습니다. 먼저 '전체 교체'로 초기 계획을 생성하세요.",
         )
 
-    # run_label 재사용 — create_batches가 run_label로 필터링하므로 필수
-    run_label = parent_run_label
+    # 신규 run_label 발급 — 이전 run 은 건드리지 않고 새 버전으로 분기
+    new_run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:
-        # ── 1. Frozen 배치 식별 ───────────────────────────────────────────────
-        # 룰: 상태(status) 기준만 사용.
-        #   frozen  : in_progress / completed / wip_complete — 물리적으로 시작/완료된 건만 보존
-        #   mutable : planned + scheduled 전부 → 삭제 후 재생성
-        #             (업데이트된 수주 리스트로 create_batches 재실행)
-        # base_date 는 Stage 1에서 필터 기준이 아님. Stage 2 자동배열 시 앵커로 전달.
-        # (구 soft_frozen 로직 — "기준일자 이전 scheduled 보존" — 은 도메인 룰에 따라
-        #  제거됨. 아직 물리적으로 시작되지 않은 scheduled 배치는 긴급수주 도착 시
-        #  재배치 대상이 되어야 한다.)
-        frozen = (
-            db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status.in_(
-                    ["in_progress", "completed", "wip_complete"]
-                ),
-            )
-            .all()
-        )
-        mutable_scheduled_ids: set[int] = {
-            b.batch_id
-            for b in db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status == "scheduled",
-            )
-            .all()
-        }
+        from app.infrastructure.models.sales_order import SalesOrder
+        from app.infrastructure.models.schedule_task import ScheduleTask
+        from app.services.erp_parser import parse_erp_file_incremental
+        from sqlalchemy import and_, or_
 
-        # frozen orders: batch_seq >= 1인 실제 수주 배치에서 추출
+        # ── 1. Frozen 배치 식별 (parent_run_label 기준) ─────────────────────────
+        # 룰: 상태(status) 기준만 사용 — in_progress / completed / wip_complete 만 보존.
+        # base_date 는 Stage 1 에서 필터 기준이 아님 (Stage 2 자동배열 앵커 용도).
+        if parent_run_label:
+            frozen = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == parent_run_label,
+                    ProductionBatch.status.in_(
+                        ["in_progress", "completed", "wip_complete"]
+                    ),
+                )
+                .all()
+            )
+        else:
+            frozen = []
+
+        # frozen_order_keys: status-only (batch_seq 필터 제거 — 기존 버그 수정).
+        # 연선 헤더(batch_seq=-1) 도 frozen 이면 포함해야 Full 모드에서 해당 수주가
+        # create_batches 재배치에서 제외되어 중복 배치가 발생하지 않는다.
         frozen_order_keys: set[tuple] = {
             (b.sales_order_id, b.sales_order_line)
             for b in frozen
-            if b.batch_seq is not None and b.batch_seq >= 1
+            if b.sales_order_id and b.sales_order_line is not None
         }
+        frozen_order_ids = {k[0] for k in frozen_order_keys}
         frozen_wip_ids: set[int] = {
             b.wip_matched_id for b in frozen if b.wip_matched_id is not None
         }
         frozen_batch_ids: set[int] = {b.batch_id for b in frozen}
 
+        # ── 2. "보존" 대상 배치: frozen 자신 + 동일 수주의 다른 공정 배치 ──────
+        # 연선이 in_progress인데 절연/시스가 planned 이면 이 세 배치 모두 new_run_label
+        # 로 복제되어야 버전 B 에서도 동일 수주의 공정 체인이 끊어지지 않는다.
+        if frozen_order_ids and parent_run_label:
+            related_batches = (
+                db.query(ProductionBatch)
+                .filter(
+                    ProductionBatch.run_label == parent_run_label,
+                    or_(
+                        ProductionBatch.sales_order_id.in_(frozen_order_ids),
+                        ProductionBatch.batch_id.in_(frozen_batch_ids),
+                    ),
+                )
+                .all()
+            )
+        else:
+            related_batches = list(frozen)
+        protected_batch_ids: set[int] = {b.batch_id for b in related_batches}
+
         # ── 1.4 Full 모드 diff pre-snapshot (T2b) ─────────────────────────────
         # 새 파일과 대사해 added/updated/deleted/preserved 분류를 낸다. mutation
         # 직전에 order_id set 을 찍어 둬야 사후 비교가 가능.
-        from app.infrastructure.models.sales_order import SalesOrder as _SO
-
         pre_order_ids_full: set[str] = set()
-        if upload_mode == "full":
+        if upload_mode == "full" and parent_run_label:
             pre_order_ids_full = {
                 row[0]
-                for row in db.query(_SO.order_id)
-                .filter(_SO.run_label == run_label)
+                for row in db.query(SalesOrder.order_id)
+                .filter(SalesOrder.run_label == parent_run_label)
                 .distinct()
                 .all()
                 if row[0]
             }
 
-        # ── 1.5 Frozen orders의 모든 공정 배치도 보존 (F-4 fix) ───────────────
-        # 연선이 in_progress인데 절연/시스가 planned이면,
-        # 같은 order의 모든 공정 배치를 삭제 대상에서 제외해야 한다.
-        frozen_order_ids = {k[0] for k in frozen_order_keys}
-        if frozen_order_ids:
-            related_batches = (
-                db.query(ProductionBatch.batch_id)
+        # ── 3. 보존 배치를 new_run_label 로 복제 (parent_run_label 기록) ───────
+        # SQLAlchemy 컬럼 이름 자동 추출로 모든 데이터 그대로 복사. batch_id 는
+        # autoincrement 이므로 제외, run_label / parent_run_label 은 재지정.
+        old_to_new_batch_id: dict[int, int] = {}
+        batch_columns = [
+            c.name
+            for c in ProductionBatch.__table__.columns
+            if c.name not in ("batch_id", "created_at")
+        ]
+        for b in related_batches:
+            data = {col: getattr(b, col) for col in batch_columns}
+            data["run_label"] = new_run_label
+            data["parent_run_label"] = parent_run_label
+            new_b = ProductionBatch(**data)
+            db.add(new_b)
+            db.flush()  # batch_id 확정
+            old_to_new_batch_id[b.batch_id] = new_b.batch_id
+
+        # ── 4. 보존 배치의 ScheduleTask 를 new_run_label 로 복제 ──────────────
+        # 간트 표시에 필요한 설비/시간 슬롯 정보. Stage 2 의 _purge_run_tasks 가
+        # frozen 배치 task 는 보존하도록 이미 수정되어 있음 (해당 PR 참조).
+        if old_to_new_batch_id:
+            old_batch_ids = list(old_to_new_batch_id.keys())
+            old_tasks = (
+                db.query(ScheduleTask)
                 .filter(
-                    ProductionBatch.run_label == run_label,
-                    ProductionBatch.sales_order_id.in_(frozen_order_ids),
+                    ScheduleTask.run_label == parent_run_label,
+                    ScheduleTask.batch_id.in_(old_batch_ids),
                 )
                 .all()
             )
-            protected_batch_ids: set[int] = {b.batch_id for b in related_batches}
-        else:
-            protected_batch_ids = set()
-        # frozen 자체도 protected에 포함
-        protected_batch_ids |= frozen_batch_ids
+            task_columns = [
+                c.name
+                for c in ScheduleTask.__table__.columns
+                if c.name not in ("task_id", "created_at")
+            ]
+            for t in old_tasks:
+                data = {col: getattr(t, col) for col in task_columns}
+                data["run_label"] = new_run_label
+                data["batch_id"] = old_to_new_batch_id[t.batch_id]
+                db.add(ScheduleTask(**data))
+            db.flush()
 
-        # ── 2. Planned + mutable_scheduled 배치/스케줄 삭제 ─────────────────────
-        # (FK 순서: audit_log → schedule_task → production_batch)
-        from app.infrastructure.models.audit_log import AuditLog
-        from app.infrastructure.models.schedule_task import ScheduleTask
+        # ── 5. 비동결 SalesOrder / WipInventory 를 new_run_label 로 forward-roll ──
+        # SalesOrder PK = (order_id, order_line) 이므로 run_label 버전 불가.
+        # 동결 수주는 parent 라벨을 유지 → list_runs 외주 집계 보존.
+        # 비동결만 new_run_label 로 옮겨서 create_batches / wip_matching 이
+        # new_run_label 스코프에서 일관되게 동작하도록 한다.
+        if parent_run_label:
+            if frozen_order_keys:
+                frozen_cond = or_(
+                    *[
+                        and_(
+                            SalesOrder.order_id == oid,
+                            SalesOrder.order_line == oline,
+                        )
+                        for oid, oline in frozen_order_keys
+                    ]
+                )
+                db.query(SalesOrder).filter(
+                    SalesOrder.run_label == parent_run_label,
+                    ~frozen_cond,
+                ).update({"run_label": new_run_label}, synchronize_session=False)
+            else:
+                db.query(SalesOrder).filter(
+                    SalesOrder.run_label == parent_run_label,
+                ).update({"run_label": new_run_label}, synchronize_session=False)
+            # WipInventory: 동결 WIP 제외하고 forward-roll
+            wip_update_q = db.query(WipInventory).filter(
+                WipInventory.run_label == parent_run_label,
+            )
+            if frozen_wip_ids:
+                wip_update_q = wip_update_q.filter(
+                    WipInventory.wip_id.notin_(frozen_wip_ids)
+                )
+            wip_update_q.update({"run_label": new_run_label}, synchronize_session=False)
+            db.flush()
 
-        # 삭제 대상 1: protected_batch_ids에 속하지 않는 planned 배치
-        planned_query = db.query(ProductionBatch.batch_id).filter(
-            ProductionBatch.run_label == run_label,
-            ProductionBatch.status == "planned",
-        )
-        if protected_batch_ids:
-            planned_query = planned_query.filter(
-                ProductionBatch.batch_id.notin_(protected_batch_ids)
-            )
-        unprotected_planned = planned_query.all()
-        # 삭제 대상 2: 기준일자 이후 mutable scheduled 배치 (재생성 대상)
-        delete_batch_ids = {
-            b.batch_id for b in unprotected_planned
-        } | mutable_scheduled_ids
-
-        deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
-        if delete_batch_ids:
-            # FK 선해제: production_batch ↔ wip_inventory 순환 참조 끊기
-            # (a) 삭제 대상 배치의 wip_matched_id → NULL
-            db.query(ProductionBatch).filter(
-                ProductionBatch.batch_id.in_(delete_batch_ids)
-            ).update({"wip_matched_id": None}, synchronize_session=False)
-            # (b) wip_inventory.source_batch_id → NULL (삭제 대상 배치를 가리키는 행)
-            db.execute(
-                text(
-                    "UPDATE wip_inventory SET source_batch_id = NULL"
-                    " WHERE source_batch_id = ANY(:ids)"
-                ),
-                {"ids": list(delete_batch_ids)},
-            )
-            # FK 순서 1: audit_log
-            deleted_counts["audit_log"] = (
-                db.query(AuditLog)
-                .filter(AuditLog.batch_id.in_(delete_batch_ids))
-                .delete(synchronize_session=False)
-            )
-            # FK 순서 2: schedule_task
-            deleted_counts["schedule_task"] = (
-                db.query(ScheduleTask)
-                .filter(ScheduleTask.batch_id.in_(delete_batch_ids))
-                .delete(synchronize_session=False)
-            )
-            # FK 순서 3: production_batch
-            deleted_counts["production_batch"] = (
-                db.query(ProductionBatch)
-                .filter(ProductionBatch.batch_id.in_(delete_batch_ids))
-                .delete(synchronize_session=False)
-            )
-
-        db.flush()
-
-        # ── 3. Sales Order 처리 ───────────────────────────────────────────────
+        # ── 6. Sales Order 처리 (new_run_label 스코프) ─────────────────────────
         erp_content = await erp_file.read()
         if not erp_content:
             raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
 
-        from app.infrastructure.models.sales_order import SalesOrder
-        from app.services.erp_parser import parse_erp_file_incremental
+        deleted_counts = {"audit_log": 0, "schedule_task": 0, "production_batch": 0}
 
         if upload_mode == "incremental":
-            # 기존 orders 유지 + 새 orders만 추가
+            # 기존 orders (forward-roll 로 new_run_label 라벨 완료) 유지 + 새 수주만 append
             pre_parse_order_keys: set[tuple] = {
                 (row[0], row[1])
                 for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
-                .filter(SalesOrder.run_label == run_label)
+                .filter(SalesOrder.run_label == new_run_label)
                 .all()
             }
-            parse_result = parse_erp_file_incremental(erp_content, run_label, db)
+            parse_result = parse_erp_file_incremental(erp_content, new_run_label, db)
         else:
-            # full: frozen orders의 SalesOrder는 보존, 나머지 삭제 후 새 파일로 교체
-            if frozen_order_keys:
-                # frozen orders 외의 SalesOrder만 삭제
-                # PostgreSQL: tuple_().in_() 사용 가능
-                from sqlalchemy import and_, or_
-
-                frozen_conditions = [
-                    and_(
-                        SalesOrder.order_id == oid,
-                        SalesOrder.order_line == oline,
-                    )
-                    for oid, oline in frozen_order_keys
-                ]
-                db.query(SalesOrder).filter(
-                    SalesOrder.run_label == run_label,
-                    ~or_(*frozen_conditions),
-                ).delete(synchronize_session=False)
-            else:
-                # frozen이 없으면 전체 삭제
-                db.query(SalesOrder).filter(
-                    SalesOrder.run_label == run_label,
-                ).delete(synchronize_session=False)
-
+            # full: 방금 forward-roll 된 비동결 SalesOrder 를 전부 삭제 후 새 파일로 교체.
+            # 동결 SalesOrder 는 parent run_label 에 남아 있으므로 이 쿼리 영향 없음.
+            db.query(SalesOrder).filter(
+                SalesOrder.run_label == new_run_label,
+            ).delete(synchronize_session=False)
             db.flush()
-            # "이 파일로 실제 추가된 주문" 키셋 계산을 위한 pre-parse 스냅샷 —
-            # full 모드에선 non-frozen 삭제 이후 == frozen 만 남은 상태.
-            pre_parse_order_keys = {
-                (row[0], row[1])
-                for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
-                .filter(SalesOrder.run_label == run_label)
-                .all()
-            }
-            # 새 파일에서 파싱 — incremental 파서를 사용하여 frozen orders와의 중복 방지
-            parse_result = parse_erp_file_incremental(erp_content, run_label, db)
+            # pre-parse 스냅샷 (new_run_label 스코프) — 이 파일로 실제 추가된 수주 계산용
+            pre_parse_order_keys = set()
+            # 새 파일 파싱 — incremental 파서로 동일 (order_id, drum_length_m) 중복 감지
+            parse_result = parse_erp_file_incremental(erp_content, new_run_label, db)
 
-        # ── 4. WIP 처리 ──────────────────────────────────────────────────────
+        # ── 7. WIP 처리 ──────────────────────────────────────────────────────
         wip_warnings: list[str] = []
         if wip_file:
             try:
-                from app.infrastructure.models.wip_inventory import WipInventory
                 from app.services.wip_parser import parse_wip_file
 
                 wip_content = await wip_file.read()
                 if wip_content:
-                    # frozen WIP를 제외한 기존 WIP 삭제
-                    wip_delete_query = db.query(WipInventory).filter(
-                        WipInventory.run_label == run_label,
-                    )
-                    if frozen_wip_ids:
-                        wip_delete_query = wip_delete_query.filter(
-                            WipInventory.wip_id.notin_(frozen_wip_ids)
-                        )
-                    wip_delete_query.delete(synchronize_session=False)
+                    # new_run_label 스코프의 기존 WIP 삭제 (frozen 은 parent 라벨에 남아 있음)
+                    db.query(WipInventory).filter(
+                        WipInventory.run_label == new_run_label,
+                    ).delete(synchronize_session=False)
                     db.flush()
 
-                    # 새 WIP 파싱
-                    wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
+                    # 새 WIP 파싱 — new_run_label 로 적재
+                    wip_parse = parse_wip_file(wip_content, db, run_label=new_run_label)
                     wip_warnings.extend(wip_parse.get("warnings", []))
                     if wip_parse["total"] > 0:
                         wip_warnings.append(
@@ -477,10 +466,10 @@ async def run_stage1_update(
             except Exception as exc:
                 wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
 
-        # ── 5. WIP 매칭 — frozen WIP 제외 ─────────────────────────────────────
+        # ── 8. WIP 매칭 — frozen WIP 제외 ─────────────────────────────────────
         try:
             wip_result = match_wip(
-                run_label,
+                new_run_label,
                 db,
                 exclude_wip_ids=frozen_wip_ids if frozen_wip_ids else None,
             )
@@ -488,10 +477,12 @@ async def run_stage1_update(
             wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
             wip_result = {"matched": 0, "skipped": 0, "details": []}
 
-        # ── 6. Batch Grouping — frozen orders 제외 ────────────────────────────
+        # ── 9. Batch Grouping — frozen orders 제외 (중복 배치 방지 불변식) ─────
+        # frozen_order_keys 는 status-only 로 뽑혔으므로 헤더(batch_seq=-1) 까지
+        # 포함되어 있어, 해당 수주가 어떤 공정에서든 물리 시작/완료되었으면 재배치 X.
         try:
             batch_result = create_batches(
-                run_label,
+                new_run_label,
                 db,
                 frozen_order_keys=frozen_order_keys if frozen_order_keys else None,
             )
@@ -500,7 +491,7 @@ async def run_stage1_update(
                 status_code=500, detail=f"배치 생성 실패: {exc}"
             ) from exc
 
-        # ── 6a. "이 파일로 추가된 주문에서 나온 배치" 분리 집계 ───────────────
+        # ── 9a. "이 파일로 추가된 주문에서 나온 배치" 분리 집계 ───────────────
         # Why: batch_result.total_batches 는 "비동결 수주 전체를 다시 배치화한
         # 재생성 총계" 다. 사용자가 업로드한 파일의 실제 증분이 얼마인지 알기
         # 어려워 오해가 발생 (e.g. 20건 업로드 → 952 배치 표시). pre-parse 스냅샷
@@ -509,7 +500,7 @@ async def run_stage1_update(
         post_parse_order_keys: set[tuple] = {
             (row[0], row[1])
             for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
-            .filter(SalesOrder.run_label == run_label)
+            .filter(SalesOrder.run_label == new_run_label)
             .all()
         }
         new_from_file_keys = post_parse_order_keys - pre_parse_order_keys
@@ -519,7 +510,7 @@ async def run_stage1_update(
             new_file_batches = (
                 db.query(ProductionBatch.process_name)
                 .filter(
-                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.run_label == new_run_label,
                     ProductionBatch.status == "planned",
                     ProductionBatch.sales_order_id.in_(new_order_ids),
                 )
@@ -536,11 +527,11 @@ async def run_stage1_update(
 
         db.commit()
 
-        # ── 7. 자동 분할 (긴급 수주 후순위 드럼 → 자동 분리) ────────────────
+        # ── 10. 자동 분할 (긴급 수주 후순위 드럼 → 자동 분리) ───────────────
         auto_split_result: dict = {"auto_split_count": 0, "splits": []}
         try:
             auto_split_result = execute_auto_splits(
-                run_label, db, gap_days=split_gap_days
+                new_run_label, db, gap_days=split_gap_days
             )
             if auto_split_result["auto_split_count"] > 0:
                 logger.info(
@@ -550,10 +541,10 @@ async def run_stage1_update(
         except Exception as exc:
             logger.warning("[Stage1 Update] 자동 분할 실패 (계속 진행): %s", exc)
 
-        # ── 8. Split 후보 감지 (자동 분할 후 잔여 후보) ──────────────────────
+        # ── 11. Split 후보 감지 (자동 분할 후 잔여 후보) ─────────────────────
         try:
             split_candidates = detect_split_candidates(
-                run_label, db, gap_days=split_gap_days
+                new_run_label, db, gap_days=split_gap_days
             )
         except Exception as exc:
             logger.warning("[Stage1 Update] 분할 후보 감지 실패: %s", exc)
@@ -565,67 +556,83 @@ async def run_stage1_update(
             + batch_result.get("warnings", [])
         )
 
-        # ── 9. Frozen 배치 요약 (T2a) ────────────────────────────────────────
+        # ── 12. Frozen 배치 요약 (T2a) — 복제된 new_run_label 기준 ───────────
         # 프론트엔드가 "진행중/완료 보존" 뱃지로 표시할 수 있도록 frozen 배치의
-        # 최소 필드를 직렬화해 응답에 포함. 재생성된 batches 와 병합 렌더링됨.
-        frozen_batches_payload = [
-            {
-                "batch_id": b.batch_id,
-                "batch_group": b.batch_group,
-                "process_name": b.process_name,
-                "status": b.status,
-                "customer_name": b.customer_name,
-                "due_date": b.due_date.isoformat() if b.due_date else None,
-                "item_code": b.item_code,
-                "product_group": b.product_group,
-                "voltage": b.voltage,
-                "sq_mm2": float(b.sq_mm2) if b.sq_mm2 is not None else None,
-                "sheath_color": b.sheath_color,
-                "drum_count": b.drum_count,
-                "total_length_m": (
-                    float(b.total_length_m) if b.total_length_m is not None else None
-                ),
-                "sales_order_id": b.sales_order_id,
-                "sales_order_line": b.sales_order_line,
-                "equipment_code": b.equipment_code,
-            }
-            for b in frozen
-        ]
+        # 최소 필드를 직렬화해 응답에 포함. 복제본의 batch_id (new_run_label 안)
+        # 을 내려줘야 UI 에서 해당 run 상세 조회 시 연결된다.
+        frozen_batches_payload = []
+        if old_to_new_batch_id and frozen:
+            # 복제된 frozen 배치를 new_run_label 에서 다시 로드
+            new_frozen_ids = [
+                old_to_new_batch_id[b.batch_id]
+                for b in frozen
+                if b.batch_id in old_to_new_batch_id
+            ]
+            if new_frozen_ids:
+                new_frozen = (
+                    db.query(ProductionBatch)
+                    .filter(ProductionBatch.batch_id.in_(new_frozen_ids))
+                    .all()
+                )
+                frozen_batches_payload = [
+                    {
+                        "batch_id": b.batch_id,
+                        "batch_group": b.batch_group,
+                        "process_name": b.process_name,
+                        "status": b.status,
+                        "customer_name": b.customer_name,
+                        "due_date": b.due_date.isoformat() if b.due_date else None,
+                        "item_code": b.item_code,
+                        "product_group": b.product_group,
+                        "voltage": b.voltage,
+                        "sq_mm2": float(b.sq_mm2) if b.sq_mm2 is not None else None,
+                        "sheath_color": b.sheath_color,
+                        "drum_count": b.drum_count,
+                        "total_length_m": (
+                            float(b.total_length_m)
+                            if b.total_length_m is not None
+                            else None
+                        ),
+                        "sales_order_id": b.sales_order_id,
+                        "sales_order_line": b.sales_order_line,
+                        "equipment_code": b.equipment_code,
+                    }
+                    for b in new_frozen
+                ]
 
-        # ── 10. Full 모드 diff 요약 (T2b) ────────────────────────────────────
+        # ── 13. Full 모드 diff 요약 (T2b) ───────────────────────────────────
         # 새 파일 파싱 후 post-snapshot 을 pre 와 대사해 added/updated/deleted/
-        # preserved_frozen 분류. order_id 레벨 (드럼/line 무관). frozen 주문은
-        # 새 파일에 없어도 DB 에 남아있으므로 post 에도 포함됨 → common 이면서
-        # frozen 인 경우 preserved 로 분류. non-frozen common 은 delete→reinsert
-        # 를 거쳤으니 updated.
+        # preserved_frozen 분류. order_id 레벨 (드럼/line 무관).
+        # post_order_ids: new_run_label 의 SalesOrder + parent 에 남은 frozen 수주.
         diff_summary: dict | None = None
         if upload_mode == "full":
-            post_order_ids = {
+            post_order_ids_new = {
                 row[0]
-                for row in db.query(_SO.order_id)
-                .filter(_SO.run_label == run_label)
+                for row in db.query(SalesOrder.order_id)
+                .filter(SalesOrder.run_label == new_run_label)
                 .distinct()
                 .all()
                 if row[0]
             }
-            _frozen_order_id_set = {k[0] for k in frozen_order_keys}
+            post_order_ids = post_order_ids_new | frozen_order_ids
             _common = pre_order_ids_full & post_order_ids
             diff_summary = {
                 "added": len(post_order_ids - pre_order_ids_full),
-                "updated": len(_common - _frozen_order_id_set),
+                "updated": len(_common - frozen_order_ids),
                 "deleted": len(pre_order_ids_full - post_order_ids),
-                "preserved_frozen": len(_common & _frozen_order_id_set),
+                "preserved_frozen": len(_common & frozen_order_ids),
             }
 
         return {
-            "run_label": run_label,
+            "run_label": new_run_label,
+            "parent_run_label": parent_run_label,
             "upload_mode": upload_mode,
             "frozen": {
                 "batch_count": len(frozen_batch_ids),
                 "order_count": len(frozen_order_keys),
                 "wip_count": len(frozen_wip_ids),
                 "protected_batch_count": len(protected_batch_ids),
-                "mutable_count": len(mutable_scheduled_ids),
+                "copied_batch_count": len(old_to_new_batch_id),
             },
             "frozen_batches": frozen_batches_payload,
             "diff_summary": diff_summary,
@@ -641,7 +648,7 @@ async def run_stage1_update(
             # 프론트엔드 토스트 메시지용
             "added_orders": parse_result.get("inserted", 0),
             "created_batch_groups": batch_result.get("total_batches", 0),
-            "preserved_batches": len(frozen_batch_ids),
+            "preserved_batches": len(old_to_new_batch_id),
             "auto_split_count": auto_split_result["auto_split_count"],
         }
 
