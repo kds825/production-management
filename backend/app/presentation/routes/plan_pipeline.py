@@ -306,13 +306,28 @@ async def run_stage1_update(
         # ── 2. "보존" 대상 배치: frozen 자신 + 동일 수주의 다른 공정 배치 ──────
         # 연선이 in_progress인데 절연/시스가 planned 이면 이 세 배치 모두 new_run_label
         # 로 복제되어야 버전 B 에서도 동일 수주의 공정 체인이 끊어지지 않는다.
-        if frozen_order_ids and parent_run_label:
+        #
+        # Bug fix: "동일 수주" 식별은 (sales_order_id, sales_order_line) tuple
+        # 기준. 이전 구현은 `sales_order_id.in_(frozen_order_ids)` 로 order_id
+        # 만 비교해서, 같은 order_id 의 **다른 line** (non-frozen) 배치까지
+        # 복제 대상에 포함됨 → create_batches 재생성 경로와 교차 → 중복 insert
+        # (run 20260420_224009 에서 107건 영향). tuple 매칭으로 교정.
+        if frozen_order_keys and parent_run_label:
+            related_order_cond = or_(
+                *[
+                    and_(
+                        ProductionBatch.sales_order_id == oid,
+                        ProductionBatch.sales_order_line == oline,
+                    )
+                    for oid, oline in frozen_order_keys
+                ]
+            )
             related_batches = (
                 db.query(ProductionBatch)
                 .filter(
                     ProductionBatch.run_label == parent_run_label,
                     or_(
-                        ProductionBatch.sales_order_id.in_(frozen_order_ids),
+                        related_order_cond,
                         ProductionBatch.batch_id.in_(frozen_batch_ids),
                     ),
                 )

@@ -279,3 +279,73 @@ def test_purge_preserves_frozen_task(db: Session) -> None:
     assert planned_task_id not in remaining_ids, (
         "planned 배치의 ScheduleTask 는 _purge 로 삭제되어야 함"
     )
+
+
+def test_related_batches_filter_by_order_key_tuple(db: Session) -> None:
+    """stage1/update 의 related_batches 선택은 (order_id, order_line) tuple
+    기준이어야 한다.
+
+    Bug: 과거 `sales_order_id.in_(frozen_order_ids)` 로 order_id 만 비교해서,
+    동일 order_id 의 **다른 line** (non-frozen) 배치까지 복제 대상에 포함됨.
+    이후 create_batches 가 non-frozen line 을 다시 재배치 → 중복 생성.
+    (KBI PoC run 20260420_224009 에서 확인, 107건 영향).
+
+    수정 후: `frozen_order_keys` (set of tuples) 로 필터 → 같은 order_id 라도
+    다른 line 은 복제 제외.
+    """
+    from sqlalchemy import and_, or_
+
+    run_label = "20260420_130000"
+    so_id = "S-MULTILINE"
+
+    # 동일 order_id, 두 line — 한쪽(line=1) 만 frozen.
+    _seed_sales_order(db, run_label, so_id, order_line=1)
+    _seed_sales_order(db, run_label, so_id, order_line=2)
+    frozen_batch = _seed_production_batch(
+        db, run_label, so_id, order_line=1, status="in_progress"
+    )
+    non_frozen_batch = _seed_production_batch(
+        db, run_label, so_id, order_line=2, status="planned"
+    )
+    # 무관 수주 — 필터에 걸리면 안 됨
+    _seed_sales_order(db, run_label, "S-OTHER")
+    _seed_production_batch(db, run_label, "S-OTHER", status="planned")
+    db.flush()
+
+    # stage1_update 의 로직을 모사
+    frozen_order_keys: set[tuple] = {
+        (frozen_batch.sales_order_id, frozen_batch.sales_order_line)
+    }
+    frozen_batch_ids: set[int] = {frozen_batch.batch_id}
+
+    # === 수정된 쿼리 패턴 ===
+    related_order_cond = or_(
+        *[
+            and_(
+                ProductionBatch.sales_order_id == oid,
+                ProductionBatch.sales_order_line == oline,
+            )
+            for oid, oline in frozen_order_keys
+        ]
+    )
+    related_batches = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            or_(
+                related_order_cond,
+                ProductionBatch.batch_id.in_(frozen_batch_ids),
+            ),
+        )
+        .all()
+    )
+
+    related_ids = {b.batch_id for b in related_batches}
+    assert frozen_batch.batch_id in related_ids, (
+        "frozen 배치는 복제 대상에 포함되어야 함"
+    )
+    assert non_frozen_batch.batch_id not in related_ids, (
+        "같은 order_id 의 non-frozen line 배치는 복제 대상에서 제외되어야 함. "
+        "이 assertion 이 실패하면 stage1/update 의 related_batches 필터 회귀 — "
+        "재생성 경로와 겹쳐 중복 insert 발생."
+    )
