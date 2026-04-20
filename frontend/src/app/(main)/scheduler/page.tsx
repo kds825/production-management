@@ -503,7 +503,17 @@ export default function SchedulerPage() {
       }
       // scheduleStore에 runLabel 저장 (AI 재분석 트리거용)
       setRunLabel(runLabel);
-      const res = await fetch(`${API_BASE}/pipeline/stage2`, {
+
+      // ── Phase 3 개선: 비동기 job 경로로 전환 ──────────────────────────
+      // 왜 async 경로:
+      //   동기 /pipeline/stage2 는 10분 급 솔빙 동안 HTTP 연결을 유지하며
+      //   uvicorn 워커를 점유. 프론트는 응답이 올 때까지 아무 피드백을 줄
+      //   수 없었고, 같은 시간대의 다른 API 요청은 워커 대기열에 쌓였음.
+      //   /stage2/async 는 job_id 를 즉시 반환 → 1초 간격 status polling
+      //   으로 완료/오류/오버랩을 감지. 기존 응답 구조(overlap_alert,
+      //   schedule 등)는 job.result 에 그대로 실려 오므로 기존 UX 분기가
+      //   그대로 동작.
+      const submitRes = await fetch(`${API_BASE}/pipeline/stage2/async`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -514,43 +524,81 @@ export default function SchedulerPage() {
               : undefined,
         }),
       });
-      if (res.ok) {
-        // 백엔드가 SchedulerOverlapError를 포착한 경우 200 응답에 overlap_alert 플래그를 실어 돌려줌.
-        // 이때는 기존 스케줄을 보존하고(refresh 안 함) 상단 배너만 띄운다.
-        type OverlapPayload = {
+      if (!submitRes.ok) {
+        const text = await submitRes.text();
+        setAutoScheduleResult(
+          `오류: ${submitRes.status} — ${text.slice(0, 120)}`,
+        );
+        return;
+      }
+      const { job_id: jobId } = (await submitRes.json()) as { job_id: string };
+
+      // ── 폴링 루프 ─────────────────────────────────────────────────────
+      // 1초 간격, 최대 20분 (대형 런 대비 여유). 완료/오버랩/오류 시 탈출.
+      type JobStatus = {
+        status: "running" | "done" | "overlap_alert" | "error";
+        result?: {
+          run_label?: string;
           overlap_alert?: boolean;
           attempts?: number;
           message?: string;
         };
-        let overlapPayload: OverlapPayload | null = null;
-        try {
-          overlapPayload = (await res.clone().json()) as OverlapPayload;
-        } catch {
-          // JSON 파싱 실패 — 기존 happy path로 진행
-          overlapPayload = null;
-        }
-        if (overlapPayload?.overlap_alert) {
-          const attempts = overlapPayload.attempts ?? 3;
-          setOverlapAlert(
-            `${attempts}회 재시도 실패. 기존 스케줄을 유지합니다.`,
-          );
-          // 자동배열 결과 토스트는 중복 정보를 주지 않도록 비움
-          setAutoScheduleResult(null);
+        error?: string;
+        started_at?: string;
+      };
+      const startedAt = Date.now();
+      const deadlineMs = 20 * 60 * 1000;
+      let finalStatus: JobStatus | null = null;
+      while (Date.now() - startedAt < deadlineMs) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const statusRes = await fetch(
+          `${API_BASE}/pipeline/stage2/status/${jobId}`,
+        );
+        if (!statusRes.ok) {
+          setAutoScheduleResult(`상태 조회 실패: ${statusRes.status}`);
           return;
         }
-        setAutoScheduleResult(`자동배열 완료 (런: ${runLabel}).`);
-        // 왜 reload 대신 부분 갱신:
-        //   window.location.reload() 는 모든 useEffect 를 재실행시켜 /pipeline/runs,
-        //   /schedules/tasks, /equipment, /line-speeds, /audit 등 10+ 엔드포인트가
-        //   동시에 재호출되어 Supabase 커넥션 풀에 폭주 트래픽을 만든다. 사용자 UX
-        //   체감 시간의 상당 부분이 "reload 후 전체 페이지 재로드 대기" 였음.
-        //   대신 scheduler 페이지가 실제로 관심 있는 태스크만 다시 가져와 store 에
-        //   반영하면, Gantt 가 동일 effect 체인 없이 즉시 재렌더링된다.
-        await refreshScheduleTasks();
-      } else {
-        const text = await res.text();
-        setAutoScheduleResult(`오류: ${res.status} — ${text.slice(0, 120)}`);
+        const s = (await statusRes.json()) as JobStatus;
+        if (s.status === "running") {
+          const elapsedS = Math.floor((Date.now() - startedAt) / 1000);
+          setAutoScheduleResult(`자동배열 진행 중... ${elapsedS}초 경과`);
+          continue;
+        }
+        finalStatus = s;
+        break;
       }
+
+      if (!finalStatus) {
+        setAutoScheduleResult("자동배열 타임아웃 (20분). 서버 로그 확인 필요.");
+        return;
+      }
+
+      if (finalStatus.status === "error") {
+        setAutoScheduleResult(
+          `자동배열 오류: ${finalStatus.error ?? "알 수 없음"}`,
+        );
+        return;
+      }
+
+      if (
+        finalStatus.status === "overlap_alert" ||
+        finalStatus.result?.overlap_alert
+      ) {
+        const attempts = finalStatus.result?.attempts ?? 3;
+        setOverlapAlert(`${attempts}회 재시도 실패. 기존 스케줄을 유지합니다.`);
+        setAutoScheduleResult(null);
+        return;
+      }
+
+      setAutoScheduleResult(`자동배열 완료 (런: ${runLabel}).`);
+      // 왜 reload 대신 부분 갱신:
+      //   window.location.reload() 는 모든 useEffect 를 재실행시켜 /pipeline/runs,
+      //   /schedules/tasks, /equipment, /line-speeds, /audit 등 10+ 엔드포인트가
+      //   동시에 재호출되어 Supabase 커넥션 풀에 폭주 트래픽을 만든다. 사용자 UX
+      //   체감 시간의 상당 부분이 "reload 후 전체 페이지 재로드 대기" 였음.
+      //   대신 scheduler 페이지가 실제로 관심 있는 태스크만 다시 가져와 store 에
+      //   반영하면, Gantt 가 동일 effect 체인 없이 즉시 재렌더링된다.
+      await refreshScheduleTasks();
     } catch {
       setAutoScheduleResult(
         `연결 실패: 백엔드 서버(localhost:8000)를 확인하세요.`,

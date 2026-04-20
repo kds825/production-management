@@ -998,20 +998,13 @@ def export_stage1(run_label: str, db: Session = Depends(get_db)) -> StreamingRes
     )
 
 
-@router.post("/stage2", summary="Stage 2: 자동 스케줄링")
-def run_stage2(body: dict, db: Session = Depends(get_db)):
-    """Stage 2: production_batch → 간트 차트 자동배열 + 제약조건 검증
-
-    body:
-        run_label: str (필수)
-        base_date: str (선택, YYYYMMDD 형식 — 스케줄 시작 기준일)
-    """
+def _parse_stage2_body(body: dict) -> tuple[str, datetime | None, str]:
+    """POST /stage2 body 파싱 공통 루틴 (sync/async 경로 공유)."""
     run_label = body.get("run_label")
     if not run_label:
         raise HTTPException(status_code=400, detail="run_label 필수")
 
-    # 기준일자 파싱 — 없으면 auto_schedule이 KST 당일 08:00 사용
-    base_date_dt = None
+    base_date_dt: datetime | None = None
     base_date_str = body.get("base_date")
     if base_date_str:
         try:
@@ -1025,24 +1018,73 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
             )
 
     optimizer = body.get("optimizer", "cpsat")  # "cpsat" | "greedy"
+    return run_label, base_date_dt, optimizer
+
+
+def _execute_stage2_core(
+    run_label: str,
+    base_date_dt: datetime | None,
+    optimizer: str,
+    db: Session,
+) -> dict:
+    """Stage2 핵심 로직: 자동배열 → 전체 검증 → commit → AI 백그라운드 기동.
+
+    sync `/pipeline/stage2` 와 async `/pipeline/stage2/async` 의 공유 구현.
+    SchedulerOverlapError 는 여기서 잡지 않고 호출자가 매핑하도록 전파한다
+    (sync 는 200 + overlap_alert 응답, async job 은 status=overlap_alert
+    저장).
+    """
+    if optimizer == "greedy":
+        schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
+        schedule_result["engine"] = "greedy"
+    else:
+        # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
+        # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
+        # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
+        schedule_result = auto_schedule(
+            run_label, db, use_cpsat=True, base_date=base_date_dt
+        )
+        if schedule_result.get("solver_status") in ("OPTIMAL", "FEASIBLE"):
+            schedule_result["engine"] = "cpsat"
+        else:
+            schedule_result["engine"] = "greedy_fallback"
+
+    violations = validate_all(run_label, db)
+    db.commit()
+
+    # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음
+    with _ai_cache_lock:
+        _ai_cache[run_label] = {"status": "pending"}
+    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
+    thread.start()
+
+    return {
+        "run_label": run_label,
+        "schedule": schedule_result,
+        "violations": violations,
+        "total_violations": len(violations),
+        "overlap_alert": False,
+    }
+
+
+@router.post("/stage2", summary="Stage 2: 자동 스케줄링 (동기)")
+def run_stage2(body: dict, db: Session = Depends(get_db)):
+    """Stage 2 동기 경로 — 기존 호환 유지.
+
+    왜 동기를 유지하는가:
+      기존 테스트 (test_schedule_route_overlap) 및 프론트 일부 흐름이
+      이 엔드포인트의 즉시 응답에 의존. async 경로는 `/stage2/async`
+      로 분리하여 점진 이관 가능하도록 함.
+
+    body:
+        run_label: str (필수)
+        base_date: str (선택, YYYYMMDD 형식 — 스케줄 시작 기준일)
+        optimizer: "cpsat" | "greedy" (기본 "cpsat")
+    """
+    run_label, base_date_dt, optimizer = _parse_stage2_body(body)
 
     try:
-        if optimizer == "greedy":
-            schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
-            schedule_result["engine"] = "greedy"
-        else:
-            # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
-            # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
-            # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
-            schedule_result = auto_schedule(
-                run_label, db, use_cpsat=True, base_date=base_date_dt
-            )
-            # solver_status 가 OPTIMAL/FEASIBLE 이 아니면 내부에서 greedy 로 폴백된 것.
-            # 엔진 라벨은 그에 맞춰 분기.
-            if schedule_result.get("solver_status") in ("OPTIMAL", "FEASIBLE"):
-                schedule_result["engine"] = "cpsat"
-            else:
-                schedule_result["engine"] = "greedy_fallback"
+        return _execute_stage2_core(run_label, base_date_dt, optimizer, db)
     except SchedulerOverlapError as exc:
         # 왜 200: 이 예외는 '겹침 재시도 실패' 비즈니스 시그널이지 서버 장애가 아니다.
         # 프론트가 overlap_alert=True 플래그로 경고 배너를 표시할 수 있도록 성공 코드로 반환.
@@ -1066,23 +1108,56 @@ def run_stage2(body: dict, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"스케줄링 실패: {exc}") from exc
 
-    violations = validate_all(run_label, db)
-    db.commit()
 
-    # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음
-    with _ai_cache_lock:
-        _ai_cache[run_label] = {"status": "pending"}
-    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
-    thread.start()
+@router.post("/stage2/async", summary="Stage 2: 자동 스케줄링 (비동기 job 제출)")
+def run_stage2_async(body: dict) -> dict:
+    """Stage 2 비동기 경로 — 즉시 job_id 반환, 실제 처리는 백그라운드 스레드.
 
-    return {
-        "run_label": run_label,
-        "schedule": schedule_result,
-        "violations": violations,
-        "total_violations": len(violations),
-        # 정상 경로에서도 플래그를 내려보내 프론트가 분기 조건을 단순화할 수 있게 한다.
-        "overlap_alert": False,
-    }
+    왜 async 경로가 필요한가:
+      동기 엔드포인트는 10분 급 Stage2 처리 동안 uvicorn 워커 + threadpool
+      슬롯을 점유해 동시 요청 응답성을 악화시키고, 프론트 입장에서 진행률
+      표시가 불가능해 UX 가 나쁘다. 이 경로는 job 을 큐에 등록하고 즉시
+      반환 → 프론트는 `GET /stage2/status/{job_id}` 로 폴링.
+
+    Returns:
+        { "job_id": str, "status": "running", "run_label": str }
+    """
+    from app.infrastructure.database import SessionLocal
+    from app.services.stage2_job_queue import Stage2JobRequest, submit_job
+
+    run_label, base_date_dt, optimizer = _parse_stage2_body(body)
+
+    def _runner(req: Stage2JobRequest, db: Session) -> dict:
+        # SchedulerOverlapError 는 큐 워커가 overlap_alert 상태로 매핑.
+        # 다른 예외는 큐 워커가 error 상태로 기록하고 로그에 남김.
+        return _execute_stage2_core(req.run_label, req.base_date, req.optimizer, db)
+
+    req = Stage2JobRequest(
+        run_label=run_label, base_date=base_date_dt, optimizer=optimizer
+    )
+    job_id = submit_job(req, _runner, SessionLocal)
+    return {"job_id": job_id, "status": "running", "run_label": run_label}
+
+
+@router.get(
+    "/stage2/status/{job_id}",
+    summary="Stage 2 비동기 job 상태 조회",
+)
+def get_stage2_status(job_id: str) -> dict:
+    """job 상태 반환.
+
+    상태 필드:
+      - status: "running" | "done" | "overlap_alert" | "error"
+      - result: done/overlap_alert 일 때만 채워짐 (sync 응답과 동일 구조)
+      - error: error 일 때만 채워짐
+      - started_at / finished_at: ISO-8601 UTC
+    """
+    from app.services.stage2_job_queue import get_job
+
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job_id={job_id} 없음")
+    return job
 
 
 @router.get("/stage2/{run_label}/ai-status", summary="AI 분석 진행 상태 조회")
