@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -169,6 +170,60 @@ def test_new_run_label_preserves_parent(db: Session) -> None:
         db.query(ProductionBatch).filter(ProductionBatch.run_label == new_rl).first()
     )
     assert new_batch.parent_run_label == parent_rl
+
+
+def test_compare_runs_basic(db: Session) -> None:
+    """두 run_label 을 비교해 added/removed/moved/unchanged 분류 정확성 검증."""
+    from app.presentation.routes.plan_pipeline import compare_runs
+
+    before_rl = "20260420_140000"
+    after_rl = "20260420_150000"
+
+    # before: S001, S002 있음. after: S002 이동, S003 신규, S001 삭제.
+    _seed_sales_order(db, before_rl, "S001")
+    _seed_sales_order(db, before_rl, "S002", order_line=1)
+    b1 = _seed_production_batch(db, before_rl, "S001", process_name="저압절연")
+    b2 = _seed_production_batch(db, before_rl, "S002", process_name="저압절연")
+
+    _seed_sales_order(db, after_rl, "S002", order_line=2)  # 다른 order 로 pk 회피
+    _seed_sales_order(db, after_rl, "S003")
+    b2_new = _seed_production_batch(db, after_rl, "S002", process_name="저압절연")
+    b3 = _seed_production_batch(db, after_rl, "S003", process_name="저압절연")
+    db.flush()
+
+    # b2(before): (S002, 1, 저압절연, 1) 에 task 추가
+    t_before = ScheduleTask(
+        run_label=before_rl,
+        batch_id=b2.batch_id,
+        equipment_code="EX-B100",
+        start_datetime=datetime(2026, 4, 20, 10, 0),
+        end_datetime=datetime(2026, 4, 20, 14, 0),
+        status="scheduled",
+    )
+    # b2_new(after): 동일 key, 시간만 다름 → moved 로 분류
+    t_after = ScheduleTask(
+        run_label=after_rl,
+        batch_id=b2_new.batch_id,
+        equipment_code="EX-B100",
+        start_datetime=datetime(2026, 4, 20, 16, 0),
+        end_datetime=datetime(2026, 4, 20, 20, 0),
+        status="scheduled",
+    )
+    db.add_all([t_before, t_after])
+    db.flush()
+
+    result = compare_runs(before=before_rl, after=after_rl, db=db)
+
+    assert result["run_label_before"] == before_rl
+    assert result["run_label_after"] == after_rl
+    s = result["summary"]
+    # S001 → removed (before 에만), S003 → added (after 에만), S002 → moved
+    assert s["removed"] == 1, f"S001 is removed; got {s['removed']}"
+    assert s["added"] == 1, f"S003 is added; got {s['added']}"
+    assert s["moved"] == 1, f"S002 moved by 6h; got {s['moved']}"
+    # moved 항목의 delta 확인
+    moved = result["moved_tasks"][0]
+    assert moved["start_delta_hours"] == pytest.approx(6.0)
 
 
 def test_purge_preserves_frozen_task(db: Session) -> None:

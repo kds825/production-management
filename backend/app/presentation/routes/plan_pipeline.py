@@ -2151,6 +2151,190 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
+@router.get("/runs/compare", summary="두 run 간 배치/스케줄 diff")
+def compare_runs(
+    before: str,
+    after: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """두 run_label 의 ProductionBatch + ScheduleTask 를 비교해 added/removed/
+    moved/unchanged 로 분류한다.
+
+    stable key = (sales_order_id, sales_order_line, process_name, batch_seq).
+    batch_id 는 run 마다 autoincrement 로 달라지므로 논리적 식별자가 필요.
+    응답 스키마는 ScheduleDiffResponse (types/diff.ts) 와 호환 — task_id 필드에
+    stable key 의 문자열 표현을 넣어 UI 에서 dedup 하기 편하도록 함.
+    """
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    if before == after:
+        raise HTTPException(status_code=400, detail="before 와 after 는 달라야 합니다")
+
+    # 두 run 의 배치 + task 를 한 번에 로드 (N+1 방지)
+    def _load(run_label: str) -> dict[tuple, dict]:
+        """stable_key → {batch, task, meta} 매핑."""
+        rows = (
+            db.query(ProductionBatch, ScheduleTask)
+            .outerjoin(
+                ScheduleTask,
+                (ScheduleTask.batch_id == ProductionBatch.batch_id)
+                & (ScheduleTask.run_label == ProductionBatch.run_label),
+            )
+            .filter(ProductionBatch.run_label == run_label)
+            .all()
+        )
+        result: dict[tuple, dict] = {}
+        for b, t in rows:
+            key = (
+                b.sales_order_id or "",
+                b.sales_order_line if b.sales_order_line is not None else 0,
+                b.process_name or "",
+                b.batch_seq if b.batch_seq is not None else 0,
+            )
+            # batch_seq=-1 (연선 헤더) 가 여러 수주를 묶은 경우 sales_order_id 가
+            # 비어 있을 수 있음 — batch_group 으로 보강.
+            if not key[0]:
+                key = (b.batch_group or f"UNK_{b.batch_id}",) + key[1:]
+            start_iso = t.start_datetime.isoformat() if t and t.start_datetime else None
+            end_iso = t.end_datetime.isoformat() if t and t.end_datetime else None
+            result[key] = {
+                "batch_id": b.batch_id,
+                "equipment_code": (t.equipment_code if t else None) or b.equipment_code,
+                "start": start_iso,
+                "end": end_iso,
+                "process_name": b.process_name,
+                "batch_group": b.batch_group,
+                "sales_order_id": b.sales_order_id,
+                "sales_order_line": b.sales_order_line,
+                "customer_name": b.customer_name,
+                "status": b.status,
+                "sheath_color": b.sheath_color,
+                "sq_mm2": float(b.sq_mm2) if b.sq_mm2 is not None else None,
+                "due_date": b.due_date.isoformat() if b.due_date else None,
+            }
+        return result
+
+    before_map = _load(before)
+    after_map = _load(after)
+
+    if not before_map and not after_map:
+        raise HTTPException(
+            status_code=404,
+            detail=f"두 run 모두 배치가 없습니다: before={before}, after={after}",
+        )
+
+    before_keys = set(before_map.keys())
+    after_keys = set(after_map.keys())
+    added_keys = after_keys - before_keys
+    removed_keys = before_keys - after_keys
+    common_keys = before_keys & after_keys
+
+    def _delta_hours(a_iso: str | None, b_iso: str | None) -> float | None:
+        if not a_iso or not b_iso:
+            return None
+        try:
+            a_dt = datetime.fromisoformat(a_iso)
+            b_dt = datetime.fromisoformat(b_iso)
+            return (b_dt - a_dt).total_seconds() / 3600.0
+        except Exception:
+            return None
+
+    def _key_str(k: tuple) -> str:
+        return "|".join(str(x) for x in k)
+
+    moved_tasks: list[dict] = []
+    unchanged_task_ids: list[str] = []
+
+    for key in sorted(common_keys, key=_key_str):
+        b_row = before_map[key]
+        a_row = after_map[key]
+        start_changed = b_row["start"] != a_row["start"]
+        end_changed = b_row["end"] != a_row["end"]
+        eq_changed = b_row["equipment_code"] != a_row["equipment_code"]
+
+        if not (start_changed or end_changed or eq_changed):
+            unchanged_task_ids.append(_key_str(key))
+            continue
+
+        moved_tasks.append(
+            {
+                "task_id": _key_str(key),
+                "old_start": b_row["start"],
+                "old_end": b_row["end"],
+                "old_equipment": b_row["equipment_code"],
+                "new_start": a_row["start"],
+                "new_end": a_row["end"],
+                "new_equipment": a_row["equipment_code"],
+                "start_delta_hours": _delta_hours(b_row["start"], a_row["start"]),
+                "end_delta_hours": _delta_hours(b_row["end"], a_row["end"]),
+                "equipment_changed": eq_changed,
+                "batch_group": a_row["batch_group"],
+                "process_name": a_row["process_name"],
+                "sales_order_id": a_row["sales_order_id"],
+                "customer_name": a_row["customer_name"],
+                "sheath_color": a_row["sheath_color"],
+                "cross_section": a_row["sq_mm2"],
+            }
+        )
+
+    added_tasks: list[dict] = []
+    for key in sorted(added_keys, key=_key_str):
+        a_row = after_map[key]
+        added_tasks.append(
+            {
+                "task_id": _key_str(key),
+                "start": a_row["start"],
+                "end": a_row["end"],
+                "equipment": a_row["equipment_code"],
+                "batch_group": a_row["batch_group"],
+                "process_name": a_row["process_name"],
+                "sales_order_id": a_row["sales_order_id"],
+                "customer_name": a_row["customer_name"],
+                "sheath_color": a_row["sheath_color"],
+                "cross_section": a_row["sq_mm2"],
+                "due_date": a_row["due_date"],
+            }
+        )
+
+    removed_tasks: list[dict] = []
+    for key in sorted(removed_keys, key=_key_str):
+        b_row = before_map[key]
+        removed_tasks.append(
+            {
+                "task_id": _key_str(key),
+                "start": b_row["start"],
+                "end": b_row["end"],
+                "equipment": b_row["equipment_code"],
+                "batch_group": b_row["batch_group"],
+                "process_name": b_row["process_name"],
+                "sales_order_id": b_row["sales_order_id"],
+                "customer_name": b_row["customer_name"],
+                "sheath_color": b_row["sheath_color"],
+                "cross_section": b_row["sq_mm2"],
+                "due_date": b_row["due_date"],
+            }
+        )
+
+    return {
+        "run_label_before": before,
+        "run_label_after": after,
+        "kind": "run_compare",
+        "created_at": datetime.now().isoformat(),
+        "summary": {
+            "moved": len(moved_tasks),
+            "added": len(added_tasks),
+            "removed": len(removed_tasks),
+            "unchanged": len(unchanged_task_ids),
+            "total_before": len(before_keys),
+            "total_after": len(after_keys),
+        },
+        "moved_tasks": moved_tasks,
+        "added_tasks": added_tasks,
+        "removed_tasks": removed_tasks,
+        "unchanged_task_ids": unchanged_task_ids,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Task 2.3: batch_group 미배정 (unassign) — 단일 트랜잭션 엔드포인트
 #
