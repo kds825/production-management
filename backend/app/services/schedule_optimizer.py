@@ -210,15 +210,57 @@ def auto_schedule(
     for attempt in range(MAX_RETRIES + 1):
         if use_cpsat:
             # CP-SAT 우선 시도. random_seed 를 시도 번호로 변동 → 동일 해 반복 방지.
+            # P9-B: 3-level fallback (tardiness_hard=True → sheath_color_hard 완화 →
+            # tardiness_hard 완화) 을 greedy 폴백 전에 적용.
             from app.services.cp_sat_optimizer import cp_sat_schedule
 
+            # Level 1: 납기/색상 모두 엄격
             result = cp_sat_schedule(run_label, db, random_seed=attempt, **kwargs)
-            # INFEASIBLE / UNKNOWN / timeout → 같은 시도 사이클 내 greedy 폴백.
-            # (plan_pipeline 에서 별도 폴백을 수행했으나, retry 래퍼 안으로 끌어와
-            # 폴백 경로도 동일한 validate+retry 안전망을 공유하도록 한다.)
+            l1_status = result.get("solver_status")
+
+            # Level 2: 색상만 완화
+            if l1_status == "INFEASIBLE":
+                _purge_run_tasks(db, run_label)
+                result = cp_sat_schedule(
+                    run_label,
+                    db,
+                    random_seed=attempt,
+                    sheath_color_hard=False,
+                    tardiness_hard=True,
+                    **{
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("sheath_color_hard", "tardiness_hard")
+                    },
+                )
+                result.setdefault("warnings", []).append(
+                    "납기 hard 유지 + 색상 hard 완화(Level 2) 로 재시도"
+                )
+            l2_status = result.get("solver_status")
+
+            # Level 3: 둘 다 완화
+            if l2_status == "INFEASIBLE":
+                _purge_run_tasks(db, run_label)
+                result = cp_sat_schedule(
+                    run_label,
+                    db,
+                    random_seed=attempt,
+                    sheath_color_hard=False,
+                    tardiness_hard=False,
+                    **{
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("sheath_color_hard", "tardiness_hard")
+                    },
+                )
+                result.setdefault("warnings", []).append(
+                    "납기+색상 모두 완화(Level 3) 로 재시도 — 납기 초과 가능성 있음"
+                )
+
+            # greedy 최종 폴백
             if result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
                 result.setdefault("warnings", []).append(
-                    "CP-SAT 솔버 미해결 — 그리디 폴백으로 전환합니다"
+                    "CP-SAT 3-level 모두 미해결 — 그리디 폴백으로 전환합니다"
                 )
                 _purge_run_tasks(db, run_label)
                 result = _run_optimization_once(run_label, db, **kwargs)
@@ -2038,7 +2080,7 @@ def _reschedule_affected_groups_cpsat(
     *,
     base_date: datetime | None = None,
 ) -> dict:
-    """긴급수주 재최적화 — CP-SAT 전역 경로 (P4).
+    """긴급수주 재최적화 — CP-SAT 전역 경로 (P4 → P9-B).
 
     왜 전역 재최적화인가 (사용자 결정):
       - Merged 그룹을 "start 유지 + end 연장" 트릭으로 제자리에 두지 않고,
@@ -2046,17 +2088,19 @@ def _reschedule_affected_groups_cpsat(
       - 진행중/완료 작업만 frozen (in_progress/completed/wip_complete) +
         base_date 이전 start_datetime 의 scheduled 도 보호 (생산 중이므로).
 
-    동작:
+    동작 (P9-B — 3-level fallback):
       1. hard_frozen_keys 계산: 보호 상태 배치 + base_date 이전 scheduled 의
          batch_group 집합.
       2. 비-frozen ScheduleTask 삭제 + 비-frozen 배치 status 를 'planned' 로 리셋.
-         (CP-SAT 는 planned 만 재스케줄. scheduled 인 채 두면 재배치 대상에서
-          빠져 전역 최적화가 깨진다.)
-      3. cp_sat_schedule(frozen_group_keys=hard_frozen_keys,
-         sheath_color_hard=True) 호출.
-      4. solver_status == "INFEASIBLE" → sheath_color_hard=False 로 재시도
-         (색상 hard 가 infeasible 원인일 수 있음 → soft 로 강등).
-      5. 그래도 실패 → greedy 폴백 (_run_optimization_once).
+      3. Level 1: cp_sat_schedule(tardiness_hard=True, sheath_color_hard=True)
+         → 납기/색상 둘 다 엄격.
+      4. Level 2 (INFEASIBLE 시): tardiness_hard=True, sheath_color_hard=False
+         → 색상만 완화, 납기는 여전히 엄격.
+      5. Level 3 (여전히 INFEASIBLE): tardiness_hard=False, sheath_color_hard=False
+         → 둘 다 soft penalty 로 강등 (weight 기반 최소화).
+      6. 그래도 실패 → greedy 폴백 (_run_optimization_once).
+
+    각 단계 결과는 result["warnings"] 에 사유와 함께 기록된다.
 
     affected_group_keys 는 현재 단계에서는 소비하지 않는다. 이유:
       cp_sat_schedule 자체가 "run_label 의 planned 배치 전체" 를 푸는 설계라
@@ -2150,27 +2194,27 @@ def _reschedule_affected_groups_cpsat(
         )
     db.flush()
 
-    # ── 4. CP-SAT 1차 시도 — sheath_color_hard=True ─────────────────────────
+    # ── 4. CP-SAT Level 1: tardiness_hard=True, sheath_color_hard=True ──────
+    # P9-B: 납기/색상 모두 엄격. 가장 strict 한 설정 — 해가 있으면 무조건 납기 지킴.
     cp_result = cp_sat_schedule(
         run_label,
         db,
         base_date=base_date,
         frozen_group_keys=hard_frozen_keys or None,
         sheath_color_hard=True,
+        tardiness_hard=True,
     )
-
-    # ── 5. INFEASIBLE → sheath_color_hard=False 로 재시도 (P4 fallback) ─────
-    # 원인 추적용: 1차 solve 결과를 보존한다. 2차도 INFEASIBLE 시 greedy 폴백
-    # warning 에 함께 실어 "색상이 문제였는지, frozen/horizon 이 문제였는지"
-    # 운영자가 구분 가능하도록 한다.
     first_status = cp_result.get("solver_status")
     first_objective = cp_result.get("objective_value")
     second_status: str | None = None
     second_objective: int | None = None
+    third_status: str | None = None
+    third_objective: int | None = None
 
-    if cp_result.get("solver_status") == "INFEASIBLE":
-        # 색상 hard 가 infeasible 원인일 수 있음 → soft penalty 로 강등 후 재시도.
-        # 재시도 전 이전 부분 삽입물이 있을 수 있으므로 non-frozen 영역을 다시 정리.
+    # ── 5. Level 2: tardiness_hard=True, sheath_color_hard=False (색상만 완화) ──
+    # 색상 hard 가 infeasible 주범일 가능성 높음 (같은 색상 block 연속 강제가
+    # 설비 충돌·납기 제약과 동시에 성립 안될 때). 납기는 여전히 엄격.
+    if first_status == "INFEASIBLE":
         _reset_non_frozen_for_retry(run_label, frozen_batch_ids, db)
 
         cp_result = cp_sat_schedule(
@@ -2179,16 +2223,38 @@ def _reschedule_affected_groups_cpsat(
             base_date=base_date,
             frozen_group_keys=hard_frozen_keys or None,
             sheath_color_hard=False,
+            tardiness_hard=True,
         )
         cp_result.setdefault("warnings", []).append(
-            "색상 hard constraint infeasible → soft penalty 로 재시도"
+            "납기 hard constraint 유지한 채 색상 hard 완화 (Level 2) 로 재시도"
         )
         second_status = cp_result.get("solver_status")
         second_objective = cp_result.get("objective_value")
 
-    # ── 6. 그래도 실패 → greedy 폴백 ────────────────────────────────────────
+    # ── 6. Level 3: tardiness_hard=False, sheath_color_hard=False (둘 다 완화) ─
+    # 납기 제약이 infeasible 주범인 경우(수주량이 설비 용량 초과 등). soft penalty
+    # 로 강등 → weight 기반 최소 지연 해를 구함. 사용자 UX: warning 으로 납기 위반
+    # 가능성 안내. 2회 실패 시점에 원인 후보 정보를 함께 기록.
+    if cp_result.get("solver_status") == "INFEASIBLE":
+        _reset_non_frozen_for_retry(run_label, frozen_batch_ids, db)
+
+        cp_result = cp_sat_schedule(
+            run_label,
+            db,
+            base_date=base_date,
+            frozen_group_keys=hard_frozen_keys or None,
+            sheath_color_hard=False,
+            tardiness_hard=False,
+        )
+        cp_result.setdefault("warnings", []).append(
+            "납기+색상 모두 완화(Level 3, soft weighted tardiness) 로 재시도 "
+            "— 납기 초과 가능성 있음"
+        )
+        third_status = cp_result.get("solver_status")
+        third_objective = cp_result.get("objective_value")
+
+    # ── 7. 그래도 실패 → greedy 폴백 (최후 수단) ────────────────────────────
     if cp_result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
-        # 재시도 전 non-frozen 영역 재정리
         _reset_non_frozen_for_retry(run_label, frozen_batch_ids, db)
 
         greedy_result = _run_optimization_once(run_label, db, base_date=base_date)
@@ -2197,18 +2263,22 @@ def _reschedule_affected_groups_cpsat(
         result["warnings"].extend(cp_result.get("warnings", []))
         result["warnings"].extend(greedy_result.get("warnings", []))
 
-        # 2차까지 INFEASIBLE 로 떨어진 경우 원인 후보를 가시화. 색상 hard 제거로도
-        # 안 풀리면 frozen 집합 과다 / horizon 부족 / 처리량 초과 등 구조적 문제.
-        if second_status == "INFEASIBLE":
+        # 3차까지 INFEASIBLE: 구조적 문제(frozen 충돌, horizon 초과 등).
+        if third_status == "INFEASIBLE":
             result["warnings"].append(
-                "INFEASIBLE 2회 연속 — 원인 후보: frozen 제약 충돌, "
+                "INFEASIBLE 3회 연속 — 원인 후보: frozen 제약 충돌, "
                 "horizon 내 할당 불가, 설비 처리량 초과 등 "
-                "(색상 hard 제거로도 해결되지 않음)"
+                "(납기+색상 모두 완화해도 해결되지 않음)"
+            )
+        elif second_status == "INFEASIBLE" and third_status is None:
+            # 2차 INFEASIBLE 후 3차 돌리지 않은 경로(방어적 — 이론상 도달 불가)
+            result["warnings"].append(
+                "INFEASIBLE 2회 연속 — Level 3 로 미진입 (알 수 없는 오류)"
             )
         result["warnings"].append(
             "CP-SAT 재최적화 실패 → greedy 폴백으로 전환 | "
-            f"solver_status(1차={first_status}, 2차={second_status}) | "
-            f"objective(1차={first_objective}, 2차={second_objective})"
+            f"solver_status(1차={first_status}, 2차={second_status}, 3차={third_status}) | "
+            f"objective(1차={first_objective}, 2차={second_objective}, 3차={third_objective})"
         )
         return result
 

@@ -34,7 +34,9 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.services.audit_logger import log_decision
-from app.services.calendar_engine import calculate_end_datetime
+from app.services.calendar_engine import (
+    calculate_end_datetime,
+)
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
 from app.services.schedule_optimizer import (
     PREDECESSOR_PROCESS,
@@ -54,25 +56,41 @@ from app.services.schedule_optimizer import (
     align_start_to_predecessor_end,
 )
 
-# 하루 근무 시간(분): 08:00~22:00
+# 하루 근무 시간(분): 08:00~22:00 (CP-SAT 시간축 legacy 단위).
+# 실제 가용 분은 calendar_engine 기반 _working_minutes_between 이 계산하므로
+# 이 상수는 폴백(legacy path) 과 horizon 계산의 근사치로만 사용된다.
 _WORK_MIN_PER_DAY = 14 * 60  # 840분
 
-# CP-SAT 최대 계획 기간(근무 분) — 90 근무일
-_MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY
+# 연선연합(default) 카테고리 기준 1 근무일 최대 working-min (P9-E 신규).
+# Mon-Thu 22h 가동 중 휴식 2h 제외 = 20h 실가동 + 8h idle (창 내부) 합쳐 24h 창.
+# horizon 은 가장 큰 가용 카테고리 기준으로 잡아야 INFEASIBLE 를 피함 → 24h*60.
+_WORK_MIN_PER_DAY_DEFAULT = 24 * 60  # 1440분 (창 full)
+
+# CP-SAT 최대 계획 기간(근무 분) — 90 근무일. P9-E: calendar_engine 기반 축으로
+# 확장되어 기존 840*90=75600 보다 큰 값 필요 (공휴일/금요일 때문에 실가용 분은
+# 날마다 달라짐). 여유있게 90*1440 = 129600 으로 horizon 확장.
+_MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY_DEFAULT
 
 # CP-SAT 솔버 시간 제한(초)
 _SOLVER_TIME_LIMIT_SEC = 30
 
-# 납기 초과 가중치 — 납기는 사용자 요구 상 하드 제약.
-# CP-SAT 에서 실제 'hard' add() 는 INFEASIBLE 위험(과거 납기 등) 때문에 피하고,
-# 아이들(1)/체인(1)/선점 등 다른 목적함수 항들을 _DUE_HARD_WEIGHT 로 압도하여
-# 실질적 hard 로 동작시킨다. 납기 맞출 해가 있으면 솔버는 그 해를 반드시 선택.
+# 납기 초과 가중치 — tardiness_hard=False 모드에서만 사용.
+# tardiness_hard=True (기본) 에서는 model.add(e <= due_wmin) 로 직접 강제.
+# _DUE_HARD_WEIGHT: 아이들(1)/체인(120)/선점 등 다른 목적함수 항들을 압도해
+# 실질적 hard 로 동작시킨다 (soft 폴백 경로용).
 _DUE_HARD_WEIGHT = 100000
 _TARDINESS_WEIGHT = {
     "critical": _DUE_HARD_WEIGHT * 100,
     "urgent": _DUE_HARD_WEIGHT * 10,
     "normal": _DUE_HARD_WEIGHT,
 }
+
+# 색상 교체 cost 가중치 (분 단위). resolve_color_change_min 의 기본값(120min)과
+# 일치시켜 chain_diff(boolean: 동색 0, 이색 1) 곱한 값이 실제 교체 시간과 동등
+# scale 로 경쟁하게 함. 1 분 tardiness ≒ 1 분 idle ≒ 색상 1회 교체(120min).
+# 기존 값(1)은 tardiness_weight(10만~1000만) 대비 사실상 무력했음 (P9-B 교정).
+_CHAIN_WEIGHT = 120
+_IDLE_WEIGHT = 1
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────
@@ -88,7 +106,11 @@ def _priority_label(customer_priority: int | None) -> str:
 
 
 def _work_days_between(d1: date, d2: date) -> int:
-    """d1(포함) ~ d2(미포함) 사이의 근무일 수(토·일 제외)."""
+    """d1(포함) ~ d2(미포함) 사이의 근무일 수(토·일 제외).
+
+    Legacy fallback — calendar_engine 경로가 db/equipment_code 정보 없을 때 사용.
+    공휴일은 반영하지 않는다.
+    """
     days = 0
     cur = d1
     while cur < d2:
@@ -98,8 +120,115 @@ def _work_days_between(d1: date, d2: date) -> int:
     return days
 
 
-def _due_work_min(due: date, base: datetime) -> int:
-    """납기일까지 남은 근무 분(CP-SAT 내부 단위)."""
+def _working_minutes_between(
+    start: datetime,
+    end: datetime,
+    equipment_code: str | None = None,
+    db: Session | None = None,
+) -> int:
+    """start → end 사이 실제 가용 근무분 (calendar_engine 기반, P9-E).
+
+    calendar_engine.get_working_window / get_available_hours / _get_day_breaks 를
+    결합해 공정 카테고리별 가동시간·요일별·휴식·공휴일(db 있을 때) 을 모두 반영.
+
+    가정/한계:
+      - tz-naive (KST) — 기존 코드 전체 규칙 준수.
+      - equipment_code=None → 'default' 카테고리 (연선연합과 동일 22h Mon-Thu).
+      - db=None → OperationCalendar(CAL-HOL) 공휴일 미반영, 주말만 제외.
+      - 같은 날 start ~ end 는 day 의 working window 와 교집합 후 휴식 구간 제거.
+      - 휴식 구간을 완전히 포함한 start/end 만 차감 (부분 겹침은 차감 분을 clamp).
+
+    Edge case (알려진 근사):
+      - start/end 가 working window 밖이면 day_start/day_end 로 clamp.
+      - current date 가 금요일 오후이면 FRI_END_HOUR 로 창이 단축됨 — 자동 반영.
+
+    Why: 기존 _work_days_between * _WORK_MIN_PER_DAY 는 하루=840분 고정 근사로
+    "공휴일 있는 주에 작업이 하루 더 밀림" 같은 현실을 반영 못 했음. P9-E 로 교체.
+    """
+    # 지역 import — 최상단 import 가 formatter 에 의해 제거되는 환경 방어.
+    from app.services.calendar_engine import (
+        _get_category,
+        _get_day_breaks,
+        get_available_hours,
+        get_working_window,
+    )
+
+    if end <= start:
+        return 0
+
+    cat = _get_category(equipment_code)
+    total_min = 0
+    current_date = start.date()
+    end_date = end.date()
+
+    while current_date <= end_date:
+        # 1) 해당 날짜 사용 가능 시간 (공휴일이면 0 → skip)
+        avail_hr = get_available_hours(current_date, equipment_code, db)
+        if avail_hr <= 0:
+            current_date = current_date + timedelta(days=1)
+            continue
+
+        # 2) 해당 날짜 작업 윈도우 (day_start, day_end) — 08:00 시작, cat/요일별 종료
+        day_start, day_end = get_working_window(current_date, equipment_code)
+        if day_end <= day_start:
+            current_date = current_date + timedelta(days=1)
+            continue
+
+        # 3) 실제 구간 = [max(start, day_start), min(end, day_end)]
+        if current_date == start.date():
+            effective_start = max(start, day_start)
+        else:
+            effective_start = day_start
+        if current_date == end_date:
+            effective_end = min(end, day_end)
+        else:
+            effective_end = day_end
+
+        if effective_end <= effective_start:
+            current_date = current_date + timedelta(days=1)
+            continue
+
+        seg_min = int((effective_end - effective_start).total_seconds() / 60)
+
+        # 4) 휴식 구간 제거 (월~목 연선연합 점심/저녁/간식). 부분 겹침도 정확히 차감.
+        breaks = _get_day_breaks(current_date, cat)
+        for b_start, b_end in breaks:
+            # 겹침 없음 조기 탈출
+            if b_start >= effective_end or b_end <= effective_start:
+                continue
+            overlap_start = max(b_start, effective_start)
+            overlap_end = min(b_end, effective_end)
+            seg_min -= max(0, int((overlap_end - overlap_start).total_seconds() / 60))
+
+        total_min += max(0, seg_min)
+        current_date = current_date + timedelta(days=1)
+
+    return total_min
+
+
+def _due_work_min(
+    due: date,
+    base: datetime,
+    equipment_code: str | None = None,
+    db: Session | None = None,
+) -> int:
+    """납기일까지 남은 근무 분(CP-SAT 내부 단위).
+
+    P9-E: equipment_code / db 선택 파라미터로 calendar_engine 반영.
+    - 제공되면 `_working_minutes_between(base, due 22:00, ...)` 으로 정확 계산.
+    - 없으면 기존 legacy 축(_work_days_between * _WORK_MIN_PER_DAY) 유지 —
+      `_datetime_to_wmin` 등 legacy wmin 축과 정합 유지용.
+
+    due 의 "하루 끝" 을 22:00 (일반 오후 마감) 기준으로 해석. calendar_engine 의
+    day_end 와 min() 을 통해 카테고리별 실제 마감(금요일 14:00 등) 로 자동 clamp.
+    """
+    from datetime import time as _time
+
+    if equipment_code is not None or db is not None:
+        due_end = datetime.combine(due, _time(22, 0))
+        return _working_minutes_between(base, due_end, equipment_code, db)
+
+    # Legacy fallback — _datetime_to_wmin / horizon 과 동일 축 유지.
     wd = _work_days_between(base.date(), due)
     return wd * _WORK_MIN_PER_DAY
 
@@ -432,6 +561,7 @@ def cp_sat_schedule(
     random_seed: int = 0,
     frozen_group_keys: set[str] | None = None,
     sheath_color_hard: bool = True,
+    tardiness_hard: bool = True,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.
@@ -456,6 +586,15 @@ def cp_sat_schedule(
                  "같은 설비에서 연속" 이므로).
             False 면 기존 soft penalty(chain_terms)만 유지되는 기존 동작.
             호출측(auto_schedule)이 전달하지 않으면 True 가 적용된다.
+        tardiness_hard: 납기 초과를 hard constraint 로 강제할지 여부 (기본 True —
+            P9-B "Tardiness A 엄격" 사용자 결정). True 일 때:
+              - `model.add(e <= due_wmin)` 로 납기 직접 강제. 단 1분도 초과 불가.
+              - tardiness 목적함수 항이 제거되므로 objective = idle + CHAIN*chain_diff.
+              - INFEASIBLE 시 호출부(_reschedule_affected_groups_cpsat)가
+                (tardiness_hard=False, sheath_color_hard=False) 등으로 단계적 완화.
+            False 면 기존 weight-based soft(tardiness * _TARDINESS_WEIGHT) 동작 유지.
+            단, `_CHAIN_WEIGHT=120` 은 두 모드 모두 공통 적용 (색상 교체가 tardiness
+            와 동일 분 단위로 경쟁 가능하도록).
 
     Returns:
         {"total_tasks", "violations", "warnings", "solver_status", "objective_value"}
@@ -645,10 +784,20 @@ def cp_sat_schedule(
         start_vars[gk] = s
         end_vars[gk] = e
 
-        tard = model.new_int_var(0, _MAX_HORIZON_MIN, f"t_{gk}")
-        # tardiness = max(0, end - due)
-        model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
-        tardiness_vars[gk] = tard
+        if tardiness_hard:
+            # P9-B: 납기 hard constraint — end_var ≤ due_wmin 로 직접 강제.
+            # due 가 있을 때만 제약 추가. (due_wmin == _MAX_HORIZON_MIN 인 no-due
+            # 그룹은 제약 추가해도 무의미하게 통과하므로 skip — 모델 경량화.)
+            # tardiness_vars 는 생성 자체 생략 → objective 에서 제외.
+            if meta.get("earliest_due") is not None:
+                model.add(e <= meta["due_wmin"])
+            # placeholder — 이후 코드가 tardiness_vars[gk] 를 참조하지 않아도 안전
+        else:
+            # Soft 모드 (폴백용): 기존 weight-based tardiness.
+            tard = model.new_int_var(0, _MAX_HORIZON_MIN, f"t_{gk}")
+            # tardiness = max(0, end - due)
+            model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
+            tardiness_vars[gk] = tard
 
         eq_bools: dict[str, cp_model.IntVar] = {}
         for eq in meta["eligible"]:
@@ -796,7 +945,7 @@ def cp_sat_schedule(
         ]:
             model.add(start_vars[st_gk] >= start_vars[core_gk] + first_drum)
 
-    # 6-f. 목적함수: 가중 납기 초과 최소화 + 파이프라인 유휴 최소화
+    # 6-f. 목적함수: 파이프라인 유휴 최소화 + 색상 체인 최소화 (+ soft 모드에선 tardiness)
     # 유휴 = succ_end - pred_end (≥ 0, 6-d 하드 제약으로 보장). 납기 가중치(수십~수백)
     # 대비 훨씬 낮은 _IDLE_WEIGHT 로 soft 최적화 — 파이프라인이 빠른 공정일수록
     # 솔버가 start_vars 를 늦춰서 pred_end 와 succ_end 를 정렬시킨다.
@@ -810,12 +959,19 @@ def cp_sat_schedule(
             model.add(_idle == end_vars[_gk] - end_vars[_pred_gk])
             idle_terms.append(_idle)
 
-    _IDLE_WEIGHT = 1
-    _objective = sum(
-        meta["weight"] * tardiness_vars[gk] for gk, meta in group_meta.items()
-    )
-    if idle_terms:
-        _objective = _objective + _IDLE_WEIGHT * sum(idle_terms)
+    # objective 초기화:
+    #   tardiness_hard=True  → idle + CHAIN*chain_diff (tardiness 항 제거, hard 제약으로 강제)
+    #   tardiness_hard=False → sum(weight*tardiness) + idle + CHAIN*chain_diff (기존 soft 유지)
+    # 두 모드 모두 _CHAIN_WEIGHT=120 (color changeover 분과 동일 scale) 적용 →
+    # solver 가 "색상 교체 120min vs idle 120min" 을 동등 비교.
+    if tardiness_hard:
+        _objective = _IDLE_WEIGHT * sum(idle_terms) if idle_terms else 0
+    else:
+        _objective = sum(
+            meta["weight"] * tardiness_vars[gk] for gk, meta in group_meta.items()
+        )
+        if idle_terms:
+            _objective = _objective + _IDLE_WEIGHT * sum(idle_terms)
 
     # 6-f-hard. 시스 색상 체인 Hard Constraint (sheath_color_hard=True 일 때만)
     #
@@ -919,7 +1075,9 @@ def cp_sat_schedule(
             model.add_abs_equality(_diff, start_vars[_gk_a] - start_vars[_gk_b])
             chain_terms.append(_diff)
 
-    _CHAIN_WEIGHT = 1
+    # _CHAIN_WEIGHT 는 모듈 상수(기본 120). chain_diff 가 boolean 이 아닌 |start-start|
+    # 분 단위이므로 weight 가 tardiness 와 같은 scale 에 놓여야 solver 가 색상을
+    # 포기하고 납기를 우선하는 등 올바른 tradeoff 를 수행한다.
     if chain_terms:
         _objective = _objective + _CHAIN_WEIGHT * sum(chain_terms)
 

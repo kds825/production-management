@@ -419,7 +419,14 @@ def test_long_color_chain_not_broken_by_half_week(db):
 
 
 def test_cp_sat_color_chain_bonus(db):
-    """CP-SAT 솔버가 시스 같은 색상을 인접 배치하는 해를 선호."""
+    """CP-SAT 솔버가 시스 같은 색상을 인접 배치하는 해를 선호.
+
+    P9-B 이후: tardiness_hard=True (기본) 이면 과거 납기는 infeasible.
+    본 테스트는 "color chain soft 최적화" 가 목적이므로 tardiness_hard=False 로
+    호출해 soft penalty 모드에서 color chain preference 만 검증한다.
+    (원래 fixture 의 due_date 2026-04-13, 2026-04-20 은 현재일 2026-04-20 기준
+    일부 이미 경과/당일이라 hard 모드에선 infeasible.)
+    """
     from app.services.cp_sat_optimizer import cp_sat_schedule
 
     rows = [
@@ -448,7 +455,9 @@ def test_cp_sat_color_chain_bonus(db):
         )
     db.flush()
 
-    result = cp_sat_schedule(run_label="test-cpsat-chain", db=db)
+    # tardiness_hard=False: P9-B 이전 weight-based 동작과 등가.
+    # 본 테스트는 color chain bonus 에만 관심 있음.
+    result = cp_sat_schedule(run_label="test-cpsat-chain", db=db, tardiness_hard=False)
     assert result.get("solver_status") in ("OPTIMAL", "FEASIBLE"), (
         f"Solver failed: {result.get('solver_status')}"
     )

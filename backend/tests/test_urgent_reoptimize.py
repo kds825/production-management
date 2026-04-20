@@ -561,6 +561,129 @@ def test_cpsat_frozen_in_progress_start_preserved(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# P9-B: Tardiness hard + chain weight rebalance 시그니처 / 상수 계약
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 사용자 결정 (Tardiness A 엄격): 납기 초과는 1분이라도 infeasible 로 취급.
+# cp_sat_schedule(tardiness_hard=True) 에서 end_var <= due_wmin 를 hard 로 강제.
+# 색상 교체는 tardiness 와 동일 분 단위(_CHAIN_WEIGHT=120) 로 cost 화해 경쟁 가능.
+
+
+def test_cp_sat_tardiness_hard_signature(db: Session) -> None:
+    """tardiness_hard 파라미터 시그니처 호환성.
+
+    None run_label → 예외 없이 dict 반환 (빈 배치 경로).
+    True / False 둘 다 허용되어야 한다.
+    """
+    r1 = cp_sat_schedule("NON_EXISTENT_P9B", db, tardiness_hard=True)
+    r2 = cp_sat_schedule("NON_EXISTENT_P9B", db, tardiness_hard=False)
+    assert isinstance(r1, dict) and isinstance(r2, dict)
+    assert "warnings" in r1 and "warnings" in r2
+
+
+def test_cp_sat_tardiness_hard_default_true(db: Session) -> None:
+    """tardiness_hard 기본값 True (사용자 결정 A 엄격).
+
+    기존 호출부(auto_schedule / reschedule_affected_groups_cpsat)는
+    tardiness_hard 를 전달하지 않으므로 기본값이 True 여야 "납기 1분도 초과 불가"
+    요구를 만족한다.
+    """
+    import inspect
+
+    sig = inspect.signature(cp_sat_schedule)
+    assert "tardiness_hard" in sig.parameters, (
+        "cp_sat_schedule 에 tardiness_hard 파라미터 없음"
+    )
+    assert sig.parameters["tardiness_hard"].default is True, (
+        f"tardiness_hard 기본값은 True 여야 함 (실제={sig.parameters['tardiness_hard'].default})"
+    )
+
+
+def test_chain_weight_is_real_changeover_minutes(db: Session) -> None:
+    """chain_diff 가중치가 실제 color changeover 분 단위와 일치.
+
+    사용자 결정: 색상 변경 1회 cost = 120min (ConstraintConfig 4-2 sheath_color_min).
+    solver 가 "color 1회 교체 비용" 과 "idle 120min" 을 동등 비교할 수 있으려면
+    _CHAIN_WEIGHT >= 60 이어야 한다. 기존 값(1)은 tardiness_weight(수십~수백만)에
+    밀려 사실상 색상 최적화가 무시되던 상태였다.
+    """
+    from app.services.cp_sat_optimizer import _CHAIN_WEIGHT
+
+    assert _CHAIN_WEIGHT >= 60, (
+        f"_CHAIN_WEIGHT={_CHAIN_WEIGHT} 너무 작음 — 색상 교체 cost 가 "
+        f"idle/tardiness 대비 사실상 무시됨"
+    )
+
+
+def test_cp_sat_tardiness_hard_and_color_hard_combine(db: Session) -> None:
+    """tardiness_hard + sheath_color_hard 동시 전달 예외 없음 (3-level fallback chain 구축용)."""
+    r = cp_sat_schedule(
+        "NON_EXISTENT_P9B_COMBO",
+        db,
+        tardiness_hard=True,
+        sheath_color_hard=True,
+    )
+    assert isinstance(r, dict)
+    assert "warnings" in r
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# P9-E: Calendar engine 통합 — _working_minutes_between / _due_work_min 확장
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 기존 _work_days_between + _WORK_MIN_PER_DAY 는 "하루=고정 840분" 근사로 공휴일/
+# 금요일/공정별 시간 차이를 반영하지 못했다. calendar_engine 기반 함수로 교체.
+
+
+def test_working_minutes_between_weekend_excluded(db: Session) -> None:
+    """주말은 working-minute 0."""
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _working_minutes_between
+
+    sat = datetime(2026, 4, 18, 8, 0)  # 토
+    sun_end = datetime(2026, 4, 19, 20, 0)  # 일
+    # default 카테고리(equipment_code None) — 주말 0h
+    assert _working_minutes_between(sat, sun_end) == 0
+
+
+def test_working_minutes_between_weekday_with_break(db: Session) -> None:
+    """연선 월 08:00 ~ 14:00 = 5h (점심 12:00~13:00 = 60min 휴식 제외).
+
+    calendar_engine._DAILY_BREAKS["연선연합"] 의 점심 1h 가 반영되어
+    실제 가용 분 = 6h - 1h = 5h = 300min.
+    """
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _working_minutes_between
+
+    mon = datetime(2026, 4, 20, 8, 0)
+    mon_end = datetime(2026, 4, 20, 14, 0)
+    result = _working_minutes_between(mon, mon_end, equipment_code="ST-54BO1", db=db)
+    assert result == 300, f"expected 300, got {result}"
+
+
+def test_due_work_min_accepts_equipment_code(db: Session) -> None:
+    """_due_work_min 시그니처에 equipment_code/db optional 파라미터 호환성."""
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _due_work_min
+
+    # 기존 호출(equipment_code 없이)도 여전히 동작
+    r1 = _due_work_min(date_cls(2026, 4, 25), datetime(2026, 4, 20, 8, 0))
+    # 신규 확장 파라미터 — calendar_engine 기반 정확 계산
+    r2 = _due_work_min(
+        date_cls(2026, 4, 25),
+        datetime(2026, 4, 20, 8, 0),
+        equipment_code="ST-54BO1",
+        db=db,
+    )
+    assert isinstance(r1, int) and isinstance(r2, int)
+    assert r1 >= 0 and r2 >= 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #
