@@ -12,8 +12,10 @@ PDF "1안 수정 (가용용량 대응)" 의 "95SQ 5틀 → 3틀변경 + 2틀" �
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import date, timedelta
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
@@ -37,6 +39,26 @@ def _cleanup_run_label(db: Session, run_label: str) -> None:
         synchronize_session=False
     )
     db.commit()
+
+
+@pytest.fixture
+def overload_run(db: Session) -> Generator[str, None, None]:
+    # Why: execute_auto_splits()가 내부 commit을 하므로 conftest의 rollback만으로는
+    # DB 잔여물이 남아 UI 드롭다운에 TEST_* run_label이 노출된다. 테스트 전후 모두 정리.
+    _cleanup_run_label(db, _RUN_LABEL_OVERLOAD)
+    try:
+        yield _RUN_LABEL_OVERLOAD
+    finally:
+        _cleanup_run_label(db, _RUN_LABEL_OVERLOAD)
+
+
+@pytest.fixture
+def urgent_run(db: Session) -> Generator[str, None, None]:
+    _cleanup_run_label(db, _RUN_LABEL_URGENT)
+    try:
+        yield _RUN_LABEL_URGENT
+    finally:
+        _cleanup_run_label(db, _RUN_LABEL_URGENT)
 
 
 def _make_overload_fixture(db: Session, run_label: str) -> None:
@@ -170,11 +192,10 @@ def _make_urgent_only_fixture(db: Session, run_label: str) -> None:
     db.flush()
 
 
-def test_detect_overload_flag(db: Session) -> None:
+def test_detect_overload_flag(db: Session, overload_run: str) -> None:
     """단일 대형 배치 + 납기 불가능 조합이 is_overload=True 로 감지."""
-    _cleanup_run_label(db, _RUN_LABEL_OVERLOAD)
-    _make_overload_fixture(db, _RUN_LABEL_OVERLOAD)
-    candidates = detect_split_candidates(_RUN_LABEL_OVERLOAD, db)
+    _make_overload_fixture(db, overload_run)
+    candidates = detect_split_candidates(overload_run, db)
     assert len(candidates) == 1, f"overload 그룹 감지 실패: {candidates}"
     c = candidates[0]
     assert c["is_overload"] is True, f"is_overload 플래그 안 붙음: {c}"
@@ -182,11 +203,12 @@ def test_detect_overload_flag(db: Session) -> None:
     assert "과부하" in c["urgency_reason"]
 
 
-def test_execute_overload_split_uses_balanced_boundary(db: Session) -> None:
+def test_execute_overload_split_uses_balanced_boundary(
+    db: Session, overload_run: str
+) -> None:
     """overload 케이스: 5틀 → 3+2 (앞쪽이 더 많음). balanced 분할."""
-    _cleanup_run_label(db, _RUN_LABEL_OVERLOAD)
-    _make_overload_fixture(db, _RUN_LABEL_OVERLOAD)
-    result = execute_auto_splits(_RUN_LABEL_OVERLOAD, db)
+    _make_overload_fixture(db, overload_run)
+    result = execute_auto_splits(overload_run, db)
 
     assert result["auto_split_count"] == 1, f"분할 안 일어남: {result}"
 
@@ -194,7 +216,7 @@ def test_execute_overload_split_uses_balanced_boundary(db: Session) -> None:
     headers = (
         db.query(ProductionBatch)
         .filter(
-            ProductionBatch.run_label == _RUN_LABEL_OVERLOAD,
+            ProductionBatch.run_label == overload_run,
             ProductionBatch.batch_seq == -1,
         )
         .all()
@@ -204,13 +226,12 @@ def test_execute_overload_split_uses_balanced_boundary(db: Session) -> None:
     assert drum_counts == [2, 3], f"예상 drum_count [2,3], 실제: {drum_counts}"
 
 
-def test_execute_urgent_only_uses_legacy_boundary(db: Session) -> None:
+def test_execute_urgent_only_uses_legacy_boundary(db: Session, urgent_run: str) -> None:
     """기존 긴급-only 경로는 여전히 1+rest (균형 분할 변경 영향 없음)."""
-    _cleanup_run_label(db, _RUN_LABEL_URGENT)
-    _make_urgent_only_fixture(db, _RUN_LABEL_URGENT)
+    _make_urgent_only_fixture(db, urgent_run)
 
     # 먼저 overload 아님을 확인
-    candidates = detect_split_candidates(_RUN_LABEL_URGENT, db)
+    candidates = detect_split_candidates(urgent_run, db)
     assert len(candidates) == 1
     c = candidates[0]
     assert c["is_overload"] is False, (
@@ -219,13 +240,13 @@ def test_execute_urgent_only_uses_legacy_boundary(db: Session) -> None:
     assert c["has_urgent_in_later_drum"] is True
     assert c["auto_split_recommended"] is True
 
-    result = execute_auto_splits(_RUN_LABEL_URGENT, db)
+    result = execute_auto_splits(urgent_run, db)
     assert result["auto_split_count"] == 1
 
     headers = (
         db.query(ProductionBatch)
         .filter(
-            ProductionBatch.run_label == _RUN_LABEL_URGENT,
+            ProductionBatch.run_label == urgent_run,
             ProductionBatch.batch_seq == -1,
         )
         .all()
