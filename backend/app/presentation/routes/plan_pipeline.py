@@ -303,6 +303,22 @@ async def run_stage1_update(
         }
         frozen_batch_ids: set[int] = {b.batch_id for b in frozen}
 
+        # ── 1.4 Full 모드 diff pre-snapshot (T2b) ─────────────────────────────
+        # 새 파일과 대사해 added/updated/deleted/preserved 분류를 낸다. mutation
+        # 직전에 order_id set 을 찍어 둬야 사후 비교가 가능.
+        from app.infrastructure.models.sales_order import SalesOrder as _SO
+
+        pre_order_ids_full: set[str] = set()
+        if upload_mode == "full":
+            pre_order_ids_full = {
+                row[0]
+                for row in db.query(_SO.order_id)
+                .filter(_SO.run_label == run_label)
+                .distinct()
+                .all()
+                if row[0]
+            }
+
         # ── 1.5 Frozen orders의 모든 공정 배치도 보존 (F-4 fix) ───────────────
         # 연선이 in_progress인데 절연/시스가 planned이면,
         # 같은 order의 모든 공정 배치를 삭제 대상에서 제외해야 한다.
@@ -500,6 +516,58 @@ async def run_stage1_update(
             + batch_result.get("warnings", [])
         )
 
+        # ── 9. Frozen 배치 요약 (T2a) ────────────────────────────────────────
+        # 프론트엔드가 "진행중/완료 보존" 뱃지로 표시할 수 있도록 frozen 배치의
+        # 최소 필드를 직렬화해 응답에 포함. 재생성된 batches 와 병합 렌더링됨.
+        frozen_batches_payload = [
+            {
+                "batch_id": b.batch_id,
+                "batch_group": b.batch_group,
+                "process_name": b.process_name,
+                "status": b.status,
+                "customer_name": b.customer_name,
+                "due_date": b.due_date.isoformat() if b.due_date else None,
+                "item_code": b.item_code,
+                "product_group": b.product_group,
+                "voltage": b.voltage,
+                "sq_mm2": float(b.sq_mm2) if b.sq_mm2 is not None else None,
+                "sheath_color": b.sheath_color,
+                "drum_count": b.drum_count,
+                "total_length_m": (
+                    float(b.total_length_m) if b.total_length_m is not None else None
+                ),
+                "sales_order_id": b.sales_order_id,
+                "sales_order_line": b.sales_order_line,
+                "equipment_code": b.equipment_code,
+            }
+            for b in frozen
+        ]
+
+        # ── 10. Full 모드 diff 요약 (T2b) ────────────────────────────────────
+        # 새 파일 파싱 후 post-snapshot 을 pre 와 대사해 added/updated/deleted/
+        # preserved_frozen 분류. order_id 레벨 (드럼/line 무관). frozen 주문은
+        # 새 파일에 없어도 DB 에 남아있으므로 post 에도 포함됨 → common 이면서
+        # frozen 인 경우 preserved 로 분류. non-frozen common 은 delete→reinsert
+        # 를 거쳤으니 updated.
+        diff_summary: dict | None = None
+        if upload_mode == "full":
+            post_order_ids = {
+                row[0]
+                for row in db.query(_SO.order_id)
+                .filter(_SO.run_label == run_label)
+                .distinct()
+                .all()
+                if row[0]
+            }
+            _frozen_order_id_set = {k[0] for k in frozen_order_keys}
+            _common = pre_order_ids_full & post_order_ids
+            diff_summary = {
+                "added": len(post_order_ids - pre_order_ids_full),
+                "updated": len(_common - _frozen_order_id_set),
+                "deleted": len(pre_order_ids_full - post_order_ids),
+                "preserved_frozen": len(_common & _frozen_order_id_set),
+            }
+
         return {
             "run_label": run_label,
             "upload_mode": upload_mode,
@@ -510,6 +578,8 @@ async def run_stage1_update(
                 "protected_batch_count": len(protected_batch_ids),
                 "mutable_count": len(mutable_scheduled_ids),
             },
+            "frozen_batches": frozen_batches_payload,
+            "diff_summary": diff_summary,
             "deleted": deleted_counts,
             "parse": parse_result,
             "wip": wip_result,
