@@ -402,6 +402,22 @@ def auto_schedule(
                 result.setdefault("warnings", []).append(
                     f"tardiness_report 집계 실패 (무시): {_e}"
                 )
+
+            # 납기 초과 발견 시 boost retry — tardy 배치의 customer_priority 를
+            # 일시적으로 critical 로 상향해 CP-SAT 재실행, 개선되면 채택.
+            # SAVEPOINT 로 감싸 악화/동일 시 원본 상태로 완전 복원.
+            _retry_depth = int(kwargs.pop("_tardiness_retry_depth", 0))
+            _tr = result.get("tardiness_report") or {}
+            if use_cpsat and _retry_depth == 0 and _tr.get("total_tardy_count", 0) > 0:
+                result = _tardiness_boost_retry(
+                    original_result=result,
+                    original_tardiness=_tr,
+                    run_label=run_label,
+                    db=db,
+                    use_cpsat=use_cpsat,
+                    retry_depth=_retry_depth,
+                    **kwargs,
+                )
             return result
 
         overlap_hits = violations
@@ -446,6 +462,119 @@ def auto_schedule(
         violations=[v for v in violations if v.get("constraint_id") == "overlap"],
         attempts=MAX_RETRIES + 1,
     )
+
+
+def _tardiness_boost_retry(
+    *,
+    original_result: dict,
+    original_tardiness: dict,
+    run_label: str,
+    db: Session,
+    use_cpsat: bool,
+    retry_depth: int,
+    **kwargs,
+) -> dict:
+    """납기 초과 건의 customer_priority 를 일시 boost 해 재스케줄, 개선되면 채택.
+
+    Why:
+      CP-SAT 는 weight × tardiness 를 minimize 하지만 time_limit 내 최적해를
+      못 찾거나 equal-weight 동점 해 중 suboptimal 을 선택할 수 있음. Tardy
+      그룹의 weight 를 한 단계 상향(_TARDINESS_WEIGHT["critical"] = 1e7/min,
+      normal 1e5 대비 100×) 후 재실행하면 solver 가 해당 그룹을 더 공격적으로
+      앞당기려 시도 → 총 tardiness 감소 가능.
+
+    Safety:
+      - SAVEPOINT 내부에서 customer_priority UPDATE + _purge_run_tasks +
+        auto_schedule 재호출. 악화/동일/예외 시 rollback 으로 원본 상태 복원.
+      - `_tardiness_retry_depth` kwarg 로 1회만 수행 (무한 재귀 방지).
+      - 비교 기준: (tardy_count, tardy_minutes) 사전식 비교 — 두 지표 모두
+        악화 또는 동일이면 reject.
+
+    Args:
+        original_result: 직전 auto_schedule 결과 (rejection 시 반환용).
+        original_tardiness: tardiness_report dict (worst_tasks 포함).
+        run_label, db: 재스케줄 대상.
+        use_cpsat: True 여야 의미 있음 (호출부에서 이미 체크).
+        retry_depth: 현재 0 이면 +1 로 재시도 허용, 아니면 skip.
+        **kwargs: 상위 auto_schedule 인자 passthrough.
+
+    Returns:
+        채택 시: retry_result + {"retry_adopted": True,
+                                   "retry_original_tardiness": {count, minutes}}
+        거부 시: original_result + {"retry_adopted": False,
+                                     "retry_rejected_reason": str}
+        오류 시: original_result + {"retry_adopted": False, "retry_error": str}
+    """
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    original_count = int(original_tardiness.get("total_tardy_count", 0))
+    original_min = int(original_tardiness.get("total_tardy_minutes", 0))
+    worst = original_tardiness.get("worst_tasks") or []
+    tardy_task_ids = [t["task_id"] for t in worst if t.get("task_id") is not None]
+    if not tardy_task_ids:
+        original_result["retry_adopted"] = False
+        original_result["retry_rejected_reason"] = "worst_tasks 가 비어 boost 대상 없음"
+        return original_result
+
+    # Tardy task 의 batch_id 조회 (boost 대상)
+    tardy_batch_ids = [
+        row[0]
+        for row in db.query(ScheduleTask.batch_id)
+        .filter(ScheduleTask.task_id.in_(tardy_task_ids))
+        .all()
+    ]
+    if not tardy_batch_ids:
+        original_result["retry_adopted"] = False
+        original_result["retry_rejected_reason"] = "tardy batch_id 조회 결과 비어 있음"
+        return original_result
+
+    sp = db.begin_nested()
+    try:
+        # Boost: customer_priority = 1 (critical). NULL 은 유지하지 않고 1 로.
+        db.query(ProductionBatch).filter(
+            ProductionBatch.batch_id.in_(tardy_batch_ids)
+        ).update({ProductionBatch.customer_priority: 1}, synchronize_session=False)
+        # 기존 태스크 purge — retry 가 처음부터 배치
+        _purge_run_tasks(db, run_label)
+
+        retry_result = auto_schedule(
+            run_label=run_label,
+            db=db,
+            use_cpsat=use_cpsat,
+            _tardiness_retry_depth=retry_depth + 1,
+            **kwargs,
+        )
+        retry_tr = retry_result.get("tardiness_report") or {}
+        retry_count = int(retry_tr.get("total_tardy_count", 0))
+        retry_min = int(retry_tr.get("total_tardy_minutes", 0))
+
+        # 엄격한 개선: (count, minutes) 사전식 비교
+        if (retry_count, retry_min) < (original_count, original_min):
+            sp.commit()
+            retry_result["retry_adopted"] = True
+            retry_result["retry_original_tardiness"] = {
+                "count": original_count,
+                "minutes": original_min,
+            }
+            return retry_result
+        # 동일 또는 악화 → rollback
+        sp.rollback()
+        original_result["retry_adopted"] = False
+        original_result["retry_rejected_reason"] = (
+            f"retry ({retry_count}, {retry_min}) ≥ original "
+            f"({original_count}, {original_min})"
+        )
+        return original_result
+    except Exception as e:  # noqa: BLE001
+        # 예외 시 원본 상태로 복원. retry 실패가 스케줄 자체를 막지 않음.
+        sp.rollback()
+        original_result["retry_adopted"] = False
+        original_result["retry_error"] = str(e)
+        original_result.setdefault("warnings", []).append(
+            f"tardiness boost retry 실패 (원본 유지): {e}"
+        )
+        return original_result
 
 
 def _purge_run_tasks(db: Session, run_label: str) -> None:
