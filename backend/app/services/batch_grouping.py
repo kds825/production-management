@@ -955,12 +955,204 @@ def create_batches(
     db.add_all(batches)
     db.flush()  # batch_id 자동 채번 (autoincrement)을 트리거하되 커밋은 호출자에게 위임
 
+    # ── 중복 배치 정리 — "한 batch_group = 한 헤더" 불변식 방어 ────────────
+    # Why: create_batches / stage1 incremental update / auto-split 등 복수 경로
+    # 에서 같은 수주가 재처리되어 (batch_group, sales_order_id,
+    # sales_order_line, batch_seq) 동일 row 가 중복 insert 되는 현상을 관측.
+    # 이로 인해 CP-SAT 가 같은 batch_group 에 헤더(batch_seq=-1) 를 2개 이상
+    # 갖는 경우 한 헤더만 스케줄링하고 나머지는 loss. UI 에서는 실제 처리량이
+    # 헤더 라벨과 불일치 ("1틀 9500m" 라벨이지만 실제 3틀 28500m). 근본 경로
+    # 수정 전이라도 post-hoc 정리로 불변식을 복원한다.
+    dedupe_stats = deduplicate_group_headers(run_label, db)
+    result["dedupe"] = dedupe_stats
+
     for b in batches:
         proc = b.process_name
         result["by_process"][proc] = result["by_process"].get(proc, 0) + 1
     result["total_batches"] = len(batches)
 
     return result
+
+
+def deduplicate_group_headers(run_label: str, db: Session) -> dict:
+    """배치 중복 정리 — "한 batch_group = 한 헤더, 수주-라인별 1 row" 불변식 복원.
+
+    Why: create_batches / incremental Stage1 update / auto-split 복합 경로에서
+    같은 (batch_group, sales_order_id, sales_order_line, batch_seq) 튜플이
+    다중 insert 되는 현상 확인 (KBI PoC run 기준 전 공정 362건 중복). 대표
+    증상:
+      - batch_seq=-1 헤더 2개 공존 → CP-SAT 가 한 헤더만 스케줄링 → 다른
+        수주 통째로 누락 (예: 300SQ 9500m 분량이 계획에 안 나타남)
+      - UI 라벨 ("1틀 9500m") 이 bar 가 실제 처리량 (3틀 28500m) 와 불일치
+        — label 은 첫 헤더에서, 처리시간은 두번째 헤더에서 오는 혼선
+
+    본 함수는 근본 경로 수정 전 post-hoc 방어선으로 invariant 를 보장한다.
+    근본 수정 (create_batches idempotent 화 / split 잔재 정리) 은 후속 과제.
+
+    Dedupe 절차:
+      1. batch_seq != -1 (CORE=0, 공정 sub-batch >= 1) 먼저 dedup — 같은
+         (batch_group, so, line, seq, process_name) 튜플은 최소 batch_id
+         하나만 유지, 나머지 delete.
+      2. batch_seq = -1 (연선 aggregate header) 의 중복 처리 — 같은 batch_group
+         에 헤더 2개 이상이면 canonical (가장 이른 납기 → 우선순위 → batch_id)
+         하나만 남김. 남은 sub-batch (1번에서 정리된 상태) 기준으로
+         total_length_m / drum_count / est_duration / due / priority 재집계.
+
+    Returns: {
+        "non_header_deleted": int,   # seq != -1 중복 삭제 row 수
+        "headers_deleted": int,      # seq = -1 중복 삭제 row 수
+        "groups_rebalanced": int,    # 재집계된 batch_group 수 (헤더 재집계 트리거된 그룹)
+    }
+    """
+    from collections import defaultdict
+
+    stats: dict = {
+        "non_header_deleted": 0,
+        "headers_deleted": 0,
+        "groups_rebalanced": 0,
+    }
+
+    # ── 1. Non-header 중복 제거 (batch_seq != -1) ──────────────────────────
+    # 키: (batch_group, sales_order_id, sales_order_line, batch_seq, process_name).
+    # process_name 까지 포함 이유: batch_group 문자열에 공정명이 내재돼 있지만
+    # CORE 배치처럼 cross-process 가능성 방어. 동일 키 2회 이상 → 최소 batch_id
+    # 만 canonical, 나머지 delete.
+    non_headers = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.batch_seq != -1,
+        )
+        .order_by(ProductionBatch.batch_id)
+        .all()
+    )
+    seen: set[tuple] = set()
+    to_delete_nh: list = []
+    for b in non_headers:
+        if b.batch_group is None:
+            continue
+        key = (
+            b.batch_group,
+            b.sales_order_id,
+            b.sales_order_line,
+            b.batch_seq,
+            b.process_name,
+        )
+        if key in seen:
+            to_delete_nh.append(b)
+        else:
+            seen.add(key)
+    for b in to_delete_nh:
+        db.delete(b)
+    stats["non_header_deleted"] = len(to_delete_nh)
+    if to_delete_nh:
+        db.flush()
+
+    # ── 2. Header (batch_seq=-1) 중복 제거 + 재집계 ────────────────────────
+    headers = (
+        db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.batch_seq == -1,
+        )
+        .all()
+    )
+    by_group: dict[str, list] = defaultdict(list)
+    for h in headers:
+        if h.batch_group:
+            by_group[h.batch_group].append(h)
+
+    for bg, hs in by_group.items():
+        # Canonical: 가장 이른 납기 → 가장 높은 우선순위(작은 숫자) → 작은 batch_id
+        hs_sorted = sorted(
+            hs,
+            key=lambda h: (
+                h.due_date or date.max,
+                h.customer_priority or 99,
+                h.batch_id or 0,
+            ),
+        )
+        canon = hs_sorted[0]
+        others = hs_sorted[1:]
+
+        # 재집계 source: 1번에서 dedup 완료된 sub-batch.
+        group_subs = (
+            db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.batch_group == bg,
+                ProductionBatch.batch_seq >= 1,
+            )
+            .all()
+        )
+        if not group_subs:
+            # 헤더만 있고 sub 없는 특수 케이스 — 재집계 skip, 중복 헤더만 삭제.
+            for h in others:
+                db.delete(h)
+            stats["headers_deleted"] += len(others)
+            if others:
+                stats["groups_rebalanced"] += 1
+            continue
+
+        core_mul = int(canon.core_count or 1)
+        raw_total = sum(float(s.total_length_m or 0) for s in group_subs)
+        net_qty = raw_total * core_mul
+        lot_size = float(canon.drum_length_m or 0)
+
+        if lot_size > 0 and net_qty > 0:
+            drum_count = max(math.ceil(net_qty / lot_size), 1)
+            total_len_m = drum_count * lot_size
+        elif net_qty > 0:
+            drum_count = 1
+            total_len_m = net_qty
+        else:
+            # net=0 인 그룹은 헤더 자체가 무의미 — 현 헤더 값 유지.
+            drum_count = int(canon.drum_count or 0)
+            total_len_m = float(canon.total_length_m or 0)
+
+        earliest_due = min(
+            (s.due_date for s in group_subs if s.due_date),
+            default=canon.due_date,
+        )
+        best_priority = min(
+            (s.customer_priority or 99 for s in group_subs),
+            default=99,
+        )
+        line_speed = float(canon.line_speed_mpm) if canon.line_speed_mpm else 0.0
+        est_dur = (
+            total_len_m / line_speed if line_speed > 0 else canon.estimated_duration_min
+        )
+        surplus = max(0.0, total_len_m - raw_total * core_mul)
+
+        # 재집계로 실제 변경이 발생했는지 여부 판단 (통계용).
+        rebalanced = (
+            len(others) > 0
+            or abs(float(canon.total_length_m or 0) - total_len_m) > 0.5
+            or int(canon.drum_count or 0) != drum_count
+        )
+
+        canon.total_length_m = total_len_m
+        canon.drum_count = drum_count
+        canon.due_date = earliest_due
+        canon.customer_priority = best_priority
+        canon.estimated_duration_min = est_dur
+        canon.wip_output_expected_m = surplus
+        if len(hs) > 1:
+            canon.remarks = (
+                (canon.remarks or "") + f" [dedup:헤더{len(hs)}→1 병합]"
+            ).strip()
+
+        for h in others:
+            db.delete(h)
+
+        stats["headers_deleted"] += len(others)
+        if rebalanced:
+            stats["groups_rebalanced"] += 1
+
+    if stats["headers_deleted"] or stats["groups_rebalanced"]:
+        db.flush()
+
+    return stats
 
 
 def detect_split_candidates(
