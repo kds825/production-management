@@ -393,7 +393,10 @@ def create_task(body: ScheduleTaskCreate) -> ScheduleTaskResponse:
         )
 
     task = ScheduleTask(
-        id=f"TASK-{uuid.uuid4().hex[:8].upper()}",
+        # Why 'M' 접두: update_task 라우팅은 "TASK-" 뒤가 전부 숫자면 DB 경로로
+        # 보냄. uuid.hex 는 ~6% 확률로 all-digit 이 되어 in-memory task 가 DB 조회
+        # 경로를 타고 404. 'M'(manual) 고정 prefix 로 충돌 제거.
+        id=f"TASK-M{uuid.uuid4().hex[:7].upper()}",
         order_id=body.order_id,
         equipment_id=body.equipment_id,
         product=body.product,

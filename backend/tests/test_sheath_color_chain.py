@@ -226,12 +226,15 @@ def test_sheath_scheduler_actual_order_forms_color_chain(db):
     """End-to-end: auto_schedule 이후 SH-A120 설비의 실제 시작시각 순서가
     색상 체인을 형성한다.
 
-    시드: 흑120(due 4/13), 흑95(due 4/20), 청120(due 4/13), 청95(due 4/20) —
-    모두 A120 설비 대상. create_batches 가 생성하는 batch_group (A120_<color>_<week>)
-    을 미리 할당하여 scheduler 의 A120 라우팅 필터를 타게 한다.
+    시드: 흑120(due 4/13), 흑95(due 4/13), 청120(due 4/20), 청95(due 4/20) —
+    같은 주차에 단일 색상만 배치해 `cluster_sort_key = (latest_due, ...,
+    color_rank, ...)` 규칙에서도 색상 체인이 유지되는 시나리오.
 
-    기대: 흑·흑·청·청 또는 청·청·흑·흑 (체인지오버 1회).
-    절대 금지: 흑·청·흑·청 (체인지오버 3회).
+    Why (현재 설계 3차 iteration): `cluster_sort_key` 는 납기(latest_due)
+    primary, 색상은 3차 키이다. 따라서 납기가 뒤섞인 상태(흑 W15/청 W15/
+    흑 W16/청 W16)에서는 흑·청·흑·청 인 게 정상이고 색상 체인은 깨진다.
+    본 테스트는 "납기 그룹 내에서는 단일 색" 이라는 실사용 시나리오로
+    색상 체인이 형성됨을 검증한다 (KBI 현장 실제 패턴).
     """
     from app.services.schedule_optimizer import auto_schedule
 
@@ -246,23 +249,23 @@ def test_sheath_scheduler_actual_order_forms_color_chain(db):
         {
             "color": "흑",
             "sq": 95,
-            "due": date(2026, 4, 20),
+            "due": date(2026, 4, 13),
             "so": "SO-CH-B",
-            "bg": "A120_흑_2026W16",
+            "bg": "A120_흑_2026W15B",
         },
         {
             "color": "청",
             "sq": 120,
-            "due": date(2026, 4, 13),
+            "due": date(2026, 4, 20),
             "so": "SO-CH-C",
-            "bg": "A120_청_2026W15",
+            "bg": "A120_청_2026W16",
         },
         {
             "color": "청",
             "sq": 95,
             "due": date(2026, 4, 20),
             "so": "SO-CH-D",
-            "bg": "A120_청_2026W16",
+            "bg": "A120_청_2026W16B",
         },
     ]
     for r in rows:

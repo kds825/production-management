@@ -182,9 +182,15 @@ def test_reconciliation_single_match_auto_update(db):
 
 
 def test_reconciliation_zero_match_inserts_orphan(db):
-    """매칭 후보 0건 → orphan WIP (사용가능, source_batch_id=None) INSERT."""
+    """매칭 후보 0건 → orphan WIP (사용가능, source_batch_id=None) INSERT.
+
+    Why 241SQ: reconciliation 후보 검색은 run_label 무관하게 cross_section
+    기준으로 전역 탐색하므로(운영 업로드 시맨틱) KBI 표준 SQ(240 등)로
+    테스트하면 타 run 의 예상 WIP 와 충돌해 orphan 대신 UPDATE 경로로 감.
+    표준 단계표에 없는 241 은 현장 데이터와 영구 격리.
+    """
     _cleanup_batches(db)
-    rows = [{"공정": "연선재고", "규격": "240SQ", "전압": "저압", "길이": 500}]
+    rows = [{"공정": "연선재고", "규격": "241SQ", "전압": "저압", "길이": 500}]
     from app.services.wip_parser import parse_wip_excel
 
     parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
@@ -194,7 +200,7 @@ def test_reconciliation_zero_match_inserts_orphan(db):
         db.query(WipInventory)
         .filter(
             WipInventory.run_label == _RUN_LABEL,
-            WipInventory.cross_section == 240,
+            WipInventory.cross_section == 241,
         )
         .first()
     )

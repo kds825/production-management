@@ -26,6 +26,7 @@ from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.wip_inventory import WipInventory
+from app.infrastructure.models.wip_upload_log import WipUploadLog
 from app.services.sm_inventory import create_shortage_batches
 from app.services.wip_matching import match_wip
 from app.services.wip_parser import parse_wip_excel
@@ -66,6 +67,11 @@ def _cleanup(db) -> None:
             synchronize_session=False
         )
         db.query(SalesOrder).filter(SalesOrder.run_label == label).delete(
+            synchronize_session=False
+        )
+        # Why: WipUploadLog 는 canonical_hash 로 멱등성을 강제하므로 정리하지
+        # 않으면 이전 실행 잔여 log 때문에 첫 업로드부터 duplicate=True 가 반환됨.
+        db.query(WipUploadLog).filter(WipUploadLog.run_label == label).delete(
             synchronize_session=False
         )
     db.commit()
