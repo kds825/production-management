@@ -656,19 +656,22 @@ function WipUploadSection({
   const [showDeleteHover, setShowDeleteHover] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback((file: File) => {
-    setValidationError(null);
-    if (!isValidExtension(file.name)) {
-      setValidationError(".xls 또는 .xlsx 파일만 업로드 가능합니다.");
-      return;
-    }
-    setWipFile({
-      name: file.name,
-      size: file.size,
-      uploadedAt: new Date(),
-      file,
-    });
-  }, []);
+  const handleFile = useCallback(
+    (file: File) => {
+      setValidationError(null);
+      if (!isValidExtension(file.name)) {
+        setValidationError(".xls 또는 .xlsx 파일만 업로드 가능합니다.");
+        return;
+      }
+      setWipFile({
+        name: file.name,
+        size: file.size,
+        uploadedAt: new Date(),
+        file,
+      });
+    },
+    [setWipFile],
+  );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -701,7 +704,7 @@ function WipUploadSection({
   const handleDelete = useCallback(() => {
     setWipFile(null);
     setValidationError(null);
-  }, []);
+  }, [setWipFile]);
 
   const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
 
@@ -1119,7 +1122,7 @@ function ErpUploadSection({
 
     // 3. 기존 배치 없음 + 전체 모드 → 레거시 /stage1 직접 실행
     await executeStage1();
-  }, [erpFile, isRunning, executeStage1]);
+  }, [erpFile, isRunning, uploadMode, executeStage1]);
 
   // 확인 모달에서 "업로드 진행" 클릭 시 — 최신 run_label을 받아 executeStage1 호출
   // fromConfirmModal=true 를 항상 전달해 full 모드에서도 /stage1/update 를 보장한다.
@@ -1747,20 +1750,28 @@ function getKstToday(): string {
 }
 
 export default function PlanRegisterPage() {
-  const [baseDate, setBaseDate] = useState(getKstToday());
+  // baseDate 초기화: SSR 은 오늘 날짜를 반환해 서버 렌더를 결정적으로 유지하고,
+  // client lazy-init 은 localStorage 에 저장된 값을 읽어 사용자 선호를 복원한다.
+  // 잠재적 hydration mismatch 는 input[value] 차원에서만 발생하며
+  // suppressHydrationWarning 으로 허용(사용자 입력 컨트롤이므로 자연스러움).
+  // 이 패턴은 "setState-in-effect" 안티패턴을 피하기 위한 공식 대안.
+  const [baseDate, setBaseDate] = useState<string>(() => {
+    if (typeof window === "undefined") return getKstToday();
+    const stored = window.localStorage.getItem("plan_base_date");
+    if (stored && stored.length === 8) {
+      return `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
+    }
+    return getKstToday();
+  });
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
   // incremental 모드 선택 시 WIP 섹션을 흐리게 처리하기 위해 모드를 상위에서 관리
   const [erpUploadMode, setErpUploadMode] = useState<UploadMode>("full");
 
-  // localStorage에서 기존 기준일자 복원, 없으면 오늘로 초기화 후 저장
+  // 최초 방문 시 localStorage 기본값을 오늘 날짜로 채워둔다(외부 시스템 동기화만,
+  // setState 호출 없음 — cascading render 방지).
   useEffect(() => {
-    const stored = localStorage.getItem("plan_base_date");
-    if (stored && stored.length === 8) {
-      const formatted = `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
-      setBaseDate(formatted);
-    } else {
-      const today = getKstToday();
-      localStorage.setItem("plan_base_date", today.replace(/-/g, ""));
+    if (!localStorage.getItem("plan_base_date")) {
+      localStorage.setItem("plan_base_date", getKstToday().replace(/-/g, ""));
     }
   }, []);
 
@@ -1805,6 +1816,10 @@ export default function PlanRegisterPage() {
           <input
             type="date"
             value={baseDate}
+            // lazy-init 에서 localStorage 값을 읽으므로 SSR(오늘) ↔ client(저장값)
+            // 가 다를 수 있다. 사용자 선호 복원 용도라 첫 페인트에서 잠시 다른
+            // 값이 보이는 것은 의도된 동작이며 hydration warning 만 가린다.
+            suppressHydrationWarning
             onChange={(e) => {
               setBaseDate(e.target.value);
               if (typeof window !== "undefined") {
