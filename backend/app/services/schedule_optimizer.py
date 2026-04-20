@@ -214,8 +214,18 @@ def auto_schedule(
             # tardiness_hard 완화) 을 greedy 폴백 전에 적용.
             from app.services.cp_sat_optimizer import cp_sat_schedule
 
+            # P4-3: attempt==0 에만 warm_start_hints 유지, 1+ 에서는 drop.
+            # 왜: 같은 힌트로 재시도하면 비슷한 해로 수렴 → overlap 이 재발할 위험
+            # (random_seed 변동만으로는 탐색 공간을 충분히 다르게 못 만듦). 힌트도
+            # 함께 drop 해야 retry 가 의미를 갖는다. kwargs 원본 보존을 위해 copy.
+            _attempt_kwargs = dict(kwargs)
+            if attempt > 0 and "warm_start_hints" in _attempt_kwargs:
+                _attempt_kwargs["warm_start_hints"] = None
+
             # Level 1: 납기/색상 모두 엄격
-            result = cp_sat_schedule(run_label, db, random_seed=attempt, **kwargs)
+            result = cp_sat_schedule(
+                run_label, db, random_seed=attempt, **_attempt_kwargs
+            )
             l1_status = result.get("solver_status")
 
             # Level 2: 색상만 완화
@@ -229,7 +239,7 @@ def auto_schedule(
                     tardiness_hard=True,
                     **{
                         k: v
-                        for k, v in kwargs.items()
+                        for k, v in _attempt_kwargs.items()
                         if k not in ("sheath_color_hard", "tardiness_hard")
                     },
                 )
@@ -249,7 +259,7 @@ def auto_schedule(
                     tardiness_hard=False,
                     **{
                         k: v
-                        for k, v in kwargs.items()
+                        for k, v in _attempt_kwargs.items()
                         if k not in ("sheath_color_hard", "tardiness_hard")
                     },
                 )
@@ -257,15 +267,40 @@ def auto_schedule(
                     "납기+색상 모두 완화(Level 3) 로 재시도 — 납기 초과 가능성 있음"
                 )
 
-            # greedy 최종 폴백
+            # greedy 최종 폴백 — greedy 는 힌트를 모르므로 kwargs 에서 제거.
             if result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
                 result.setdefault("warnings", []).append(
                     "CP-SAT 3-level 모두 미해결 — 그리디 폴백으로 전환합니다"
                 )
                 _purge_run_tasks(db, run_label)
-                result = _run_optimization_once(run_label, db, **kwargs)
+                _greedy_kwargs = {
+                    k: v
+                    for k, v in kwargs.items()
+                    if k
+                    not in (
+                        "warm_start_hints",
+                        "time_limit_sec",
+                        "frozen_group_keys",
+                        "sheath_color_hard",
+                        "tardiness_hard",
+                    )
+                }
+                result = _run_optimization_once(run_label, db, **_greedy_kwargs)
         else:
-            result = _run_optimization_once(run_label, db, **kwargs)
+            # greedy 경로도 CP-SAT 전용 kwargs 가 흘러들어오지 않도록 필터.
+            _greedy_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in (
+                    "warm_start_hints",
+                    "time_limit_sec",
+                    "frozen_group_keys",
+                    "sheath_color_hard",
+                    "tardiness_hard",
+                )
+            }
+            result = _run_optimization_once(run_label, db, **_greedy_kwargs)
 
         violations = constraint_checker.validate_all(run_label, db)
 

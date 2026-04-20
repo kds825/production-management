@@ -20,6 +20,8 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 from __future__ import annotations
 
 import math
+import os
+import time
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
 from typing import Any
