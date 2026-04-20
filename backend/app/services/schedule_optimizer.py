@@ -391,6 +391,17 @@ def auto_schedule(
                         result.setdefault("warnings", []).append(
                             f"JIT post-shift 후 overlap {len(post_overlap)}건 발생 — 로직 재검토 필요"
                         )
+            # 납기 초과 리포트 — solver 결과와 무관하게 DB 기준으로 집계.
+            # 운영자/UI 가 "납기 초과 N" 배지/리스트로 활용. past-due 포함.
+            try:
+                from app.services.tardiness_metrics import count_tardiness
+
+                result["tardiness_report"] = count_tardiness(run_label, db)
+            except Exception as _e:  # noqa: BLE001
+                # 메트릭 실패는 스케줄 결과 자체를 막지 않도록 best-effort.
+                result.setdefault("warnings", []).append(
+                    f"tardiness_report 집계 실패 (무시): {_e}"
+                )
             return result
 
         overlap_hits = violations
