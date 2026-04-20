@@ -302,7 +302,12 @@ def auto_schedule(
             }
             result = _run_optimization_once(run_label, db, **_greedy_kwargs)
 
-        violations = constraint_checker.validate_all(run_label, db)
+        # 재시도 판단 경량 검증 — overlap 만. 최종 전체 검증은 run_stage2 에서 1회.
+        # 왜: 재시도 루프는 "겹침이면 다시 돌린다" 만 필요. 전체 28개 체커를
+        # retry 마다 돌리는 기존 방식은 공통 로드 4쿼리 + 체커 loop 가 반복되어
+        # 원격 Supabase 왕복이 누적. 이 분기에서는 overlap 만 확인하고, violation
+        # 리스트는 호출자(run_stage2) 가 최종 시점에 한 번만 계산한다.
+        violations = constraint_checker.validate_overlap_only(run_label, db)
 
         if not constraint_checker.has_overlap(violations):
             result["overlap_alert"] = False
@@ -319,12 +324,10 @@ def auto_schedule(
                 shifts = apply_jit_delay(run_tasks, db)
                 db.flush()
                 if shifts:
-                    post_violations = constraint_checker.validate_all(run_label, db)
-                    post_overlap = [
-                        v
-                        for v in post_violations
-                        if v.get("constraint_id") == "overlap"
-                    ]
+                    # JIT post-shift 후에도 overlap 만 확인 (전체 검증은 run_stage2 최종).
+                    post_overlap = constraint_checker.validate_overlap_only(
+                        run_label, db
+                    )
                     result["jit_shifts_applied"] = shifts
                     if post_overlap:
                         result.setdefault("warnings", []).append(
@@ -332,7 +335,7 @@ def auto_schedule(
                         )
             return result
 
-        overlap_hits = [v for v in violations if v.get("constraint_id") == "overlap"]
+        overlap_hits = violations
 
         # 재시도 전 audit 기록 + 현재 run 의 기존 태스크 정리
         # audit 실패는 스케줄링 실패로 연결하지 않는다 (best-effort 로깅).

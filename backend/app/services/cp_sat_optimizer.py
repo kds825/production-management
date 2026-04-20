@@ -857,10 +857,23 @@ def cp_sat_schedule(
     for eq in equipment_list:
         equipment_by_process.setdefault(eq.process_name, []).append(eq)
 
+    # SpeedMaster 한 번 로드. speed_map 은 (eq, sq) lookup, color_setup_map 은
+    # "색상 교체 시간은 설비 파라미터" 라서 sq 와 무관한 equipment_code → setup_color_min
+    # 인덱스. 기존 코드는 색상 교체가 발생할 때마다 SpeedMaster 를 재조회(N+1)
+    # 하여 원격 Supabase 왕복이 누적됐음 — 한 번의 메모리 조회로 대체.
+    _speed_rows = db.query(SpeedMaster).all()
     speed_map: dict[tuple, SpeedMaster] = {
-        (sr.equipment_code, float(sr.cross_section or 0)): sr
-        for sr in db.query(SpeedMaster).all()
+        (sr.equipment_code, float(sr.cross_section or 0)): sr for sr in _speed_rows
     }
+    # 동일 설비에 여러 sq row 가 있으면 setup_color_min 은 첫 non-null 을 채택
+    # (현 DB 스키마상 설비별로 일정하다는 전제 — 과거 조회 로직 `.first()` 와 동치).
+    color_setup_map: dict[str, float | None] = {}
+    for sr in _speed_rows:
+        code = sr.equipment_code
+        if code not in color_setup_map:
+            color_setup_map[code] = sr.setup_color_min
+        elif color_setup_map[code] is None and sr.setup_color_min is not None:
+            color_setup_map[code] = sr.setup_color_min
 
     # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
     constraint_params = ConstraintParams.load(db)
@@ -1534,6 +1547,23 @@ def cp_sat_schedule(
     # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
     solver.parameters.random_seed = int(random_seed)
 
+    # ── Phase 1 개선: 수렴 가속 파라미터 ──────────────────────────────────
+    # 왜 이 세 파라미터를 추가하는가:
+    #   (1) linearization_level=2 — 정수 스케줄링 문제에서 LP 이완 정확도를
+    #       상승시켜 분기한정(branch-and-bound) 가지치기 효율을 높임. 최적성은
+    #       유지되고 수렴만 빨라진다 (OR-Tools 기본 1 → 2).
+    #   (2) cp_model_probing_level=2 — constraint propagation 을 강하게 돌려
+    #       INFEASIBLE 을 조기에 탐지. Level 2/3 완화 모드 전환을 앞당겨
+    #       재시도 누적 시간을 단축.
+    #   (3) relative_gap_limit — Level 1 (hard 납기 + hard 색상) 에서만 적용.
+    #       이 모드는 FEASIBLE 이면 납기/색상 제약이 100% 만족되므로, 소프트
+    #       목적함수(idle + chain_diff) 를 2% 이내로 근사해도 운영상 동등.
+    #       완화 모드(Level 2/3) 에서는 품질이 중요하므로 gap 미적용.
+    solver.parameters.linearization_level = 2
+    solver.parameters.cp_model_probing_level = 2
+    if tardiness_hard and sheath_color_hard:
+        solver.parameters.relative_gap_limit = 0.02
+
     # 계측: solve() wall-time. 성능 개선 판정의 baseline 데이터 소스.
     # result 에 직접 기록 → 상위 호출자가 Prometheus/로그로 집계 가능.
     _solve_t0 = time.perf_counter()
@@ -1815,18 +1845,16 @@ def cp_sat_schedule(
             if float(prev_batch.sq_mm2) == float(rep.sq_mm2):
                 actual_setup = 0.0
 
-        # 색상 교체
+        # 색상 교체 — 메모리 dict lookup (사전에 color_setup_map 으로 일괄 로드).
+        # 기존에는 매번 `db.query(SpeedMaster).filter(...).first()` 라 배치 수 × 색상
+        # 교체마다 원격 Supabase 왕복이 발생. 대형 런(수백 배치, 수십 색상 교체)
+        # 에서 수 초~수십 초의 누적 지연 원인이었다.
         color_change_min = 0.0
         if prev_batch and rep.process_name in ("저압시스", "고압시스", "HFCO시스"):
             pc = (prev_batch.sheath_color or "").strip()
             cc = (rep.sheath_color or "").strip()
             if pc and cc and pc != cc:
-                sm_c = (
-                    db.query(SpeedMaster.setup_color_min)
-                    .filter(SpeedMaster.equipment_code == chosen_eq_code)
-                    .first()
-                )
-                sm_c_val = sm_c[0] if sm_c else None
+                sm_c_val = color_setup_map.get(chosen_eq_code)
                 color_change_min = resolve_color_change_min(
                     sm_color_min=sm_c_val,
                     params=constraint_params,

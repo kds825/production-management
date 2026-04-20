@@ -20,6 +20,22 @@ def has_overlap(violations: list[dict]) -> bool:
     return any(v.get("constraint_id") == "overlap" for v in violations)
 
 
+def validate_overlap_only(run_label: str, db: Session) -> list[dict]:
+    """재시도 판단 전용 경량 검증 — 겹침만 체크.
+
+    왜 분리했는가:
+      auto_schedule 의 재시도 루프는 "겹침이 있으면 다시 돌린다" 만 필요.
+      전체 28개 체커를 돌리는 validate_all 은 재시도마다 공통 로드(tasks/batches/
+      equipment/constraints 4 쿼리) + 체커 loop 를 반복해 불필요한 비용이 크다.
+      이 함수는 ScheduleTask 만 로드하고 _check_overlap 만 실행해
+      재시도 판단 속도를 높인다.
+
+    최종 Stage2 응답에는 여전히 validate_all 을 사용해 모든 violation 을 반환.
+    """
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+    return _check_overlap(tasks)
+
+
 def validate_all(run_label: str, db: Session) -> list[dict]:
     """모든 활성 제약조건으로 스케줄 검증. Returns list of violations."""
 

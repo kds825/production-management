@@ -538,11 +538,15 @@ export default function SchedulerPage() {
           setAutoScheduleResult(null);
           return;
         }
-        setAutoScheduleResult(
-          `자동배열 완료 (런: ${runLabel}). 새로고침 중...`,
-        );
-        // 1초 후 자동 새로고침
-        setTimeout(() => window.location.reload(), 1000);
+        setAutoScheduleResult(`자동배열 완료 (런: ${runLabel}).`);
+        // 왜 reload 대신 부분 갱신:
+        //   window.location.reload() 는 모든 useEffect 를 재실행시켜 /pipeline/runs,
+        //   /schedules/tasks, /equipment, /line-speeds, /audit 등 10+ 엔드포인트가
+        //   동시에 재호출되어 Supabase 커넥션 풀에 폭주 트래픽을 만든다. 사용자 UX
+        //   체감 시간의 상당 부분이 "reload 후 전체 페이지 재로드 대기" 였음.
+        //   대신 scheduler 페이지가 실제로 관심 있는 태스크만 다시 가져와 store 에
+        //   반영하면, Gantt 가 동일 effect 체인 없이 즉시 재렌더링된다.
+        await refreshScheduleTasks();
       } else {
         const text = await res.text();
         setAutoScheduleResult(`오류: ${res.status} — ${text.slice(0, 120)}`);

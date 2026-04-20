@@ -53,7 +53,9 @@ def test_overlap_persist_raises(db, monkeypatch):
     def _fake_validate(run_label, db):
         return [{"constraint_id": "overlap", "detail": "mock overlap"}]
 
-    monkeypatch.setattr(constraint_checker, "validate_all", _fake_validate)
+    # Phase 1 개선: 재시도 루프가 validate_overlap_only 를 호출하므로 이쪽을 monkeypatch.
+    # 기존 validate_all 은 최종 전체 검증용으로만 남아있음 (run_stage2 경로).
+    monkeypatch.setattr(constraint_checker, "validate_overlap_only", _fake_validate)
 
     _seed_minimal(db, run_label="test-retry-persist")
 
@@ -81,7 +83,8 @@ def test_overlap_retry_succeeds_on_second_attempt(db, monkeypatch):
         return {"warnings": [], "tasks_created": []}
 
     monkeypatch.setattr(schedule_optimizer, "_run_optimization_once", _fake_run)
-    monkeypatch.setattr(constraint_checker, "validate_all", _sometimes_overlap)
+    # 재시도 경로는 validate_overlap_only 를 호출하도록 Phase 1 에서 변경됨.
+    monkeypatch.setattr(constraint_checker, "validate_overlap_only", _sometimes_overlap)
 
     _seed_minimal(db, run_label="test-retry-success")
     result = schedule_optimizer.auto_schedule(run_label="test-retry-success", db=db)
@@ -104,17 +107,18 @@ def test_retry_real_run_resets_batch_status_and_audit(db, monkeypatch):
     run_label = "test-retry-real"
     _seed_minimal(db, run_label=run_label)
 
-    # 첫 호출만 overlap 보고, 두번째부터는 실제 검증 경로
+    # 첫 호출만 overlap 보고, 두번째부터는 실제 검증 경로.
+    # Phase 1 개선: 재시도 루프가 validate_overlap_only 를 호출하므로 이쪽을 patch.
     call_count = {"validate": 0}
-    real_validate = constraint_checker.validate_all
+    real_overlap_only = constraint_checker.validate_overlap_only
 
     def _flaky_validate(rlabel, dbs):
         call_count["validate"] += 1
         if call_count["validate"] == 1:
             return [{"constraint_id": "overlap", "detail": "mock", "task_id": -1}]
-        return real_validate(rlabel, dbs)
+        return real_overlap_only(rlabel, dbs)
 
-    monkeypatch.setattr(constraint_checker, "validate_all", _flaky_validate)
+    monkeypatch.setattr(constraint_checker, "validate_overlap_only", _flaky_validate)
 
     # _run_optimization_once 는 monkey-patch 하지 않음 — 실제 경로 실행
     result = schedule_optimizer.auto_schedule(run_label=run_label, db=db)
@@ -175,15 +179,16 @@ def test_cpsat_path_also_retries_on_overlap(db, monkeypatch):
     db.flush()
 
     calls = {"validate": 0}
-    real_validate = constraint_checker.validate_all
+    # Phase 1 개선 반영: 재시도 루프가 validate_overlap_only 만 호출.
+    real_overlap_only = constraint_checker.validate_overlap_only
 
     def _flaky(rlabel, dbs):
         calls["validate"] += 1
         if calls["validate"] == 1:
             return [{"constraint_id": "overlap", "detail": "mock", "task_id": -1}]
-        return real_validate(rlabel, dbs)
+        return real_overlap_only(rlabel, dbs)
 
-    monkeypatch.setattr(constraint_checker, "validate_all", _flaky)
+    monkeypatch.setattr(constraint_checker, "validate_overlap_only", _flaky)
     result = schedule_optimizer.auto_schedule(
         run_label="test-cpsat-retry", db=db, use_cpsat=True
     )
