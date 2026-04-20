@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
+from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.schedule_task import ScheduleTask
 
 if TYPE_CHECKING:
@@ -43,6 +45,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _FROZEN_STATUSES = frozenset({"in_progress", "completed", "wip_complete"})
+
+
+def _build_snapshot(run_label: str, db: Session) -> dict:
+    """run_label 에 속한 모든 ScheduleTask 를 JSONB 저장용 dict 로 직렬화.
+
+    구조: {task_id_str: {start, end, equipment_code}}
+    batch_group / process / color 같은 메타는 diff API 에서 join 으로 보강.
+
+    P6: urgent apply 의 before/after 스냅샷 캡처용. read-only 쿼리로 트랜잭션
+    오염 없음 — CP-SAT 실패/DB 커밋 실패에도 스냅샷 구축은 안전.
+    """
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+    return {
+        str(t.task_id): {
+            "start": t.start_datetime.isoformat() if t.start_datetime else None,
+            "end": t.end_datetime.isoformat() if t.end_datetime else None,
+            "equipment_code": t.equipment_code,
+        }
+        for t in tasks
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -81,7 +103,18 @@ def apply_urgent_incremental(
         "split_count": 0,
         "rescheduled_groups": [],
         "warnings": [],
+        # P6: before/after 스냅샷 캡처 + ScheduleChangeSet INSERT 결과.
+        # 실질적 변경 없음(new_orders=0) 또는 snapshot INSERT 실패 시 None.
+        "change_set_id": None,
+        "snapshot_count_before": 0,
+        "snapshot_count_after": 0,
     }
+
+    # ── 0. ERP 파싱 직전 snapshot_before 캡처 (P6) ──────────────────────────
+    # 파싱/배치생성/CP-SAT 는 모두 ScheduleTask 를 수정할 수 있으므로 가장 이른
+    # 시점에 read-only 로 현 상태를 저장한다. 트랜잭션 오염 없음.
+    snapshot_before = _build_snapshot(run_label, db)
+    result["snapshot_count_before"] = len(snapshot_before)
 
     # ── 1. 긴급 수주 파싱 ─────────────────────────────────────────────────────
     from app.services.erp_parser import parse_erp_file_incremental
@@ -96,6 +129,8 @@ def apply_urgent_incremental(
     result["warnings"].extend(parse_result.get("warnings", []))
 
     if not new_order_keys:
+        # P6: 실질적 변경이 없으므로 ScheduleChangeSet 도 만들지 않는다.
+        # change_set_id 는 기본값 None 유지.
         result["warnings"].append("새로 추가된 수주가 없습니다 (중복 또는 파일 이상).")
         return result
 
@@ -228,6 +263,36 @@ def apply_urgent_incremental(
             logger.error("[Urgent] 신규 그룹 스케줄 오류: %s", exc, exc_info=True)
 
     db.flush()
+
+    # ── 9. 재최적화 후 snapshot_after 캡처 + ScheduleChangeSet INSERT (P6) ──
+    # snapshot INSERT 실패가 urgent apply 자체를 롤백시키지 않도록 방어적 처리.
+    # 스케줄 변경은 이미 db.flush() 로 세션에 반영된 상태 — INSERT 실패 시
+    # warning 기록 후 change_set_id=None 으로 반환.
+    try:
+        snapshot_after = _build_snapshot(run_label, db)
+        result["snapshot_count_after"] = len(snapshot_after)
+
+        change_set_id = str(uuid.uuid4())
+        cs = ScheduleChangeSet(
+            change_set_id=change_set_id,
+            kind="urgent",
+            snapshot_before=snapshot_before,
+            snapshot_after=snapshot_after,
+        )
+        db.add(cs)
+        db.flush()
+        result["change_set_id"] = change_set_id
+        logger.info(
+            "[Urgent] ScheduleChangeSet INSERT 완료: %s (before=%d, after=%d)",
+            change_set_id,
+            len(snapshot_before),
+            len(snapshot_after),
+        )
+    except Exception as exc:
+        # snapshot 캡처/INSERT 실패는 urgent apply 의 본질에 영향 없음 — 기록만.
+        result["warnings"].append(f"change_set 기록 실패 (계속): {exc}")
+        logger.warning("[Urgent] change_set INSERT 실패: %s", exc, exc_info=True)
+
     return result
 
 

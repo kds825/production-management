@@ -9,16 +9,86 @@ cleanup 도 명시적 DELETE + commit 으로 마무리한다 (rollback 으로는
 """
 
 import uuid
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 
-from app.main import app
+from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
+from app.infrastructure.models.schedule_task import ScheduleTask
+from app.main import app
 
 
 client = TestClient(app)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P6 메타 테스트용 helper — equipment_code 는 기존 seed data ("ST-54BO1") 재사용
+# (FK 제약 때문에 임의 문자열은 INSERT 실패). test_overload_split.py 와 같은 패턴.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _seed_batch_and_task(
+    db,
+    *,
+    run_label: str,
+    process_name: str = "연선",
+    sheath_color: str | None = None,
+    sq_mm2: int = 95,
+    customer_priority: int = 5,
+    equipment_code: str = "ST-54BO1",
+) -> tuple[int, int]:
+    """ProductionBatch + ScheduleTask 1쌍을 INSERT + commit.
+
+    반환: (batch_id, task_id). run_label 은 cleanup 용 식별자.
+    """
+    batch = ProductionBatch(
+        run_label=run_label,
+        process_name=process_name,
+        batch_seq=1,
+        drum_count=1,
+        drum_length_m=9700,
+        total_length_m=9700,
+        sq_mm2=sq_mm2,
+        core_count=1,
+        equipment_code=equipment_code,
+        sheath_color=sheath_color,
+        due_date=date.today() + timedelta(days=30),
+        customer_priority=customer_priority,
+        line_speed_mpm=11.7,
+        setup_time_min=30,
+        estimated_duration_min=60,
+        status="planned",
+        batch_group=f"ST-{sq_mm2}-0.6/1kV-{run_label}",
+    )
+    db.add(batch)
+    db.flush()
+
+    task = ScheduleTask(
+        batch_id=batch.batch_id,
+        equipment_code=equipment_code,
+        start_datetime=datetime(2026, 4, 20, 9, 0),
+        end_datetime=datetime(2026, 4, 20, 12, 0),
+        status="scheduled",
+        run_label=run_label,
+        batch_group=batch.batch_group,
+    )
+    db.add(task)
+    db.commit()
+    return batch.batch_id, task.task_id
+
+
+def _cleanup_seed(db, run_label: str) -> None:
+    """run_label 기반 task/batch 정리 — rollback 이 commit 후 데이터를 못 지우므로 수동."""
+    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    db.commit()
 
 
 def _has_kind_column(db) -> bool:
@@ -306,3 +376,196 @@ def test_diff_summary_counts_match(db):
         assert body["summary"]["total_after"] == 4
     finally:
         _delete_change_set(db, cs_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P6: diff 응답 메타데이터 필드 확장 (batch_group / process_name / sheath_color /
+# cross_section / is_urgent / customer_priority)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_diff_includes_batch_metadata(db):
+    """moved_tasks / added_tasks 에 batch 메타 필드 포함 확인.
+
+    ProductionBatch + ScheduleTask seed → change_set 의 snapshot 에 task_id 넣고
+    diff 호출 → 응답에 batch_group / process_name / cross_section / is_urgent
+    가 실제 배치 값으로 채워져 있는지 검증.
+    """
+    run_label = f"TEST_DIFF_META_{uuid.uuid4().hex[:6]}"
+    cs_id = None
+
+    try:
+        # Seed — moved 로 간주될 task (sheath_color 포함 — 시스 공정)
+        _batch_id, task_id = _seed_batch_and_task(
+            db,
+            run_label=run_label,
+            process_name="저압시스",
+            sheath_color="흑",
+            sq_mm2=95,
+            customer_priority=5,  # <= 7 → is_urgent=True
+        )
+        task_id_str = str(task_id)
+
+        snapshot_before = {
+            task_id_str: {
+                "start": "2026-04-20T09:00:00",
+                "end": "2026-04-20T12:00:00",
+                "equipment_code": "ST-54BO1",
+            }
+        }
+        snapshot_after = {
+            task_id_str: {
+                "start": "2026-04-20T13:00:00",  # +4h shift → moved
+                "end": "2026-04-20T16:00:00",
+                "equipment_code": "ST-54BO1",
+            }
+        }
+        cs_id = _insert_change_set(
+            db,
+            snapshot_before=snapshot_before,
+            snapshot_after=snapshot_after,
+        )
+
+        r = client.get(f"/api/schedules/change-sets/{cs_id}/diff")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["summary"]["moved"] == 1
+        assert len(body["moved_tasks"]) == 1
+
+        moved = body["moved_tasks"][0]
+        assert moved["task_id"] == task_id_str
+        # 하위 호환 필드 — 기존 테스트가 요구하는 start/end delta 등은 그대로.
+        assert moved["start_delta_hours"] == 4.0
+        assert moved["equipment_changed"] is False
+        # P6 신규 메타 필드
+        assert moved["batch_group"] == f"ST-95-0.6/1kV-{run_label}"
+        assert moved["process_name"] == "저압시스"
+        assert moved["sheath_color"] == "흑"
+        assert moved["cross_section"] == 95
+        assert moved["is_urgent"] is True
+        assert moved["customer_priority"] == 5
+    finally:
+        if cs_id is not None:
+            _delete_change_set(db, cs_id)
+        _cleanup_seed(db, run_label)
+
+
+def test_diff_meta_null_for_unknown_task_id(db):
+    """숫자가 아닌 task_id (T1 등) 는 DB 조회 불가 → 메타 필드 null.
+
+    legacy snapshot 이나 synthetic id 를 가진 change_set 이 오면 시각화는 포기하고
+    스키마만 유지한다. 500/404 로 깨지지 않아야 함.
+    """
+    snapshot_before = {
+        "SYNTHETIC_XYZ": {
+            "start": "2026-04-20T09:00:00",
+            "end": "2026-04-20T12:00:00",
+            "equipment_code": "EQ_FAKE",
+        }
+    }
+    snapshot_after = {
+        "SYNTHETIC_XYZ": {
+            "start": "2026-04-20T10:00:00",
+            "end": "2026-04-20T13:00:00",
+            "equipment_code": "EQ_FAKE",
+        }
+    }
+    cs_id = _insert_change_set(
+        db,
+        snapshot_before=snapshot_before,
+        snapshot_after=snapshot_after,
+    )
+    try:
+        r = client.get(f"/api/schedules/change-sets/{cs_id}/diff")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["summary"]["moved"] == 1
+        moved = body["moved_tasks"][0]
+        # 메타 필드는 null / False 로 채워짐 (스키마 일관성).
+        assert moved["batch_group"] is None
+        assert moved["process_name"] is None
+        assert moved["sheath_color"] is None
+        assert moved["cross_section"] is None
+        assert moved["is_urgent"] is False
+        assert moved["customer_priority"] is None
+    finally:
+        _delete_change_set(db, cs_id)
+
+
+def test_diff_meta_added_and_removed_blocks(db):
+    """added_tasks / removed_tasks 에도 동일한 메타 필드가 붙는지 확인.
+
+    added: after 에만 존재 — DB 에 실존하는 task 라면 메타 채워짐.
+    removed: before 에만 존재 — DB 에 없으면 (삭제된 경우) 메타 null.
+    """
+    run_label = f"TEST_DIFF_META_AR_{uuid.uuid4().hex[:6]}"
+    cs_id = None
+
+    try:
+        _batch_id, task_id = _seed_batch_and_task(
+            db,
+            run_label=run_label,
+            process_name="연선",
+            sheath_color=None,  # 연선 공정은 색 없음
+            sq_mm2=120,
+            customer_priority=99,  # > 7 → is_urgent=False
+        )
+        task_id_str = str(task_id)
+
+        # added: 새로 생긴 task (before 없음)
+        snapshot_before = {}
+        snapshot_after = {
+            task_id_str: {
+                "start": "2026-04-20T13:00:00",
+                "end": "2026-04-20T16:00:00",
+                "equipment_code": "ST-54BO1",
+            }
+        }
+        cs_id = _insert_change_set(
+            db,
+            snapshot_before=snapshot_before,
+            snapshot_after=snapshot_after,
+        )
+
+        r = client.get(f"/api/schedules/change-sets/{cs_id}/diff")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["summary"]["added"] == 1
+        added = body["added_tasks"][0]
+        assert added["task_id"] == task_id_str
+        assert added["process_name"] == "연선"
+        assert added["cross_section"] == 120
+        assert added["sheath_color"] is None  # 연선은 색 메타 없음
+        assert added["is_urgent"] is False  # priority 99 → 일반
+        assert added["customer_priority"] == 99
+
+        # removed 경로: synthetic id — DB 없으므로 메타 null
+        snapshot_before2 = {
+            "999999": {  # 숫자지만 DB 에 없음
+                "start": "2026-04-20T09:00:00",
+                "end": "2026-04-20T12:00:00",
+                "equipment_code": "ST-54BO1",
+            }
+        }
+        cs_id2 = _insert_change_set(
+            db,
+            snapshot_before=snapshot_before2,
+            snapshot_after={},
+        )
+        try:
+            r2 = client.get(f"/api/schedules/change-sets/{cs_id2}/diff")
+            assert r2.status_code == 200
+            body2 = r2.json()
+            assert body2["summary"]["removed"] == 1
+            removed = body2["removed_tasks"][0]
+            assert removed["task_id"] == "999999"
+            # DB 에 없으므로 메타는 전부 null/False
+            assert removed["batch_group"] is None
+            assert removed["process_name"] is None
+            assert removed["is_urgent"] is False
+        finally:
+            _delete_change_set(db, cs_id2)
+    finally:
+        if cs_id is not None:
+            _delete_change_set(db, cs_id)
+        _cleanup_seed(db, run_label)

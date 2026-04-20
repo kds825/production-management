@@ -1438,6 +1438,85 @@ def _delta_hours(old_iso: Any, new_iso: Any) -> float | None:
     return round((new_dt - old_dt).total_seconds() / 3600, 2)
 
 
+def _build_task_meta_map(db: Session, task_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """task_id 문자열 집합 → 메타 dict 매핑 구축.
+
+    ScheduleTask + ProductionBatch 를 batch_id 로 join 해 batch_group /
+    process_name / sheath_color / cross_section / customer_priority / is_urgent
+    필드를 추출.
+
+    P6: 숫자 문자열 task_id 만 DB 조회 — "T1" 같은 synthetic id (테스트/스냅샷
+    손상) 는 건너뛴다. 조회되지 않는 task_id 는 결과 dict 에 없음 →
+    호출부에서 null 로 보강.
+
+    is_urgent 규칙: customer_priority <= 7 이면 긴급 (NORMAL/CRITICAL/URGENT 의
+    URGENT 이상). ProductionBatch 의 customer_priority 는 nullable 이지만 기본값 99.
+    """
+    if not task_ids:
+        return {}
+
+    numeric_ids: list[int] = []
+    for tid in task_ids:
+        if tid.isdigit():
+            numeric_ids.append(int(tid))
+
+    if not numeric_ids:
+        return {}
+
+    rows = (
+        db.query(ScheduleTaskModel, ProductionBatchModel)
+        .outerjoin(
+            ProductionBatchModel,
+            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
+        )
+        .filter(ScheduleTaskModel.task_id.in_(numeric_ids))
+        .all()
+    )
+
+    meta_map: dict[str, dict[str, Any]] = {}
+    for task, batch in rows:
+        cp = (
+            int(batch.customer_priority)
+            if batch is not None and batch.customer_priority is not None
+            else None
+        )
+        sq = (
+            int(batch.sq_mm2)
+            if batch is not None and batch.sq_mm2 is not None
+            else None
+        )
+        meta_map[str(task.task_id)] = {
+            "batch_group": (batch.batch_group if batch is not None else None)
+            or task.batch_group,
+            "process_name": batch.process_name if batch is not None else None,
+            # sheath_color 는 시스 블록에서만 유의미 — 그 외 공정은 NULL 이 정상.
+            "sheath_color": batch.sheath_color if batch is not None else None,
+            "cross_section": sq,
+            # PoC 규약: customer_priority <= 7 → 긴급(URGENT+). 99/기본값은 NORMAL.
+            "is_urgent": cp is not None and cp <= 7,
+            "customer_priority": cp,
+        }
+    return meta_map
+
+
+def _merge_meta(entry: dict[str, Any], meta: dict[str, Any] | None) -> dict[str, Any]:
+    """diff 엔트리에 batch 메타 필드 병합 — 메타 없을 때 null 로 채움.
+
+    프론트가 필드 존재 여부가 아닌 값 null 체크로 처리하도록 스키마 일관성 유지.
+    """
+    defaults = {
+        "batch_group": None,
+        "process_name": None,
+        "sheath_color": None,
+        "cross_section": None,
+        "is_urgent": False,
+        "customer_priority": None,
+    }
+    if meta:
+        defaults.update(meta)
+    return {**entry, **defaults}
+
+
 @router.get("/change-sets/{change_set_id}/diff")
 def get_change_set_diff(
     change_set_id: str,
@@ -1447,6 +1526,11 @@ def get_change_set_diff(
 
     긴급수주 반영 후 "기존 계획 대비 어떤 배치가 어떻게 바뀌었는지" 를 UI 에
     노출하기 위한 읽기 전용 API. revert 와 달리 DB 를 수정하지 않는다.
+
+    P6: moved/added/removed 각 항목에 batch_group / process_name / sheath_color
+    / cross_section / is_urgent / customer_priority 메타 포함 (Stage 2 블록
+    시각화 목적). removed_tasks 는 DB 에서 이미 삭제된 경우 meta null.
+    unchanged_task_ids 는 id list 유지 — 회색 표시용이라 메타 불필요.
     """
     cs = db.get(ScheduleChangeSet, change_set_id)
     if cs is None:
@@ -1472,6 +1556,9 @@ def get_change_set_diff(
     common_ids = before_ids & after_ids
     added_ids = after_ids - before_ids
     removed_ids = before_ids - after_ids
+
+    # 메타 조회 — moved+added+removed 전체를 한 번에 조회해 N+1 방지.
+    meta_map = _build_task_meta_map(db, before_ids | after_ids)
 
     moved_tasks: list[dict[str, Any]] = []
     unchanged_task_ids: list[str] = []
@@ -1499,18 +1586,21 @@ def get_change_set_diff(
             continue
 
         moved_tasks.append(
-            {
-                "task_id": task_id,
-                "old_start": old_start,
-                "old_end": old_end,
-                "old_equipment": old_eq,
-                "new_start": new_start,
-                "new_end": new_end,
-                "new_equipment": new_eq,
-                "start_delta_hours": _delta_hours(old_start, new_start),
-                "end_delta_hours": _delta_hours(old_end, new_end),
-                "equipment_changed": eq_changed,
-            }
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "old_start": old_start,
+                    "old_end": old_end,
+                    "old_equipment": old_eq,
+                    "new_start": new_start,
+                    "new_end": new_end,
+                    "new_equipment": new_eq,
+                    "start_delta_hours": _delta_hours(old_start, new_start),
+                    "end_delta_hours": _delta_hours(old_end, new_end),
+                    "equipment_changed": eq_changed,
+                },
+                meta_map.get(task_id),
+            )
         )
 
     added_tasks: list[dict[str, Any]] = []
@@ -1519,12 +1609,15 @@ def get_change_set_diff(
         if not isinstance(a, dict):
             continue
         added_tasks.append(
-            {
-                "task_id": task_id,
-                "start": a.get("start"),
-                "end": a.get("end"),
-                "equipment": a.get("equipment_code"),
-            }
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "start": a.get("start"),
+                    "end": a.get("end"),
+                    "equipment": a.get("equipment_code"),
+                },
+                meta_map.get(task_id),
+            )
         )
 
     removed_tasks: list[dict[str, Any]] = []
@@ -1532,13 +1625,17 @@ def get_change_set_diff(
         b = before.get(task_id) or {}
         if not isinstance(b, dict):
             continue
+        # removed task 는 DB 에서 이미 사라졌을 수 있음 — meta_map 에 없으면 null 필드.
         removed_tasks.append(
-            {
-                "task_id": task_id,
-                "start": b.get("start"),
-                "end": b.get("end"),
-                "equipment": b.get("equipment_code"),
-            }
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "start": b.get("start"),
+                    "end": b.get("end"),
+                    "equipment": b.get("equipment_code"),
+                },
+                meta_map.get(task_id),
+            )
         )
 
     # kind 컬럼이 없는 구 스키마 환경(migration 미적용) 에서도 안전하게 동작하도록

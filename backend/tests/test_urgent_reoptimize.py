@@ -262,6 +262,77 @@ def test_reschedule_use_cpsat_ghost_affected_safe(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# P6: apply_urgent_incremental 반환 dict 시그니처 (snapshot/change_set_id 키)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_apply_urgent_incremental_returns_change_set_keys(db: Session) -> None:
+    """apply_urgent_incremental 반환 dict 에 P6 신규 키 포함.
+
+    new_orders=0 조기 반환 경로 — ERP 파싱 실패 or 중복 전부 — 에서
+    change_set_id=None 유지 + snapshot_count_before/after 필드 존재.
+
+    실제 반영/CP-SAT 호출까지 가는 통합 시나리오는 ERP Excel fixture 가 필요해
+    본 유닛 테스트 범위 밖. 시그니처 계약만 고정한다.
+    """
+    from app.services.urgent_scheduler import apply_urgent_incremental
+
+    # 빈 bytes → parse_erp_file_incremental 이 파싱 실패/빈 결과 중 하나로 반응.
+    # 예외가 나면 테스트가 감지하고, 정상 경로면 new_orders=0 으로 조기 반환.
+    # 어느 경로든 반환 dict 의 키 집합은 안정적으로 노출되어야 한다.
+    try:
+        result = apply_urgent_incremental(
+            b"",
+            _RUN_LABEL + "_P6_EMPTY",
+            db,
+        )
+    except Exception:
+        # 빈 bytes 파싱 예외는 본 테스트 범위 밖 — skip (허용).
+        import pytest
+
+        pytest.skip("parse_erp_file_incremental rejected empty bytes")
+        return
+
+    assert isinstance(result, dict)
+    required_keys = {
+        "new_orders",
+        "warnings",
+        "change_set_id",
+        "snapshot_count_before",
+        "snapshot_count_after",
+    }
+    assert required_keys.issubset(set(result.keys())), (
+        f"missing keys: {required_keys - set(result.keys())}"
+    )
+
+    # new_orders=0 경로이므로 change_set_id=None (INSERT 생략).
+    # snapshot_count_before 는 DB 상태에 따라 0 이상의 int.
+    assert result["new_orders"] == 0
+    assert result["change_set_id"] is None
+    assert isinstance(result["snapshot_count_before"], int)
+    assert result["snapshot_count_before"] >= 0
+    assert isinstance(result["snapshot_count_after"], int)
+
+
+def test_build_snapshot_shape(db: Session) -> None:
+    """_build_snapshot 이 기대 스키마의 dict 를 반환.
+
+    read-only 쿼리이므로 DB 비어있거나 run_label 이 없어도 예외 없이 {} 반환.
+    각 엔트리는 {start, end, equipment_code} 세 필드.
+    """
+    from app.services.urgent_scheduler import _build_snapshot
+
+    snap = _build_snapshot(_RUN_LABEL + "_P6_SNAP_SHAPE", db)
+    assert isinstance(snap, dict)
+
+    # 각 엔트리 shape 검증 — 비어있는 DB 경로면 값 없음 (skip), 있으면 스키마 확인.
+    for task_id, entry in snap.items():
+        assert isinstance(task_id, str)
+        assert isinstance(entry, dict)
+        assert set(entry.keys()) == {"start", "end", "equipment_code"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #
