@@ -57,6 +57,35 @@ interface ParsedBatch {
   total_quantity: number;
 }
 
+// T2a: /stage1/update 응답의 frozen_batches 원소. 진행중/완료/wip_complete 상태의
+// 기존 배치를 재생성된 ParsedBatch 리스트와 함께 렌더링하기 위해 사용한다.
+interface FrozenBatch {
+  batch_id: number;
+  batch_group: string | null;
+  process_name: string;
+  status: "in_progress" | "completed" | "wip_complete";
+  customer_name: string | null;
+  due_date: string | null;
+  item_code: string | null;
+  product_group: string | null;
+  voltage: string | null;
+  sq_mm2: number | null;
+  sheath_color: string | null;
+  drum_count: number | null;
+  total_length_m: number | null;
+  sales_order_id: string | null;
+  sales_order_line: number | null;
+  equipment_code: string | null;
+}
+
+// T2b: Full 모드에서 새 파일과 기존 수주 리스트를 대사한 order_id 레벨 분류.
+interface OrderDiffSummary {
+  added: number;
+  updated: number;
+  deleted: number;
+  preserved_frozen: number;
+}
+
 interface SplitChunk {
   lot_index: number;
   order_count: number;
@@ -101,6 +130,12 @@ interface Stage1Result {
   snapshot_persisted?: boolean;
   snapshot_count_before?: number;
   snapshot_count_after?: number;
+  // T2a: 진행중/완료/wip_complete 로 보존된 배치. 재생성된 batches 와 병합 렌더링.
+  frozen_batches?: FrozenBatch[];
+  // T2b: Full 모드에서만 세팅. order_id 레벨 대사 결과.
+  diff_summary?: OrderDiffSummary | null;
+  // 응답 기반 분기(Full diff 패널 조건부 렌더)를 위해 노출.
+  upload_mode?: UploadMode;
 }
 
 type UploadMode = "full" | "incremental";
@@ -374,6 +409,237 @@ function DiffSummaryPanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * T2b — Full 모드 업로드 직후 표시되는 수주 대사 요약 패널.
+ * 배치 단위가 아니라 order_id 레벨 분류이므로 별도 패널로 둔다.
+ *   - added   : 새 파일에만 있음 (신규 수주)
+ *   - updated : 양쪽에 있고 frozen 아님 (delete→reinsert 경유, 내용 갱신 가능)
+ *   - deleted : 기존에만 있고 새 파일에 없음 (non-frozen — 실제 삭제)
+ *   - preserved_frozen: frozen 으로 보존된 수주 (진행중/완료, 새 파일에 없어도 유지)
+ */
+function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
+  const items: Array<{
+    key: keyof OrderDiffSummary;
+    label: string;
+    value: number;
+    bg: string;
+    fg: string;
+  }> = [
+    {
+      key: "added",
+      label: "신규",
+      value: diff.added,
+      bg: "#D1FAE5",
+      fg: "var(--color-success)",
+    },
+    {
+      key: "updated",
+      label: "수정",
+      value: diff.updated,
+      bg: "#FEF3C7",
+      fg: "var(--color-warning)",
+    },
+    {
+      key: "deleted",
+      label: "삭제",
+      value: diff.deleted,
+      bg: "#FEE2E2",
+      fg: "var(--color-danger)",
+    },
+    {
+      key: "preserved_frozen",
+      label: "보존",
+      value: diff.preserved_frozen,
+      bg: "var(--color-bg-muted)",
+      fg: "var(--color-text-secondary)",
+    },
+  ];
+  return (
+    <div
+      className="rounded-lg p-3"
+      style={{
+        border: "1px solid var(--color-border-default)",
+        backgroundColor: "#FFFFFF",
+      }}
+    >
+      <p
+        className="text-xs font-semibold mb-2"
+        style={{ color: "var(--color-text-primary)" }}
+      >
+        수주 대사 결과 (전체 교체)
+      </p>
+      <div className="flex gap-2 flex-wrap">
+        {items.map((it) => (
+          <div
+            key={it.key}
+            className="flex items-center gap-1.5 rounded px-2 py-1"
+            style={{ backgroundColor: it.bg }}
+          >
+            <span className="text-xs font-medium" style={{ color: it.fg }}>
+              {it.label}
+            </span>
+            <span
+              className="text-xs font-semibold tabular-nums"
+              style={{ color: it.fg }}
+            >
+              {it.value.toLocaleString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * T2a — 재생성된 배치(ParsedBatch)와 frozen 배치(FrozenBatch)를 한 리스트로
+ * 병합 렌더링. 각 행에 상태 뱃지를 붙여 진행중/완료/WIP완료/신규 를 구분한다.
+ *
+ * frozen 과 new 는 스키마가 달라 공통 필드만 표시:
+ *   - 배치 번호, 공정, 상태 뱃지, 우측에 간략 메타.
+ * frozen 쪽엔 수주/고객 정보가 있어 메타에 반영. new 는 order_count/total_quantity.
+ */
+function BatchGridWithFrozen({
+  frozenBatches,
+  newBatches,
+}: {
+  frozenBatches: FrozenBatch[];
+  newBatches: ParsedBatch[];
+}) {
+  const total = frozenBatches.length + newBatches.length;
+  // 상태별 카운트 (헤더 요약용)
+  const counts = {
+    in_progress: frozenBatches.filter((b) => b.status === "in_progress").length,
+    completed: frozenBatches.filter((b) => b.status === "completed").length,
+    wip_complete: frozenBatches.filter((b) => b.status === "wip_complete")
+      .length,
+    new: newBatches.length,
+  };
+
+  const statusBadge = (
+    status: FrozenBatch["status"] | "new",
+  ): { label: string; bg: string; fg: string } => {
+    switch (status) {
+      case "in_progress":
+        return { label: "진행중", bg: "#FEF3C7", fg: "var(--color-warning)" };
+      case "completed":
+        return { label: "완료", bg: "#D1FAE5", fg: "var(--color-success)" };
+      case "wip_complete":
+        return { label: "WIP완료", bg: "#DBEAFE", fg: "#1D4ED8" };
+      case "new":
+        return { label: "신규", bg: "#FEF2F2", fg: PRIMARY };
+    }
+  };
+
+  return (
+    <div
+      className="rounded-lg p-3"
+      style={{
+        border: "1px solid var(--color-border-default)",
+        backgroundColor: "#FFFFFF",
+      }}
+    >
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <p
+          className="text-xs font-semibold"
+          style={{ color: "var(--color-text-primary)" }}
+        >
+          배치 ({total}개)
+        </p>
+        <div className="flex items-center gap-1.5 text-xs">
+          {counts.in_progress > 0 && (
+            <span style={{ color: "var(--color-warning)" }}>
+              진행중 {counts.in_progress}
+            </span>
+          )}
+          {counts.completed > 0 && (
+            <span style={{ color: "var(--color-success)" }}>
+              완료 {counts.completed}
+            </span>
+          )}
+          {counts.wip_complete > 0 && (
+            <span style={{ color: "#1D4ED8" }}>
+              WIP완료 {counts.wip_complete}
+            </span>
+          )}
+          {counts.new > 0 && (
+            <span style={{ color: PRIMARY }}>신규 {counts.new}</span>
+          )}
+        </div>
+      </div>
+      <div className="space-y-1">
+        {frozenBatches.map((b) => {
+          const badge = statusBadge(b.status);
+          return (
+            <div
+              key={`frozen-${b.batch_id}`}
+              className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
+              style={{ borderColor: "#F3F4F6" }}
+            >
+              <span
+                className="rounded px-1.5 py-0.5 font-medium"
+                style={{ backgroundColor: badge.bg, color: badge.fg }}
+              >
+                {badge.label}
+              </span>
+              <span
+                className="rounded px-1.5 py-0.5 font-medium"
+                style={{
+                  backgroundColor: "var(--color-bg-muted)",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                배치#{b.batch_id}
+              </span>
+              <span className="font-medium text-gray-700">
+                {b.process_name}
+              </span>
+              {b.customer_name && (
+                <span className="text-gray-400 truncate">
+                  {b.customer_name}
+                </span>
+              )}
+              {b.total_length_m !== null && (
+                <span className="text-gray-400 ml-auto tabular-nums">
+                  {b.total_length_m.toLocaleString()} m
+                </span>
+              )}
+            </div>
+          );
+        })}
+        {newBatches.map((b) => {
+          const badge = statusBadge("new");
+          return (
+            <div
+              key={`new-${b.batch_id}`}
+              className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
+              style={{ borderColor: "#F3F4F6" }}
+            >
+              <span
+                className="rounded px-1.5 py-0.5 font-medium"
+                style={{ backgroundColor: badge.bg, color: badge.fg }}
+              >
+                {badge.label}
+              </span>
+              <span
+                className="rounded px-1.5 py-0.5 font-medium"
+                style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
+              >
+                배치#{b.batch_id}
+              </span>
+              <span className="font-medium text-gray-700">{b.process}</span>
+              <span className="text-gray-400">주문 {b.order_count}건</span>
+              <span className="text-gray-400 ml-auto tabular-nums">
+                {b.total_quantity.toLocaleString()} m
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1202,47 +1468,18 @@ function ErpUploadSection({
             </div>
           )}
 
-          {/* Batch summary */}
-          {result.batches && result.batches.length > 0 && (
-            <div
-              className="rounded-lg p-3"
-              style={{
-                border: "1px solid #E5E7EB",
-                backgroundColor: "#FFFFFF",
-              }}
-            >
-              <p
-                className="text-xs font-semibold mb-2"
-                style={{ color: "#111827" }}
-              >
-                생성된 배치 ({result.batches.length}개)
-              </p>
-              <div className="space-y-1">
-                {result.batches.map((batch) => (
-                  <div
-                    key={batch.batch_id}
-                    className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
-                    style={{ borderColor: "#F3F4F6" }}
-                  >
-                    <span
-                      className="rounded px-1.5 py-0.5 font-medium"
-                      style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
-                    >
-                      배치#{batch.batch_id}
-                    </span>
-                    <span className="font-medium text-gray-700">
-                      {batch.process}
-                    </span>
-                    <span className="text-gray-400">
-                      주문 {batch.order_count}건
-                    </span>
-                    <span className="text-gray-400">
-                      총 {batch.total_quantity.toLocaleString()} m
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {/* Full 모드 diff 요약 (T2b) — 새 파일과 기존 수주를 order_id 레벨에서 대사 */}
+          {result.upload_mode === "full" && result.diff_summary && (
+            <OrderDiffSummaryPanel diff={result.diff_summary} />
+          )}
+
+          {/* Batch summary — frozen(진행중/완료 보존) + 재생성 배치 병합 렌더링 (T2a) */}
+          {((result.batches && result.batches.length > 0) ||
+            (result.frozen_batches && result.frozen_batches.length > 0)) && (
+            <BatchGridWithFrozen
+              frozenBatches={result.frozen_batches ?? []}
+              newBatches={result.batches ?? []}
+            />
           )}
 
           {/* Parsed orders summary */}
