@@ -672,6 +672,34 @@ def _try_preempt_for_urgent(
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
 
 
+def resolve_base_date(run_label: str, base_date: datetime | None = None) -> datetime:
+    """run_label/base_date 조합으로 CP-SAT 기준일시를 결정.
+
+    왜 공용 헬퍼로 뽑았는가:
+      기존에는 cp_sat_schedule 진입부 (line 842 근처), schedule_optimizer
+      의 긴급수주 재최적화 (line 2153) 등 여러 곳에서 동일 폴백 로직이
+      복제되어 있었다. warm_start_hints 를 auto_schedule 에서 자동 생성할
+      때 `_datetime_to_wmin(existing_task.start_datetime, base_date)` 를
+      호출해야 하므로, **cp_sat_schedule 이 내부적으로 쓸 base_date 와
+      정확히 동일한 값** 으로 미리 결정해두는 단일 진실 공급원이 필요하다.
+
+    규칙:
+      - base_date 가 명시 전달되면 그대로 반환.
+      - None 이면 run_label 접두부 YYYYMMDD 로 08:00 생성.
+      - 파싱 실패 시 KST 당일 08:00 으로 폴백.
+    """
+    if base_date is not None:
+        return base_date
+    try:
+        dp = run_label.split("_")[0]
+        return datetime(int(dp[:4]), int(dp[4:6]), int(dp[6:8]), 8, 0, 0)
+    except Exception:
+        from zoneinfo import ZoneInfo
+
+        kst = datetime.now(ZoneInfo("Asia/Seoul"))
+        return kst.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+
+
 def _datetime_to_wmin(dt: datetime, base_date: datetime) -> int:
     """datetime 을 CP-SAT 내부 working-minutes 축(하루 840분, 08:00~22:00) 으로 변환.
 

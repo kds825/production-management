@@ -203,6 +203,64 @@ def auto_schedule(
     """
     from app.services import constraint_checker
 
+    # ── Phase 2 개선: warm_start_hints 자동 생성 ──────────────────────────
+    # 왜 자동 생성:
+    #   cp_sat_optimizer.py:1185~1186 주석에 따르면 warm_start_hints 주입은
+    #   ERP 재업로드/증분 재최적화에서 2.5~5× speedup 을 준다. 기존 구현은
+    #   `_reschedule_affected_groups_cpsat` 같은 특수 경로에서만 힌트를
+    #   명시 전달했고, 일반 `auto_schedule` 재실행 경로에서는 힌트 없이
+    #   처음부터 탐색했다. 결과적으로 **동일 run 을 반복 자동배열할 때
+    #   매번 cold-start** 가 되어 시간 낭비.
+    #
+    # 전략:
+    #   1) use_cpsat=True 이고 caller 가 warm_start_hints 를 명시 전달하지
+    #      않았다면 기존 ScheduleTask 에서 (batch_group → start_wmin +
+    #      equipment_code) 맵을 자동 생성해 kwargs 에 주입.
+    #   2) 기존 태스크가 없으면 (최초 실행) 빈 dict → solver 에 영향 없음.
+    #   3) base_date 는 cp_sat_schedule 내부 폴백 로직과 동일하게
+    #      `resolve_base_date` 로 미리 확정해, 힌트의 wmin 축과 solver 의
+    #      wmin 축이 일치하도록 보장.
+    #   4) add_hint 는 silent-fail 이라 batch_group 이 신규 모델에 없어도
+    #      안전 (cp_sat_optimizer 주석 참조).
+    if use_cpsat and "warm_start_hints" not in kwargs:
+        from app.services.cp_sat_optimizer import _datetime_to_wmin, resolve_base_date
+        from app.infrastructure.models.production_batch import ProductionBatch
+
+        _hint_base = resolve_base_date(run_label, kwargs.get("base_date"))
+
+        existing = (
+            db.query(ScheduleTask)
+            .filter(
+                ScheduleTask.run_label == run_label,
+                ScheduleTask.equipment_code.isnot(None),
+                ScheduleTask.start_datetime.isnot(None),
+            )
+            .all()
+        )
+        if existing:
+            _batch_groups = {
+                b.batch_id: b.batch_group
+                for b in db.query(ProductionBatch.batch_id, ProductionBatch.batch_group)
+                .filter(ProductionBatch.run_label == run_label)
+                .all()
+            }
+            _hints: dict[str, dict] = {}
+            for t in existing:
+                bg = _batch_groups.get(t.batch_id)
+                if not bg:
+                    continue
+                # 같은 그룹 여러 배치 → 첫 등장만 사용 (긴급수주 경로와 동일 규칙)
+                if bg in _hints:
+                    continue
+                _hints[bg] = {
+                    "start_wmin": _datetime_to_wmin(t.start_datetime, _hint_base),
+                    "equipment_code": t.equipment_code,
+                }
+            if _hints:
+                kwargs["warm_start_hints"] = _hints
+                # base_date 도 함께 주입해 solver 축 일관성 보장
+                kwargs.setdefault("base_date", _hint_base)
+
     MAX_RETRIES = 2
     result: dict = {}
     violations: list[dict] = []
