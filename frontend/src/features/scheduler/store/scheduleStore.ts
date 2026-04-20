@@ -42,6 +42,7 @@ import type {
   BatchGroupSnapshot,
   UnassignReason,
 } from "../types";
+import type { RunCompareResponse } from "../types/diff";
 import {
   getLineSpeed,
   calculateTaskEnd,
@@ -137,6 +138,41 @@ interface ViewFilter {
   filterValue: string[];
 }
 
+/**
+ * Gantt 버전 diff overlay(compareMode)의 상태.
+ *
+ * 진입: scheduler/page.tsx 의 [비교 모드] 토글이 `enableCompareMode(before, after)`
+ * 를 호출하면 async fetch 로 /runs/compare 응답을 받아 `diffResponse` 에 저장.
+ * SchedulerView 가 `buildDiffIndex(diffResponse)` 로 색인하여 GanttTaskBlock 의
+ * diffOverlay/ghostReason/dimmed prop 을 분기 렌더.
+ *
+ * Cascade preview 와는 상호배타: compareMode 활성화 시 cascade 상태를 즉시 리셋하여
+ * 두 overlay 가 동시에 그려지지 않도록 한다 (스펙 §설계결정 참조).
+ *
+ * 에러 상태에서도 `enabled` 는 true 를 유지해 상단 pill 에 빨간 toast 를 띄울 수
+ * 있게 하고, 사용자가 × 클릭 시 closeCompareMode 로 닫는다.
+ */
+interface CompareModeState {
+  enabled: boolean;
+  beforeRunLabel: string | null;
+  afterRunLabel: string | null;
+  diffResponse: RunCompareResponse | null;
+  loading: boolean;
+  error: string | null;
+  filters: { added: boolean; moved: boolean; removed: boolean };
+}
+
+const initialCompareMode: CompareModeState = {
+  enabled: false,
+  beforeRunLabel: null,
+  afterRunLabel: null,
+  diffResponse: null,
+  loading: false,
+  error: null,
+  // removed 는 기본 OFF — 노이즈 최소화 (스펙 §2 필터 초기값)
+  filters: { added: true, moved: true, removed: false },
+};
+
 interface ScheduleState {
   // 도메인 데이터
   equipment: Equipment[];
@@ -210,6 +246,12 @@ interface ScheduleState {
 
   // 현재 run_label — AI 재분석 트리거에 사용
   runLabel: string | null;
+
+  /**
+   * Gantt 버전 diff overlay 상태 (compareMode).
+   * cascade preview 와 시각/상태 모두 상호배타.
+   */
+  compareMode: CompareModeState;
 }
 
 interface ScheduleActions {
@@ -313,6 +355,30 @@ interface ScheduleActions {
    * - 실패 시 조용히 리턴 (warn 로그만 남김) — 초기 로드 방해 금지.
    */
   loadBatchGroupSnapshots: () => Promise<void>;
+
+  /**
+   * Gantt 버전 diff overlay 활성화 — /api/pipeline/runs/compare 를 fetch 해 저장.
+   *
+   * Flow:
+   *   1. loading=true, enabled=true, before/after 저장, error 리셋
+   *   2. cascade preview 상호배타 — cascadePreview=null, previewOffsets={},
+   *      cascadeOriginalTask=null, conflictModalOpen=false 로 강제 리셋
+   *   3. fetch 성공: diffResponse 저장 + loading=false
+   *   4. fetch 실패: error 설정 + loading=false (enabled=true 유지 → UI 에서 toast 표시)
+   */
+  enableCompareMode: (before: string, after: string) => Promise<void>;
+
+  /**
+   * 필터 pill 토글 — added/moved/removed 중 하나의 가시성을 반전한다.
+   * 간트 블록 리렌더만 트리거되며 diffResponse 는 건드리지 않는다.
+   */
+  toggleCompareFilter: (category: "added" | "moved" | "removed") => void;
+
+  /**
+   * compareMode OFF — initialCompareMode 로 리셋.
+   * 필터 기본값(added=ON, moved=ON, removed=OFF) 도 함께 복귀한다.
+   */
+  closeCompareMode: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -359,6 +425,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     conflictModalOpen: false,
     cascadeOriginalTask: null,
     runLabel: null,
+    compareMode: initialCompareMode,
 
     // 설비 목록 설정
     setEquipment: (equipment) => {
@@ -1158,6 +1225,67 @@ export const useScheduleStore = create<ScheduleStore>()(
       } catch (err) {
         console.warn("[loadBatchGroupSnapshots] 실패:", err);
       }
+    },
+
+    /**
+     * compareMode 활성화 — /runs/compare 를 fetch 해 diffResponse 저장.
+     *
+     * Cascade preview 와 상호배타: 두 overlay 가 동시 활성되면 시각적으로
+     * 혼동(yellow cascade vs blue diff)을 일으키므로 관련 상태를 즉시 리셋.
+     *
+     * 에러 시 enabled 를 true 로 유지하는 이유: 페이지 레벨에서 toast/배너로
+     * "비교 실패 — 재시도" 를 표시할 수 있어야 하기 때문. 닫힘은 사용자가
+     * 명시적으로 × 를 눌러야 함.
+     */
+    enableCompareMode: async (before: string, after: string) => {
+      set((state) => {
+        state.compareMode.enabled = true;
+        state.compareMode.loading = true;
+        state.compareMode.error = null;
+        state.compareMode.beforeRunLabel = before;
+        state.compareMode.afterRunLabel = after;
+        // 신규 fetch 시작 시 과거 diffResponse 는 비워 leaky render 방지
+        state.compareMode.diffResponse = null;
+        // cascade 상호배타 리셋
+        state.cascadePreview = null;
+        state.conflictModalOpen = false;
+        state.cascadeOriginalTask = null;
+        state.previewOffsets = {};
+      });
+
+      try {
+        const url = `${API_BASE}/pipeline/runs/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const body: RunCompareResponse = await res.json();
+        set((state) => {
+          state.compareMode.diffResponse = body;
+          state.compareMode.loading = false;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "비교 요청 실패";
+        console.warn("[enableCompareMode] 실패:", err);
+        set((state) => {
+          state.compareMode.error = message;
+          state.compareMode.loading = false;
+          // enabled 는 true 유지 — UI 에서 에러 표시 후 사용자가 닫게 한다
+        });
+      }
+    },
+
+    toggleCompareFilter: (category) => {
+      set((state) => {
+        state.compareMode.filters[category] =
+          !state.compareMode.filters[category];
+      });
+    },
+
+    closeCompareMode: () => {
+      set((state) => {
+        state.compareMode = { ...initialCompareMode };
+      });
     },
   })),
 );
