@@ -41,6 +41,8 @@ import { useScheduleStore } from "@/features/scheduler/store/scheduleStore";
 import type { Order, ScheduleTask } from "@/features/scheduler/types";
 import { UnassignConfirmModal } from "@/features/scheduler/components/UnassignConfirmModal";
 import { BatchGroupDragPreviewModal } from "@/features/scheduler/components/BatchGroupDragPreviewModal";
+import FilterPill from "@/features/scheduler/components/FilterPill";
+import { KBI_BRAND } from "@/shared/constants/brand";
 import { useToastStore } from "@/shared/ui/toastStore";
 import {
   xToTime,
@@ -435,56 +437,27 @@ export default function SchedulerPage() {
   // ── 납기 초과 패널 상태 ──
   const [showLatePanel, setShowLatePanel] = useState(false);
 
-  // ── 버전 비교 모달 상태 ── scheduling-review 와 동일한 UX
-  interface _RunCompareResponse {
-    run_label_before: string;
-    run_label_after: string;
-    summary: {
-      moved: number;
-      added: number;
-      removed: number;
-      unchanged: number;
-      total_before: number;
-      total_after: number;
-    };
-    moved_tasks: Array<{
-      task_id: string;
-      start_delta_hours: number | null;
-      equipment_changed: boolean;
-      process_name?: string | null;
-      sales_order_id?: string | null;
-    }>;
-    added_tasks: Array<{
-      task_id: string;
-      process_name?: string | null;
-      sales_order_id?: string | null;
-      customer_name?: string | null;
-      cross_section?: number | null;
-    }>;
-    removed_tasks: Array<{
-      task_id: string;
-      process_name?: string | null;
-      sales_order_id?: string | null;
-      customer_name?: string | null;
-    }>;
-  }
+  // ── 버전 비교 ──
+  // compareMode 자체는 store 로 이관됨 (Wave 2).
+  // compareOpen 은 **기존 목록 모달** 의 가시성만 관리 (툴바의 [목록] 버튼으로 오픈).
+  // 모달 데이터 소스는 store.compareMode.diffResponse 재사용 — 추가 fetch 없음.
   const [compareOpen, setCompareOpen] = useState(false);
-  const [compareData, setCompareData] = useState<_RunCompareResponse | null>(
-    null,
-  );
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareError, setCompareError] = useState<string | null>(null);
+  const compareMode = useScheduleStore((s) => s.compareMode);
+  const enableCompareMode = useScheduleStore((s) => s.enableCompareMode);
+  const toggleCompareFilter = useScheduleStore((s) => s.toggleCompareFilter);
+  const closeCompareMode = useScheduleStore((s) => s.closeCompareMode);
 
-  // 최신 run 의 parent_run_label 을 조회해 비교 가능 여부 판단
-  const handleCompareWithParent = useCallback(async () => {
-    setCompareOpen(true);
-    setCompareLoading(true);
-    setCompareError(null);
-    setCompareData(null);
+  // 비교 모드 토글 — 이미 ON 이면 닫고, OFF 면 최신 run/parent 조회 후 enableCompareMode.
+  // 에러는 store 가 compareMode.error 로 노출하므로 여기서는 toast 만 띄운다.
+  const handleToggleCompareMode = useCallback(async () => {
+    if (compareMode.enabled) {
+      closeCompareMode();
+      return;
+    }
     try {
       const runsRes = await fetch(`${API_BASE}/pipeline/runs`);
       if (!runsRes.ok) {
-        setCompareError("런 목록 조회 실패");
+        useToastStore.getState().show("런 목록 조회 실패", "error");
         return;
       }
       const runs: Array<{
@@ -492,34 +465,43 @@ export default function SchedulerPage() {
         parent_run_label?: string | null;
       }> = await runsRes.json();
       if (runs.length === 0) {
-        setCompareError("비교할 런이 없습니다.");
+        useToastStore.getState().show("비교할 런이 없습니다.", "warning");
         return;
       }
       const latest = runs[0];
       if (!latest.parent_run_label) {
-        setCompareError(
-          "최신 런은 최초 실행입니다. 비교할 이전 버전이 없습니다.",
-        );
+        useToastStore
+          .getState()
+          .show("최초 실행 — 비교할 이전 버전이 없습니다.", "warning");
         return;
       }
-      const url = `${API_BASE}/pipeline/runs/compare?before=${encodeURIComponent(
-        latest.parent_run_label,
-      )}&after=${encodeURIComponent(latest.run_label)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const body = await res
-          .json()
-          .catch(() => ({ detail: `HTTP ${res.status}` }));
-        setCompareError(body.detail ?? `비교 실패 (${res.status})`);
-        return;
-      }
-      setCompareData(await res.json());
+      await enableCompareMode(latest.parent_run_label, latest.run_label);
     } catch (err) {
-      setCompareError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCompareLoading(false);
+      useToastStore
+        .getState()
+        .show(err instanceof Error ? err.message : String(err), "error");
     }
-  }, []);
+  }, [compareMode.enabled, closeCompareMode, enableCompareMode]);
+
+  // ESC 로 비교 모드 종료 — INPUT/TEXTAREA 에서는 무시 (모달 닫기 등 기존 동작 보존).
+  useEffect(() => {
+    if (!compareMode.enabled) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      closeCompareMode();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [compareMode.enabled, closeCompareMode]);
 
   // 납기 초과 태스크: 배치 종료 시각 > 납기일 자정.
   // 뷰 필터(전체/저압만/고압만/공정별) 에 반응 — 필터에서 제외된 설비의 task 는 카운트·목록에서 빠짐.
@@ -1283,23 +1265,103 @@ export default function SchedulerPage() {
             자동배열
           </button>
         </div>
-        {/* 이전 버전과 비교 버튼 — 최신 런이 parent_run_label 을 가질 때만 의미 있음 */}
-        <div className="px-3 py-2 shrink-0 border-l border-gray-200">
+        {/* Wave 3 — 비교 모드 토글 + 필터 pills (기존 [이전 버전과 비교] 버튼 교체).
+            토글 ON 시 간트 위에 diff overlay 를 렌더한다. pills 는 카테고리별 가시성 제어.
+            [목록] 버튼으로 기존 모달 오픈. ESC 키 또는 × 아이콘으로 종료. */}
+        <div className="px-3 py-2 shrink-0 border-l border-gray-200 flex items-center gap-2">
           <button
-            onClick={handleCompareWithParent}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors"
+            onClick={handleToggleCompareMode}
+            disabled={compareMode.loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-60"
             style={{
-              backgroundColor: "#EFF6FF",
-              color: "#1E40AF",
+              backgroundColor: compareMode.enabled ? "#1E40AF" : "#EFF6FF",
+              color: compareMode.enabled ? "#FFFFFF" : "#1E40AF",
               border: "1px solid #BFDBFE",
             }}
-            title="최신 런과 그 이전 버전을 비교 (추가/삭제/이동)"
+            title={
+              compareMode.enabled
+                ? "비교 모드 끄기 (ESC)"
+                : "최신 런과 이전 버전 비교"
+            }
+            aria-pressed={compareMode.enabled}
           >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 13V2a6 6 0 010 12z" />
-            </svg>
-            이전 버전과 비교
+            {compareMode.loading ? (
+              <span
+                className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full"
+                style={{ animation: "spin 1s linear infinite" }}
+              />
+            ) : (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 13V2a6 6 0 010 12z" />
+              </svg>
+            )}
+            {compareMode.enabled ? "비교 모드 ×" : "비교 모드"}
           </button>
+
+          {/* compareMode ON 상태일 때 필터 pills 렌더 */}
+          {compareMode.enabled && compareMode.diffResponse && (
+            <>
+              <FilterPill
+                color={KBI_BRAND.colors.diff.added}
+                label={`추가 ${compareMode.diffResponse.summary.added}`}
+                active={compareMode.filters.added}
+                onClick={() => toggleCompareFilter("added")}
+                ariaLabel={`추가 ${compareMode.diffResponse.summary.added}건 보기 (토글)`}
+              />
+              <FilterPill
+                color={KBI_BRAND.colors.diff.moved}
+                label={`이동 ${compareMode.diffResponse.summary.moved}`}
+                active={compareMode.filters.moved}
+                onClick={() => toggleCompareFilter("moved")}
+                ariaLabel={`이동 ${compareMode.diffResponse.summary.moved}건 보기 (토글)`}
+              />
+              <FilterPill
+                color={KBI_BRAND.colors.diff.removed}
+                label={`삭제 ${compareMode.diffResponse.summary.removed}`}
+                active={compareMode.filters.removed}
+                onClick={() => toggleCompareFilter("removed")}
+                ariaLabel={`삭제 ${compareMode.diffResponse.summary.removed}건 보기 (토글)`}
+              />
+              {/* 목록 버튼 → 기존 텍스트 기반 상세 모달 재사용 */}
+              <button
+                onClick={() => setCompareOpen(true)}
+                className="px-2 py-1 text-[11px] rounded border border-gray-200 hover:bg-gray-50"
+                aria-haspopup="dialog"
+              >
+                목록
+              </button>
+            </>
+          )}
+
+          {/* 에러 toast 대체 — 툴바 인라인 안내 */}
+          {compareMode.error && (
+            <span className="text-[10px] text-red-600 ml-2">
+              {compareMode.error}
+            </span>
+          )}
+
+          {/* 변화 없음 배너 */}
+          {compareMode.enabled &&
+            compareMode.diffResponse &&
+            compareMode.diffResponse.summary.added === 0 &&
+            compareMode.diffResponse.summary.moved === 0 &&
+            compareMode.diffResponse.summary.removed === 0 && (
+              <span className="text-[10px] text-green-700 ml-2">
+                ✓ 두 버전이 동일합니다
+              </span>
+            )}
+
+          {/* 스크린리더 라이브 리전 — compareMode 상태를 텍스트로 안내 (a11y) */}
+          <div aria-live="polite" className="sr-only">
+            {compareMode.enabled && compareMode.diffResponse
+              ? `비교 모드 활성. 추가 ${compareMode.diffResponse.summary.added}, 이동 ${compareMode.diffResponse.summary.moved}, 삭제 ${compareMode.diffResponse.summary.removed}`
+              : ""}
+          </div>
         </div>
 
         {/* 납기 초과 현황 버튼 */}
@@ -2440,10 +2502,10 @@ export default function SchedulerPage() {
                 >
                   버전 비교
                 </h2>
-                {compareData && (
+                {compareMode.diffResponse && (
                   <div className="text-[10px] text-gray-500 mt-0.5">
-                    {compareData.run_label_before} →{" "}
-                    {compareData.run_label_after}
+                    {compareMode.diffResponse.run_label_before} →{" "}
+                    {compareMode.diffResponse.run_label_after}
                   </div>
                 )}
               </div>
@@ -2456,12 +2518,12 @@ export default function SchedulerPage() {
             </div>
 
             <div className="p-5 overflow-y-auto flex-1">
-              {compareLoading && (
+              {compareMode.loading && (
                 <div className="text-[12px] text-gray-500">
                   비교 데이터 로드 중...
                 </div>
               )}
-              {compareError && (
+              {compareMode.error && (
                 <div
                   className="text-[12px] p-3 rounded"
                   style={{
@@ -2470,10 +2532,10 @@ export default function SchedulerPage() {
                     border: "1px solid #FECACA",
                   }}
                 >
-                  {compareError}
+                  {compareMode.error}
                 </div>
               )}
-              {compareData && (
+              {compareMode.diffResponse && (
                 <>
                   <div className="grid grid-cols-4 gap-2 mb-4">
                     <div
@@ -2482,7 +2544,7 @@ export default function SchedulerPage() {
                     >
                       <div className="text-[10px] font-medium">추가됨</div>
                       <div className="text-2xl font-bold">
-                        {compareData.summary.added}
+                        {compareMode.diffResponse.summary.added}
                       </div>
                     </div>
                     <div
@@ -2491,7 +2553,7 @@ export default function SchedulerPage() {
                     >
                       <div className="text-[10px] font-medium">이동됨</div>
                       <div className="text-2xl font-bold">
-                        {compareData.summary.moved}
+                        {compareMode.diffResponse.summary.moved}
                       </div>
                     </div>
                     <div
@@ -2500,7 +2562,7 @@ export default function SchedulerPage() {
                     >
                       <div className="text-[10px] font-medium">삭제됨</div>
                       <div className="text-2xl font-bold">
-                        {compareData.summary.removed}
+                        {compareMode.diffResponse.summary.removed}
                       </div>
                     </div>
                     <div
@@ -2509,89 +2571,98 @@ export default function SchedulerPage() {
                     >
                       <div className="text-[10px] font-medium">변경 없음</div>
                       <div className="text-2xl font-bold">
-                        {compareData.summary.unchanged}
+                        {compareMode.diffResponse.summary.unchanged}
                       </div>
                     </div>
                   </div>
 
-                  {compareData.added_tasks.length > 0 && (
+                  {compareMode.diffResponse.added_tasks.length > 0 && (
                     <div className="mb-4">
                       <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
-                        추가된 배치 ({compareData.added_tasks.length})
+                        추가된 배치 (
+                        {compareMode.diffResponse.added_tasks.length})
                       </h3>
                       <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
-                        {compareData.added_tasks.slice(0, 50).map((t) => (
-                          <div
-                            key={t.task_id}
-                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
-                          >
-                            <span
-                              className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: "#059669" }}
-                            />
-                            <span className="font-medium">
-                              {t.sales_order_id || "-"}
-                            </span>
-                            <span className="text-gray-500">
-                              {t.process_name}
-                            </span>
-                            {t.customer_name && (
-                              <span className="text-gray-400">
-                                · {t.customer_name}
+                        {compareMode.diffResponse.added_tasks
+                          .slice(0, 50)
+                          .map((t) => (
+                            <div
+                              key={t.task_id}
+                              className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                            >
+                              <span
+                                className="inline-block w-1.5 h-1.5 rounded-full"
+                                style={{ backgroundColor: "#059669" }}
+                              />
+                              <span className="font-medium">
+                                {t.sales_order_id || "-"}
                               </span>
-                            )}
-                            {t.cross_section != null && (
-                              <span className="text-gray-400">
-                                · {t.cross_section}SQ
+                              <span className="text-gray-500">
+                                {t.process_name}
                               </span>
-                            )}
-                          </div>
-                        ))}
+                              {t.customer_name && (
+                                <span className="text-gray-400">
+                                  · {t.customer_name}
+                                </span>
+                              )}
+                              {t.cross_section != null && (
+                                <span className="text-gray-400">
+                                  · {t.cross_section}SQ
+                                </span>
+                              )}
+                            </div>
+                          ))}
                       </div>
                     </div>
                   )}
 
-                  {compareData.removed_tasks.length > 0 && (
+                  {compareMode.diffResponse.removed_tasks.length > 0 && (
                     <div className="mb-4">
                       <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
-                        삭제된 배치 ({compareData.removed_tasks.length})
+                        삭제된 배치 (
+                        {compareMode.diffResponse.removed_tasks.length})
                       </h3>
                       <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
-                        {compareData.removed_tasks.slice(0, 50).map((t) => (
-                          <div
-                            key={t.task_id}
-                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
-                          >
-                            <span
-                              className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: "#DC2626" }}
-                            />
-                            <span className="font-medium">
-                              {t.sales_order_id || "-"}
-                            </span>
-                            <span className="text-gray-500">
-                              {t.process_name}
-                            </span>
-                            {t.customer_name && (
-                              <span className="text-gray-400">
-                                · {t.customer_name}
+                        {compareMode.diffResponse.removed_tasks
+                          .slice(0, 50)
+                          .map((t) => (
+                            <div
+                              key={t.task_id}
+                              className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                            >
+                              <span
+                                className="inline-block w-1.5 h-1.5 rounded-full"
+                                style={{ backgroundColor: "#DC2626" }}
+                              />
+                              <span className="font-medium">
+                                {t.sales_order_id || "-"}
                               </span>
-                            )}
-                          </div>
-                        ))}
+                              <span className="text-gray-500">
+                                {t.process_name}
+                              </span>
+                              {t.customer_name && (
+                                <span className="text-gray-400">
+                                  · {t.customer_name}
+                                </span>
+                              )}
+                            </div>
+                          ))}
                       </div>
                     </div>
                   )}
 
-                  {compareData.moved_tasks.length > 0 && (
+                  {compareMode.diffResponse.moved_tasks.length > 0 && (
                     <div className="mb-4">
                       <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
                         이동된 배치 (상위{" "}
-                        {Math.min(5, compareData.moved_tasks.length)}/
-                        {compareData.moved_tasks.length})
+                        {Math.min(
+                          5,
+                          compareMode.diffResponse.moved_tasks.length,
+                        )}
+                        /{compareMode.diffResponse.moved_tasks.length})
                       </h3>
                       <div className="max-h-56 overflow-y-auto border border-gray-200 rounded">
-                        {[...compareData.moved_tasks]
+                        {[...compareMode.diffResponse.moved_tasks]
                           .sort(
                             (a, b) =>
                               Math.abs(b.start_delta_hours ?? 0) -

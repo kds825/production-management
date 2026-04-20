@@ -19,6 +19,7 @@ import { ChainHighlightOverlay } from "./ChainHighlightOverlay";
 import { useTimelineNavigation } from "../../../shared/hooks/useTimelineNavigation";
 import type { ScheduleTask, Equipment, ViewFilterType } from "../types";
 import type { CascadePreviewResponse, PushEntry } from "../api/cascade.types";
+import { buildDiffIndex, taskStableKey } from "../utils/diffIndex";
 import {
   SIDEBAR_WIDTH,
   ROW_HEIGHT,
@@ -95,6 +96,18 @@ interface GanttRowProps {
   previewOverlay?: CascadePreviewResponse | null;
   /** Task 22 — 모달 row hover 시 설정되는 focus task id (gantt 블록 outline 연동). */
   focusedTaskId?: string | null;
+  /**
+   * Wave 3 — compareMode 상태.
+   * SchedulerView 에서 useMemo 로 1회 계산해 모든 row 에 동일 참조를 내려보낸다.
+   * null 이면 compareMode OFF → diff 렌더 경로 완전 스킵 (기존 cascade preview 동작 유지).
+   */
+  compareModeEnabled?: boolean;
+  /** Wave 3 — task_id(stable key) → DiffIndexEntry 맵. compareMode OFF 시 null. */
+  diffByKey?: Map<string, import("../utils/diffIndex").DiffIndexEntry> | null;
+  /** Wave 3 — pills 필터 상태. compareMode OFF 시 undefined 허용. */
+  diffFilters?: { added: boolean; moved: boolean; removed: boolean };
+  /** Wave 3 — 현재 run 에서 삭제된 tasks (이 row 의 equipment 에 해당하는 것만 렌더). */
+  removedTasks?: import("../types/diff").RunCompareAddedOrRemovedTask[];
 }
 
 /**
@@ -117,6 +130,10 @@ const GanttRow = memo(function GanttRow({
   activeDragMaterial,
   previewOverlay,
   focusedTaskId,
+  compareModeEnabled,
+  diffByKey,
+  diffFilters,
+  removedTasks,
 }: GanttRowProps) {
   // 이 행이 드래그 그룹과 호환되는지 판단 (SQ 범위 + 재질 제한 포함)
   const isIncompatible = activeDragGroup
@@ -405,6 +422,50 @@ const GanttRow = memo(function GanttRow({
           const proposal = getProposalFor(String(task.id), previewOverlay);
           const isFocused = focusedTaskId === String(task.id);
           const lane = laneMap[String(task.id)] ?? 0;
+
+          // Wave 3 — compareMode 에서 diff 인덱스 조회.
+          // ScheduleTask 필드와 백엔드 stable key 규약 매핑:
+          //   - sales_order_id ← task.order_id
+          //   - sales_order_line ← null (프론트 ScheduleTask 에 없음 — 백엔드가 0 fallback)
+          //   - process_name ← task.product (프론트는 product 에 공정명 노출)
+          //   - batch_seq ← null (백엔드가 0 fallback)
+          //   - batch_group/batch_id 는 fallback 식별자
+          const diffEntry =
+            compareModeEnabled && diffByKey
+              ? diffByKey.get(
+                  taskStableKey({
+                    sales_order_id: task.order_id,
+                    sales_order_line: null,
+                    process_name: task.product,
+                    batch_seq: null,
+                    batch_group: task.batch_group,
+                    batch_id: task.batch_id,
+                  }),
+                )
+              : undefined;
+
+          // 현재 위치 블록의 outline kind — added/moved 만 outline 렌더, removed 는 현재 run 에 없으므로 제외.
+          const diffOverlay: "added" | "moved" | undefined =
+            diffEntry?.kind === "added"
+              ? "added"
+              : diffEntry?.kind === "moved"
+                ? "moved"
+                : undefined;
+          // unchanged 블록 (compareMode ON + diff 매칭 없음) 은 dim 으로 맥락만 유지.
+          const dimmed = Boolean(compareModeEnabled) && !diffEntry;
+
+          // 필터 pills 에 따른 overlay 가시성.
+          //   - 현재 위치 블록은 unchanged(매칭 없음) 일 때 항상 렌더(dimmed)
+          //   - added/moved 는 해당 필터 ON 일 때만 overlay 표시
+          const showDiffOverlay =
+            !compareModeEnabled ||
+            (diffOverlay === "added" && diffFilters?.added) ||
+            (diffOverlay === "moved" && diffFilters?.moved) ||
+            !diffOverlay;
+
+          // compareMode.enabled 일 때는 cascade preview ghost 비활성 (상호배타).
+          const showProposalGhost = !compareModeEnabled && proposal;
+
           return (
             <Fragment key={task.id}>
               <GanttTaskBlock
@@ -415,8 +476,49 @@ const GanttRow = memo(function GanttRow({
                 lane={lane}
                 laneHeight={LANE_HEIGHT}
                 focused={isFocused}
+                diffOverlay={
+                  compareModeEnabled && showDiffOverlay
+                    ? diffOverlay
+                    : undefined
+                }
+                diffDeltaHours={
+                  diffEntry?.kind === "moved"
+                    ? diffEntry.start_delta_hours
+                    : undefined
+                }
+                diffEquipmentChanged={
+                  diffEntry?.kind === "moved"
+                    ? diffEntry.equipment_changed
+                    : undefined
+                }
+                dimmed={dimmed}
               />
-              {proposal && (
+              {/* moved 의 과거 위치 ghost — moved 필터 ON 이고 old_start/old_end 파싱 성공했을 때만 */}
+              {compareModeEnabled &&
+                diffFilters?.moved &&
+                diffEntry?.kind === "moved" &&
+                diffEntry.old_start &&
+                diffEntry.old_end && (
+                  <GanttTaskBlock
+                    task={{
+                      ...task,
+                      id: `${task.id}-past-ghost`,
+                      start: diffEntry.old_start,
+                      end: diffEntry.old_end,
+                      equipment_id:
+                        diffEntry.old_equipment || task.equipment_id,
+                    }}
+                    rangeStart={rangeStart}
+                    dayWidth={dayWidth}
+                    weekendWidth={weekendWidth}
+                    lane={lane}
+                    laneHeight={LANE_HEIGHT}
+                    ghost
+                    ghostReason="diff_moved_past"
+                  />
+                )}
+              {/* 기존 cascade proposal ghost — compareMode OFF 일 때만 렌더 (상호배타) */}
+              {showProposalGhost && proposal && (
                 <GanttTaskBlock
                   task={{
                     ...task,
@@ -434,6 +536,64 @@ const GanttRow = memo(function GanttRow({
             </Fragment>
           );
         })}
+
+        {/* Wave 3 — Removed tasks ghost.
+            이 row 의 equipment 에 속하고 start/end 가 파싱 가능한 항목만 렌더.
+            합성된 ScheduleTask 는 실제 tasks 배열에는 없으므로 lane=0 고정. */}
+        {compareModeEnabled &&
+          diffFilters?.removed &&
+          removedTasks &&
+          removedTasks
+            .filter(
+              (r) =>
+                r.equipment === equipment.id &&
+                r.start != null &&
+                r.end != null,
+            )
+            .map((r) => {
+              const synthStart = new Date(r.start!);
+              const synthEnd = new Date(r.end!);
+              // fail-fast: 잘못된 ISO 는 렌더 skip (NaN x좌표 방지).
+              if (
+                Number.isNaN(synthStart.getTime()) ||
+                Number.isNaN(synthEnd.getTime())
+              ) {
+                return null;
+              }
+              const synthesizedTask: ScheduleTask = {
+                id: `removed-${r.task_id}`,
+                order_id: r.sales_order_id || "",
+                equipment_id: r.equipment || "",
+                product: r.process_name || "",
+                spec: "",
+                core_count: 1,
+                color: "#9CA3AF",
+                start: synthStart,
+                end: synthEnd,
+                volume_m: 0,
+                line_speed_m_per_min: 0,
+                priority: "normal",
+                status: "removed",
+                predecessors: [],
+                notes: "",
+                changeover_min: 0,
+                batch_group: r.batch_group || undefined,
+                customer: r.customer_name || undefined,
+              };
+              return (
+                <GanttTaskBlock
+                  key={synthesizedTask.id}
+                  task={synthesizedTask}
+                  rangeStart={rangeStart}
+                  dayWidth={dayWidth}
+                  weekendWidth={weekendWidth}
+                  lane={0}
+                  laneHeight={LANE_HEIGHT}
+                  ghost
+                  ghostReason="diff_removed"
+                />
+              );
+            })}
       </div>
     </div>
   );
@@ -932,6 +1092,13 @@ export function SchedulerView({
   const zoomLevel = useScheduleStore((s) => s.zoomLevel);
   const dayWidthScale = useScheduleStore((s) => s.dayWidthScale);
   const range = useScheduleStore((s) => s.range);
+  // Wave 3 — compareMode 상태 구독.
+  // diffByKey 는 diffResponse 가 바뀔 때만 재계산 (메모이제이션 포인트).
+  const compareMode = useScheduleStore((s) => s.compareMode);
+  const diffByKey = useMemo(
+    () => buildDiffIndex(compareMode.diffResponse ?? null),
+    [compareMode.diffResponse],
+  );
 
   // 필터 적용
   const filteredEquipment = useFilteredEquipment(
@@ -1198,6 +1365,14 @@ export function SchedulerView({
                   activeDragMaterial={activeDragMaterial}
                   previewOverlay={previewOverlay}
                   focusedTaskId={focusedTaskId}
+                  compareModeEnabled={compareMode.enabled}
+                  diffByKey={compareMode.enabled ? diffByKey : null}
+                  diffFilters={compareMode.filters}
+                  removedTasks={
+                    compareMode.enabled
+                      ? (compareMode.diffResponse?.removed_tasks ?? [])
+                      : []
+                  }
                 />
               ))}
 
