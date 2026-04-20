@@ -385,20 +385,43 @@ def _try_preempt_for_urgent(
 
 
 def _datetime_to_wmin(dt: datetime, base_date: datetime) -> int:
-    """datetime 을 CP-SAT 내부 단위(근무 분 offset) 로 변환.
+    """datetime 을 CP-SAT 내부 working-minutes 축(하루 840분, 08:00~22:00) 으로 변환.
 
-    Why: CP-SAT 은 하루 840 근무 분(_WORK_MIN_PER_DAY) 모델을 쓰지만, base_date
-    이전 datetime(과거 실측 start/end)을 넘길 경우 음수가 되면 모델 제약이
-    INFEASIBLE 을 유발한다. 방어적으로 max(0, ...) 로 clamp 한다. 근사라도
-    freeze 가 "멀리 과거" 임을 솔버가 알면 충돌을 일으키지 않는다.
+    Why (C1 fix): CP-SAT 모델의 시간축은 **working-minutes** 로, 하루 840 분
+    (_WORK_MIN_PER_DAY, 08:00~22:00) 만 카운트하고 야간/주말은 제외한다.
+    `_due_work_min` 은 날짜 단위(wd * _WORK_MIN_PER_DAY) 만 처리하므로 시각/분
+    해상도가 없다. frozen task 의 start_datetime / end_datetime 은 hour/minute
+    까지 포함한 datetime 이라 정확한 변환을 위해 **시각부 분 offset** 까지
+    계산해야 frozen 위치가 솔버 축에서 올바른 지점에 박힌다.
 
-    매 분 정밀하게 근무시간만 세는 방식(역산)은 불필요 — freeze 구간은 실제
-    배치 단계에서 timeline 으로 pre-load 되어 겹침 방지는 그쪽이 담당하고,
-    CP-SAT 시간축은 '순서 결정' 용도이므로 절대 분 offset 으로 충분.
+    과거 구현은 `(dt - base_date).total_seconds() // 60` 로 wall-clock delta 를
+    반환해 시간축이 어긋났고, 솔버가 frozen 위치를 "눈에 보이는 것보다 훨씬 뒤"
+    로 인식해 INFEASIBLE 또는 비합리적 배치 이동을 야기했다.
+
+    변환 규칙:
+      - dt < base_date: 0 반환 (이미 지난 시각. `_ALWAYS_FROZEN_STATUSES` 경로에서
+        completed 로 판정되어 모델에서 제외되어야 정상; 방어적으로 clamp).
+      - dt ≥ base_date: 날짜부(working days) × 840 + 시각부(08:00 기준 분 offset).
+      - 시각부가 [08:00, 22:00) 밖이면 경계로 clamp:
+          · dt.hour < 8 → 그날 시작점 (0)
+          · dt.hour ≥ 22 → 그날 끝 (840)
+
+    가정:
+      - tz naive (KST) — 기존 코드 전반의 패턴.
+      - within-day offset 은 08:00 기준 선형 offset 으로만 계산하고 휴식
+        (점심/저녁/간식) 은 무시한다. CP-SAT 축은 순서 결정용으로 충분하며
+        실제 배치는 calendar_engine 이 휴식을 반영한다.
     """
-    delta = dt - base_date
-    total_min = int(delta.total_seconds() // 60)
-    return max(0, total_min)
+    if dt < base_date:
+        return 0
+    day_off = _work_days_between(base_date.date(), dt.date()) * _WORK_MIN_PER_DAY
+    if dt.hour < 8:
+        time_off = 0
+    elif dt.hour >= 22:
+        time_off = _WORK_MIN_PER_DAY
+    else:
+        time_off = (dt.hour - 8) * 60 + dt.minute
+    return day_off + time_off
 
 
 def cp_sat_schedule(

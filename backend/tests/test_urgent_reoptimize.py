@@ -333,13 +333,239 @@ def test_build_snapshot_shape(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# C1 Regression: _datetime_to_wmin 시간축 정합성 (CRITICAL fix)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: CP-SAT 모델의 시간축은 _WORK_MIN_PER_DAY(=840 분, 08:00~22:00) 기반
+# **working-minutes** 이다. `_due_work_min` 등 다른 변수들은 working-minute 축
+# 으로 계산되지만, 과거 `_datetime_to_wmin` 은 wall-clock delta 를 반환해
+# (`(dt - base_date).total_seconds() // 60`) frozen 배치의 start 가 솔버 인식
+# 위치와 실제 위치가 어긋났다. 결과: INFEASIBLE 또는 non-frozen 배치가 엉뚱한
+# 곳으로 이동. 본 테스트는 변환 함수 자체의 축 정합성을 단위로 가드한다.
+
+
+def test_datetime_to_wmin_same_day_within_working_hours() -> None:
+    """base_date 와 같은 날 08:00 ~ 22:00 구간은 그대로 분 offset.
+
+    base_date = 2026-04-20 08:00 (월), dt = 2026-04-20 14:00 (월)
+    → working-min offset = 6h * 60 = 360 (working-hour 기준).
+    wall-clock 과 결과가 같은 케이스(하루 안, 근무시간 안) — 회귀 없음 확인.
+    """
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _datetime_to_wmin
+
+    base = datetime(2026, 4, 20, 8, 0, 0)
+    dt = datetime(2026, 4, 20, 14, 0, 0)
+    assert _datetime_to_wmin(dt, base) == 360
+
+
+def test_datetime_to_wmin_next_working_day_axis_alignment() -> None:
+    """C1 핵심: 하루 뒤 08:00 은 정확히 _WORK_MIN_PER_DAY(840 분) offset.
+
+    버그가 있는 구현(wall-clock delta)에서는 24h=1440 분을 반환해 축이 어긋난다.
+    올바른 구현(working-min)은 정확히 840. 이 차이가 frozen 배치의 start 를
+    솔버가 "약 600분 뒤" 로 오해하게 만든 근본 원인.
+    """
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import (
+        _WORK_MIN_PER_DAY,
+        _datetime_to_wmin,
+    )
+
+    base = datetime(2026, 4, 20, 8, 0, 0)  # Mon 08:00
+    dt = datetime(2026, 4, 21, 8, 0, 0)  # Tue 08:00 (하루 working-day 경과)
+
+    # C1 fix: 정확히 1 working-day = 840 분 (wall-clock 1440 아님)
+    assert _datetime_to_wmin(dt, base) == _WORK_MIN_PER_DAY
+
+
+def test_datetime_to_wmin_weekend_skipped() -> None:
+    """주말은 working-day 카운트에서 제외 → axis consistency.
+
+    base=금요일 08:00, dt=월요일 08:00 → working-days between = 1 (Fri 만)
+    → 1 * 840 = 840 분. wall-clock 으로는 72h=4320 분.
+    `_due_work_min` 과 동일한 `_work_days_between` 축을 쓰는지 확인.
+    """
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import (
+        _WORK_MIN_PER_DAY,
+        _datetime_to_wmin,
+    )
+
+    base = datetime(2026, 4, 17, 8, 0, 0)  # Friday
+    dt = datetime(2026, 4, 20, 8, 0, 0)  # Monday (skip Sat/Sun)
+
+    # Fri(working-day 1) + Sat/Sun(0) = 1 working-day from base
+    assert _datetime_to_wmin(dt, base) == _WORK_MIN_PER_DAY
+
+
+def test_datetime_to_wmin_past_returns_zero() -> None:
+    """dt < base_date → 0 반환 (과거는 모델 밖).
+
+    frozen 배치가 base_date 이전에 시작한 경우(in_progress 는 이미 시작됨),
+    솔버 horizon 바깥이므로 0 으로 clamp 해 INFEASIBLE 방지.
+    """
+    from datetime import datetime, timedelta
+
+    from app.services.cp_sat_optimizer import _datetime_to_wmin
+
+    base = datetime(2026, 4, 20, 8, 0, 0)
+    past = base - timedelta(hours=3)
+    assert _datetime_to_wmin(past, base) == 0
+
+
+def test_datetime_to_wmin_consistent_with_due_work_min() -> None:
+    """_due_work_min 과 _datetime_to_wmin 이 동일 축을 쓰는지 확인 (C1 핵심).
+
+    같은 날짜에 대해 _due_work_min(날짜) == _datetime_to_wmin(날짜 08:00).
+    이 일치가 깨지면 frozen start 와 due_wmin 이 다른 축 위에 놓여 솔버가
+    "frozen 은 미래 / due 는 훨씬 먼 미래" 로 오해해 non-frozen 그룹을 엉뚱한
+    곳에 배치하게 된다.
+    """
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import (
+        _datetime_to_wmin,
+        _due_work_min,
+    )
+
+    base = datetime(2026, 4, 20, 8, 0, 0)
+    # 3 working-days 뒤 (Mon → Thu)
+    due_date_target = datetime(2026, 4, 23, 8, 0, 0)
+
+    due_wmin = _due_work_min(due_date_target.date(), base)
+    frozen_wmin = _datetime_to_wmin(due_date_target, base)
+
+    # 두 함수가 같은 순간(target day 08:00)을 같은 값으로 인식해야 한다.
+    # wall-clock 구현이면 frozen_wmin=4320, due_wmin=2520 으로 다름 → 축 어긋남.
+    assert due_wmin == frozen_wmin, (
+        f"C1 axis mismatch: _due_work_min={due_wmin} vs _datetime_to_wmin="
+        f"{frozen_wmin} — frozen 배치의 start 가 due 축과 다른 축에 박히면 "
+        f"솔버가 위치를 잘못 인식한다."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fixture regression: frozen in_progress 배치의 start_datetime 보존
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_cpsat_frozen_in_progress_start_preserved(db: Session) -> None:
+    """CRITICAL: in_progress 배치의 start_datetime 이 CP-SAT 재최적화 후에도 유지.
+
+    C1 regression guard: _datetime_to_wmin 의 시간축이 어긋나면 frozen 위치가
+    실제와 다르게 박혀 이 테스트가 깨진다. 동시에 `_ALWAYS_FROZEN_STATUSES`
+    경로가 in_progress 태스크를 삭제 대상에서 제외하는지도 간접 검증.
+    """
+    from datetime import datetime, timedelta
+
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    run_label = "TEST_C1_FROZEN_20260420"
+
+    # Cleanup before — 이전 실행 잔여물 제거 (commit 없으므로 rollback 에 의존)
+    db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).delete(
+        synchronize_session=False
+    )
+    db.flush()
+
+    try:
+        # 1. in_progress 배치 seed
+        header = ProductionBatch(
+            run_label=run_label,
+            process_name="연선",
+            batch_seq=-1,
+            drum_count=3,
+            drum_length_m=7100,
+            total_length_m=21300,
+            sq_mm2=120,
+            core_count=1,
+            equipment_code="ST-54BO1",
+            due_date=datetime.now().date() + timedelta(days=10),
+            customer_priority=5,
+            line_speed_mpm=11.7,
+            setup_time_min=210,
+            estimated_duration_min=2200,
+            status="in_progress",  # frozen 대상
+            batch_group=f"ST-120-FROZEN-{run_label}",
+        )
+        db.add(header)
+        db.flush()
+
+        # 2. ScheduleTask seed — 현재 진행 중 (start 는 "지금 기준 과거")
+        original_start = datetime.now().replace(
+            hour=10, minute=0, second=0, microsecond=0
+        ) - timedelta(days=1)
+        original_end = original_start + timedelta(hours=5)
+        task = ScheduleTask(
+            batch_id=header.batch_id,
+            equipment_code="ST-54BO1",
+            start_datetime=original_start,
+            end_datetime=original_end,
+            status="in_progress",
+            run_label=run_label,
+            batch_group=header.batch_group,
+        )
+        db.add(task)
+        db.flush()
+        original_task_id = task.task_id
+
+        # 3. CP-SAT 재최적화 호출 (빈 affected_group_keys — frozen 만 있고 재배치 대상 없음)
+        result = reschedule_affected_groups(run_label, db, set(), use_cpsat=True)
+
+        # 시그니처 / shape 검증
+        assert isinstance(result, dict)
+        assert {"total_tasks", "violations", "warnings"}.issubset(result.keys())
+
+        # 4. in_progress ScheduleTask 가 손상되지 않았는지 확인
+        db.flush()
+        retasks = (
+            db.query(ScheduleTask)
+            .filter(
+                ScheduleTask.run_label == run_label,
+                ScheduleTask.status == "in_progress",
+            )
+            .all()
+        )
+        assert len(retasks) == 1, (
+            f"in_progress task 갯수가 바뀜: 기대 1, 실제 {len(retasks)} "
+            f"— frozen 보호 경로 깨짐"
+        )
+        retask = retasks[0]
+        assert retask.task_id == original_task_id, (
+            "in_progress task 가 삭제 후 재생성됨 — frozen 보호 경로 위반"
+        )
+        assert retask.start_datetime == original_start, (
+            f"C1 regression: in_progress start moved "
+            f"{original_start} → {retask.start_datetime}"
+        )
+        assert retask.equipment_code == "ST-54BO1", (
+            "in_progress 설비가 변경됨 — frozen 보호 경로 위반"
+        )
+    finally:
+        # cleanup (rollback 대비 — use_cpsat 경로에 flush 가 포함되나 commit 은 테스트 외부)
+        db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).delete(
+            synchronize_session=False
+        )
+        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).delete(
+            synchronize_session=False
+        )
+        db.flush()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # 실제 배치를 seed 해 CP-SAT 재최적화 품질을 검증하는 테스트는 P4 에서 추가한다:
 #
-# - test_urgent_preserves_frozen_tasks: in_progress/completed/wip_complete 태스크는
-#   start_datetime 이 절대 변하지 않는다.
 # - test_urgent_reoptimize_beats_greedy_on_tardiness: 동일 fixture 에서 CP-SAT
 #   결과의 sum(tardiness) 가 greedy 결과보다 작거나 같다.
 # - test_urgent_color_chain_hard_constraint: 시스 클러스터 인접 쌍의 색상 순서가
