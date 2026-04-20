@@ -110,6 +110,22 @@ _TARDINESS_WEIGHT = {
 _CHAIN_WEIGHT = 120
 _IDLE_WEIGHT = 1
 
+# On-time 그룹 간 "납기 임박도" 에 가산점을 주는 slack 가중치 base.
+# Why: tardiness_hard=True 에서 on-time 그룹은 `e ≤ due` hard constraint 만 걸리고
+# soft 항은 0 → 슬랙 3일 vs 13일이 objective 에서 동등 취급됨. 결과: 같은 설비에
+# 후보로 올라온 납기 여유 그룹이 납기 임박 그룹보다 앞에 놓이는 현상. EDD pair
+# tie-breaker (weight=1/pair) 만으론 `_IDLE_WEIGHT=1/min`, `_CHAIN_WEIGHT=120`,
+# `_TRANSITION_WEIGHT=180` 등 다른 항에 의해 압도될 수 있음.
+#
+# 해결: 각 on-time 그룹에 `weight × (end - base) / _WORK_MIN_PER_DAY` 항 추가.
+# `weight = _SLACK_WEIGHT_BASE // slack_min` → 납기 임박할수록 큰 가중치.
+#   - slack 1근무일(1440min) → w ≈ 69
+#   - slack 10근무일(14400min) → w ≈ 7
+#   → 약 10배 차등. idle_weight(1) 압도, past-due tardiness(1e5/min) 에는 열세.
+# base 를 뺀 형태로 항 scale 을 (end - now) ≈ 0 ~ horizon 에 제한 (end 자체가
+# 0~_MAX_HORIZON_MIN 라 절대값이 과대해지는 것 방지).
+_SLACK_WEIGHT_BASE = 100_000
+
 # Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
 # 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
 # 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
@@ -1557,6 +1573,39 @@ def cp_sat_schedule(
     _sheath_end_terms = [end_vars[_g] for _g in _sheath_gks_all]
     if _sheath_end_terms:
         _objective = _objective + sum(_sheath_end_terms)
+
+    # 6-g-slack. On-time 그룹 slack-weighted completion — 납기 임박 우선 정렬.
+    #
+    # Why: 기존 on-time 그룹은 `e ≤ due_wmin` hard constraint 만 걸리고 objective
+    # 항이 없어 슬랙 차이가 무시됨 → "납기 여유 있는 그룹이 납기 임박 그룹보다
+    # 앞에 배치" 현상 (KBI PoC 관찰: 300SQ 납기 4/30 이 150SQ 납기 4/17 보다
+    # 먼저 같은 설비에 배치). EDD pair tie-breaker (weight=1/pair) 만으론 idle /
+    # chain / transition 항에 밀려 역전 발생 가능.
+    #
+    # 구현: on-time 그룹 각각에 `w × end` 항 추가. w 는 슬랙에 반비례 → 임박한
+    # 그룹일수록 end 를 작게 하려는 힘 강함. 연선/절연/시스 등 모든 후속 공정에
+    # 일괄 적용 (요구사항: "연선 뿐만 아니라 절연 등 후속공정에도 모두").
+    #
+    # 필터:
+    #   - no-due (`due_wmin == _MAX_HORIZON_MIN`): 납기 없는 그룹은 skip.
+    #   - past-due (`due_wmin < 0`): 기존 `_TARDINESS_WEIGHT × tardiness_vars` 가
+    #     담당 — 중복 부과 방지.
+    #
+    # 가중치 스케일:
+    #   `_IDLE_WEIGHT=1` < slack_w (수~수백/min) < `_TARDINESS_WEIGHT=1e5/min`.
+    #   past-due penalty 를 이기지 못해 안전, idle_terms 와 경쟁 가능.
+    _slack_terms: list = []
+    for _gk, _meta in group_meta.items():
+        _due = _meta["due_wmin"]
+        if _due == _MAX_HORIZON_MIN:
+            continue
+        if _due < 0:
+            continue
+        _slack_min = max(1, int(_due))
+        _w = max(1, _SLACK_WEIGHT_BASE // _slack_min)
+        _slack_terms.append(_w * end_vars[_gk])
+    if _slack_terms:
+        _objective = _objective + sum(_slack_terms)
 
     # 6-h. EDD 전역 tie-breaker — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
     # 납기 빠른 쪽이 뒤에 시작하면 +1 penalty.
