@@ -2198,6 +2198,31 @@ def _reschedule_affected_groups_cpsat(
             # 이 batch 도 이동 금지 → frozen_batch_ids 에 포함시켜 task 삭제/리셋 대상에서 제외
             frozen_batch_ids.add(t.batch_id)
 
+    # ── 2.5. 웜스타트 스냅샷 캡처 (P4-4) ──────────────────────────────────────
+    #   삭제 직전의 비-frozen 태스크 위치를 기록해 CP-SAT 에 힌트로 주입한다.
+    #   ERP 재업로드 시나리오: 신규 스냅샷의 80~95% batch_group 이 이전과 동일
+    #   → 힌트 재사용으로 feasibility warm-up 단계 생략 → 2.5~5× speedup 기대.
+    #   frozen 그룹은 이미 hard-pin 되므로 힌트 redundant — 스킵.
+    #   add_hint() 는 silent-fail 이라 batch_group 이 신규 모델에 없어도 안전.
+    from app.services.cp_sat_optimizer import _datetime_to_wmin
+
+    warm_start_hints: dict[str, dict] = {}
+    for t in existing_tasks:
+        bg = _batch_group_by_id.get(t.batch_id)
+        if not bg:
+            continue
+        if t.batch_id in frozen_batch_ids:
+            continue  # frozen 은 frozen_group_keys 로 hard-pin
+        if t.start_datetime is None or t.equipment_code is None:
+            continue
+        # 같은 batch_group 에 대해 첫 등장만 사용 (같은 그룹 다중 batch 가능).
+        if bg in warm_start_hints:
+            continue
+        warm_start_hints[bg] = {
+            "start_wmin": _datetime_to_wmin(t.start_datetime, base_date),
+            "equipment_code": t.equipment_code,
+        }
+
     # ── 3. 비-frozen ScheduleTask 삭제 + 비-frozen 배치 status 'planned' 리셋 ─
     #   CP-SAT 는 status=='planned' 배치만 재스케줄한다. 이 리셋 없이 호출하면
     #   scheduled 그대로 남은 배치는 "pre-load timeline" 블록 역할만 하고 재배치
@@ -2231,6 +2256,8 @@ def _reschedule_affected_groups_cpsat(
 
     # ── 4. CP-SAT Level 1: tardiness_hard=True, sheath_color_hard=True ──────
     # P9-B: 납기/색상 모두 엄격. 가장 strict 한 설정 — 해가 있으면 무조건 납기 지킴.
+    # P4-4: warm_start_hints 로 이전 스케줄 위치 주입 — Level 1 에만. L2/L3 는
+    # infeasible 에서의 완화 재시도라 힌트가 같은 해로 수렴시킬 위험.
     cp_result = cp_sat_schedule(
         run_label,
         db,
@@ -2238,6 +2265,7 @@ def _reschedule_affected_groups_cpsat(
         frozen_group_keys=hard_frozen_keys or None,
         sheath_color_hard=True,
         tardiness_hard=True,
+        warm_start_hints=warm_start_hints or None,
     )
     first_status = cp_result.get("solver_status")
     first_objective = cp_result.get("objective_value")
