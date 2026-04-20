@@ -4,6 +4,17 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { BatchSplitReview } from "@/features/plan-register/components/BatchSplitReview";
+import type {
+  ScheduleDiffResponse,
+  ScheduleDiffEntry,
+} from "@/features/scheduler/types/diff";
+import {
+  ArrowsRightLeftIcon,
+  PlusCircleIcon,
+  MinusCircleIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+} from "@heroicons/react/24/outline";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
 const PRIMARY = "#C41230";
@@ -83,6 +94,13 @@ interface Stage1Result {
   created_batch_groups?: number;
   preserved_batches?: number;
   auto_split_count?: number;
+  // P6 긴급수주 diff — /stage1/update 응답에만 포함 (전체 교체 모드에선 null)
+  // change_set_id가 있으면 /schedules/change-sets/{id}/diff 로 diff 조회 가능
+  change_set_id?: string | null;
+  // snapshot_persisted=false 이면 이 변경은 자동 롤백 불가 (사용자 경고 필수)
+  snapshot_persisted?: boolean;
+  snapshot_count_before?: number;
+  snapshot_count_after?: number;
 }
 
 type UploadMode = "full" | "incremental";
@@ -97,6 +115,267 @@ interface BatchStatusSummary {
   frozen_count: number;
   frozen_wip_count: number;
   available_wip_count: number;
+}
+
+/**
+ * Diff 요약 패널 — 긴급수주 반영(/stage1/update) 직후 change_set_id 로 조회한
+ * 변경 전/후 비교를 **최소 요약** 형태로 보여준다.
+ *
+ * 배치 위치: ErpUploadSection 의 Stage1 result 패널 맨 위 (사용자가 반영 직후 즉시 보는 위치).
+ *
+ * 디자인 원칙:
+ *  - KBI 프로젝트 토큰 (var(--color-*)) 만 사용, raw hex 하드코딩 금지.
+ *  - heroicons 라인 아이콘 사용 (이모지 금지).
+ *  - 카드/뱃지/리스트는 samildevkit 패턴을 직접 구현 (패키지 import 없음).
+ *  - moved(주황)=변경, added(초록)=신규, removed(빨강)=제거, unchanged(회색)=유지
+ *
+ * MVP 범위:
+ *  - 4-카운트 요약 카드
+ *  - start_delta_hours 절대값 기준 top 5 moved_tasks 리스트
+ *  - snapshot_persisted=false 경고 배너
+ */
+function DiffSummaryPanel({
+  diff,
+  snapshotPersisted,
+}: {
+  diff: ScheduleDiffResponse;
+  snapshotPersisted?: boolean;
+}) {
+  // start_delta_hours 절대값 기준 top 5 추출.
+  // null/undefined delta는 0으로 처리해 하단 배치.
+  const topMoved: ScheduleDiffEntry[] = [...diff.moved_tasks]
+    .sort((a, b) => {
+      const aAbs = Math.abs(a.start_delta_hours ?? 0);
+      const bAbs = Math.abs(b.start_delta_hours ?? 0);
+      return bAbs - aAbs;
+    })
+    .slice(0, 5);
+
+  const { moved, added, removed, unchanged, total_before, total_after } =
+    diff.summary;
+
+  // KBI 프로젝트 색상 토큰 (CSS 변수 우선, 접근성을 위한 bg/text 쌍)
+  const counts: Array<{
+    key: string;
+    label: string;
+    value: number;
+    Icon: typeof ArrowsRightLeftIcon;
+    bg: string;
+    fg: string;
+    border: string;
+  }> = [
+    {
+      key: "moved",
+      label: "이동",
+      value: moved,
+      Icon: ArrowsRightLeftIcon,
+      bg: "#FEF3C7", // warning-subtle (주황/노랑 계열 — 일정 이동)
+      fg: "var(--color-warning)",
+      border: "#FDE68A",
+    },
+    {
+      key: "added",
+      label: "추가",
+      value: added,
+      Icon: PlusCircleIcon,
+      bg: "#D1FAE5", // success-subtle
+      fg: "var(--color-success)",
+      border: "#A7F3D0",
+    },
+    {
+      key: "removed",
+      label: "제거",
+      value: removed,
+      Icon: MinusCircleIcon,
+      bg: "#FEE2E2", // danger-subtle
+      fg: "var(--color-danger)",
+      border: "#FECACA",
+    },
+    {
+      key: "unchanged",
+      label: "유지",
+      value: unchanged,
+      Icon: CheckCircleIcon,
+      bg: "var(--color-bg-muted)",
+      fg: "var(--color-text-secondary)",
+      border: "var(--color-border-default)",
+    },
+  ];
+
+  return (
+    <div
+      className="rounded-lg p-4"
+      style={{
+        border: "1px solid var(--color-border-default)",
+        backgroundColor: "var(--color-bg-elevated)",
+      }}
+    >
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p
+            className="text-sm font-semibold"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            긴급수주 반영 결과
+          </p>
+          <p
+            className="text-[11px] mt-0.5"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            스케줄 변경 요약 · 총 {total_before} → {total_after} 건
+          </p>
+        </div>
+        <span
+          className="font-mono text-[10px] px-2 py-0.5 rounded"
+          style={{
+            backgroundColor: "var(--color-bg-muted)",
+            color: "var(--color-text-tertiary)",
+          }}
+          title={diff.change_set_id}
+        >
+          {diff.change_set_id.slice(0, 8)}
+        </span>
+      </div>
+
+      {/* 스냅샷 미저장 경고 배너 */}
+      {snapshotPersisted === false && (
+        <div
+          className="flex items-start gap-2 rounded-md p-2.5 mb-3 text-xs"
+          style={{
+            backgroundColor: "#FEF2F2",
+            border: "1px solid #FECACA",
+            color: "#991B1B",
+          }}
+        >
+          <ExclamationTriangleIcon
+            className="shrink-0 mt-0.5"
+            width={16}
+            height={16}
+          />
+          <div>
+            <span className="font-semibold">스냅샷 저장 실패 — </span>이 변경은
+            자동 롤백이 불가능합니다. 결과 검토 후 수동 복구가 필요합니다.
+          </div>
+        </div>
+      )}
+
+      {/* 4-count summary grid */}
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        {counts.map(({ key, label, value, Icon, bg, fg, border }) => (
+          <div
+            key={key}
+            className="rounded-md px-3 py-2 flex flex-col gap-1"
+            style={{ backgroundColor: bg, border: `1px solid ${border}` }}
+          >
+            <div className="flex items-center gap-1.5">
+              <Icon width={12} height={12} style={{ color: fg }} />
+              <span
+                className="text-[10px] font-medium uppercase"
+                style={{ color: fg }}
+              >
+                {label}
+              </span>
+            </div>
+            <span
+              className="text-lg font-semibold tabular-nums leading-none"
+              style={{ color: fg }}
+            >
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* top 5 moved tasks */}
+      {topMoved.length > 0 && (
+        <div>
+          <p
+            className="text-xs font-semibold mb-2"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            시간 변경 Top {topMoved.length}
+          </p>
+          <div
+            className="rounded-md overflow-hidden"
+            style={{ border: "1px solid var(--color-border-default)" }}
+          >
+            {/* header row */}
+            <div
+              className="grid grid-cols-12 gap-2 px-3 py-1.5 text-[10px] font-medium uppercase"
+              style={{
+                backgroundColor: "var(--color-bg-muted)",
+                color: "var(--color-text-tertiary)",
+              }}
+            >
+              <span className="col-span-3">Task ID</span>
+              <span className="col-span-3">배치그룹</span>
+              <span className="col-span-2">공정</span>
+              <span className="col-span-2">색상</span>
+              <span className="col-span-2 text-right">Δ 시간</span>
+            </div>
+            {/* data rows */}
+            {topMoved.map((row) => {
+              const delta = row.start_delta_hours ?? 0;
+              const deltaDisplay =
+                delta === 0
+                  ? "0h"
+                  : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}h`;
+              // 양수(뒤로 밀림)=warning, 음수(앞당겨짐)=success
+              const deltaColor =
+                delta > 0
+                  ? "var(--color-warning)"
+                  : delta < 0
+                    ? "var(--color-success)"
+                    : "var(--color-text-tertiary)";
+              return (
+                <div
+                  key={row.task_id}
+                  className="grid grid-cols-12 gap-2 px-3 py-1.5 text-xs border-t"
+                  style={{
+                    borderColor: "var(--color-border-muted)",
+                    color: "var(--color-text-primary)",
+                  }}
+                >
+                  <span
+                    className="col-span-3 font-mono truncate"
+                    title={row.task_id}
+                  >
+                    {row.task_id}
+                  </span>
+                  <span
+                    className="col-span-3 truncate"
+                    style={{ color: "var(--color-text-secondary)" }}
+                    title={row.batch_group ?? ""}
+                  >
+                    {row.batch_group ?? "—"}
+                  </span>
+                  <span
+                    className="col-span-2 truncate"
+                    style={{ color: "var(--color-text-secondary)" }}
+                  >
+                    {row.process_name ?? "—"}
+                  </span>
+                  <span
+                    className="col-span-2 truncate"
+                    style={{ color: "var(--color-text-secondary)" }}
+                  >
+                    {row.sheath_color ?? "—"}
+                  </span>
+                  <span
+                    className="col-span-2 text-right font-mono tabular-nums font-medium"
+                    style={{ color: deltaColor }}
+                  >
+                    {deltaDisplay}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function WipUploadSection({
@@ -350,6 +629,10 @@ function ErpUploadSection({
   );
   // 성공 토스트 메시지
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  // P6 긴급수주 diff — stage1 응답의 change_set_id로 조회한 스케줄 변경 요약
+  const [diffData, setDiffData] = useState<ScheduleDiffResponse | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleUploadModeChange = useCallback(
@@ -364,6 +647,9 @@ function ErpUploadSection({
     setValidationError(null);
     setResult(null);
     setApiError(null);
+    // 새 파일 선택 시 기존 diff 상태도 초기화 (혼선 방지)
+    setDiffData(null);
+    setDiffError(null);
     if (!isValidExtension(file.name)) {
       setValidationError(".xls 또는 .xlsx 파일만 업로드 가능합니다.");
       return;
@@ -404,6 +690,8 @@ function ErpUploadSection({
     setResult(null);
     setApiError(null);
     setValidationError(null);
+    setDiffData(null);
+    setDiffError(null);
   }, []);
 
   // 에러 텍스트를 사용자 친화적 메시지로 변환
@@ -490,6 +778,33 @@ function ErpUploadSection({
             parts.push(`⚡ ${data.auto_split_count}개 자동분할`);
           if (parts.length > 0) setSuccessToast(parts.join(", "));
         }
+
+        // P6: change_set_id 가 있으면 diff 를 비동기 조회해 요약 패널에 표시.
+        // diff 조회 실패는 Stage1 성공과 독립적이므로 setApiError 를 쓰지 않고
+        // 전용 diffError 상태로 격리한다 (Stage1 결과 표시는 방해 금지).
+        if (data.change_set_id) {
+          setDiffLoading(true);
+          setDiffError(null);
+          try {
+            const diffRes = await fetch(
+              `${API}/schedules/change-sets/${data.change_set_id}/diff`,
+            );
+            if (diffRes.ok) {
+              const diffJson: ScheduleDiffResponse = await diffRes.json();
+              setDiffData(diffJson);
+            } else {
+              setDiffError(`Diff 조회 실패 (${diffRes.status})`);
+            }
+          } catch (diffErr) {
+            setDiffError(
+              diffErr instanceof Error
+                ? diffErr.message
+                : "Diff 조회 중 오류 발생",
+            );
+          } finally {
+            setDiffLoading(false);
+          }
+        }
       } catch (err) {
         setApiError(
           err instanceof Error
@@ -500,7 +815,15 @@ function ErpUploadSection({
         setIsRunning(false);
       }
     },
-    [erpFile, isRunning, splitGapDays, wipFile, uploadMode, baseDate, parseApiError],
+    [
+      erpFile,
+      isRunning,
+      splitGapDays,
+      wipFile,
+      uploadMode,
+      baseDate,
+      parseApiError,
+    ],
   );
 
   // Stage 1 실행 버튼 클릭 핸들러 — 기존 배치가 있으면 확인 모달 선표시
@@ -812,6 +1135,55 @@ function ErpUploadSection({
       {/* Stage 1 result */}
       {result && (
         <div className="mt-4 space-y-3">
+          {/* P6 긴급수주 diff 요약 — change_set_id 가 있을 때만 표시.
+              로딩/에러/완료 세 가지 상태를 인라인으로 처리. */}
+          {result.change_set_id && diffLoading && (
+            <div
+              className="rounded-lg p-3 text-xs flex items-center gap-2"
+              style={{
+                border: "1px solid var(--color-border-default)",
+                backgroundColor: "var(--color-bg-muted)",
+                color: "var(--color-text-secondary)",
+              }}
+            >
+              <svg
+                className="animate-spin"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <path
+                  d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"
+                  opacity="0.25"
+                />
+                <path d="M21 12a9 9 0 0 0-9-9" />
+              </svg>
+              스케줄 변경 비교 조회 중...
+            </div>
+          )}
+          {result.change_set_id && diffError && (
+            <div
+              className="rounded-lg p-3 text-xs"
+              style={{
+                backgroundColor: "#FEF2F2",
+                border: "1px solid #FECACA",
+                color: "#991B1B",
+              }}
+            >
+              <span className="font-semibold">Diff 조회 실패: </span>
+              {diffError}
+            </div>
+          )}
+          {diffData && (
+            <DiffSummaryPanel
+              diff={diffData}
+              snapshotPersisted={result.snapshot_persisted}
+            />
+          )}
+
           {/* Warnings */}
           {result.warnings && result.warnings.length > 0 && (
             <div
@@ -1062,7 +1434,8 @@ function ErpUploadSection({
                   },
                 ].map(({ key, label, color, frozen }) => {
                   const count =
-                    (batchSummary as unknown as Record<string, number>)[key] ?? 0;
+                    (batchSummary as unknown as Record<string, number>)[key] ??
+                    0;
                   if (count === 0) return null;
                   return (
                     <div key={key} className="flex items-center gap-2 text-xs">
