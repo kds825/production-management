@@ -18,6 +18,9 @@ class ProductionBatch(Base):
 
     batch_id = Column(Integer, primary_key=True, autoincrement=True)
     run_label = Column(String(50), nullable=False, index=True)
+    # stage1/update 가 신규 run_label 을 발급할 때 어느 run 에서 파생됐는지 기록.
+    # 버전 계보 추적과 two-run diff 비교 대상 도출에 쓰인다.
+    parent_run_label = Column(String(50), nullable=True, index=True)
     sales_order_id = Column(String(30))
     sales_order_line = Column(Integer, default=1)
     item_code = Column(String(20), ForeignKey("item_master.item_code"), nullable=True)
