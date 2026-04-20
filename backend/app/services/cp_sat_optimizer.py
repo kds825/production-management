@@ -453,6 +453,32 @@ def _drums_completable(
     return lo
 
 
+def _delete_task_safely(db: Session, task: ScheduleTask) -> int:
+    """ScheduleTask 삭제 전에 참조 FK 들을 안전하게 해제한다.
+
+    왜: 동일 트랜잭션에서
+      - `auto_assign` audit_log 가 task_id 로 이 행을 참조 (audit_log_task_id_fkey)
+      - 다른 schedule_task 의 predecessor_task_id 가 이 행을 참조 (self-FK)
+    둘 다 살아있으면 db.delete(task) 가 ForeignKeyViolation 으로 실패한다.
+    audit 이력은 run_label/batch_id 로 추적 가능하므로 task_id 만 NULL 로 끊는다.
+    predecessor 체인은 단방향 공정 순서이므로 NULL 허용 (선행 미상으로 표시).
+
+    Returns:
+        삭제된 task.task_id — 호출부에서 in-memory map(예: predecessor_map) 정리용.
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+
+    deleted_id = task.task_id
+    db.query(AuditLog).filter(AuditLog.task_id == deleted_id).update(
+        {"task_id": None}, synchronize_session=False
+    )
+    db.query(ScheduleTask).filter(
+        ScheduleTask.predecessor_task_id == deleted_id
+    ).update({"predecessor_task_id": None}, synchronize_session=False)
+    db.delete(task)
+    return deleted_id
+
+
 def _try_preempt_for_urgent(
     earliest: datetime,
     chosen_eq_code: str,
@@ -460,6 +486,7 @@ def _try_preempt_for_urgent(
     timeline: dict[str, list],
     db: Session,
     urgent_priority: int = 7,
+    predecessor_map: dict[tuple, int] | None = None,
 ) -> list[ProductionBatch]:
     """긴급 배치를 위해 chosen_eq_code의 블로킹 태스크를 선점한다.
 
@@ -525,7 +552,12 @@ def _try_preempt_for_urgent(
                 break  # 동급 이상 긴급 배치 — 밀 수 없음
 
             # 비긴급 단드럼 배치: ScheduleTask 삭제 후 재스케줄링 대상으로 반환
-            db.delete(task)
+            deleted_id = _delete_task_safely(db, task)
+            if predecessor_map is not None:
+                # 삭제된 task_id 를 가리키던 predecessor 엔트리 제거 —
+                # 이후 INSERT 가 없어진 task 를 참조해 FK 위반되는 것을 방지.
+                for _k in [k for k, v in predecessor_map.items() if v == deleted_id]:
+                    predecessor_map.pop(_k, None)
             db.flush()
 
             # timeline에서 슬롯 제거 (긴급 배치가 이 자리를 사용)
@@ -553,7 +585,10 @@ def _try_preempt_for_urgent(
             # 셋업조차 완료 불가 → 단드럼 밀어내기와 동일 처리 (비긴급인 경우)
             if blocking_priority <= urgent_priority:
                 break  # 동급 이상 긴급 → 포기
-            db.delete(task)
+            deleted_id = _delete_task_safely(db, task)
+            if predecessor_map is not None:
+                for _k in [k2 for k2, v in predecessor_map.items() if v == deleted_id]:
+                    predecessor_map.pop(_k, None)
             db.flush()
             tl = timeline[chosen_eq_code]
             tl.remove((slot_start, slot_end))
@@ -1926,6 +1961,7 @@ def cp_sat_schedule(
                     timeline=timeline,
                     db=db,
                     urgent_priority=int(rep.customer_priority or 7),
+                    predecessor_map=predecessor_map,
                 )
                 if rem_list:
                     preempted_remainder.extend(rem_list)
