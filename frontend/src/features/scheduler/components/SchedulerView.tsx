@@ -424,20 +424,21 @@ const GanttRow = memo(function GanttRow({
           const lane = laneMap[String(task.id)] ?? 0;
 
           // Wave 3 — compareMode 에서 diff 인덱스 조회.
-          // ScheduleTask 필드와 백엔드 stable key 규약 매핑:
-          //   - sales_order_id ← task.order_id
-          //   - sales_order_line ← null (프론트 ScheduleTask 에 없음 — 백엔드가 0 fallback)
-          //   - process_name ← task.product (프론트는 product 에 공정명 노출)
-          //   - batch_seq ← null (백엔드가 0 fallback)
-          //   - batch_group/batch_id 는 fallback 식별자
+          // stable key 매핑 (백엔드 /runs/compare 의 task_id 포맷과 1:1 일치 필수):
+          //   - sales_order_id ← task.order_id            (batch.sales_order_id)
+          //   - sales_order_line ← task.sales_order_line  (batch.sales_order_line)
+          //   - process_name ← task.process_name          (batch.process_name: 연선/저압절연/저압시스 …)
+          //   - batch_seq ← task.process_step             (batch.batch_seq: -1 헤더 / 0+ 개별수주)
+          // 왜 task.product 를 쓰지 않는가: product 는 제품군(예: "TFR-CV-WB") 이라 공정명과 다르다.
+          // batch_group/batch_id 는 오직 sales_order_id 가 비어있는 헤더 배치 fallback 용.
           const diffEntry =
             compareModeEnabled && diffByKey
               ? diffByKey.get(
                   taskStableKey({
                     sales_order_id: task.order_id,
-                    sales_order_line: null,
-                    process_name: task.product,
-                    batch_seq: null,
+                    sales_order_line: task.sales_order_line,
+                    process_name: task.process_name,
+                    batch_seq: task.process_step,
                     batch_group: task.batch_group,
                     batch_id: task.batch_id,
                   }),

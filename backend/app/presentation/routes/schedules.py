@@ -181,6 +181,8 @@ def _db_task_to_response(
         if batch.due_date
         else None,
         process_step=batch.batch_seq,
+        process_name=batch.process_name,
+        sales_order_line=batch.sales_order_line,
         predecessors=[f"TASK-{task.predecessor_task_id}"]
         if task.predecessor_task_id
         else [],

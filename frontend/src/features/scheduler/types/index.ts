@@ -28,6 +28,15 @@ export interface ScheduleTask {
   status: string;
   delivery_date?: Date;
   process_step?: number;
+  /**
+   * 공정명 (batch.process_name) — diff overlay 의 stable key 구성요소.
+   * "(order_id, sales_order_line, process_name, process_step)" 튜플로
+   * /api/pipeline/runs/compare 응답의 task_id 와 매칭된다.
+   * 없으면 diff 매칭 실패 → overlay 미표시 (silent fail).
+   */
+  process_name?: string;
+  /** 수주 라인 번호 (batch.sales_order_line) — 위 stable key 의 두번째 구성요소. */
+  sales_order_line?: number;
   predecessors: string[];
   notes: string;
   changeover_min: number;

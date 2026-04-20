@@ -80,6 +80,12 @@ class ScheduleTaskResponse(BaseModel):
     status: TaskStatus
     delivery_date: Optional[datetime] = None
     process_step: Optional[int] = None
+    # 공정명 (batch.process_name) — 프론트 간트 diff overlay 의 stable key 생성용.
+    # "(order_id, sales_order_line, process_name, batch_seq)" 튜플로
+    # /api/pipeline/runs/compare 응답의 task_id 와 매칭된다. 누락 시 diff 매칭 실패.
+    process_name: Optional[str] = None
+    # 수주 라인 번호 (batch.sales_order_line) — 위 stable key 의 두번째 구성요소.
+    sales_order_line: Optional[int] = None
     predecessors: list[str]
     notes: str
     changeover_min: int
