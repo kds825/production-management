@@ -574,19 +574,30 @@ async def run_stage1_update(
         ) from exc
 
 
-@router.post("/stage1/urgent", summary="긴급 수주 증분 반영 — 최소 파급 재스케줄")
+@router.post(
+    "/stage1/urgent",
+    summary="[DEPRECATED] 긴급 수주 증분 반영 — 최소 파급 재스케줄",
+    deprecated=True,
+)
 async def apply_urgent_order(
     erp_file: UploadFile = File(..., description="긴급 수주 ERP 파일 (.xls/.xlsx)"),
     run_label: str = Form(..., description="기존 계획 실행의 run_label"),
     gap_days: int = Form(3, description="분할 후보 납기 간격 임계값 (일)"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """긴급 수주를 기존 스케줄에 최소 파급으로 증분 반영한다.
+    """[DEPRECATED] 프론트엔드는 더 이상 이 엔드포인트를 호출하지 않는다.
 
-    기존 배치는 삭제하지 않는다. 긴급 수주 배치만 생성 후:
-    - 동일 SQ·전압의 비동결 연선 그룹이 있으면 헤더 배치에 수량 합산
-    - 절연·시스는 기존 batch_group에 배치 추가
-    - 수정/신규 batch_group만 부분 재스케줄 (기존 그룹 순서 보존)
+    현재 긴급수주 플로우는 `/stage1/update` (upload_mode='incremental' +
+    base_date) → `/stage2` (base_date) 조합을 사용한다. 이 엔드포인트는
+    과거 호환 목적으로 남겨 두며, `apply_urgent_incremental` 시그니처에
+    `base_date` kwarg 가 추가되지 않은 상태이므로 base_date 파라미터를
+    받지 않는다 (Track 2 의 urgent_scheduler 리팩터와 함께 확장 예정).
+
+    기존 동작:
+      - 기존 배치는 삭제하지 않는다. 긴급 수주 배치만 생성 후:
+        * 동일 SQ·전압의 비동결 연선 그룹이 있으면 헤더 배치에 수량 합산
+        * 절연·시스는 기존 batch_group 에 배치 추가
+        * 수정/신규 batch_group 만 부분 재스케줄 (기존 그룹 순서 보존)
     """
     # run_label 존재 확인
     existing_count = (
