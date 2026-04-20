@@ -1503,6 +1503,12 @@ def _merge_meta(entry: dict[str, Any], meta: dict[str, Any] | None) -> dict[str,
     """diff 엔트리에 batch 메타 필드 병합 — 메타 없을 때 null 로 채움.
 
     프론트가 필드 존재 여부가 아닌 값 null 체크로 처리하도록 스키마 일관성 유지.
+
+    방어적 처리: meta 의 None 값은 default 를 덮어쓰지 않는다.
+    현재 build_batch_meta_map 은 is_urgent (항상 bool) 를 제외하면 null 가능한
+    필드만 반환하므로 defaults 와 덮어쓰기 결과가 같지만, 호출자가 부분 메타
+    (예: {"batch_group": "A"}) 를 넘길 때 is_urgent=False default 가 보존되도록
+    한다. key 가 defaults 에 없는 경우는 신규 메타로 간주하여 그대로 채택.
     """
     defaults = {
         "batch_group": None,
@@ -1513,7 +1519,9 @@ def _merge_meta(entry: dict[str, Any], meta: dict[str, Any] | None) -> dict[str,
         "customer_priority": None,
     }
     if meta:
-        defaults.update(meta)
+        for key, value in meta.items():
+            if value is not None or key not in defaults:
+                defaults[key] = value
     return {**entry, **defaults}
 
 

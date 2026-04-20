@@ -1977,6 +1977,60 @@ _ALWAYS_FROZEN_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def _reset_non_frozen_for_retry(
+    run_label: str,
+    frozen_batch_ids: set[int],
+    db: Session,
+) -> None:
+    """frozen 이 아닌 ScheduleTask / AuditLog / batch status 를 재시도 전 원위치.
+
+    CP-SAT 재시도 (색상 soft, greedy 폴백) 전에 non-frozen 영역을 완전히 비워야
+    한다. 그렇지 않으면 이전 solve 의 부분 삽입물이 남아 중복/오버랩을 일으킨다.
+
+    Side effects:
+      - AuditLog: non-frozen task_id 에 걸린 로그 일괄 삭제.
+      - ScheduleTask: non-frozen task 삭제.
+      - ProductionBatch: non-frozen 이면서 status=='scheduled' 인 배치를 'planned'
+        + equipment_code=None 으로 리셋 (CP-SAT 는 planned 만 재스케줄 대상).
+    DB commit 은 호출자 책임 — 여기서는 flush 까지만.
+    """
+    from app.infrastructure.models.audit_log import AuditLog
+
+    non_frozen_task_ids = [
+        t.task_id
+        for t in db.query(ScheduleTask)
+        .filter(ScheduleTask.run_label == run_label)
+        .all()
+        if t.batch_id not in frozen_batch_ids
+    ]
+    if non_frozen_task_ids:
+        db.query(AuditLog).filter(AuditLog.task_id.in_(non_frozen_task_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(ScheduleTask).filter(
+            ScheduleTask.task_id.in_(non_frozen_task_ids)
+        ).delete(synchronize_session=False)
+
+    reset_ids = [
+        b.batch_id
+        for b in db.query(ProductionBatch)
+        .filter(
+            ProductionBatch.run_label == run_label,
+            ProductionBatch.status == "scheduled",
+        )
+        .all()
+        if b.batch_id not in frozen_batch_ids
+    ]
+    if reset_ids:
+        db.query(ProductionBatch).filter(
+            ProductionBatch.batch_id.in_(reset_ids)
+        ).update(
+            {"status": "planned", "equipment_code": None},
+            synchronize_session=False,
+        )
+    db.flush()
+
+
 def _reschedule_affected_groups_cpsat(
     run_label: str,
     db: Session,
@@ -2106,42 +2160,18 @@ def _reschedule_affected_groups_cpsat(
     )
 
     # ── 5. INFEASIBLE → sheath_color_hard=False 로 재시도 (P4 fallback) ─────
+    # 원인 추적용: 1차 solve 결과를 보존한다. 2차도 INFEASIBLE 시 greedy 폴백
+    # warning 에 함께 실어 "색상이 문제였는지, frozen/horizon 이 문제였는지"
+    # 운영자가 구분 가능하도록 한다.
+    first_status = cp_result.get("solver_status")
+    first_objective = cp_result.get("objective_value")
+    second_status: str | None = None
+    second_objective: int | None = None
+
     if cp_result.get("solver_status") == "INFEASIBLE":
         # 색상 hard 가 infeasible 원인일 수 있음 → soft penalty 로 강등 후 재시도.
         # 재시도 전 이전 부분 삽입물이 있을 수 있으므로 non-frozen 영역을 다시 정리.
-        _retry_non_frozen_task_ids = [
-            t.task_id
-            for t in (
-                db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
-            )
-            if t.batch_id not in frozen_batch_ids
-        ]
-        if _retry_non_frozen_task_ids:
-            db.query(AuditLog).filter(
-                AuditLog.task_id.in_(_retry_non_frozen_task_ids)
-            ).delete(synchronize_session=False)
-            db.query(ScheduleTask).filter(
-                ScheduleTask.task_id.in_(_retry_non_frozen_task_ids)
-            ).delete(synchronize_session=False)
-        # scheduled 로 재진입된 배치도 다시 planned 로
-        _retry_reset_ids = [
-            b.batch_id
-            for b in db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status == "scheduled",
-            )
-            .all()
-            if b.batch_id not in frozen_batch_ids
-        ]
-        if _retry_reset_ids:
-            db.query(ProductionBatch).filter(
-                ProductionBatch.batch_id.in_(_retry_reset_ids)
-            ).update(
-                {"status": "planned", "equipment_code": None},
-                synchronize_session=False,
-            )
-        db.flush()
+        _reset_non_frozen_for_retry(run_label, frozen_batch_ids, db)
 
         cp_result = cp_sat_schedule(
             run_label,
@@ -2153,49 +2183,33 @@ def _reschedule_affected_groups_cpsat(
         cp_result.setdefault("warnings", []).append(
             "색상 hard constraint infeasible → soft penalty 로 재시도"
         )
+        second_status = cp_result.get("solver_status")
+        second_objective = cp_result.get("objective_value")
 
     # ── 6. 그래도 실패 → greedy 폴백 ────────────────────────────────────────
     if cp_result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
         # 재시도 전 non-frozen 영역 재정리
-        _fb_non_frozen_task_ids = [
-            t.task_id
-            for t in (
-                db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
-            )
-            if t.batch_id not in frozen_batch_ids
-        ]
-        if _fb_non_frozen_task_ids:
-            db.query(AuditLog).filter(
-                AuditLog.task_id.in_(_fb_non_frozen_task_ids)
-            ).delete(synchronize_session=False)
-            db.query(ScheduleTask).filter(
-                ScheduleTask.task_id.in_(_fb_non_frozen_task_ids)
-            ).delete(synchronize_session=False)
-        _fb_reset_ids = [
-            b.batch_id
-            for b in db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status == "scheduled",
-            )
-            .all()
-            if b.batch_id not in frozen_batch_ids
-        ]
-        if _fb_reset_ids:
-            db.query(ProductionBatch).filter(
-                ProductionBatch.batch_id.in_(_fb_reset_ids)
-            ).update(
-                {"status": "planned", "equipment_code": None},
-                synchronize_session=False,
-            )
-        db.flush()
+        _reset_non_frozen_for_retry(run_label, frozen_batch_ids, db)
 
         greedy_result = _run_optimization_once(run_label, db, base_date=base_date)
         result["total_tasks"] = greedy_result.get("total_tasks", 0)
         result["violations"] = greedy_result.get("violations", [])
         result["warnings"].extend(cp_result.get("warnings", []))
         result["warnings"].extend(greedy_result.get("warnings", []))
-        result["warnings"].append("CP-SAT 전역 재최적화 실패 → greedy 폴백으로 전환")
+
+        # 2차까지 INFEASIBLE 로 떨어진 경우 원인 후보를 가시화. 색상 hard 제거로도
+        # 안 풀리면 frozen 집합 과다 / horizon 부족 / 처리량 초과 등 구조적 문제.
+        if second_status == "INFEASIBLE":
+            result["warnings"].append(
+                "INFEASIBLE 2회 연속 — 원인 후보: frozen 제약 충돌, "
+                "horizon 내 할당 불가, 설비 처리량 초과 등 "
+                "(색상 hard 제거로도 해결되지 않음)"
+            )
+        result["warnings"].append(
+            "CP-SAT 재최적화 실패 → greedy 폴백으로 전환 | "
+            f"solver_status(1차={first_status}, 2차={second_status}) | "
+            f"objective(1차={first_objective}, 2차={second_objective})"
+        )
         return result
 
     # ── 7. 성공 — CP-SAT 결과 그대로 전달 (shape 유지) ───────────────────────

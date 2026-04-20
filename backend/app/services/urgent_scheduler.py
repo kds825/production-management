@@ -1,24 +1,34 @@
-"""긴급 수주 증분 반영 — CP-SAT 전역 재최적화로 연결 (P4)
+"""긴급 수주 증분 반영 — CP-SAT 전역 재최적화로 연결 (P4 이후)
 
 설계 원칙
 ─────────
-1. 진행중/완료 작업만 보호: status in {in_progress, completed, wip_complete}
-   + base_date 이전 'scheduled' 배치만 frozen. 나머지는 CP-SAT 가 자유변수로
-   전체를 다시 풀어 납기 초과 최소화.
+1. 보호 대상 최소화:
+   - status in {in_progress, completed, wip_complete} 배치는 hard frozen.
+   - base_date 이전 start_datetime 의 'scheduled' 배치도 hard frozen
+     (이미 생산 시작 가능성이 있으므로).
+   - 그 외 나머지 배치는 전부 CP-SAT 자유변수 → 납기 초과 최소화 목적으로
+     전역 재배치.
 
-2. Merged 그룹 처리 (P4 변경):
-   - 과거: ScheduleTask.start_datetime 유지 + end_datetime 만 연장 + cascade
-     push 로 후속 작업 밀어냄.
-   - 현재: 해당 트릭 제거. CP-SAT 가 전체 run 을 다시 풀어 merged 그룹도
-     자유변수로 재배치. 색상 체인은 sheath_color_hard 로 hard constraint
-     강제 (infeasible 시 soft 로 폴백).
+2. Merged 그룹 처리:
+   - 기존 배치 헤더에 긴급 수주 수량을 합산 (total_length_m, drum_count,
+     estimated_duration_min, due_date 갱신) 하고 신규 임시 헤더는 삭제.
+   - 위치/시간 조정 트릭은 사용하지 않는다. CP-SAT 가 run 전체를 다시 풀어
+     merged 그룹도 자유변수로 재배치한다. 색상 체인은 sheath_color_hard 로
+     강제 (infeasible 시 soft 로 강등 후 재시도, 그래도 실패 시 greedy 폴백).
 
 3. 연선 헤더 중복:
-   - create_batches 가 긴급 수주만의 수량으로 새 ST- 헤더를 생성.
-   - 기존 비동결 헤더에 수량 합산 후 신규 헤더 삭제 (유지).
+   - create_batches 가 긴급 수주만의 수량으로 새 ST- 헤더를 생성한다.
+   - 기존 비-frozen 헤더에 수량 합산 후 신규 임시 헤더 삭제.
 
 4. 자동 분할:
-   - drum_count 증가 시 분할 필요 — CP-SAT 입력 전에 execute_auto_splits 수행.
+   - drum_count 증가 시 분할이 필요할 수 있음 — CP-SAT 입력 전에
+     execute_auto_splits 수행하여 자식 배치를 선생성.
+
+5. 스냅샷 (P6):
+   - 파싱 직전 snapshot_before, 재최적화 후 snapshot_after 를 캡처하고
+     ScheduleChangeSet(kind='urgent') 로 저장한다. revert / diff API 의 근거.
+   - INSERT 실패 시 snapshot_persisted=False 로 호출자에게 보고
+     (apply 자체는 성공 유지).
 
 공개 API
 ────────
@@ -30,7 +40,6 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -38,9 +47,6 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.schedule_task import ScheduleTask
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -79,20 +85,31 @@ def apply_urgent_incremental(
     *,
     gap_days: int = 3,
 ) -> dict:
-    """긴급 수주를 기존 run_label에 증분 반영한다.
+    """긴급 수주를 기존 run_label 에 증분 반영한다.
 
-    Merged 그룹: 기존 ScheduleTask의 end_datetime 만 연장 (위치 보존).
-    New 그룹: EDD 기준으로 기존 ScheduleTask 사이 빈 슬롯에 삽입.
+    동작 (P4 이후):
+      1. snapshot_before 캡처 → ERP 파싱 → 신규 배치 생성.
+      2. 기존 비-frozen 헤더에 수량 합산 + 임시 헤더 삭제 (merged).
+      3. drum_count 증가 시 execute_auto_splits 로 분할 배치 선생성.
+      4. reschedule_affected_groups(use_cpsat=True) 로 CP-SAT 전역 재최적화.
+         frozen 은 진행중/완료 + base_date 이전 scheduled 만 유지되고 나머지는
+         모두 자유변수로 재배치된다.
+      5. snapshot_after 캡처 + ScheduleChangeSet(kind='urgent') INSERT.
+         (INSERT 실패 시 snapshot_persisted=False, 나머지는 성공으로 보고.)
 
     Returns:
         {
             "new_orders": int,
             "merged_groups": list[str],
             "new_groups": list[str],
-            "extended_tasks": int,       # end_datetime 연장된 ScheduleTask 수
+            "extended_tasks": int,       # 항상 0 — 하위 호환 유지용 shape.
             "split_count": int,
             "rescheduled_groups": list[str],
             "warnings": list[str],
+            "change_set_id": str | None,       # INSERT 성공 시 uuid, 실패/변화없음 None.
+            "snapshot_count_before": int,
+            "snapshot_count_after": int,
+            "snapshot_persisted": bool,        # ScheduleChangeSet INSERT 성공 여부.
         }
     """
     result: dict = {
@@ -108,6 +125,11 @@ def apply_urgent_incremental(
         "change_set_id": None,
         "snapshot_count_before": 0,
         "snapshot_count_after": 0,
+        # 스냅샷 INSERT 성공 여부를 호출자가 명시적으로 감지할 수 있는 플래그.
+        # 왜 분리? change_set_id 는 '실질 변경 없음' 에도 None → 실패와 구분 불가.
+        # snapshot_persisted=False + new_orders>0 조합이 '스케줄은 바뀌었는데
+        # revert/diff 는 불가' 한 경고 상태.
+        "snapshot_persisted": False,
     }
 
     # ── 0. ERP 파싱 직전 snapshot_before 캡처 (P6) ──────────────────────────
@@ -267,7 +289,9 @@ def apply_urgent_incremental(
     # ── 9. 재최적화 후 snapshot_after 캡처 + ScheduleChangeSet INSERT (P6) ──
     # snapshot INSERT 실패가 urgent apply 자체를 롤백시키지 않도록 방어적 처리.
     # 스케줄 변경은 이미 db.flush() 로 세션에 반영된 상태 — INSERT 실패 시
-    # warning 기록 후 change_set_id=None 으로 반환.
+    # ERROR 로깅 + snapshot_persisted=False 플래그로 호출자에게 전달.
+    # exception 은 여전히 swallow (urgent apply 자체는 성공 유지) 하되,
+    # 호출자가 감지할 수 있도록 result 필드로 노출.
     try:
         snapshot_after = _build_snapshot(run_label, db)
         result["snapshot_count_after"] = len(snapshot_after)
@@ -282,6 +306,7 @@ def apply_urgent_incremental(
         db.add(cs)
         db.flush()
         result["change_set_id"] = change_set_id
+        result["snapshot_persisted"] = True
         logger.info(
             "[Urgent] ScheduleChangeSet INSERT 완료: %s (before=%d, after=%d)",
             change_set_id,
@@ -289,9 +314,21 @@ def apply_urgent_incremental(
             len(snapshot_after),
         )
     except Exception as exc:
-        # snapshot 캡처/INSERT 실패는 urgent apply 의 본질에 영향 없음 — 기록만.
-        result["warnings"].append(f"change_set 기록 실패 (계속): {exc}")
-        logger.warning("[Urgent] change_set INSERT 실패: %s", exc, exc_info=True)
+        # snapshot INSERT 실패 — 스케줄은 이미 변경됐지만 revert/diff 기록이 없다.
+        # ERROR 레벨로 로깅하여 운영에서 즉각 감지 가능하도록 한다.
+        # change_set_id=None + snapshot_persisted=False 로 호출자 (route) 가
+        # "이 apply 는 롤백 불가" 임을 인지하고 UI 경고를 낼 수 있다.
+        logger.error(
+            "[Urgent] ScheduleChangeSet INSERT 실패 — revert/diff 불가: %s",
+            exc,
+            exc_info=True,
+        )
+        result["change_set_id"] = None
+        result["snapshot_persisted"] = False
+        result["warnings"].append(
+            f"스냅샷 저장 실패: {type(exc).__name__} — "
+            "롤백/diff 기능이 이 apply 에는 적용 안 됨"
+        )
 
     return result
 
@@ -345,146 +382,6 @@ def _merge_header(existing: ProductionBatch, new_hdr: ProductionBatch) -> None:
         existing.due_date is None or new_hdr.due_date < existing.due_date
     ):
         existing.due_date = new_hdr.due_date
-
-
-def _find_group_task(
-    run_label: str,
-    batch_group: str,
-    db: Session,
-) -> ScheduleTask | None:
-    """batch_group의 대표 배치에 연결된 ScheduleTask 조회.
-
-    ScheduleTask는 스케줄링 시 group_batches[0] (batch_seq 오름차순 첫 번째)의
-    batch_id를 사용한다. 연선 그룹은 seq=-1 헤더가 대표; 절연·시스는 seq>=1 중 최솟값.
-    group 내 모든 batch_id로 ScheduleTask를 찾아 반환한다.
-    """
-    group_batch_ids = [
-        r.batch_id
-        for r in db.query(ProductionBatch.batch_id)
-        .filter(
-            ProductionBatch.run_label == run_label,
-            ProductionBatch.batch_group == batch_group,
-        )
-        .all()
-    ]
-    if not group_batch_ids:
-        return None
-    return (
-        db.query(ScheduleTask)
-        .filter(
-            ScheduleTask.run_label == run_label,
-            ScheduleTask.batch_id.in_(group_batch_ids),
-        )
-        .first()
-    )
-
-
-def _cascade_push_tasks(
-    run_label: str,
-    equipment_code: str,
-    from_task_start: "datetime",
-    new_boundary: "datetime",
-    db: Session,
-    warnings: list,
-) -> int:
-    """from_task_start 이후 시작하는 같은 설비의 ScheduleTask를 겹치지 않게 밀어낸다.
-
-    new_boundary(= 연장된 배치의 새 end_datetime) 이전에 시작하는 후속 배치부터
-    도미노처럼 순서대로 밀어낸다. frozen 배치에서 멈추고 경고를 남긴다.
-
-    Returns: 밀어낸 ScheduleTask 수
-    """
-    from app.services.calendar_engine import calculate_end_datetime
-
-    current_boundary = new_boundary
-    pushed = 0
-
-    # from_task_start 이후 시작하는 배치들을 start_datetime 오름차순으로 조회
-    # (한 번에 전체 로드 후 in-memory 처리 → 루프 내 start_datetime 변경에 영향 없음)
-    tasks_after = (
-        db.query(ScheduleTask)
-        .filter(
-            ScheduleTask.run_label == run_label,
-            ScheduleTask.equipment_code == equipment_code,
-            ScheduleTask.start_datetime > from_task_start,
-        )
-        .order_by(ScheduleTask.start_datetime.asc())
-        .all()
-    )
-
-    for task in tasks_after:
-        # 이미 current_boundary 이후에 시작하면 겹침 없음 → 종료
-        if task.start_datetime >= current_boundary:
-            break
-
-        # frozen 배치는 밀어낼 수 없음
-        batch = (
-            db.query(ProductionBatch)
-            .filter(ProductionBatch.batch_id == task.batch_id)
-            .first()
-        )
-        if batch and batch.status in _FROZEN_STATUSES:
-            warnings.append(
-                f"[{equipment_code}] frozen 배치({batch.batch_group or '?'}) 겹침 — "
-                "수동 조정 필요"
-            )
-            break
-
-        # 총 작업시간(분) 계산 후 밀어냄
-        total_min = _compute_task_total_min(task, batch, run_label, db)
-        old_start = task.start_datetime
-        task.start_datetime = current_boundary
-        task.end_datetime = calculate_end_datetime(
-            current_boundary, total_min, db, equipment_code
-        )
-        current_boundary = task.end_datetime
-        pushed += 1
-
-        bg_label = (batch.batch_group or "?") if batch else "?"
-        logger.info(
-            "[Urgent cascade] %s %s: %s → %s",
-            equipment_code,
-            bg_label,
-            old_start.strftime("%m/%d %H:%M"),
-            task.start_datetime.strftime("%m/%d %H:%M"),
-        )
-
-    return pushed
-
-
-def _compute_task_total_min(
-    task: ScheduleTask,
-    batch: ProductionBatch | None,
-    run_label: str,
-    db: Session,
-) -> float:
-    """ScheduleTask의 총 작업시간(분) = setup + work. batch_group 데이터 기준 재산출."""
-    setup_min = float(task.setup_time_min or 0)
-
-    if batch and batch.batch_group:
-        all_batches = (
-            db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.batch_group == batch.batch_group,
-            )
-            .all()
-        )
-        header = next((b for b in all_batches if b.batch_seq == -1), None)
-        if header is not None:
-            work_min = float(header.estimated_duration_min or 0)
-        else:
-            work_min = sum(
-                float(b.estimated_duration_min or 0)
-                for b in all_batches
-                if b.batch_seq != -1
-            )
-    else:
-        # 배치 정보 없음: wall-clock 길이로 근사 (setup 제외)
-        delta_sec = (task.end_datetime - task.start_datetime).total_seconds()
-        work_min = max(delta_sec / 60.0 - setup_min, 0)
-
-    return setup_min + work_min
 
 
 def _collect_split_children(
