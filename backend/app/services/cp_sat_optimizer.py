@@ -1379,10 +1379,11 @@ def cp_sat_schedule(
             idle_terms.append(_idle)
 
     # objective 초기화:
-    #   tardiness_hard=True  → idle + CHAIN*chain_diff (tardiness 항 제거, hard 제약으로 강제)
-    #   tardiness_hard=False → sum(weight*tardiness) + idle + CHAIN*chain_diff (기존 soft 유지)
-    # 두 모드 모두 _CHAIN_WEIGHT=120 (color changeover 분과 동일 scale) 적용 →
-    # solver 가 "색상 교체 120min vs idle 120min" 을 동등 비교.
+    #   tardiness_hard=True  → idle (tardiness 항 제거, hard 제약으로 강제)
+    #   tardiness_hard=False → sum(weight*tardiness) + idle (기존 soft 유지)
+    # 시스 색상 교체 비용은 6-g 에서 sequence-dependent gap 으로 duration 에 직접
+    # 반영 (soft penalty 가 아닌 hard interval gap). Solver 가 실제 wall-clock
+    # 을 정확히 인식 → tardiness 와의 tradeoff 를 모든 시스 그룹 쌍 단위로 평가.
     if tardiness_hard:
         _objective = _IDLE_WEIGHT * sum(idle_terms) if idle_terms else 0
     else:
@@ -1449,56 +1450,97 @@ def cp_sat_schedule(
                 for _eq in _shared_eqs:
                     model.add(equip_vars[_gk_a][_eq] == equip_vars[_gk_b][_eq])
 
-    # 6-g. 시스 색상 체인 보너스 — 같은 설비 카테고리(A100/A120) 내 같은 색상 그룹
-    # 쌍에 대해 |start_a - start_b| 를 최소화. 체인지오버 비용을 간접적으로 penalize.
-    # 가중치는 IDLE 과 동일 (1) — 납기 가중치(수십~수백) 대비 훨씬 낮음.
-    sheath_groups_by_color: dict[tuple[str, str], list[str]] = {}
-    for _gk, _meta in group_meta.items():
-        _rep = _meta["rep"]
-        if _rep.process_name not in ("저압시스", "고압시스"):
-            continue
-        _color = (_rep.sheath_color or "").strip() or "기타"
-        # 설비 카테고리: group_key prefix (A100 / A120 / 저압시스 / 고압시스)
-        if _gk.startswith("A120_"):
-            _eq_cat = "A120"
-        elif _gk.startswith("A100_"):
-            _eq_cat = "A100"
-        else:
-            _eq_cat = _rep.process_name
-        sheath_groups_by_color.setdefault((_eq_cat, _color), []).append(_gk)
-
-    # chain_terms: 같은 (설비카테고리, 색상) 그룹 간 start_var 근접성 페널티.
-    # 과거 O(n²) 전체 쌍 구성 → H1/H2 반주차 분할 이후 그룹 수가 급증하면
-    # 모델 변수·제약이 폭증해 CP-SAT 이 타임아웃될 위험이 있음.
-    # 개선: due_date 정렬 후 '인접한 쌍' 만 묶고, 납기 14일 이상 벌어지면 스킵.
-    # → O(n) 으로 감소, 멀리 있는 그룹들 간 chain bonus 는 의미가 없으므로 품질 손실 없음.
-    chain_terms: list = []
-    for (_cat, _color), _gks in sheath_groups_by_color.items():
-        if len(_gks) < 2:
-            continue
-        # due_date_ord 기준 정렬 — None 은 뒤로 밀기 위해 큰 값(date.max ordinal)
-        _MAX_ORD = date.max.toordinal()
-        sorted_gks = sorted(
-            _gks, key=lambda gk: group_meta[gk].get("due_date_ord") or _MAX_ORD
-        )
-        for i in range(len(sorted_gks) - 1):
-            _gk_a, _gk_b = sorted_gks[i], sorted_gks[i + 1]
-            _due_a = group_meta[_gk_a].get("due_date_ord")
-            _due_b = group_meta[_gk_b].get("due_date_ord")
-            # 납기 14일 이상 벌어지면 chain 묶음 해체 (멀리 있는 쌍은 관계 없음)
-            if _due_a is not None and _due_b is not None and abs(_due_b - _due_a) > 14:
-                continue
-            _diff = model.new_int_var(
-                0, _MAX_HORIZON_MIN, f"chain_diff_{_gk_a}_{_gk_b}"
+    # 6-g. 시스 색상 Sequence-Dependent Setup (정식 모델링).
+    #
+    # Why: 기존 chain_terms (|start_a - start_b| soft) 은 proximity 만 minimize 하여
+    # 실제 "같은 설비에서 다른 색상 인접 시 +color_gap 분" 을 solver 가 인식 못 함.
+    # Post-solve 캘린더 엔진만 color_change_min 을 duration 에 더해 solver 목적
+    # 함수와 실제 스케줄이 괴리 (solver 는 갈→회→갈→회 와 갈갈→회회 를 동일 비용
+    # 으로 착각). 결과: objective 동점 해 중 색상 흩어진 해가 빈번히 선택됨.
+    #
+    # 수정: 시스 공정 그룹 쌍(gk_a, gk_b) 중 색상 다르고 공통 eligible 설비 있는
+    # 경우에 대해, "같은 설비 + 순서" booleans 로 conditional gap 제약을 부여한다.
+    #   same_eq = OR_{ec ∈ shared}(equip_a[ec] ∧ equip_b[ec])
+    #   a_before_b ∈ {0,1} (solver 자율 선택)
+    #   same_eq=1 ∧ a_before_b=1  ⇒  start_b ≥ end_a + color_gap
+    #   same_eq=1 ∧ a_before_b=0  ⇒  start_a ≥ end_b + color_gap
+    # 효과:
+    #   - Solver 가 실제 교체 시간(120 분) 을 duration 으로 반영 → tardiness
+    #     vs 색상 묶음 tradeoff 를 정확히 평가.
+    #   - 납기 여유 있으면 같은 색상 연속 배치를 자연 선호 (makespan/idle 감소).
+    #   - 여유 없으면 색상 포기 (tardiness 피하기 위해).
+    #   - AddCircuit / successor-var 기반 완전 TSP 모델 대비 단순. O(n²) 쌍에
+    #     per-pair bool 2-3 개 + conditional constraint 4 개 → n≈60 기준 ~3K 변수.
+    #
+    # Note: 같은 색상 pair 는 gap 0 이면 no_overlap 만으로 충분하므로 skip (모델
+    # 경량화). 다른 색상에만 제약 추가.
+    _sheath_color_gap_min = int(
+        round(
+            resolve_color_change_min(
+                sm_color_min=None,
+                params=constraint_params,
             )
-            model.add_abs_equality(_diff, start_vars[_gk_a] - start_vars[_gk_b])
-            chain_terms.append(_diff)
+        )
+    )
+    _sheath_gks_all = [
+        _g
+        for _g, _m in group_meta.items()
+        if _m["rep"].process_name in ("저압시스", "고압시스")
+    ]
+    for _i in range(len(_sheath_gks_all)):
+        for _j in range(_i + 1, len(_sheath_gks_all)):
+            _gk_a = _sheath_gks_all[_i]
+            _gk_b = _sheath_gks_all[_j]
+            _color_a = (group_meta[_gk_a]["rep"].sheath_color or "").strip()
+            _color_b = (group_meta[_gk_b]["rep"].sheath_color or "").strip()
+            # 색상 미지정/동일: 실물 교체 없음 → 제약 불필요 (no_overlap 으로 충분).
+            if not _color_a or not _color_b or _color_a == _color_b:
+                continue
+            # 공통 eligible 설비 없으면 same_eq 가 항상 0 → 제약 항상 비활성 → skip.
+            _shared_eqs_color = set(equip_vars[_gk_a].keys()) & set(
+                equip_vars[_gk_b].keys()
+            )
+            if not _shared_eqs_color:
+                continue
+            # same_eq bool: 공통 설비 중 하나에서 둘 다 활성화됐는지.
+            # exactly_one(equip_vars[g]) 이 각 그룹에 강제되어 있으므로 설비별
+            # both_on 의 합 ≤ 1 (둘이 같은 설비에 있거나 없거나).
+            _both_bools = []
+            for _ec in _shared_eqs_color:
+                _both = model.new_bool_var(f"sh_both_{_gk_a}_{_gk_b}_{_ec}")
+                model.add_bool_and(
+                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
+                ).only_enforce_if(_both)
+                model.add_bool_or(
+                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
+                ).only_enforce_if(_both.Not())
+                _both_bools.append(_both)
+            _same_eq = model.new_bool_var(f"sh_same_eq_{_gk_a}_{_gk_b}")
+            model.add(_same_eq == sum(_both_bools))
+            # a_before_b: no_overlap 이 둘 중 한 방향을 강제하지만, 어느 방향
+            # 인지를 솔버가 선택할 수 있도록 bool 로 bind. objective(+gap) 을
+            # 고려해 solver 가 자연스럽게 최적 순서 결정.
+            _a_before_b = model.new_bool_var(f"sh_order_{_gk_a}_{_gk_b}")
+            model.add(
+                start_vars[_gk_b] >= end_vars[_gk_a] + _sheath_color_gap_min
+            ).only_enforce_if([_same_eq, _a_before_b])
+            model.add(
+                start_vars[_gk_a] >= end_vars[_gk_b] + _sheath_color_gap_min
+            ).only_enforce_if([_same_eq, _a_before_b.Not()])
 
-    # _CHAIN_WEIGHT 는 모듈 상수(기본 120). chain_diff 가 boolean 이 아닌 |start-start|
-    # 분 단위이므로 weight 가 tardiness 와 같은 scale 에 놓여야 solver 가 색상을
-    # 포기하고 납기를 우선하는 등 올바른 tradeoff 를 수행한다.
-    if chain_terms:
-        _objective = _objective + _CHAIN_WEIGHT * sum(chain_terms)
+    # 6-g-tiebreak. 시스 그룹 makespan bias (tie-breaker).
+    #
+    # Why: 위 sequence-dependent gap 제약은 실제 wall-clock 을 반영하지만 objective
+    # 에 makespan 항이 없으면 "납기 여유 많고 설비 여유 많은" 경우 동일 objective
+    # 의 grouped/scattered 해가 공존 → solver 가 non-deterministic 으로 scattered
+    # 선택 가능 (예: 4 배치 {흑,흑,청,청} 모두 tardiness=0 feasible → 흑청흑청도 유효).
+    # 작은 가중치로 시스 그룹의 end_var 합을 목적함수에 더해 "빨리 끝내는 해" 를
+    # 선호시키면 자연스럽게 grouped 선택 (gap 적은 해 = makespan 작은 해).
+    # weight=1 → tardiness(1e5~1e7 per min) 대비 5 orders 작아 실제 tradeoff 훼손 X,
+    # objective tie 상황에서만 작동.
+    _sheath_end_terms = [end_vars[_g] for _g in _sheath_gks_all]
+    if _sheath_end_terms:
+        _objective = _objective + sum(_sheath_end_terms)
 
     # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
     # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
