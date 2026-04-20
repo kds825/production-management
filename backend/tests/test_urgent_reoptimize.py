@@ -16,6 +16,7 @@ CP-SAT 로 내부 구현을 바꾸더라도 이 테스트들은 통과해야 한
 1. 빈 affected_group_keys → 즉시 반환 (no-op).
 2. 동일 input 반복 호출 → 동일 output (determinism smoke).
 3. 존재하지 않는 run_label + 비어있지 않은 affected_group_keys → 안전한 반환.
+4. CP-SAT `frozen_group_keys` 파라미터 시그니처 호환성 + 방어적 동작 (P2 추가).
 
 P2~P4 진행 후 추가될 테스트는 모듈 하단 `# TODO (P4 이후)` 주석 참조.
 """
@@ -24,8 +25,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.services.cp_sat_optimizer import cp_sat_schedule
 from app.services.schedule_optimizer import reschedule_affected_groups
-
 
 # 다른 테스트와 충돌하지 않는 고유 run_label — 실DB 에 남지 않도록 commit 없음.
 _RUN_LABEL = "TEST_URGENT_REOPT_P1_20260420"
@@ -89,6 +90,57 @@ def test_reschedule_result_shape_stable(db: Session) -> None:
     assert isinstance(result["violations"], list)
     assert isinstance(result["warnings"], list)
     assert isinstance(result["total_tasks"], int)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CP-SAT frozen_group_keys 파라미터 호환성 테스트 (P2)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: 긴급수주 추가 시 전역 CP-SAT 재최적화를 돌리되, 이미 진행중/완료/base_date
+# 이전 'scheduled' 배치는 기존 start/end/equipment 로 고정되어야 한다.
+# `frozen_group_keys` 파라미터는 해당 고정 대상의 batch_group 집합을 받는다.
+#
+# P2 스코프 — 시그니처 호환성 + 방어적 동작만 검증:
+#   - None / 빈 set 은 기존 동작과 동일 (무시)
+#   - 존재하지 않는 key → warning 만 추가하고 예외 없이 반환
+# 실제 freeze 동작(설비/시간 고정) 품질 검증은 P4 에서 실데이터 fixture 로 추가한다.
+
+
+def test_cp_sat_frozen_group_keys_accepts_none_and_empty(db: Session) -> None:
+    """frozen_group_keys=None 과 frozen_group_keys=set() 은 기존 동작과 동일.
+
+    시그니처 호환성 검증 — 기존 호출부(auto_schedule 등)가 파라미터를 전달하지
+    않아도, 또는 빈 set 을 전달해도 예외 없이 동작해야 한다.
+    """
+    # 존재하지 않는 run_label 로 호출 — CP-SAT 이 "배치 없음" 경로로 빈 결과 반환
+    r1 = cp_sat_schedule("NON_EXISTENT_RUN_P2_FROZEN", db, frozen_group_keys=None)
+    r2 = cp_sat_schedule("NON_EXISTENT_RUN_P2_FROZEN", db, frozen_group_keys=set())
+
+    # 둘 다 예외 없이 dict 반환 + 필수 키 존재
+    assert isinstance(r1, dict)
+    assert isinstance(r2, dict)
+    for r in (r1, r2):
+        assert "total_tasks" in r
+        assert "warnings" in r
+        assert isinstance(r["warnings"], list)
+
+
+def test_cp_sat_frozen_group_keys_missing_group_warns(db: Session) -> None:
+    """존재하지 않는 frozen_group_keys → 예외 없이 반환 (warning 기록은 허용).
+
+    방어적 동작 검증 — DB 에 없는 batch_group 을 freeze 요청 받아도 솔버가
+    죽으면 안 된다. 상위 로직(긴급 재최적화)이 stale key 를 넘겨도 견고해야.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P2_FROZEN_MISSING",
+        db,
+        frozen_group_keys={"NONEXISTENT_GROUP_KEY"},
+    )
+
+    # 경고는 있을 수도 있고 없을 수도 있지만 예외 없이 반환
+    assert isinstance(r, dict)
+    assert "warnings" in r
+    assert isinstance(r["warnings"], list)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

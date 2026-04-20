@@ -384,12 +384,30 @@ def _try_preempt_for_urgent(
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
 
 
+def _datetime_to_wmin(dt: datetime, base_date: datetime) -> int:
+    """datetime 을 CP-SAT 내부 단위(근무 분 offset) 로 변환.
+
+    Why: CP-SAT 은 하루 840 근무 분(_WORK_MIN_PER_DAY) 모델을 쓰지만, base_date
+    이전 datetime(과거 실측 start/end)을 넘길 경우 음수가 되면 모델 제약이
+    INFEASIBLE 을 유발한다. 방어적으로 max(0, ...) 로 clamp 한다. 근사라도
+    freeze 가 "멀리 과거" 임을 솔버가 알면 충돌을 일으키지 않는다.
+
+    매 분 정밀하게 근무시간만 세는 방식(역산)은 불필요 — freeze 구간은 실제
+    배치 단계에서 timeline 으로 pre-load 되어 겹침 방지는 그쪽이 담당하고,
+    CP-SAT 시간축은 '순서 결정' 용도이므로 절대 분 offset 으로 충분.
+    """
+    delta = dt - base_date
+    total_min = int(delta.total_seconds() // 60)
+    return max(0, total_min)
+
+
 def cp_sat_schedule(
     run_label: str,
     db: Session,
     *,
     base_date: datetime | None = None,
     random_seed: int = 0,
+    frozen_group_keys: set[str] | None = None,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.
@@ -400,6 +418,10 @@ def cp_sat_schedule(
     Args:
         random_seed: CP-SAT 솔버의 random_seed. retry wrapper 가 시도 번호를
             전달해 결정론적 동일 해가 반복되는 것을 방지한다 (기본 0).
+        frozen_group_keys: 재최적화 시 고정할 batch_group 집합. 각 그룹의
+            start/end/equipment 는 기존 DB ScheduleTask 값으로 박힌다. 긴급수주
+            추가 후 전역 재최적화에서 "이미 진행중/완료/base_date 이전 scheduled"
+            배치가 움직이지 않도록 보장. None 또는 빈 set 이면 기존 동작 유지.
 
     Returns:
         {"total_tasks", "violations", "warnings", "solver_status", "objective_value"}
@@ -601,6 +623,81 @@ def cp_sat_schedule(
             )
         equip_vars[gk] = eq_bools
         model.add_exactly_one(eq_bools.values())
+
+    # 6-b-2. Frozen groups — 기존 ScheduleTask 로 start/end/equipment 고정
+    # Why: 긴급수주 재최적화 시 이미 진행 중/완료/base_date 이전 'scheduled' 배치는
+    # 움직이면 안 된다 (실제 생산 중인 블록을 이동시키면 작업 중단/폐기 비용 발생).
+    # 호출자가 frozen_group_keys 로 대상을 명시하면 해당 그룹의 start_var/end_var/
+    # equip_var 를 DB 값으로 박아 솔버가 나머지 그룹만 자유변수로 최적화.
+    # 방어적 동작: DB 에 해당 task 없으면 warning 만 기록하고 skip (stale key 대응).
+    if frozen_group_keys:
+        # run_label 범위 ScheduleTask 를 한번에 로드 (N+1 쿼리 방지)
+        frozen_batches_q = (
+            db.query(ProductionBatch, ScheduleTask)
+            .join(ScheduleTask, ScheduleTask.batch_id == ProductionBatch.batch_id)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.batch_group.in_(list(frozen_group_keys)),
+                ScheduleTask.run_label == run_label,
+                ScheduleTask.start_datetime.isnot(None),
+                ScheduleTask.end_datetime.isnot(None),
+                ScheduleTask.equipment_code.isnot(None),
+            )
+            .all()
+        )
+        # batch_group → 대표 ScheduleTask (첫번째 매치). 여러 batch 가 한 group 에
+        # 속해도 group-level start/end/equip 은 대표값으로 고정.
+        frozen_task_by_gk: dict[str, ScheduleTask] = {}
+        for _pb, _tk in frozen_batches_q:
+            _bg = _pb.batch_group
+            if _bg and _bg not in frozen_task_by_gk:
+                frozen_task_by_gk[_bg] = _tk
+
+        for _gk in frozen_group_keys:
+            if _gk not in group_meta:
+                # group_meta 에 없음 — 이미 스케줄링 불가(설비 없음) 또는 WIP skip
+                result["warnings"].append(
+                    f"frozen_group_keys: '{_gk}' 은(는) group_meta 에 없어 고정 불가 (skip)"
+                )
+                continue
+            _tk = frozen_task_by_gk.get(_gk)
+            if _tk is None:
+                result["warnings"].append(
+                    f"frozen_group_keys: '{_gk}' 에 해당하는 ScheduleTask 없음 (skip)"
+                )
+                continue
+
+            _fixed_start_wmin = _datetime_to_wmin(_tk.start_datetime, base_date)
+            _fixed_eq_code = _tk.equipment_code
+
+            # 변수 domain 범위를 벗어나면 모델이 INFEASIBLE → clamp 후 warning
+            _dur = group_meta[_gk]["cpsat_dur"]
+            if _fixed_start_wmin > _MAX_HORIZON_MIN - _dur:
+                result["warnings"].append(
+                    f"frozen_group_keys: '{_gk}' start 가 horizon 초과 → 고정 skip"
+                )
+                continue
+
+            model.add(start_vars[_gk] == _fixed_start_wmin)
+            # end 는 (start + dur) 로 이미 묶여있으므로 end 고정은 start 고정과 동치.
+            # 방어적으로 end 도 같이 박되 실패하지 않도록 별도 equality 불필요.
+            # 단, cpsat_dur 와 실제 DB duration 이 다를 수 있어 end 를 명시 고정하면
+            # INFEASIBLE 가능 → start 만 박는다.
+
+            # 설비 고정: 해당 설비 bool=1, 나머지=0
+            if _fixed_eq_code in equip_vars[_gk]:
+                for _ec, _bv in equip_vars[_gk].items():
+                    if _ec == _fixed_eq_code:
+                        model.add(_bv == 1)
+                    else:
+                        model.add(_bv == 0)
+            else:
+                # eligible 에 없는 설비로 실행 중 → eligible 확장 없이 warning
+                # (eligible 재계산은 spec 범위 밖 — 재최적화가 해당 그룹 재배치 시도)
+                result["warnings"].append(
+                    f"frozen_group_keys: '{_gk}' 의 고정 설비 '{_fixed_eq_code}' 가 "
+                    f"eligible 에 없음 → 설비 고정 skip (시간만 고정)"
+                )
 
     # 6-c. 설비 충돌 방지 (no_overlap)
     itv_vars: dict[tuple[str, str], Any] = {}
