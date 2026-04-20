@@ -145,6 +145,22 @@ _SLACK_WEIGHT_BASE = 100_000
 # 상대 순서만 영향, 다른 objective term 과의 상호작용은 기존과 유사.
 _PAST_SEVERITY_K = 5
 
+# 같은 공정·공유 설비 후보 쌍에서 EDD 위반(납기 빠른 게 늦게 시작)당 부과되는
+# penalty. Why: 기존 weight=1 로는 WSPT(짧은 작업 먼저) 이익을 이길 수 없어
+# 납기 임박한 긴 작업이 맨 뒤로 밀리는 현상 (KBI PoC 150SQ 33000m 납기 4/17
+# 이 300SQ 9500m 납기 4/30 뒤에 배치). on-time 그룹 간엔 past-due severity 가
+# 트리거되지 않고 slack weight 차이(수단위)도 WSPT 차이(수K~수만)를 압도
+# 하지 못함. EDD pair 를 강화해 "납기 순서" 를 명시적 soft constraint 로 강제.
+#
+# 스케일 설계:
+#   _IDLE_WEIGHT(1/min) × typical_duration(1000~3000min) ≈ 1000~3000
+#   _TRANSITION_WEIGHT(180) × 1~2 transitions ≈ 180~360
+#   → 일반 scheduling 결정에서 WSPT/idle/transition 이익은 수K 수준
+#   → EDD 위반 1쌍 penalty 를 10_000 으로 두면 이들을 지배
+#   → past-due tardiness(1e5/min × 수천min = 수억) 는 EDD 압도 → past-due
+#     은 여전히 tardiness 로 강제 (EDD 는 on-time 간 정렬 전용)
+_EDD_PAIR_WEIGHT = 10_000
+
 # Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
 # 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
 # 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
@@ -1637,19 +1653,19 @@ def cp_sat_schedule(
     if _slack_terms:
         _objective = _objective + sum(_slack_terms)
 
-    # 6-h. EDD 전역 tie-breaker — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
-    # 납기 빠른 쪽이 뒤에 시작하면 +1 penalty.
+    # 6-h. EDD 전역 penalty — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
+    # 납기 빠른 쪽이 뒤에 시작하면 `_EDD_PAIR_WEIGHT` penalty.
     #
-    # Why: 위 past-due tardiness 가 overdue 그룹을 앞으로 끌지만 **on-time 그룹 간**
-    # 순서는 자유 (모두 due 이내면 tardiness 동일). 사용자 요구 "동일 조건 배치 시
-    # 납기 빠른 게 먼저" 를 만족시키려면 tie-break 기준을 명시적으로 objective 에
-    # 넣어야 함.
+    # Why: past-due tardiness 는 overdue 그룹만 앞으로 끌고, slack penalty 는
+    # on-time 그룹 간 duration 차이가 크면 WSPT(짧은 작업 먼저) 이익에 밀림.
+    # 관찰 사례: 150SQ 33000m 납기 4/17 이 300SQ 9500m 납기 4/30 보다 뒤에
+    # 배치. 두 그룹 모두 on-time 이라 tardiness 0, slack w_150≈4 / w_300≈2 의
+    # 2× 차이보다 WSPT duration 차이(51h/16h = 3×) 가 더 강해 역전 발생.
+    # → EDD 위반 penalty 를 충분히 크게 해 duration 이익을 압도하게 만듦.
     # 대상 축소 (폭주 방지):
     #   1) 같은 공정 — 다른 공정끼리는 precedence 가 이미 순서 결정
     #   2) 공통 eligible 설비 존재 — 같은 설비에 놓일 가능성 있어야 순서가 의미
     #   3) due_wmin 이 _MAX_HORIZON_MIN (no-due) 또는 동일한 쌍은 skip
-    # weight = 1 per pair. N 쌍 = 쌍 수 의 linear. 실측 shared-eq 쌍은 보통
-    # 수천 이내 → tardiness (1e5+/min) 대비 충분히 small tie-breaker.
     _edd_pair_terms: list = []
     _process_gks: dict[str, list[str]] = {}
     for _gk, _meta in group_meta.items():
@@ -1683,7 +1699,7 @@ def cp_sat_schedule(
                 )
                 _edd_pair_terms.append(_wrong)
     if _edd_pair_terms:
-        _objective = _objective + sum(_edd_pair_terms)
+        _objective = _objective + _EDD_PAIR_WEIGHT * sum(_edd_pair_terms)
 
     # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
     # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
