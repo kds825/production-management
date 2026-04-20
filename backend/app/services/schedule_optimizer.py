@@ -2563,6 +2563,12 @@ def reschedule(
     frozen 배치(in_progress/completed)의 schedule_tasks는 보존하고,
     planned/scheduled 배치의 schedule_tasks만 삭제 후 auto_schedule을 재실행한다.
     Returns: auto_schedule과 동일한 결과 dict + "cleared_tasks" 수
+
+    P4-5 — ERP 재업로드 경로 웜스타트:
+        삭제 직전에 비-frozen ScheduleTask 의 위치 스냅샷을 캡처해
+        auto_schedule 로 전파한다. 재업로드 주기가 주 3~4회이고 기존 배치와
+        80~95% 겹치는 실사용 패턴에서 CP-SAT feasibility warm-up 을 생략
+        해 2.5~5× speedup 기대.
     """
     # run_stage1_update()와 동일하게 status != "planned"인 배치를 보호
     # wip_complete: WIP 소진 완료 배치 — 재스케줄 시에도 반드시 보존
@@ -2575,11 +2581,48 @@ def reschedule(
         db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
     )
     frozen_batch_ids = {b.batch_id for b in all_batches if b.status in _ALWAYS_FROZEN}
+    batch_group_by_id: dict[int, str] = {
+        b.batch_id: b.batch_group for b in all_batches if b.batch_group
+    }
 
     # frozen 배치에 속하지 않는 schedule_tasks만 삭제
     existing_tasks = (
         db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
     )
+
+    # ── 웜스타트 스냅샷 캡처 (P4-5) ────────────────────────────────────────
+    # base_date 가 None 이면 auto_schedule 내부에서 run_label 기반 유도와 동일하게
+    # 재구성해 _datetime_to_wmin 의 reference 로 쓴다 (캡처 후 auto_schedule 이
+    # 다시 내부적으로 유도하지만 값은 결정론적으로 같음).
+    _hint_base = base_date
+    if _hint_base is None:
+        try:
+            dp = run_label.split("_")[0]
+            _hint_base = datetime(int(dp[:4]), int(dp[4:6]), int(dp[6:8]), 8, 0, 0)
+        except Exception:
+            from zoneinfo import ZoneInfo
+
+            kst = datetime.now(ZoneInfo("Asia/Seoul"))
+            _hint_base = kst.replace(hour=8, minute=0, second=0, microsecond=0).replace(
+                tzinfo=None
+            )
+
+    from app.services.cp_sat_optimizer import _datetime_to_wmin
+
+    warm_start_hints: dict[str, dict] = {}
+    for t in existing_tasks:
+        if t.batch_id in frozen_batch_ids:
+            continue
+        bg = batch_group_by_id.get(t.batch_id)
+        if not bg or bg in warm_start_hints:
+            continue
+        if t.start_datetime is None or t.equipment_code is None:
+            continue
+        warm_start_hints[bg] = {
+            "start_wmin": _datetime_to_wmin(t.start_datetime, _hint_base),
+            "equipment_code": t.equipment_code,
+        }
+
     cleared_count = 0
     for task in existing_tasks:
         if task.batch_id not in frozen_batch_ids:
@@ -2595,7 +2638,13 @@ def reschedule(
 
     db.flush()  # 삭제 반영 후 재스케줄
 
-    # 재스케줄링 실행 — auto_schedule은 status='planned' 배치만 처리하므로 frozen 배치 안전
-    result = auto_schedule(run_label, db, base_date=base_date)
+    # 재스케줄링 실행 — auto_schedule은 status='planned' 배치만 처리하므로 frozen 배치 안전.
+    # warm_start_hints 는 kwargs 로 흘러 _run_with_retry → cp_sat_schedule 까지 전파.
+    result = auto_schedule(
+        run_label,
+        db,
+        base_date=base_date,
+        warm_start_hints=warm_start_hints or None,
+    )
     result["cleared_tasks"] = cleared_count
     return result
