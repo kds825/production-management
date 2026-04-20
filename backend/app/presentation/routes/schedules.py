@@ -1392,3 +1392,174 @@ def revert(change_set_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
         extra["revert_status"] = "success"
         extra["restored_n"] = restored_n
         return {"reverted": True, "change_set_id": change_set_id}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: GET /api/schedules/change-sets/{change_set_id}/diff
+#
+# 긴급수주 등 change_set 1건의 snapshot_before/after 를 비교해 "어떤 task 가 어떻게
+# 바뀌었는지" 를 분류 반환. 프론트의 diff panel / side-by-side Gantt 데이터 소스.
+#
+# 분류 규칙:
+#   - moved   : before/after 양쪽 존재 + start|end|equipment_code 중 하나라도 상이
+#   - added   : after 에만 존재 (before 에 없음)
+#   - removed : before 에만 존재 (after 에 없음, 정상 흐름에선 드뭄)
+#   - unchanged: 완전 동일 (task_id 리스트만 반환 — payload 부피 축소)
+#
+# 시간 포맷: snapshot 의 start/end 는 ISO8601 문자열 그대로 유지. delta_hours 는
+# float 로 별도 계산해 제공 (프론트가 raw parse 부담 없이 정렬/필터링 가능).
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso_or_none(value: Any) -> datetime | None:
+    """snapshot 내 ISO8601 문자열을 datetime 으로 변환. 잘못된 값이면 None.
+
+    snapshot 은 JSONB 이므로 스키마가 강제되지 않는다 — 과거 레코드나 손상된
+    데이터가 섞여 있을 수 있어 방어적으로 파싱한다 (fail-fast 대신 partial).
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _delta_hours(old_iso: Any, new_iso: Any) -> float | None:
+    """두 ISO8601 문자열의 시간 차이를 시간 단위 float 로 반환.
+
+    둘 중 하나라도 파싱 실패 시 None — 프론트가 '계산 불가' 상태를 표시할 수 있게.
+    round(2) 로 소수점 2자리까지 (1분 해상도).
+    """
+    old_dt = _parse_iso_or_none(old_iso)
+    new_dt = _parse_iso_or_none(new_iso)
+    if old_dt is None or new_dt is None:
+        return None
+    return round((new_dt - old_dt).total_seconds() / 3600, 2)
+
+
+@router.get("/change-sets/{change_set_id}/diff")
+def get_change_set_diff(
+    change_set_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """change_set 1건의 snapshot_before/after 를 비교해 변경 내역을 분류 반환.
+
+    긴급수주 반영 후 "기존 계획 대비 어떤 배치가 어떻게 바뀌었는지" 를 UI 에
+    노출하기 위한 읽기 전용 API. revert 와 달리 DB 를 수정하지 않는다.
+    """
+    cs = db.get(ScheduleChangeSet, change_set_id)
+    if cs is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"change_set_id '{change_set_id}' not found",
+        )
+
+    before = cs.snapshot_before or {}
+    after = cs.snapshot_after or {}
+
+    # JSONB 는 정상 경로에서 dict 로 역직렬화되지만, 과거 데이터/수동 INSERT 로 인해
+    # str (직렬화 누락) 이 들어올 가능성을 방어. 파싱 실패는 500 으로 올려 원인 가시화.
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="snapshot_before / snapshot_after must be JSON objects",
+        )
+
+    before_ids = set(before.keys())
+    after_ids = set(after.keys())
+
+    common_ids = before_ids & after_ids
+    added_ids = after_ids - before_ids
+    removed_ids = before_ids - after_ids
+
+    moved_tasks: list[dict[str, Any]] = []
+    unchanged_task_ids: list[str] = []
+
+    for task_id in sorted(common_ids):
+        b = before.get(task_id) or {}
+        a = after.get(task_id) or {}
+        if not isinstance(b, dict) or not isinstance(a, dict):
+            # 개별 task 엔트리 손상 시 moved 로 간주 (보수적) — 진단 로그 대체.
+            continue
+
+        old_start = b.get("start")
+        old_end = b.get("end")
+        old_eq = b.get("equipment_code")
+        new_start = a.get("start")
+        new_end = a.get("end")
+        new_eq = a.get("equipment_code")
+
+        start_changed = old_start != new_start
+        end_changed = old_end != new_end
+        eq_changed = old_eq != new_eq
+
+        if not (start_changed or end_changed or eq_changed):
+            unchanged_task_ids.append(task_id)
+            continue
+
+        moved_tasks.append(
+            {
+                "task_id": task_id,
+                "old_start": old_start,
+                "old_end": old_end,
+                "old_equipment": old_eq,
+                "new_start": new_start,
+                "new_end": new_end,
+                "new_equipment": new_eq,
+                "start_delta_hours": _delta_hours(old_start, new_start),
+                "end_delta_hours": _delta_hours(old_end, new_end),
+                "equipment_changed": eq_changed,
+            }
+        )
+
+    added_tasks: list[dict[str, Any]] = []
+    for task_id in sorted(added_ids):
+        a = after.get(task_id) or {}
+        if not isinstance(a, dict):
+            continue
+        added_tasks.append(
+            {
+                "task_id": task_id,
+                "start": a.get("start"),
+                "end": a.get("end"),
+                "equipment": a.get("equipment_code"),
+            }
+        )
+
+    removed_tasks: list[dict[str, Any]] = []
+    for task_id in sorted(removed_ids):
+        b = before.get(task_id) or {}
+        if not isinstance(b, dict):
+            continue
+        removed_tasks.append(
+            {
+                "task_id": task_id,
+                "start": b.get("start"),
+                "end": b.get("end"),
+                "equipment": b.get("equipment_code"),
+            }
+        )
+
+    # kind 컬럼이 없는 구 스키마 환경(migration 미적용) 에서도 안전하게 동작하도록
+    # getattr 로 접근 — 없으면 기본값 "cascade" (model 의 default 와 동일).
+    kind_value = getattr(cs, "kind", None) or "cascade"
+
+    return {
+        "change_set_id": cs.change_set_id,
+        "kind": kind_value,
+        "created_at": cs.created_at.isoformat() if cs.created_at else None,
+        "preview_request_id": cs.preview_request_id,
+        "summary": {
+            "moved": len(moved_tasks),
+            "added": len(added_tasks),
+            "removed": len(removed_tasks),
+            "unchanged": len(unchanged_task_ids),
+            "total_before": len(before_ids),
+            "total_after": len(after_ids),
+        },
+        "moved_tasks": moved_tasks,
+        "added_tasks": added_tasks,
+        "removed_tasks": removed_tasks,
+        "unchanged_task_ids": unchanged_task_ids,
+    }
