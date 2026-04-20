@@ -212,6 +212,56 @@ def test_cp_sat_sheath_color_hard_combines_with_frozen(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# P4: reschedule_affected_groups(use_cpsat=...) 파라미터 계약
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_reschedule_use_cpsat_flag_accepts(db: Session) -> None:
+    """use_cpsat=True 시그니처 호환성 — 빈 affected set 에서 예외 없음.
+
+    긴급 경로가 CP-SAT 전역 재최적화를 호출하는 스위치. empty 입력은 어느 모드든
+    no-op 이어야 한다.
+    """
+    r = reschedule_affected_groups(_RUN_LABEL, db, set(), use_cpsat=True)
+    assert isinstance(r, dict)
+    assert {"total_tasks", "violations", "warnings"}.issubset(r.keys())
+
+
+def test_reschedule_use_cpsat_default_is_false(db: Session) -> None:
+    """use_cpsat 기본값은 False — 하위 호환 (기존 호출부 무영향).
+
+    auto_schedule / manual cascade 등 기존 호출부는 use_cpsat 을 전달하지 않는다.
+    이 경로가 기존 greedy 동작을 보존해야 한다.
+    """
+    r1 = reschedule_affected_groups(_RUN_LABEL, db, set())
+    r2 = reschedule_affected_groups(_RUN_LABEL, db, set(), use_cpsat=False)
+    assert r1 == r2
+
+
+def test_reschedule_use_cpsat_deterministic(db: Session) -> None:
+    """use_cpsat=True 결정성 (빈 input 기준)."""
+    r1 = reschedule_affected_groups(_RUN_LABEL, db, set(), use_cpsat=True)
+    r2 = reschedule_affected_groups(_RUN_LABEL, db, set(), use_cpsat=True)
+    assert r1 == r2
+
+
+def test_reschedule_use_cpsat_ghost_affected_safe(db: Session) -> None:
+    """CP-SAT 경로에서도 존재하지 않는 affected key 가 안전하게 처리되는지.
+
+    긴급 로직이 stale affected_group_keys 를 넘기더라도 솔버가 죽으면 안 된다.
+    """
+    r = reschedule_affected_groups(
+        _RUN_LABEL + "_GHOST_CPSAT",
+        db,
+        {"GHOST_GROUP_P4"},
+        use_cpsat=True,
+    )
+    assert isinstance(r, dict)
+    # warnings 필드는 있어야 함 (빈 리스트든, 메시지 있든)
+    assert isinstance(r["warnings"], list)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #

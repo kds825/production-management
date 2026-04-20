@@ -490,10 +490,14 @@ def _run_optimization_once(
     if existing_tasks:
         _seed_batch_ids = {t.batch_id for t in existing_tasks if t.batch_id is not None}
         _seed_batches = (
-            db.query(ProductionBatch)
-            .filter(ProductionBatch.batch_id.in_(_seed_batch_ids))
-            .all()
-        ) if _seed_batch_ids else []
+            (
+                db.query(ProductionBatch)
+                .filter(ProductionBatch.batch_id.in_(_seed_batch_ids))
+                .all()
+            )
+            if _seed_batch_ids
+            else []
+        )
         _seed_batch_map = {b.batch_id: b for b in _seed_batches}
 
         for t in existing_tasks:
@@ -507,7 +511,10 @@ def _run_optimization_once(
             proc_sq = (proc, sq_int)
 
             # process_end_by_sq: 해당 (공정, SQ)의 최대 종료 시각
-            if proc_sq not in _seed_pipeline_process_end or t.end_datetime > _seed_pipeline_process_end[proc_sq]:
+            if (
+                proc_sq not in _seed_pipeline_process_end
+                or t.end_datetime > _seed_pipeline_process_end[proc_sq]
+            ):
                 _seed_pipeline_process_end[proc_sq] = t.end_datetime
 
             # process_first_output_by_sq: 첫 번째 드럼 출력 시각
@@ -515,23 +522,40 @@ def _run_optimization_once(
                 _setup_min = float(t.setup_time_min or 0)
                 _dur = float(b.estimated_duration_min or 0)
                 _lot_count = max(int(b.drum_count or 1), 1)
-                _first_drum_min = _setup_min + (_dur / _lot_count if _lot_count else _dur)
-                _first_out = calculate_end_datetime(t.start_datetime, _first_drum_min, db, t.equipment_code)
-                if proc_sq not in _seed_pipeline_first_output or _first_out < _seed_pipeline_first_output[proc_sq]:
+                _first_drum_min = _setup_min + (
+                    _dur / _lot_count if _lot_count else _dur
+                )
+                _first_out = calculate_end_datetime(
+                    t.start_datetime, _first_drum_min, db, t.equipment_code
+                )
+                if (
+                    proc_sq not in _seed_pipeline_first_output
+                    or _first_out < _seed_pipeline_first_output[proc_sq]
+                ):
                     _seed_pipeline_first_output[proc_sq] = _first_out
                 if proc in ("저압절연", "고압절연"):
-                    if _seed_first_insul_output is None or _first_out < _seed_first_insul_output:
+                    if (
+                        _seed_first_insul_output is None
+                        or _first_out < _seed_first_insul_output
+                    ):
                         _seed_first_insul_output = _first_out
             else:
                 # CORE 그룹 → core_first_drum_by_main_sq 채우기
                 _setup_min = float(t.setup_time_min or 0)
                 _dur = float(b.estimated_duration_min or 0)
                 _lot_count = max(int(b.drum_count or 1), 1)
-                _first_drum_min = _setup_min + (_dur / _lot_count if _lot_count else _dur)
-                _first_out = calculate_end_datetime(t.start_datetime, _first_drum_min, db, t.equipment_code)
+                _first_drum_min = _setup_min + (
+                    _dur / _lot_count if _lot_count else _dur
+                )
+                _first_out = calculate_end_datetime(
+                    t.start_datetime, _first_drum_min, db, t.equipment_code
+                )
                 _msq = _extract_core_main_sq(b.batch_group or "")
                 if _msq is not None:
-                    if _msq not in _seed_core_first_drum or _first_out < _seed_core_first_drum[_msq]:
+                    if (
+                        _msq not in _seed_core_first_drum
+                        or _first_out < _seed_core_first_drum[_msq]
+                    ):
                         _seed_core_first_drum[_msq] = _first_out
 
     # Track predecessor tasks by (sales_order_id, sales_order_line)
@@ -549,13 +573,17 @@ def _run_optimization_once(
     # 공정 간 선행관계 추적 — SQ 단위로 앞 공정의 종료 시각 기록
     # 연선_120SQ 종료 → 저압절연_120SQ 시작 가능
     # 저압절연_120SQ 종료 → A100_120SQ / A120_120SQ 시작 가능
-    process_end_by_sq: dict[tuple[str, int], datetime] = dict(_seed_pipeline_process_end)
+    process_end_by_sq: dict[tuple[str, int], datetime] = dict(
+        _seed_pipeline_process_end
+    )
     # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
 
     # 파이프라인 겹침용: 앞 공정에서 첫 번째 드럼이 출력되는 시각
     # 연선에서 1틀이 나오면 절연 시작 가능, 절연 1틀 나오면 시스 시작 가능
     # = task.start_datetime + setup_min + (group_run_duration / drum_count)
-    process_first_output_by_sq: dict[tuple[str, int], datetime] = dict(_seed_pipeline_first_output)
+    process_first_output_by_sq: dict[tuple[str, int], datetime] = dict(
+        _seed_pipeline_first_output
+    )
 
     # 저압절연 전체 중 가장 이른 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
     first_insul_output: datetime | None = _seed_first_insul_output
@@ -1944,16 +1972,260 @@ def _filter_by_sheath_routing(
     return equipment
 
 
-def reschedule_affected_groups(
+_ALWAYS_FROZEN_STATUSES: frozenset[str] = frozenset(
+    {"in_progress", "completed", "wip_complete"}
+)
+
+
+def _reschedule_affected_groups_cpsat(
     run_label: str,
     db: Session,
     affected_group_keys: set[str],
     *,
     base_date: datetime | None = None,
 ) -> dict:
+    """긴급수주 재최적화 — CP-SAT 전역 경로 (P4).
+
+    왜 전역 재최적화인가 (사용자 결정):
+      - Merged 그룹을 "start 유지 + end 연장" 트릭으로 제자리에 두지 않고,
+        CP-SAT 가 자유변수로 전체를 다시 풀어 납기 초과 최우선화.
+      - 진행중/완료 작업만 frozen (in_progress/completed/wip_complete) +
+        base_date 이전 start_datetime 의 scheduled 도 보호 (생산 중이므로).
+
+    동작:
+      1. hard_frozen_keys 계산: 보호 상태 배치 + base_date 이전 scheduled 의
+         batch_group 집합.
+      2. 비-frozen ScheduleTask 삭제 + 비-frozen 배치 status 를 'planned' 로 리셋.
+         (CP-SAT 는 planned 만 재스케줄. scheduled 인 채 두면 재배치 대상에서
+          빠져 전역 최적화가 깨진다.)
+      3. cp_sat_schedule(frozen_group_keys=hard_frozen_keys,
+         sheath_color_hard=True) 호출.
+      4. solver_status == "INFEASIBLE" → sheath_color_hard=False 로 재시도
+         (색상 hard 가 infeasible 원인일 수 있음 → soft 로 강등).
+      5. 그래도 실패 → greedy 폴백 (_run_optimization_once).
+
+    affected_group_keys 는 현재 단계에서는 소비하지 않는다. 이유:
+      cp_sat_schedule 자체가 "run_label 의 planned 배치 전체" 를 푸는 설계라
+      부분 최적화 mode 가 아직 없음. 향후 '부분 재최적화' 옵션이 추가되면
+      affected 를 필터로 사용하도록 확장 가능. 현재는 시그니처 호환 목적.
+    """
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    result: dict = {"total_tasks": 0, "violations": [], "warnings": []}
+
+    # ── 1. base_date 기본값 — auto_schedule / _run_optimization_once 와 동일 ──
+    if base_date is None:
+        try:
+            dp = run_label.split("_")[0]
+            base_date = datetime(int(dp[:4]), int(dp[4:6]), int(dp[6:8]), 8, 0, 0)
+        except Exception:
+            from zoneinfo import ZoneInfo
+
+            kst = datetime.now(ZoneInfo("Asia/Seoul"))
+            base_date = kst.replace(hour=8, minute=0, second=0, microsecond=0).replace(
+                tzinfo=None
+            )
+
+    # ── 2. hard_frozen 그룹 키 계산 ──────────────────────────────────────────
+    #   (a) status in _ALWAYS_FROZEN_STATUSES 인 배치의 batch_group.
+    #   (b) base_date 이전에 start_datetime 이 잡힌 'scheduled' 배치의 batch_group.
+    #       — 이미 생산이 시작되고 있을 수 있으므로 이동 금지.
+    all_batches: list[ProductionBatch] = (
+        db.query(ProductionBatch).filter(ProductionBatch.run_label == run_label).all()
+    )
+    frozen_batch_ids: set[int] = {
+        b.batch_id for b in all_batches if b.status in _ALWAYS_FROZEN_STATUSES
+    }
+
+    hard_frozen_keys: set[str] = {
+        b.batch_group
+        for b in all_batches
+        if b.batch_group and b.status in _ALWAYS_FROZEN_STATUSES
+    }
+
+    # (b) 기존 ScheduleTask 중 base_date 이전 시작 + scheduled → frozen 로 승격
+    _batch_group_by_id: dict[int, str] = {
+        b.batch_id: b.batch_group for b in all_batches if b.batch_group
+    }
+    _batch_status_by_id: dict[int, str] = {b.batch_id: b.status for b in all_batches}
+
+    existing_tasks = (
+        db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+    )
+    for t in existing_tasks:
+        bg = _batch_group_by_id.get(t.batch_id)
+        st = _batch_status_by_id.get(t.batch_id)
+        if (
+            bg
+            and st == "scheduled"
+            and t.start_datetime is not None
+            and t.start_datetime < base_date
+        ):
+            hard_frozen_keys.add(bg)
+            # 이 batch 도 이동 금지 → frozen_batch_ids 에 포함시켜 task 삭제/리셋 대상에서 제외
+            frozen_batch_ids.add(t.batch_id)
+
+    # ── 3. 비-frozen ScheduleTask 삭제 + 비-frozen 배치 status 'planned' 리셋 ─
+    #   CP-SAT 는 status=='planned' 배치만 재스케줄한다. 이 리셋 없이 호출하면
+    #   scheduled 그대로 남은 배치는 "pre-load timeline" 블록 역할만 하고 재배치
+    #   되지 않아 전역 재최적화가 되지 않는다. frozen 은 그대로 유지 (pre-load +
+    #   cp_sat_schedule 이 frozen_group_keys 로 start/equipment 를 고정).
+    from app.infrastructure.models.audit_log import AuditLog
+
+    non_frozen_task_ids = [
+        t.task_id for t in existing_tasks if t.batch_id not in frozen_batch_ids
+    ]
+    if non_frozen_task_ids:
+        db.query(AuditLog).filter(AuditLog.task_id.in_(non_frozen_task_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(ScheduleTask).filter(
+            ScheduleTask.task_id.in_(non_frozen_task_ids)
+        ).delete(synchronize_session=False)
+
+    non_frozen_scheduled_batch_ids = [
+        b.batch_id
+        for b in all_batches
+        if b.batch_id not in frozen_batch_ids and b.status == "scheduled"
+    ]
+    if non_frozen_scheduled_batch_ids:
+        db.query(ProductionBatch).filter(
+            ProductionBatch.batch_id.in_(non_frozen_scheduled_batch_ids)
+        ).update(
+            {"status": "planned", "equipment_code": None}, synchronize_session=False
+        )
+    db.flush()
+
+    # ── 4. CP-SAT 1차 시도 — sheath_color_hard=True ─────────────────────────
+    cp_result = cp_sat_schedule(
+        run_label,
+        db,
+        base_date=base_date,
+        frozen_group_keys=hard_frozen_keys or None,
+        sheath_color_hard=True,
+    )
+
+    # ── 5. INFEASIBLE → sheath_color_hard=False 로 재시도 (P4 fallback) ─────
+    if cp_result.get("solver_status") == "INFEASIBLE":
+        # 색상 hard 가 infeasible 원인일 수 있음 → soft penalty 로 강등 후 재시도.
+        # 재시도 전 이전 부분 삽입물이 있을 수 있으므로 non-frozen 영역을 다시 정리.
+        _retry_non_frozen_task_ids = [
+            t.task_id
+            for t in (
+                db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+            )
+            if t.batch_id not in frozen_batch_ids
+        ]
+        if _retry_non_frozen_task_ids:
+            db.query(AuditLog).filter(
+                AuditLog.task_id.in_(_retry_non_frozen_task_ids)
+            ).delete(synchronize_session=False)
+            db.query(ScheduleTask).filter(
+                ScheduleTask.task_id.in_(_retry_non_frozen_task_ids)
+            ).delete(synchronize_session=False)
+        # scheduled 로 재진입된 배치도 다시 planned 로
+        _retry_reset_ids = [
+            b.batch_id
+            for b in db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status == "scheduled",
+            )
+            .all()
+            if b.batch_id not in frozen_batch_ids
+        ]
+        if _retry_reset_ids:
+            db.query(ProductionBatch).filter(
+                ProductionBatch.batch_id.in_(_retry_reset_ids)
+            ).update(
+                {"status": "planned", "equipment_code": None},
+                synchronize_session=False,
+            )
+        db.flush()
+
+        cp_result = cp_sat_schedule(
+            run_label,
+            db,
+            base_date=base_date,
+            frozen_group_keys=hard_frozen_keys or None,
+            sheath_color_hard=False,
+        )
+        cp_result.setdefault("warnings", []).append(
+            "색상 hard constraint infeasible → soft penalty 로 재시도"
+        )
+
+    # ── 6. 그래도 실패 → greedy 폴백 ────────────────────────────────────────
+    if cp_result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
+        # 재시도 전 non-frozen 영역 재정리
+        _fb_non_frozen_task_ids = [
+            t.task_id
+            for t in (
+                db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+            )
+            if t.batch_id not in frozen_batch_ids
+        ]
+        if _fb_non_frozen_task_ids:
+            db.query(AuditLog).filter(
+                AuditLog.task_id.in_(_fb_non_frozen_task_ids)
+            ).delete(synchronize_session=False)
+            db.query(ScheduleTask).filter(
+                ScheduleTask.task_id.in_(_fb_non_frozen_task_ids)
+            ).delete(synchronize_session=False)
+        _fb_reset_ids = [
+            b.batch_id
+            for b in db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status == "scheduled",
+            )
+            .all()
+            if b.batch_id not in frozen_batch_ids
+        ]
+        if _fb_reset_ids:
+            db.query(ProductionBatch).filter(
+                ProductionBatch.batch_id.in_(_fb_reset_ids)
+            ).update(
+                {"status": "planned", "equipment_code": None},
+                synchronize_session=False,
+            )
+        db.flush()
+
+        greedy_result = _run_optimization_once(run_label, db, base_date=base_date)
+        result["total_tasks"] = greedy_result.get("total_tasks", 0)
+        result["violations"] = greedy_result.get("violations", [])
+        result["warnings"].extend(cp_result.get("warnings", []))
+        result["warnings"].extend(greedy_result.get("warnings", []))
+        result["warnings"].append("CP-SAT 전역 재최적화 실패 → greedy 폴백으로 전환")
+        return result
+
+    # ── 7. 성공 — CP-SAT 결과 그대로 전달 (shape 유지) ───────────────────────
+    result["total_tasks"] = cp_result.get("total_tasks", 0)
+    result["violations"] = cp_result.get("violations", [])
+    result["warnings"].extend(cp_result.get("warnings", []))
+    return result
+
+
+def reschedule_affected_groups(
+    run_label: str,
+    db: Session,
+    affected_group_keys: set[str],
+    *,
+    base_date: datetime | None = None,
+    use_cpsat: bool = False,
+) -> dict:
     """긴급 수주 증분 반영 후 영향 받은 batch_group 만 부분 재스케줄링.
 
-    동작 원리
+    Args:
+        use_cpsat: False (기본) → 기존 greedy 경로 (부분 재스케줄).
+            True → CP-SAT 전역 재최적화 경로 (P4).
+                - hard_frozen: status in {in_progress, completed, wip_complete}
+                  + base_date 이전 start_datetime 의 scheduled 배치의 batch_group.
+                - 나머지 ScheduleTask 는 삭제하고 배치 status 를 planned 로 리셋,
+                  그 뒤 cp_sat_schedule(frozen_group_keys=hard_frozen,
+                  sheath_color_hard=True) 호출. INFEASIBLE 이면 sheath_color_hard
+                  =False 로 1회 재시도, 그래도 실패하면 greedy 로 최종 폴백.
+
+    Greedy (use_cpsat=False) 동작 원리
     ─────────
     1. 비영향 그룹의 기존 ScheduleTask → timeline / process_end_by_sq /
        process_first_output_by_sq를 미리 채운다.
@@ -1967,17 +2239,18 @@ def reschedule_affected_groups(
        '납기가 더 이른 기존 배치는 그대로, 납기가 더 늦은 기존 배치 사이에 끼워넣기'
        효과를 timeline 레벨에서 자연스럽게 구현한다.
     """
+    if use_cpsat:
+        return _reschedule_affected_groups_cpsat(
+            run_label, db, affected_group_keys, base_date=base_date
+        )
+
     result: dict = {"total_tasks": 0, "violations": [], "warnings": []}
 
     if not affected_group_keys:
         return result
 
     # ── 1. 전체 기존 ScheduleTask 로드 ───────────────────────────────────────
-    all_tasks = (
-        db.query(ScheduleTask)
-        .filter(ScheduleTask.run_label == run_label)
-        .all()
-    )
+    all_tasks = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
 
     # batch_group → task (1:1 보장: 그룹당 1 ScheduleTask)
     task_by_group: dict[str, ScheduleTask] = {}
@@ -2017,13 +2290,19 @@ def reschedule_affected_groups(
         sq_int = int(b.sq_mm2 or 0)
         proc_sq = (proc, sq_int)
         # process_end_by_sq: 해당 공정+SQ 최대 종료 시각
-        if proc_sq not in process_end_by_sq or task.end_datetime > process_end_by_sq[proc_sq]:
+        if (
+            proc_sq not in process_end_by_sq
+            or task.end_datetime > process_end_by_sq[proc_sq]
+        ):
             process_end_by_sq[proc_sq] = task.end_datetime
         # process_first_output_by_sq: 해당 공정+SQ 최소 첫 드럼 출력 시각
         # 정확한 first_output_dt를 ScheduleTask에서 역산 (lot_count 이용)
         header = next(
-            (bx for bx in batch_by_id.values()
-             if bx.batch_group == gk and bx.batch_seq == -1),
+            (
+                bx
+                for bx in batch_by_id.values()
+                if bx.batch_group == gk and bx.batch_seq == -1
+            ),
             None,
         )
         if header is not None:
@@ -2035,10 +2314,14 @@ def reschedule_affected_groups(
         dur = float(b.estimated_duration_min or 0) if b.estimated_duration_min else 0.0
         first_drum_min = setup_min + (dur / lot_count)
         from app.services.calendar_engine import calculate_end_datetime
+
         first_out = calculate_end_datetime(
             task.start_datetime, first_drum_min, db, task.equipment_code
         )
-        if proc_sq not in process_first_output_by_sq or first_out < process_first_output_by_sq[proc_sq]:
+        if (
+            proc_sq not in process_first_output_by_sq
+            or first_out < process_first_output_by_sq[proc_sq]
+        ):
             process_first_output_by_sq[proc_sq] = first_out
         # 절연 첫 출력 (시스 시작 기준)
         if proc in ("저압절연", "고압절연"):
@@ -2047,7 +2330,10 @@ def reschedule_affected_groups(
         # CORE 첫 드럼
         if _is_core_group(gk):
             msq = _extract_core_main_sq(gk)
-            if msq and (msq not in core_first_drum_by_main_sq or first_out < core_first_drum_by_main_sq[msq]):
+            if msq and (
+                msq not in core_first_drum_by_main_sq
+                or first_out < core_first_drum_by_main_sq[msq]
+            ):
                 core_first_drum_by_main_sq[msq] = first_out
 
     # ── 3. 영향 그룹의 기존 ScheduleTask 삭제 + 배치 리셋 ─────────────────
@@ -2057,22 +2343,25 @@ def reschedule_affected_groups(
         t.task_id for gk, t in task_by_group.items() if gk in affected_group_keys
     ]
     if affected_task_ids:
-        db.query(AuditLog).filter(
-            AuditLog.task_id.in_(affected_task_ids)
-        ).delete(synchronize_session=False)
+        db.query(AuditLog).filter(AuditLog.task_id.in_(affected_task_ids)).delete(
+            synchronize_session=False
+        )
         db.query(ScheduleTask).filter(
             ScheduleTask.task_id.in_(affected_task_ids)
         ).delete(synchronize_session=False)
 
     # 영향 그룹 배치 → 'planned' 리셋
     affected_batch_ids = [
-        b.batch_id for b in batch_by_id.values()
+        b.batch_id
+        for b in batch_by_id.values()
         if b.batch_group in affected_group_keys and b.status == "scheduled"
     ]
     if affected_batch_ids:
         db.query(ProductionBatch).filter(
             ProductionBatch.batch_id.in_(affected_batch_ids)
-        ).update({"status": "planned", "equipment_code": None}, synchronize_session=False)
+        ).update(
+            {"status": "planned", "equipment_code": None}, synchronize_session=False
+        )
     db.flush()
 
     # ── 4. 영향 그룹 배치 로드 → 부분 그리디 실행 ──────────────────────────
@@ -2097,7 +2386,9 @@ def reschedule_affected_groups(
     )
 
     if not affected_batches:
-        result["warnings"].append("재스케줄 대상 배치 없음 (모두 frozen 또는 이미 scheduled)")
+        result["warnings"].append(
+            "재스케줄 대상 배치 없음 (모두 frozen 또는 이미 scheduled)"
+        )
         return result
 
     # ── 5. _run_optimization_once 와 동일한 그리디 루프 — 영향 그룹만 ───────
