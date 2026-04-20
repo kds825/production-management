@@ -1,7 +1,10 @@
 """ConstraintConfig 확장 API — history / drift-status / preview-impact 테스트."""
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.infrastructure.database import SessionLocal
+from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.constraint_config_history import (
     ConstraintConfigHistory,
 )
@@ -10,13 +13,54 @@ from app.main import app
 client = TestClient(app)
 
 
+# Why: TestClient 라우트는 자체 세션으로 commit 하므로 `db` 픽스처의 rollback 으로
+# 정리되지 않는다. 실 DB(Supabase)를 공유하는 개발 환경에서 이 파일의 테스트가
+# 사용자가 UI 로 편집한 값을 덮어쓰지 않도록, 각 테스트 시작 시점의 params_json
+# 을 스냅샷해두고 테스트 종료 시 그대로 복원한다. (하드코딩 210 복원 금지)
+@pytest.fixture(autouse=True)
+def _preserve_constraint_params():
+    session = SessionLocal()
+    try:
+        snapshot = {
+            r.constraint_id: dict(r.params_json or {})
+            for r in session.query(ConstraintConfig).all()
+        }
+    finally:
+        session.close()
+
+    yield
+
+    session = SessionLocal()
+    try:
+        for cid, params in snapshot.items():
+            row = (
+                session.query(ConstraintConfig)
+                .filter(ConstraintConfig.constraint_id == cid)
+                .first()
+            )
+            if row is not None and row.params_json != params:
+                row.params_json = params
+        session.commit()
+    finally:
+        session.close()
+
+
 def test_patch_records_history(db) -> None:
     """PATCH 시 old/new params_json 을 constraint_config_history 에 기록."""
+    # 시작 시점의 stranding_min 캡처 — 하드코딩 210 에 의존하지 않는다.
+    pre = client.get("/api/constraints").json()
+    pre_4_1 = next(c for c in pre["constraints"] if c["constraint_id"] == "4-1")[
+        "params_json"
+    ]
+    pre_stranding = pre_4_1.get("stranding_min")
+    # pre 와 동일하면 history 가 생성되지 않으므로 반드시 다른 값 사용
+    new_stranding = 200 if pre_stranding != 200 else 201
+
     before = db.query(ConstraintConfigHistory).count()
 
     resp = client.patch(
         "/api/constraints/4-1",
-        json={"params_json": {"stranding_min": 200}},
+        json={"params_json": {"stranding_min": new_stranding}},
     )
     assert resp.status_code == 200
 
@@ -30,21 +74,8 @@ def test_patch_records_history(db) -> None:
         .first()
     )
     assert latest.constraint_id == "4-1"
-    assert latest.new_params_json.get("stranding_min") == 200
-    assert latest.old_params_json.get("stranding_min") == 210
-
-    # cleanup — 시드값 복원
-    client.patch(
-        "/api/constraints/4-1",
-        json={
-            "params_json": {
-                "stranding_min": 210,
-                "insulation_min": 60,
-                "sheath_min": 30,
-                "cv_min": 300,
-            }
-        },
-    )
+    assert latest.new_params_json.get("stranding_min") == new_stranding
+    assert latest.old_params_json.get("stranding_min") == pre_stranding
 
 
 def test_patch_merges_partial_params(db) -> None:
@@ -53,31 +84,24 @@ def test_patch_merges_partial_params(db) -> None:
     Regression: 이전엔 row.params_json = new_params 로 전체 교체라서
     {stranding_min: 30} patch 시 insulation_min/sheath_min/cv_min 이 사라졌다.
     """
+    # 병합 검증용 pre-스냅샷 — 편집 안 한 키는 이 값 그대로 유지되어야 한다.
+    pre = client.get("/api/constraints").json()
+    pre_4_1 = next(c for c in pre["constraints"] if c["constraint_id"] == "4-1")[
+        "params_json"
+    ]
+    new_stranding = 30 if pre_4_1.get("stranding_min") != 30 else 31
+
     resp = client.patch(
         "/api/constraints/4-1",
-        json={"params_json": {"stranding_min": 30}},
+        json={"params_json": {"stranding_min": new_stranding}},
     )
     assert resp.status_code == 200
 
     got = client.get("/api/constraints").json()
     row = next(c for c in got["constraints"] if c["constraint_id"] == "4-1")
-    assert row["params_json"]["stranding_min"] == 30
-    assert row["params_json"]["insulation_min"] == 60
-    assert row["params_json"]["sheath_min"] == 30
-    assert row["params_json"]["cv_min"] == 300
-
-    # cleanup — 시드값 복원
-    client.patch(
-        "/api/constraints/4-1",
-        json={
-            "params_json": {
-                "stranding_min": 210,
-                "insulation_min": 60,
-                "sheath_min": 30,
-                "cv_min": 300,
-            }
-        },
-    )
+    assert row["params_json"]["stranding_min"] == new_stranding
+    for k in ("insulation_min", "sheath_min", "cv_min"):
+        assert row["params_json"][k] == pre_4_1[k]
 
 
 def test_get_history(db) -> None:

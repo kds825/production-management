@@ -3,25 +3,41 @@ import { test, expect } from "@playwright/test";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /**
- * Why: 이 스펙은 실제 DB 값을 변경한다. 각 테스트 끝에 시드값을 복원하여
- * 다른 테스트와의 상호 오염을 방지한다.
+ * Why: 이 스펙은 실제 DB 값을 변경한다. 시드값(210…)을 하드코딩으로 복원하면
+ * 사용자가 UI 로 편집해둔 값까지 덮어쓴다. 각 테스트 시작 시점의 params_json
+ * 을 캡처해 종료 시 그대로 복원한다. 이렇게 하면 사용자가 30 으로 저장해둔
+ * 값은 테스트 실행 후에도 30 으로 유지된다.
  */
-async function restoreSeed(request: any) {
-  await request.patch(`${API}/constraints/4-1`, {
-    data: {
-      params_json: {
-        stranding_min: 210,
-        insulation_min: 60,
-        sheath_min: 30,
-        cv_min: 300,
-      },
-    },
-  });
+let preSnapshot: Record<string, Record<string, number>> = {};
+
+async function captureSnapshot(request: any) {
+  const resp = await request.get(`${API}/constraints`);
+  const data = await resp.json();
+  const snap: Record<string, Record<string, number>> = {};
+  for (const c of data.constraints || []) {
+    snap[c.constraint_id] = { ...(c.params_json || {}) };
+  }
+  return snap;
+}
+
+async function restoreSnapshot(
+  request: any,
+  snap: Record<string, Record<string, number>>,
+) {
+  for (const [id, params] of Object.entries(snap)) {
+    await request.patch(`${API}/constraints/${id}`, {
+      data: { params_json: params },
+    });
+  }
 }
 
 test.describe("ConstraintConfig 파라미터 편집", () => {
+  test.beforeEach(async ({ request }) => {
+    preSnapshot = await captureSnapshot(request);
+  });
+
   test.afterEach(async ({ request }) => {
-    await restoreSeed(request);
+    await restoreSnapshot(request, preSnapshot);
   });
 
   test("시나리오 1 — 다음 자동배열부터 적용 (drift 배지 + 이력)", async ({
@@ -30,9 +46,10 @@ test.describe("ConstraintConfig 파라미터 편집", () => {
     await page.goto("/master/constraints");
     await expect(page.locator("h1")).toContainText("제약 파라미터");
 
-    // 4-1 카드의 연선 규격교체 input (첫 번째 number input)
+    // 4-1 카드의 연선 규격교체 input (첫 번째 number input).
+    // 초기 값은 사용자가 편집해둔 값에 의존하므로 특정 숫자 검증은 하지 않는다.
     const strandingInput = page.locator('input[type="number"]').first();
-    await expect(strandingInput).toHaveValue("210");
+    await expect(strandingInput).toBeVisible();
     await strandingInput.fill("0");
 
     // 시간 병기 UX — 0분 표기
