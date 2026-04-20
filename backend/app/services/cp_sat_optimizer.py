@@ -408,6 +408,7 @@ def cp_sat_schedule(
     base_date: datetime | None = None,
     random_seed: int = 0,
     frozen_group_keys: set[str] | None = None,
+    sheath_color_hard: bool = True,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.
@@ -422,6 +423,16 @@ def cp_sat_schedule(
             start/end/equipment 는 기존 DB ScheduleTask 값으로 박힌다. 긴급수주
             추가 후 전역 재최적화에서 "이미 진행중/완료/base_date 이전 scheduled"
             배치가 움직이지 않도록 보장. None 또는 빈 set 이면 기존 동작 유지.
+        sheath_color_hard: 시스(저압/고압) 색상 클러스터 내 인접 그룹을 hard
+            constraint 로 강제할지 여부 (기본 True — 긴급수주 반영 시 "블록
+            배치에서 색상 우선" 사용자 결정사항). True 일 때:
+              1) 같은 (설비 카테고리, 주차, 색상) 클러스터로 묶인 그룹들의
+                 인접 쌍에 대해 gk_b.start ≥ gk_a.end + color_changeover_min
+                 을 model.add() 로 강제.
+              2) 동일 인접 쌍은 같은 설비 선택을 강제 (cluster 의 의미가
+                 "같은 설비에서 연속" 이므로).
+            False 면 기존 soft penalty(chain_terms)만 유지되는 기존 동작.
+            호출측(auto_schedule)이 전달하지 않으면 True 가 적용된다.
 
     Returns:
         {"total_tasks", "violations", "warnings", "solver_status", "objective_value"}
@@ -782,6 +793,63 @@ def cp_sat_schedule(
     )
     if idle_terms:
         _objective = _objective + _IDLE_WEIGHT * sum(idle_terms)
+
+    # 6-f-hard. 시스 색상 체인 Hard Constraint (sheath_color_hard=True 일 때만)
+    #
+    # Why: 긴급수주 반영 시 사용자 결정사항 — "블록 배치에서 색상 우선을 강제".
+    # 기존 6-g 의 soft penalty(chain_terms, weight=1) 는 tardiness_weight 에 밀려
+    # 실질적으로 무력해지는 경우가 있었음. Hard 승격 시:
+    #   1) 같은 클러스터(설비 카테고리 + 주차 버킷 + 색상) 내 정렬된 인접 쌍이
+    #      반드시 같은 설비에서 선행(gk_a → gk_b) 으로 순차 배치.
+    #   2) 두 작업 사이 간격 ≥ color_changeover_min (ConstraintConfig 4-2
+    #      sheath_color_min, 기본 120 분). 같은 색상이므로 이론상 교체 0 분이 맞지만,
+    #      클러스터 단위 연속성을 보장하기 위한 최소 gap 으로만 사용.
+    #
+    # 방어 로직:
+    #   - build_sheath_clusters 빈 list → 제약 추가 없이 pass
+    #   - frozen 그룹 pair → skip (start 이미 고정됨, 추가 제약 불필요)
+    #   - 인접 쌍 중 하나라도 start_vars/equip_vars 에 없으면 skip
+    #   - 클러스터 group_keys 가 1개 이하 → skip (인접 쌍 없음)
+    if sheath_color_hard:
+        from app.services.sheath_cluster import (
+            build_sheath_clusters as _build_sheath_clusters_hard,
+        )
+
+        _clusters_hard = _build_sheath_clusters_hard(group_meta)
+        # ConstraintConfig 4-2 에서 색상 교체 시간 조회. SpeedMaster 값 없이
+        # fallback 경로만 써서 설비별 편차 무시 (클러스터 단위 gap 의미).
+        _color_gap_min = int(
+            round(
+                resolve_color_change_min(
+                    sm_color_min=None,
+                    params=constraint_params,
+                )
+            )
+        )
+        _frozen_set = frozen_group_keys or set()
+
+        for _cluster in _clusters_hard:
+            _gks_ord = _cluster.group_keys
+            if len(_gks_ord) < 2:
+                continue
+            for _i in range(len(_gks_ord) - 1):
+                _gk_a = _gks_ord[_i]
+                _gk_b = _gks_ord[_i + 1]
+                # 둘 다 모델에 있는지 확인 (group_meta 에서 제외된 키 방어)
+                if _gk_a not in start_vars or _gk_b not in start_vars:
+                    continue
+                if _gk_a not in equip_vars or _gk_b not in equip_vars:
+                    continue
+                # 두 그룹 모두 frozen 이면 start 이미 고정 → 추가 제약은 중복/모순 위험
+                if _gk_a in _frozen_set and _gk_b in _frozen_set:
+                    continue
+                # Hard: gk_b 는 gk_a 종료 후 color_gap 이상 이후에 시작
+                model.add(start_vars[_gk_b] >= end_vars[_gk_a] + _color_gap_min)
+                # 같은 설비 강제: 두 그룹이 공통으로 eligible 한 설비 bool 을 동기화.
+                # 교집합 eq 가 없는 경우(서로 다른 설비 후보) → gap 제약만 적용.
+                _shared_eqs = equip_vars[_gk_a].keys() & equip_vars[_gk_b].keys()
+                for _eq in _shared_eqs:
+                    model.add(equip_vars[_gk_a][_eq] == equip_vars[_gk_b][_eq])
 
     # 6-g. 시스 색상 체인 보너스 — 같은 설비 카테고리(A100/A120) 내 같은 색상 그룹
     # 쌍에 대해 |start_a - start_b| 를 최소화. 체인지오버 비용을 간접적으로 penalize.

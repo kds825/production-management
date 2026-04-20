@@ -144,6 +144,74 @@ def test_cp_sat_frozen_group_keys_missing_group_warns(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CP-SAT sheath_color_hard 파라미터 호환성 테스트 (P3)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: 긴급수주 반영 시 사용자 결정 — "블록 배치에서 색상 우선 강제".
+# `sheath_color_hard` 파라미터로 시스 색상 체인을 soft penalty 대신 hard
+# constraint 로 승격. P3 스코프 — 시그니처 호환성 + 방어 로직만 검증.
+# 실제 색상 체인 품질(연속 배치, 같은 설비 강제)은 P4 에서 fixture 로 추가.
+
+
+def test_cp_sat_sheath_color_hard_default_true(db: Session) -> None:
+    """sheath_color_hard 는 기본값 True — 명시적 전달 없어도 hard constraint 작동.
+
+    존재하지 않는 run_label 이라 배치가 비어 model 에 제약이 추가되진 않지만,
+    기본값 경로가 예외 없이 통과하는지 (기본값 정의 실수/import 누락 회귀 방어).
+    """
+    r = cp_sat_schedule("NON_EXISTENT_RUN_P3", db)
+    assert isinstance(r, dict)
+    assert "warnings" in r
+    assert isinstance(r["warnings"], list)
+
+
+def test_cp_sat_sheath_color_hard_false_disables(db: Session) -> None:
+    """sheath_color_hard=False 는 기존 soft-only 동작 유지 (기존 호출 경로 보장).
+
+    P4 에서 fallback(infeasible → soft) 시 이 경로로 재시도하게 된다.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P3_SOFT",
+        db,
+        sheath_color_hard=False,
+    )
+    assert isinstance(r, dict)
+    assert "warnings" in r
+
+
+def test_cp_sat_sheath_color_hard_signature_backcompat(db: Session) -> None:
+    """기존 호출부(auto_schedule 등)가 sheath_color_hard 를 전달하지 않아도 통과.
+
+    auto_schedule 는 **kwargs 로 전달하므로, 새 파라미터를 쓰지 않는 경로가
+    여전히 깨지지 않는다는 것을 간접 검증 (signature positional/keyword 호환성).
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P3_SIG",
+        db,
+        random_seed=0,
+        frozen_group_keys=None,
+    )
+    assert isinstance(r, dict)
+    assert "warnings" in r
+
+
+def test_cp_sat_sheath_color_hard_combines_with_frozen(db: Session) -> None:
+    """P2 frozen_group_keys + P3 sheath_color_hard 동시 전달 시 예외 없음.
+
+    두 제약이 충돌하는 방어 경로(둘 다 frozen 인 pair → hard skip)를 간접 검증.
+    실제 충돌 시나리오 품질은 P4 에서 실데이터로 검증.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P3_COMBO",
+        db,
+        frozen_group_keys={"GHOST_GK_A"},
+        sheath_color_hard=True,
+    )
+    assert isinstance(r, dict)
+    assert "warnings" in r
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #
