@@ -2097,6 +2097,7 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
 
     최신 실행이 상단에 오도록 created_at 내림차순 정렬.
     outsource_count: ERP 외주 플래그(is_outsourced=True) 수주 건수.
+    parent_run_label: stage1/update 로 파생된 경우 어느 이전 run 의 후속인지.
     """
     from app.infrastructure.models.sales_order import SalesOrder
 
@@ -2105,26 +2106,35 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
             ProductionBatch.run_label,
             func.count(ProductionBatch.batch_id).label("batch_count"),
             func.min(ProductionBatch.created_at).label("created_at"),
+            # 같은 run 내에서 parent_run_label 은 모두 동일 (stage1/update 에서 일괄 설정).
+            # NULL 과 non-NULL 이 섞일 경우 MAX 로 비-NULL 우선. 최초 run 은 NULL 유지.
+            func.max(ProductionBatch.parent_run_label).label("parent_run_label"),
         )
         .group_by(ProductionBatch.run_label)
         .order_by(func.min(ProductionBatch.created_at).desc())
         .all()
     )
 
-    # 런별 외주 건수 — ERP is_outsourced 플래그 기준
+    # 런별 외주 건수 — ProductionBatch.sales_order_id 기준으로 SalesOrder 조인.
+    # SalesOrder.run_label 은 forward-roll 로 최신 run 을 가리킬 수 있으므로
+    # pb.run_label 기준으로 집계해야 버전별 정확한 외주 건수를 얻는다.
     outsource_counts: dict[str, int] = {}
     if rows:
         run_labels = [r.run_label for r in rows]
         outsource_rows = (
             db.query(
-                SalesOrder.run_label,
-                func.count().label("cnt"),
+                ProductionBatch.run_label,
+                func.count(func.distinct(ProductionBatch.sales_order_id)).label("cnt"),
+            )
+            .join(
+                SalesOrder,
+                ProductionBatch.sales_order_id == SalesOrder.order_id,
             )
             .filter(
-                SalesOrder.run_label.in_(run_labels),
+                ProductionBatch.run_label.in_(run_labels),
                 SalesOrder.is_outsourced == True,  # noqa: E712
             )
-            .group_by(SalesOrder.run_label)
+            .group_by(ProductionBatch.run_label)
             .all()
         )
         outsource_counts = {r.run_label: r.cnt for r in outsource_rows}
@@ -2134,6 +2144,7 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
             "run_label": row.run_label,
             "batch_count": row.batch_count,
             "created_at": row.created_at,
+            "parent_run_label": row.parent_run_label,
             "outsource_count": outsource_counts.get(row.run_label, 0),
         }
         for row in rows
