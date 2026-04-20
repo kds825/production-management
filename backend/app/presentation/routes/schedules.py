@@ -217,20 +217,47 @@ def list_tasks(
     ),
     equipment_id: str | None = Query(None, description="설비 필터"),
     voltage: str | None = Query(None, description="전압 필터 (저압/고압)"),
+    run_label: str | None = Query(
+        None,
+        description=(
+            "run_label 필터. 미지정 시 최신 run_label (schedule_task.created_at"
+            " 최대) 자동 선택 — 여러 버전의 task 가 이중 렌더되는 것을 방지."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> list[ScheduleTaskResponse]:
     """스케줄 작업 목록 조회 (시작 시간 오름차순).
 
     Stage 2 auto-scheduling 결과를 PostgreSQL에서 읽어 반환한다.
-    date_from/date_to/process_type/equipment_id/voltage 쿼리 파라미터로
-    Gantt 뷰에 필요한 구간만 필터링하여 전송량을 줄인다.
+    date_from/date_to/process_type/equipment_id/voltage/run_label 쿼리
+    파라미터로 Gantt 뷰에 필요한 구간만 필터링하여 전송량을 줄인다.
     DB에 schedule_task 레코드가 없을 경우 인메모리 store로 폴백하여
     개발 초기 샘플 데이터도 계속 볼 수 있다.
+
+    run_label 동작:
+    - 명시적 값: 해당 run 의 task 만 반환
+    - 미지정: 가장 최근에 생성된 run 을 자동 선택 (이중 표시 방지)
     """
+    # run_label 자동 해결: 미지정 시 최신 run (MAX(created_at) 기준) 선택
+    effective_run_label = run_label
+    if not effective_run_label:
+        latest_row = (
+            db.query(ScheduleTaskModel.run_label)
+            .filter(ScheduleTaskModel.run_label.isnot(None))
+            .order_by(ScheduleTaskModel.created_at.desc())
+            .first()
+        )
+        if latest_row:
+            effective_run_label = latest_row[0]
+
     q = db.query(ScheduleTaskModel, ProductionBatchModel).join(
         ProductionBatchModel,
         ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
     )
+
+    # run_label 스코프 (이중 렌더 방지)
+    if effective_run_label:
+        q = q.filter(ScheduleTaskModel.run_label == effective_run_label)
 
     # WIP 완료 배치는 간트에 미표시 — 재고로 대체된 공정이므로 스케줄 불필요
     q = q.filter(ProductionBatchModel.status != "wip_complete")
