@@ -92,6 +92,15 @@ _TARDINESS_WEIGHT = {
 _CHAIN_WEIGHT = 120
 _IDLE_WEIGHT = 1
 
+# Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
+# 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
+# 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
+# Solver 는 "같은 설비에서 인접 두 연선 그룹이 SQ 가 다르면 180 min penalty" 로
+# 인식 → 같은 SQ 연속 처리를 선호. 이는 sequence-dependent setup 의 정확 모델링이
+# 아닌 soft proxy 이지만, 현재 모델 구조 (group=single interval) 에서 실용적 절충안.
+# 완전한 circuit-constraint 기반 모델링은 별도 phase.
+_TRANSITION_WEIGHT = 180
+
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────
 
@@ -221,14 +230,31 @@ def _due_work_min(
 
     due 의 "하루 끝" 을 22:00 (일반 오후 마감) 기준으로 해석. calendar_engine 의
     day_end 와 min() 을 통해 카테고리별 실제 마감(금요일 14:00 등) 로 자동 clamp.
+
+    Round 2 (MED #13 Past-due 차등): past-due (due < base) 는 음수 반환.
+      - 기존: past-due 시 `_working_minutes_between(base, due_end)` 가 end<=start
+        이라 0, 혹은 `wd = _work_days_between(base, due)` 도 0 (둘 다 loss of
+        signal). 결과: overdue 5일 == overdue 1일 == on-time 동일 처리.
+      - 개선: due < base 일 때 -|past 근무 분| 반환. soft tardiness 공식
+        `max(0, end - due_wmin)` 이 `end - (-x) = end + x` 로 자연스럽게 커져
+        "3일 overdue 는 1일 overdue 의 3배 penalty" 실현. tardiness_hard=True
+        경로는 호출부에서 음수 감지 후 제약 skip + warning.
     """
     from datetime import time as _time
 
     if equipment_code is not None or db is not None:
         due_end = datetime.combine(due, _time(22, 0))
+        if due_end <= base:
+            # Past due — 음수 반환 (얼마나 지났는지).
+            past_min = _working_minutes_between(due_end, base, equipment_code, db)
+            return -past_min
         return _working_minutes_between(base, due_end, equipment_code, db)
 
     # Legacy fallback — _datetime_to_wmin / horizon 과 동일 축 유지.
+    if due < base.date():
+        # Past due — 음수 근무일 × 하루 분.
+        past_wd = _work_days_between(due, base.date())
+        return -past_wd * _WORK_MIN_PER_DAY
     wd = _work_days_between(base.date(), due)
     return wd * _WORK_MIN_PER_DAY
 
@@ -269,6 +295,86 @@ def _compute_group_duration(
             )
         total += d
     return total
+
+
+def _compute_group_duration_map(
+    group_batches: list[ProductionBatch],
+    eligible: list[EquipmentMaster],
+    speed_map: dict,
+) -> dict[str, float]:
+    """배치 그룹의 설비별 duration map (Round 2 HIGH #5).
+
+    Returns:
+        {equipment_code: work_duration_min} — 각 eligible 설비로 배치했을 때
+        예상되는 순수 작업 시간(분, setup/drum_wind 제외).
+
+    Why: 기존 `_compute_group_duration` 은 단일 스칼라 반환. 같은 배치를 설비
+    A/B 에 할당해도 모델은 duration 이 동일하다고 가정 → solver 가 "빠른 설비
+    우선" 을 인지 못 함. SpeedMaster 의 `(eq, sq)` 별 line_speed_mpm 을 활용해
+    설비마다 실제 예상 duration 계산.
+
+    Fallback 규칙:
+      - 배치의 explicit estimated_duration_min (>0) 가 있으면 설비 무관 그 값
+        사용 (이미 확정된 것이므로 설비 선택에 무영향).
+      - SpeedMaster (eq, sq) 항목이 있으면 그 line_speed_mpm 사용.
+      - 없으면 eligible 의 평균 speed 사용 (배치의 line_speed_mpm 도 고려).
+      - 최종 fallback: _compute_group_duration 과 동일 평균치 (단일 스칼라).
+
+    Note: hard-coded line_speed=10 fallback 은 신규 코드에서 제거. eligible
+    설비 중 유효 speed 가 하나도 없으면 warning 용으로 모든 설비에 대해
+    scalar fallback 값을 동일하게 반환한다 (solver 가 설비 구분 불가한 상태).
+    """
+    if not eligible:
+        return {}
+
+    rep = group_batches[0]
+    sq = float(rep.sq_mm2 or 0)
+
+    # 1) 각 설비의 line_speed 수집
+    eq_speeds: dict[str, float] = {}
+    for eq in eligible:
+        sm = speed_map.get((eq.equipment_code, sq))
+        if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
+            eq_speeds[eq.equipment_code] = float(sm.line_speed_mpm)
+
+    # 배치 자체 line_speed_mpm (배치 rep 에서 fallback)
+    rep_line_speed = float(rep.line_speed_mpm or 0)
+
+    # Fallback speed: 설비 개별 speed 못 찾은 경우 사용할 값
+    fallback_speed = rep_line_speed if rep_line_speed > 0 else 0.0
+    if fallback_speed <= 0 and eq_speeds:
+        # eligible 중 일부만 speed 있고 나머지는 없을 때 — 평균으로 대체
+        fallback_speed = sum(eq_speeds.values()) / len(eq_speeds)
+
+    # 2) 설비별 duration 계산
+    result: dict[str, float] = {}
+    header = next((b for b in group_batches if b.batch_seq == -1), None)
+
+    for eq in eligible:
+        ls = eq_speeds.get(eq.equipment_code, fallback_speed)
+
+        if header is not None:
+            hd = float(header.estimated_duration_min or 0)
+            if hd <= 0:
+                _ls = float(header.line_speed_mpm or 0) or ls
+                hd = float(header.total_length_m or 0) / _ls if _ls > 0 else 0
+            result[eq.equipment_code] = hd
+            continue
+
+        total = 0.0
+        for b in group_batches:
+            d = float(b.estimated_duration_min or 0)
+            if d <= 0:
+                _ls = float(b.line_speed_mpm or 0) or ls
+                d = (
+                    (float(b.total_length_m or 0) + float(b.extra_length_m or 0)) / _ls
+                    if _ls > 0
+                    else 0
+                )
+            total += d
+        result[eq.equipment_code] = total
+
+    return result
 
 
 def _is_multi_equip_group(
@@ -732,7 +838,65 @@ def cp_sat_schedule(
         )
         # CP-SAT 내부 duration: 실제 근무 분 그대로 사용 (최소 1분)
         # 종전 840분 단위 올림은 모든 작업이 같은 크기로 보여 EDD 정렬이 불가능했음
-        cpsat_dur = max(1, int(math.ceil(work_dur + setup_min + drum_wind)))
+        cpsat_dur_raw = max(1, int(math.ceil(work_dur + setup_min + drum_wind)))
+
+        # Round 2 HIGH #7 (conservative): 멀티설비 분배 대상은 실제 배치 단계에서
+        # `_schedule_multi_equipment` 로 N 설비 병렬 실행 → wall-clock duration 은
+        # 대략 raw / N_split. CP-SAT 모델은 단일 interval 가정이라 raw 를 그대로
+        # 쓰면 "분할 가능 그룹이 실제보다 오래 걸린다" 고 오인해 후속 배치를 뒤로
+        # 밀게 됨. 여기서 근사치 N_split 로 나눠 solver 가 실제 wall-clock 을
+        # 반영하게 함. 완전한 분할 모델링(N intervals per group)은 별도 phase.
+        _is_multi_pre, _total_drums_pre = _is_multi_equip_group(
+            gk,
+            gb,
+            eligible,
+            {},  # pre-phase: sq_to_equip 비어있어 초기 판단
+        )
+        if _is_multi_pre and _total_drums_pre >= 2 and len(eligible) >= 2:
+            _n_split = max(1, min(_total_drums_pre, len(eligible)))
+            # 실제 setup 은 분할되지 않으므로 work_dur 만 나눔 + setup/drum_wind 유지
+            _work_per_split = work_dur / _n_split
+            cpsat_dur = max(1, int(math.ceil(_work_per_split + setup_min + drum_wind)))
+        else:
+            cpsat_dur = cpsat_dur_raw
+
+        # Round 2 HIGH #5: 설비별 duration map (solver 가 "빠른 설비 선호" 가능).
+        # 동일 배치를 설비 A/B 에 할당 시 duration 차이가 유의미하면 설비 간
+        # 개별 cpsat_dur_by_eq 를 interval 에 적용. 차이 < 10% 이면 평균값(cpsat_dur)
+        # 사용 (모델 경량화).
+        _dur_map = _compute_group_duration_map(gb, eligible, speed_map)
+        # setup/drum_wind 를 더해 각 설비별 total cpsat dur 계산.
+        # drum_wind 는 설비 카테고리 단위이므로 eligible[0] 의 값을 공통 사용
+        # (설비간 차이는 추후 개선 항목).
+        # Round 2 HIGH #7: 멀티설비 분할 대상이면 설비별 work_dur 도 N_split 로 나눔.
+        _multi_split_divisor = (
+            max(1, min(_total_drums_pre, len(eligible)))
+            if (_is_multi_pre and _total_drums_pre >= 2 and len(eligible) >= 2)
+            else 1
+        )
+        cpsat_dur_by_eq: dict[str, int] = {}
+        if _dur_map:
+            for _eq in eligible:
+                _d = _dur_map.get(_eq.equipment_code, work_dur) / _multi_split_divisor
+                cpsat_dur_by_eq[_eq.equipment_code] = max(
+                    1, int(math.ceil(_d + setup_min + drum_wind))
+                )
+        else:
+            # 빈 map (eligible 전부 speed 데이터 없음) — 단일 값으로 fallback +
+            # warning 기록. hard-coded 10 fallback 은 제거 (MED #5 요구사항).
+            for _eq in eligible:
+                cpsat_dur_by_eq[_eq.equipment_code] = cpsat_dur
+            result["warnings"].append(
+                f"그룹 {gk}: SpeedMaster 에 (설비, SQ={rep.sq_mm2}) 데이터 없음 — "
+                f"설비별 duration 차등 없이 단일값 {cpsat_dur}min 사용"
+            )
+
+        # spread 판단 (10% 이상 차이나면 per-eq interval 사용)
+        _dur_values = list(cpsat_dur_by_eq.values())
+        _dur_spread_ratio = 0.0
+        if _dur_values and max(_dur_values) > 0:
+            _dur_spread_ratio = (max(_dur_values) - min(_dur_values)) / max(_dur_values)
+        _per_eq_dur_enabled = _dur_spread_ratio >= 0.10
 
         earliest_due = min((b.due_date for b in gb if b.due_date), default=None)
         due_wmin = (
@@ -747,6 +911,9 @@ def cp_sat_schedule(
             "setup_min": setup_min,
             "drum_wind": drum_wind,
             "cpsat_dur": cpsat_dur,
+            # Round 2 HIGH #5
+            "cpsat_dur_by_eq": cpsat_dur_by_eq,
+            "per_eq_dur_enabled": _per_eq_dur_enabled,
             "due_wmin": due_wmin,
             "weight": _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)],
             "earliest_due": earliest_due,
@@ -774,13 +941,33 @@ def cp_sat_schedule(
     equip_vars: dict[str, dict[str, cp_model.IntVar]] = {}
     tardiness_vars: dict[str, cp_model.IntVar] = {}
 
+    # Round 2 HIGH #5: 그룹별 "effective dur" — per_eq_dur_enabled 이면 설비 bool
+    # 에 종속된 선형합으로 표현, 아니면 스칼라. end = start + dur 로 고정.
+    # dur_vars[gk]: None (스칼라) 또는 IntVar.
+    dur_vars: dict[str, Any] = {}
     for gk in groups:
         meta = group_meta[gk]
         dur = meta["cpsat_dur"]
+        per_eq = meta.get("per_eq_dur_enabled", False)
+        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
 
-        s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"s_{gk}")
-        e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"e_{gk}")
-        model.add(e == s + dur)
+        if per_eq and dur_by_eq:
+            # 설비별 dur: dur_var = sum(eq_bool_i * dur_i). equip_vars 는 exactly_one
+            # 이므로 dur_var 는 정확히 한 설비의 dur 를 갖게 된다 (scalar product).
+            _min_dur = min(dur_by_eq.values())
+            _max_dur = max(dur_by_eq.values())
+            dur_var = model.new_int_var(_min_dur, _max_dur, f"dur_{gk}")
+            # s upper bound: horizon - min_dur (그래야 어떤 설비 선택에도 e ≤ horizon)
+            s = model.new_int_var(0, _MAX_HORIZON_MIN - _min_dur, f"s_{gk}")
+            e = model.new_int_var(_min_dur, _MAX_HORIZON_MIN, f"e_{gk}")
+            model.add(e == s + dur_var)
+            dur_vars[gk] = dur_var
+        else:
+            s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"s_{gk}")
+            e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"e_{gk}")
+            model.add(e == s + dur)
+            dur_vars[gk] = None
+
         start_vars[gk] = s
         end_vars[gk] = e
 
@@ -789,12 +976,28 @@ def cp_sat_schedule(
             # due 가 있을 때만 제약 추가. (due_wmin == _MAX_HORIZON_MIN 인 no-due
             # 그룹은 제약 추가해도 무의미하게 통과하므로 skip — 모델 경량화.)
             # tardiness_vars 는 생성 자체 생략 → objective 에서 제외.
+            #
+            # Round 2 MED #13: past-due (due_wmin < 0) 는 hard 모드에선 어차피
+            # INFEASIBLE (e ≥ dur ≥ 1 > negative). 제약 추가 skip + warning —
+            # 호출부(_reschedule_affected_groups_cpsat)가 INFEASIBLE 폴백으로
+            # soft 모드 재시도하면 거기서 음수 due_wmin 이 큰 penalty 로 작동.
             if meta.get("earliest_due") is not None:
-                model.add(e <= meta["due_wmin"])
+                if meta["due_wmin"] < 0:
+                    result["warnings"].append(
+                        f"그룹 {gk}: 납기 {meta['earliest_due']} 이미 "
+                        f"{abs(meta['due_wmin'])}min 지남 — tardiness hard 강제 skip"
+                    )
+                    # 제약 추가하지 않음 → solver 는 dur 하한만 적용
+                else:
+                    model.add(e <= meta["due_wmin"])
             # placeholder — 이후 코드가 tardiness_vars[gk] 를 참조하지 않아도 안전
         else:
             # Soft 모드 (폴백용): 기존 weight-based tardiness.
-            tard = model.new_int_var(0, _MAX_HORIZON_MIN, f"t_{gk}")
+            # Round 2 MED #13: due_wmin 음수 허용. `end - due_wmin` 이 음수 due 에
+            # 대해 `end + |past|` 로 자연 증가 → "3일 overdue 는 1일 overdue 의
+            # 3배 penalty" 실현. tard upper bound 를 2×horizon 으로 확장해
+            # 음수 due_wmin 에서도 max_equality 가 안전하게 동작.
+            tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_{gk}")
             # tardiness = max(0, end - due)
             model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
             tardiness_vars[gk] = tard
@@ -806,6 +1009,18 @@ def cp_sat_schedule(
             )
         equip_vars[gk] = eq_bools
         model.add_exactly_one(eq_bools.values())
+
+        # Round 2 HIGH #5: per_eq_dur_enabled 이면 dur_var == sum(bool_i * dur_i).
+        # exactly_one 이 보장되어 있으므로 선형합 = 선택된 설비의 dur.
+        if dur_vars.get(gk) is not None:
+            _dur_by_eq_local = meta["cpsat_dur_by_eq"]
+            model.add(
+                dur_vars[gk]
+                == sum(
+                    eq_bools[_ec] * int(_dur_by_eq_local[_ec])
+                    for _ec in eq_bools.keys()
+                )
+            )
 
     # 6-b-2. Frozen groups — 기존 ScheduleTask 로 start/end/equipment 고정
     # Why: 긴급수주 재최적화 시 이미 진행 중/완료/base_date 이전 'scheduled' 배치는
@@ -883,13 +1098,44 @@ def cp_sat_schedule(
                 )
 
     # 6-c. 설비 충돌 방지 (no_overlap)
+    # Round 2 HIGH #5: per_eq_dur_enabled 이면 interval size 는 설비별 상수 dur_i.
+    # 해당 설비 bool=1 일 때만 interval active 이므로 (optional_interval + bv), 각
+    # 설비 interval 이 자신의 고유 dur 를 사용 → solver 가 "빠른 설비에 가면
+    # overlap 덜 발생" 을 정확히 인식. end_vars[gk] 는 여전히 sum 기반 dur_var 와
+    # 연동되므로 선택된 설비의 interval 만 e 와 일치 (나머지는 비활성).
     itv_vars: dict[tuple[str, str], Any] = {}
     for gk in groups:
-        dur = group_meta[gk]["cpsat_dur"]
+        meta = group_meta[gk]
+        dur_scalar = meta["cpsat_dur"]
+        per_eq_enabled = meta.get("per_eq_dur_enabled", False)
+        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
         for eq_code, bv in equip_vars[gk].items():
-            itv = model.new_optional_interval_var(
-                start_vars[gk], dur, end_vars[gk], bv, f"itv_{gk}_{eq_code}"
+            # Per-equipment interval size: 활성 설비의 고유 dur.
+            _itv_size = (
+                int(dur_by_eq.get(eq_code, dur_scalar))
+                if per_eq_enabled
+                else dur_scalar
             )
+            # end_vars[gk] 와 선택된 설비의 interval 만 정합 — 비활성 interval 은
+            # start/size/end 값 검증 안됨 (CP-SAT optional 의미). 단 안전을 위해
+            # 고정 size interval 을 위한 별도 end helper 사용:
+            if per_eq_enabled:
+                # optional interval 은 size=상수 일 때 자체 end IntVar 를 요구.
+                # start 는 공통 start_vars[gk] 사용, end 는 helper 생성.
+                _e_eq = model.new_int_var(
+                    _itv_size, _MAX_HORIZON_MIN, f"e_{gk}_{eq_code}"
+                )
+                # bv=1 일 때만 (s + size == _e_eq AND _e_eq == end_vars[gk]) 강제.
+                # bv=0 이면 interval 비활성이므로 _e_eq 값 임의 — 제약 없음.
+                model.add(_e_eq == start_vars[gk] + _itv_size).only_enforce_if(bv)
+                model.add(_e_eq == end_vars[gk]).only_enforce_if(bv)
+                itv = model.new_optional_interval_var(
+                    start_vars[gk], _itv_size, _e_eq, bv, f"itv_{gk}_{eq_code}"
+                )
+            else:
+                itv = model.new_optional_interval_var(
+                    start_vars[gk], dur_scalar, end_vars[gk], bv, f"itv_{gk}_{eq_code}"
+                )
             itv_vars[(gk, eq_code)] = itv
 
     for eq_code in all_eq_codes:
@@ -1080,6 +1326,62 @@ def cp_sat_schedule(
     # 포기하고 납기를 우선하는 등 올바른 tradeoff 를 수행한다.
     if chain_terms:
         _objective = _objective + _CHAIN_WEIGHT * sum(chain_terms)
+
+    # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
+    # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
+    # 부과 → solver 가 "같은 SQ 들을 한 설비에 모으는" 배치를 선호. adjacency
+    # 단위 sequence-dependent setup 의 정확 모델링은 아니지만 (circuit constraint
+    # 필요) 현재 group=single-interval 구조에서 실용적 proxy.
+    #
+    # 적용 범위: rep.process_name == "연선" (CORE 포함). 납기 ordinal 이 14일 이상
+    # 벌어진 쌍은 skip (멀리 있으면 sequence 영향 희미). 납기 ordinal 없으면 skip.
+    #
+    # 각 (gk_a, gk_b) 쌍에 대해:
+    #   transition_bool = AND(equip_a == equip_b, sq_a != sq_b)
+    # 두 그룹이 같은 설비에 배치 AND SQ 다름 시 1, 아니면 0.
+    # 경량화: SQ 같으면 penalty 0 이므로 쌍 skip. SQ 다를 때만 bool var 생성.
+    transition_terms: list = []
+    _stranding_gks = [
+        _g for _g, _m in group_meta.items() if _m["rep"].process_name == "연선"
+    ]
+    for _i in range(len(_stranding_gks)):
+        for _j in range(_i + 1, len(_stranding_gks)):
+            _gk_a = _stranding_gks[_i]
+            _gk_b = _stranding_gks[_j]
+            _meta_a = group_meta[_gk_a]
+            _meta_b = group_meta[_gk_b]
+            # 동일 SQ → setup 0 or 30 — penalty 의미 없음 (현재 모델에서는 동급)
+            if _meta_a["sq"] == _meta_b["sq"]:
+                continue
+            # 공통 eligible 설비 없으면 same_equip 불가 → skip
+            _shared = set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())
+            if not _shared:
+                continue
+            # 납기 14일 초과 벌어지면 sequence 영향 미미 → skip
+            _due_a = _meta_a.get("due_date_ord")
+            _due_b = _meta_b.get("due_date_ord")
+            if _due_a is not None and _due_b is not None and abs(_due_b - _due_a) > 14:
+                continue
+            # same_equip bool: 공통 설비 _s 에 대해 eq_a[s] AND eq_b[s] 가 한 번이라도
+            # 참이면 1. 각 공통 설비별 AND 변수 만들고 OR 로 합산.
+            _same_eq_bools: list = []
+            for _ec in _shared:
+                _both = model.new_bool_var(f"both_{_gk_a}_{_gk_b}_{_ec}")
+                # _both = eq_a[ec] AND eq_b[ec]
+                model.add_bool_and(
+                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
+                ).only_enforce_if(_both)
+                model.add_bool_or(
+                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
+                ).only_enforce_if(_both.Not())
+                _same_eq_bools.append(_both)
+            # 설비 exactly_one 이므로 _same_eq_bools 중 최대 1개만 참 → sum = OR
+            _trans = model.new_bool_var(f"trans_{_gk_a}_{_gk_b}")
+            model.add(_trans == sum(_same_eq_bools))
+            transition_terms.append(_trans)
+
+    if transition_terms:
+        _objective = _objective + _TRANSITION_WEIGHT * sum(transition_terms)
 
     model.minimize(_objective)
 

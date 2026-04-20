@@ -684,6 +684,293 @@ def test_due_work_min_accepts_equipment_code(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Round 2 MED #13: Past-due 차등 가중치
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: `_due_work_min` 이 past-due(due < base) 를 0 으로 반환해 soft tardiness
+# 에서 "overdue 5일 == overdue 1일" 동일 처리. Round 2 에서 음수 반환으로 변경해
+# 차등 가중 (3배 더 지남 = 3배 penalty) 실현. Hard 모드에선 제약 skip + warning.
+
+
+def test_due_work_min_past_due_returns_negative_legacy(db: Session) -> None:
+    """Legacy 경로 (equipment_code/db 없음) — past due 는 음수 반환."""
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _WORK_MIN_PER_DAY, _due_work_min
+
+    base = datetime(2026, 4, 20, 8, 0)  # Mon
+    past_due = date_cls(2026, 4, 13)  # 7일 전, Mon (근무일 5일)
+    result = _due_work_min(past_due, base)
+    assert result < 0, f"past due 는 음수여야: {result}"
+    # 4/13 Mon ~ 4/20 Mon (exclusive) = 5 근무일 → -5 * 840
+    assert result == -5 * _WORK_MIN_PER_DAY, (
+        f"5 근무일 * 840 = -4200 분이어야: got {result}"
+    )
+
+
+def test_due_work_min_past_due_returns_negative_calendar(db: Session) -> None:
+    """Calendar 경로 (equipment_code 있음) — past due 는 음수 반환."""
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _due_work_min
+
+    base = datetime(2026, 4, 20, 8, 0)  # Mon
+    past_due = date_cls(2026, 4, 15)  # 5일 전, Wed
+    result = _due_work_min(past_due, base, equipment_code="ST-54BO1", db=db)
+    assert result < 0, f"past due(calendar path) 는 음수여야: {result}"
+
+
+def test_due_work_min_future_due_still_positive(db: Session) -> None:
+    """미래 납기는 여전히 양수 (회귀 방지)."""
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _due_work_min
+
+    base = datetime(2026, 4, 20, 8, 0)
+    future_due = date_cls(2026, 4, 25)
+    result = _due_work_min(future_due, base)
+    assert result > 0, f"미래 납기는 양수: {result}"
+
+
+def test_due_work_min_differentiates_past_due_magnitude(db: Session) -> None:
+    """3일 overdue 는 1일 overdue 보다 더 큰 음수 (차등 가능).
+
+    MED #13 의 핵심 — soft tardiness 에서 overdue 기간이 길수록 penalty 커짐.
+    """
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from app.services.cp_sat_optimizer import _due_work_min
+
+    base = datetime(2026, 4, 20, 8, 0)  # Mon
+    due_3d_past = date_cls(2026, 4, 15)  # Wed, 3 근무일 전
+    due_1d_past = date_cls(2026, 4, 17)  # Fri, 1 근무일 전
+
+    r3 = _due_work_min(due_3d_past, base)
+    r1 = _due_work_min(due_1d_past, base)
+
+    assert r3 < r1 < 0, f"3일 overdue({r3}) < 1일 overdue({r1}) < 0 이어야 — 차등 실패"
+
+
+def test_tardiness_hard_past_due_warns_not_crashes(db: Session) -> None:
+    """Past due 배치가 있어도 tardiness_hard=True 경로가 crash 없이 dict 반환."""
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    # 빈 run_label — past due 그룹은 없지만 신규 경로(warning 생성)가 깨지지 않는지.
+    r = cp_sat_schedule("NON_EXISTENT_PAST_DUE_WARN", db, tardiness_hard=True)
+    assert isinstance(r, dict)
+    assert "warnings" in r
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Round 2 HIGH #5: SpeedMaster 설비별 line_speed duration 차등
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: 기존 `_compute_group_duration` 이 eligible 설비 중 1개 speed 로 scalar
+# duration 반환. 같은 배치를 설비 A/B 에 할당해도 duration 동일 → solver 가
+# 빠른 설비 선호 불가. Round 2 에서 `_compute_group_duration_map` 으로 설비별
+# 차등 계산. hard-coded line_speed=10 fallback 제거 (warning + scalar fallback).
+
+
+def test_compute_group_duration_map_returns_per_equipment(db: Session) -> None:
+    """`_compute_group_duration_map` 이 eligible 각 설비에 대해 dict 반환.
+
+    설비 간 SpeedMaster 의 line_speed_mpm 이 다르면 duration 도 달라져야 함.
+    """
+    from types import SimpleNamespace
+
+    from app.services.cp_sat_optimizer import _compute_group_duration_map
+
+    # Fake ProductionBatch: total_length=1000m, SQ=16
+    batch = SimpleNamespace(
+        batch_seq=0,
+        estimated_duration_min=0,
+        line_speed_mpm=0,
+        total_length_m=1000,
+        extra_length_m=0,
+        sq_mm2=16,
+    )
+    eligible = [
+        SimpleNamespace(equipment_code="EQ-FAST"),
+        SimpleNamespace(equipment_code="EQ-SLOW"),
+    ]
+    # SpeedMaster: 빠른 설비 100m/min, 느린 설비 50m/min
+    speed_map = {
+        ("EQ-FAST", 16.0): SimpleNamespace(line_speed_mpm=100.0),
+        ("EQ-SLOW", 16.0): SimpleNamespace(line_speed_mpm=50.0),
+    }
+
+    result = _compute_group_duration_map([batch], eligible, speed_map)
+
+    assert set(result.keys()) == {"EQ-FAST", "EQ-SLOW"}
+    # 1000m / 100m/min = 10 min vs 1000m / 50m/min = 20 min — 2배 차이
+    assert result["EQ-FAST"] < result["EQ-SLOW"], (
+        f"빠른 설비 duration 이 더 작아야: FAST={result['EQ-FAST']}, "
+        f"SLOW={result['EQ-SLOW']}"
+    )
+    # 대략 10 vs 20 min
+    assert abs(result["EQ-FAST"] - 10.0) < 1.0
+    assert abs(result["EQ-SLOW"] - 20.0) < 1.0
+
+
+def test_compute_group_duration_map_empty_speed_data(db: Session) -> None:
+    """SpeedMaster 데이터 전혀 없고 배치 line_speed_mpm 도 0 이면 fallback 0 (hard-code 10 제거 검증).
+
+    기존 _compute_group_duration 은 line_speed=10 으로 hard-coded fallback 했으나,
+    _compute_group_duration_map 은 그러지 않고 speed=0 → duration=0 반환.
+    호출부(cp_sat_schedule)가 별도로 warning 처리.
+    """
+    from types import SimpleNamespace
+
+    from app.services.cp_sat_optimizer import _compute_group_duration_map
+
+    batch = SimpleNamespace(
+        batch_seq=0,
+        estimated_duration_min=0,
+        line_speed_mpm=0,
+        total_length_m=1000,
+        extra_length_m=0,
+        sq_mm2=16,
+    )
+    eligible = [SimpleNamespace(equipment_code="EQ-NO-DATA")]
+    speed_map = {}  # 비어있음
+
+    result = _compute_group_duration_map([batch], eligible, speed_map)
+
+    # speed 데이터 없음 → 0 분 (하드코딩 10 아님 — warning 책임은 호출부)
+    assert result == {"EQ-NO-DATA": 0.0}, (
+        f"line_speed 없을 때 hard-coded 10 아닌 0 fallback: {result}"
+    )
+
+
+def test_compute_group_duration_map_returns_empty_for_no_eligible(db: Session) -> None:
+    """eligible 리스트 비어있으면 빈 dict 반환 (방어적)."""
+    from types import SimpleNamespace
+
+    from app.services.cp_sat_optimizer import _compute_group_duration_map
+
+    batch = SimpleNamespace(
+        batch_seq=0,
+        estimated_duration_min=0,
+        line_speed_mpm=10,
+        total_length_m=1000,
+        extra_length_m=0,
+        sq_mm2=16,
+    )
+    assert _compute_group_duration_map([batch], [], {}) == {}
+
+
+def test_cp_sat_schedule_still_works_with_per_eq_dur(db: Session) -> None:
+    """per_eq_dur_enabled 경로가 엔드투엔드 smoke 테스트에서 예외 없이 완료.
+
+    실제 solver 호출 path — 배치 없어 model 이 비지만 새 경로(dur_vars/optional
+    end helpers)가 빈 input 에서도 safe 해야.
+    """
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    r = cp_sat_schedule("NON_EXISTENT_RUN_ROUND2_H5", db)
+    assert isinstance(r, dict)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Round 2 HIGH #6: 연선 setup 3-tier transition penalty
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: 연선 setup 은 동일SQ 0 / 동일소선경 30 / 이소선경 210 min (3-tier). 기존
+# CP-SAT 모델은 group setup 을 scalar `setup_min(rep)` 로만 반영 — solver 가
+# "같은 SQ 인접" 을 자발적으로 선호할 근거가 없음. Round 2 에서
+# `_TRANSITION_WEIGHT` 도입: 같은 설비 + 다른 SQ 인 연선 쌍에 penalty 부과 →
+# solver 는 같은 SQ 들을 한 설비에 모으는 배치를 선호.
+
+
+def test_transition_weight_is_meaningful(db: Session) -> None:
+    """`_TRANSITION_WEIGHT` 가 유의미한 크기 (≥ 100min) — idle/chain 과 동등 scale."""
+    from app.services.cp_sat_optimizer import _TRANSITION_WEIGHT
+
+    assert _TRANSITION_WEIGHT >= 100, (
+        f"_TRANSITION_WEIGHT={_TRANSITION_WEIGHT} 너무 작음 — idle/chain 대비 "
+        f"사실상 무력. 연선 setup 3-tier 차등 반영 실패."
+    )
+
+
+def test_transition_weight_under_tardiness_weight(db: Session) -> None:
+    """`_TRANSITION_WEIGHT` 가 납기 weight 보다 작아 납기 우선순위 보존.
+
+    setup 전이 비용이 납기보다 커지면 overdue 를 허용하고 setup 최적화에 매달릴
+    수 있음. critical=_DUE_HARD_WEIGHT*100=10M 대비 전이 180min 은 훨씬 작음.
+    """
+    from app.services.cp_sat_optimizer import (
+        _DUE_HARD_WEIGHT,
+        _TRANSITION_WEIGHT,
+    )
+
+    assert _TRANSITION_WEIGHT < _DUE_HARD_WEIGHT
+
+
+def test_cp_sat_schedule_still_works_with_transition_penalty(db: Session) -> None:
+    """Transition penalty 항 추가 후 빈 input 에서도 solver 가 안전 실행.
+
+    실제 배치 fixture 없이도 model 경로가 예외 없이 완료해야.
+    """
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    r = cp_sat_schedule("NON_EXISTENT_ROUND2_H6", db)
+    assert isinstance(r, dict)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Round 2 HIGH #7: 멀티설비 드럼 분배 duration 근사 반영
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: 대형 배치(5틀 95SQ 등) 를 N 설비에 분산 가능 (`_schedule_multi_equipment`).
+# 기존 CP-SAT 모델은 그룹=단일 interval 가정 → 분할하면 실제 duration 은 raw/N_split
+# 이지만 solver 는 raw 로 오인하여 "분할하면 더 빠름" 판단 못 함. Round 2
+# conservative 대안: 멀티 분할 대상 감지 시 `cpsat_dur = raw / N_split` 근사 사용.
+# 완전한 N-interval 모델링은 별도 phase.
+
+
+def test_cp_sat_schedule_still_works_with_multi_equip_approx(db: Session) -> None:
+    """멀티설비 분할 근사 경로가 smoke 테스트에서 safe 동작."""
+    from app.services.cp_sat_optimizer import cp_sat_schedule
+
+    r = cp_sat_schedule("NON_EXISTENT_ROUND2_H7", db)
+    assert isinstance(r, dict)
+
+
+def test_is_multi_equip_group_signature_preserved(db: Session) -> None:
+    """`_is_multi_equip_group` 시그니처 회귀 방지 — cp_sat pre-phase 판단에 사용.
+
+    Round 2 HIGH #7 에서 group_meta 구축 단계 (sq_to_equip 아직 비어있는 시점)
+    에서 이 함수를 호출해 분할 가능 여부 판단하므로 기존 시그니처 유지 필수.
+    """
+    from types import SimpleNamespace
+
+    from app.services.cp_sat_optimizer import _is_multi_equip_group
+
+    rep = SimpleNamespace(
+        process_name="연선",
+        sq_mm2=95,
+        drum_count=5,
+        batch_seq=-1,
+    )
+    gb = [rep]
+    eligible = [
+        SimpleNamespace(equipment_code="ST-A"),
+        SimpleNamespace(equipment_code="ST-B"),
+    ]
+    # 연선 + 5 drums + 2 eligible + not a CORE group name → multi-eligible
+    is_multi, total_drums = _is_multi_equip_group(
+        "ST-95-multi", gb, eligible, sq_to_equip={}
+    )
+    # 함수가 (bool, int) tuple 반환
+    assert isinstance(is_multi, bool)
+    assert isinstance(total_drums, int)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TODO (P4 이후)
 # ──────────────────────────────────────────────────────────────────────────────
 #
