@@ -202,3 +202,109 @@ def cluster_sort_key(cluster: SheathCluster, groups_meta: dict) -> tuple:
         cluster.due_week_int,
         cluster.cluster_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Metric: 색상 전환 baseline (Phase 9-B 가중치 재조정 검증용)
+# ---------------------------------------------------------------------------
+
+# Why (intent): CP-SAT objective 에 색상 changeover penalty 를 추가/강화할 때
+# "전후 비교" 가 필요. baseline 계산을 solver 로직과 분리해 metric 이 solver
+# 변경의 영향을 받지 않도록 (관찰자 효과 격리). 120min 교체시간은 KBI 현장
+# 표준 — 시스 공정 색상 교체 + 세척 + 시운전 총합.
+_SHEATH_COLOR_CHANGEOVER_MIN: int = 120
+_SHEATH_PROCESS_NAMES: frozenset[str] = frozenset({"저압시스", "고압시스"})
+
+
+def count_color_transitions(run_label: str, db) -> dict:  # type: ignore[no-untyped-def]
+    """시스 공정 ScheduleTask 를 설비별로 start_datetime 순 정렬해
+    인접 쌍의 색상 전환 횟수를 계산.
+
+    Args:
+        run_label: 조회 대상 run 식별자.
+        db: SQLAlchemy Session — 순환 임포트 피하려 lazy import 사용.
+
+    Returns:
+        {
+            "total_transitions": int,   # 모든 시스 설비 전환 합
+            "per_equipment": {
+                equipment_code: {
+                    "transitions": int,
+                    "sequence": [color, ...],  # None 색 skip 후 리스트
+                    "unique_colors": int,
+                    "task_count": int,         # sequence 길이와 동일
+                },
+                ...
+            },
+            "categories": {
+                "total_changeover_min": int,   # transitions * 120
+            },
+        }
+
+    Rule:
+        - 시스 판정: ProductionBatch.process_name ∈ {저압시스, 고압시스}
+        - 색상 출처: ProductionBatch.sheath_color (컬럼이 이미 존재 —
+          별도 파싱 불필요).
+        - 인접 정의: 같은 equipment_code, start_datetime 오름차순.
+        - 전환 정의: cur != prev (strip 공백 무시). None/빈문자열 색상은
+          sequence 에서 skip — '미지정' 을 별도 색으로 세면 노이즈 전환 발생.
+        - 설비 경계를 넘는 비교는 하지 않음 (독립 sequence).
+    """
+    # lazy import: 테스트에서 sheath_cluster 순수 유틸로도 쓰이므로 모델/ORM
+    # 전역 import 부담을 피함.
+    from app.infrastructure.models.production_batch import ProductionBatch
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    # Fail-fast: run_label 누락/빈값이면 바로 empty 반환 (DB 호출 낭비 X)
+    if not run_label:
+        return {
+            "total_transitions": 0,
+            "per_equipment": {},
+            "categories": {"total_changeover_min": 0},
+        }
+
+    # ScheduleTask + ProductionBatch join — 필요한 컬럼만 투영해 메모리 절약
+    rows = (
+        db.query(
+            ScheduleTask.equipment_code,
+            ScheduleTask.start_datetime,
+            ProductionBatch.process_name,
+            ProductionBatch.sheath_color,
+        )
+        .join(ProductionBatch, ScheduleTask.batch_id == ProductionBatch.batch_id)
+        .filter(ScheduleTask.run_label == run_label)
+        .filter(ProductionBatch.process_name.in_(list(_SHEATH_PROCESS_NAMES)))
+        .order_by(ScheduleTask.equipment_code, ScheduleTask.start_datetime)
+        .all()
+    )
+
+    per_equipment: dict[str, dict] = {}
+    for eq_code, _start, _proc, color in rows:
+        c = (color or "").strip()
+        if not c:
+            # None/"" → skip (spec: None 은 별도 색으로 취급 안 함)
+            continue
+        entry = per_equipment.setdefault(
+            eq_code,
+            {"transitions": 0, "sequence": [], "unique_colors": 0, "task_count": 0},
+        )
+        seq: list[str] = entry["sequence"]
+        if seq and seq[-1] != c:
+            entry["transitions"] += 1
+        seq.append(c)
+
+    # 파생값 — 후처리로 한 번에 계산 (루프 내 반복 계산 회피)
+    total_transitions = 0
+    for entry in per_equipment.values():
+        seq = entry["sequence"]
+        entry["task_count"] = len(seq)
+        entry["unique_colors"] = len(set(seq))
+        total_transitions += entry["transitions"]
+
+    return {
+        "total_transitions": total_transitions,
+        "per_equipment": per_equipment,
+        "categories": {
+            "total_changeover_min": total_transitions * _SHEATH_COLOR_CHANGEOVER_MIN,
+        },
+    }
