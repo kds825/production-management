@@ -126,6 +126,25 @@ _IDLE_WEIGHT = 1
 # 0~_MAX_HORIZON_MIN 라 절대값이 과대해지는 것 방지).
 _SLACK_WEIGHT_BASE = 100_000
 
+# Past-due 심각도 스케일 상수. past-due 그룹의 tardiness weight 는
+# `_TARDINESS_WEIGHT[priority] × (1 + past_days / _PAST_SEVERITY_K)` 으로 증폭.
+# Why: 기본 공식 `weight × (end - due)` 은 past-due 시 `weight × (end + |past|)`
+# = `weight × end + const` 로 계산돼 |past| 상수항이 argmin 에 기여 못함. 즉
+# "10일 지남 vs 3일 지남" 을 solver 가 동일 취급하고 WSPT (짧은 작업 먼저) 로
+# 순서를 잡음 → 가장 긴 past-due 작업이 맨 뒤로 밀림 (KBI PoC 에서 150SQ 3틀
+# past 3d 가 120SQ 3틀 past 10d 보다 뒤 배치되는 현상으로 관찰).
+# 해결: weight 자체에 심각도 배율을 곱해 오래 밀린 그룹의 `w × end` 항 gradient
+# 를 키움 → solver 가 실제로 앞으로 당기게 됨.
+# K=5 기준 배율표:
+#   past 0일  → ×1.0 (on-time 기준선)
+#   past 3일  → ×1.6
+#   past 5일  → ×2.0
+#   past 10일 → ×3.0
+#   past 20일 → ×5.0
+# priority (normal=1e5, urgent=1e6, critical=1e7) 스케일 위에 곱해지므로
+# 상대 순서만 영향, 다른 objective term 과의 상호작용은 기존과 유사.
+_PAST_SEVERITY_K = 5
+
 # Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
 # 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
 # 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
@@ -1035,6 +1054,17 @@ def cp_sat_schedule(
             _due_work_min(earliest_due, base_date) if earliest_due else _MAX_HORIZON_MIN
         )
 
+        # Past-due 심각도 배율 — due_wmin < 0 일수록 더 큰 가중치.
+        # 예: 10일 과거 → past_days = 10 → severity_mul = 1 + 10/5 = 3.0.
+        # on-time 그룹은 past_days=0 → ×1.0 (기존 priority 가중치 그대로).
+        _past_days = (
+            max(0, (-due_wmin) / _WORK_MIN_PER_DAY_DEFAULT) if due_wmin < 0 else 0.0
+        )
+        _severity_mul = 1.0 + _past_days / _PAST_SEVERITY_K
+        _weight = int(
+            _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)] * _severity_mul
+        )
+
         group_meta[gk] = {
             "rep": rep,
             "batches": gb,
@@ -1047,7 +1077,7 @@ def cp_sat_schedule(
             "cpsat_dur_by_eq": cpsat_dur_by_eq,
             "per_eq_dur_enabled": _per_eq_dur_enabled,
             "due_wmin": due_wmin,
-            "weight": _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)],
+            "weight": _weight,
             "earliest_due": earliest_due,
             # 인접 쌍 chain_terms 계산용 ordinal — None 안전
             "due_date_ord": earliest_due.toordinal() if earliest_due else None,
