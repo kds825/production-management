@@ -47,6 +47,39 @@ def test_patch_records_history(db) -> None:
     )
 
 
+def test_patch_merges_partial_params(db) -> None:
+    """부분 patch 는 기존 키를 보존하고 해당 키만 덮어써야 한다.
+
+    Regression: 이전엔 row.params_json = new_params 로 전체 교체라서
+    {stranding_min: 30} patch 시 insulation_min/sheath_min/cv_min 이 사라졌다.
+    """
+    resp = client.patch(
+        "/api/constraints/4-1",
+        json={"params_json": {"stranding_min": 30}},
+    )
+    assert resp.status_code == 200
+
+    got = client.get("/api/constraints").json()
+    row = next(c for c in got["constraints"] if c["constraint_id"] == "4-1")
+    assert row["params_json"]["stranding_min"] == 30
+    assert row["params_json"]["insulation_min"] == 60
+    assert row["params_json"]["sheath_min"] == 30
+    assert row["params_json"]["cv_min"] == 300
+
+    # cleanup — 시드값 복원
+    client.patch(
+        "/api/constraints/4-1",
+        json={
+            "params_json": {
+                "stranding_min": 210,
+                "insulation_min": 60,
+                "sheath_min": 30,
+                "cv_min": 300,
+            }
+        },
+    )
+
+
 def test_get_history(db) -> None:
     resp = client.get("/api/constraints/4-1/history")
     assert resp.status_code == 200

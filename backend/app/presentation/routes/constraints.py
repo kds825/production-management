@@ -175,18 +175,23 @@ def update_constraint(constraint_id: str, body: dict, db: Session = Depends(get_
     if not row:
         raise HTTPException(status_code=404, detail=f"제약조건 '{constraint_id}' 없음")
 
-    # 변경 이력 기록 — params_json 이 실제로 바뀐 경우만
+    # 변경 이력 기록 — params_json 이 실제로 바뀐 경우만.
+    # Why: 프론트(ParamEditor/SaveModal)는 "편집된 키만" patch 로 보낸다.
+    # 그대로 대입하면 편집되지 않은 다른 키가 DB 에서 사라져 silent corruption
+    # (예: stranding_min 만 바꿨는데 insulation_min/sheath_min/cv_min 이 날아가
+    # resolve_spec_setup_min 이 default=0.0 으로 0분 스케줄). 따라서 merge.
     if "params_json" in body:
         old_params = dict(row.params_json or {})
-        new_params = dict(body["params_json"])
-        if old_params != new_params:
+        patch = dict(body["params_json"])
+        merged = {**old_params, **patch}
+        if old_params != merged:
             history = ConstraintConfigHistory(
                 constraint_id=constraint_id,
                 old_params_json=old_params,
-                new_params_json=new_params,
+                new_params_json=merged,
             )
             db.add(history)
-        row.params_json = new_params
+        row.params_json = merged
 
     if "is_enabled" in body:
         row.is_enabled = body["is_enabled"]
