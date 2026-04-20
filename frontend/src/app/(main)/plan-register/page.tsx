@@ -50,11 +50,21 @@ interface ParsedOrder {
   due_date: string;
 }
 
-interface ParsedBatch {
-  batch_id: number;
-  process: string;
-  order_count: number;
-  total_quantity: number;
+// /stage1 및 /stage1/update 응답의 batches 필드. 백엔드 create_batches() 는 개별
+// 배치 행이 아니라 집계 요약만 반환한다. 과거 ParsedBatch[] 로 잘못 타이핑되어
+// BatchGridWithFrozen 이 .map() 에서 런타임 TypeError 를 일으켰다.
+interface BatchSummary {
+  total_batches: number;
+  by_process: Record<string, number>;
+  warnings?: string[];
+  outsource_count?: number;
+}
+
+// T2a-2: /stage1/update 가 응답에 별도로 내려주는 "이번 파일로 추가된 주문에서
+// 나온 planned 배치" 집계. 전체 batches(재생성 총계)와 구분해 UI 표기.
+interface NewFromFileSummary {
+  total_batches: number;
+  by_process: Record<string, number>;
 }
 
 // T2a: /stage1/update 응답의 frozen_batches 원소. 진행중/완료/wip_complete 상태의
@@ -115,7 +125,9 @@ interface SplitCandidate {
 interface Stage1Result {
   run_label: string;
   parsed_orders: ParsedOrder[];
-  batches: ParsedBatch[];
+  batches: BatchSummary;
+  // T2a-2: /stage1/update 에서만 내려줌. 이 파일로 실제 추가된 주문 → planned 배치.
+  new_from_file?: NewFromFileSummary | null;
   warnings: string[];
   split_candidates?: SplitCandidate[];
   // incremental update 결과 요약 (stage1/update 응답에만 포함될 수 있음)
@@ -496,32 +508,38 @@ function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
 }
 
 /**
- * T2a — 재생성된 배치(ParsedBatch)와 frozen 배치(FrozenBatch)를 한 리스트로
- * 병합 렌더링. 각 행에 상태 뱃지를 붙여 진행중/완료/WIP완료/신규 를 구분한다.
+ * T2a — 재생성된 배치(집계 요약)와 frozen 배치(FrozenBatch) 병합 렌더링.
  *
- * frozen 과 new 는 스키마가 달라 공통 필드만 표시:
- *   - 배치 번호, 공정, 상태 뱃지, 우측에 간략 메타.
- * frozen 쪽엔 수주/고객 정보가 있어 메타에 반영. new 는 order_count/total_quantity.
+ * 백엔드 /stage1/update 는 신규 배치를 개별 행으로 돌려주지 않고 집계만
+ * 반환하므로(BatchSummary), frozen 만 행으로 나열하고 신규는 헤더의
+ * 공정별 소계 + 총건수로 표시한다. (과거에 ParsedBatch[] 로 가정해 .map 을
+ * 호출했다가 NewBatches 가 dict 라서 TypeError 가 발생한 이슈를 해소.)
  */
 function BatchGridWithFrozen({
   frozenBatches,
-  newBatches,
+  newSummary,
+  newFromFile,
 }: {
   frozenBatches: FrozenBatch[];
-  newBatches: ParsedBatch[];
+  newSummary: BatchSummary;
+  newFromFile?: NewFromFileSummary | null;
 }) {
-  const total = frozenBatches.length + newBatches.length;
+  // "재생성" = non-frozen 수주 전체에서 다시 만들어진 planned 배치 총계
+  const regeneratedCount = newSummary.total_batches ?? 0;
+  const fromFileCount = newFromFile?.total_batches ?? 0;
+  const total = frozenBatches.length + regeneratedCount;
   // 상태별 카운트 (헤더 요약용)
   const counts = {
     in_progress: frozenBatches.filter((b) => b.status === "in_progress").length,
     completed: frozenBatches.filter((b) => b.status === "completed").length,
     wip_complete: frozenBatches.filter((b) => b.status === "wip_complete")
       .length,
-    new: newBatches.length,
+    regenerated: regeneratedCount,
+    from_file: fromFileCount,
   };
 
   const statusBadge = (
-    status: FrozenBatch["status"] | "new",
+    status: FrozenBatch["status"] | "regenerated" | "from_file",
   ): { label: string; bg: string; fg: string } => {
     switch (status) {
       case "in_progress":
@@ -530,8 +548,10 @@ function BatchGridWithFrozen({
         return { label: "완료", bg: "#D1FAE5", fg: "var(--color-success)" };
       case "wip_complete":
         return { label: "WIP완료", bg: "#DBEAFE", fg: "#1D4ED8" };
-      case "new":
-        return { label: "신규", bg: "#FEF2F2", fg: PRIMARY };
+      case "regenerated":
+        return { label: "재생성", bg: "#F3F4F6", fg: "#374151" };
+      case "from_file":
+        return { label: "신규 파일", bg: "#FEF2F2", fg: PRIMARY };
     }
   };
 
@@ -566,8 +586,13 @@ function BatchGridWithFrozen({
               WIP완료 {counts.wip_complete}
             </span>
           )}
-          {counts.new > 0 && (
-            <span style={{ color: PRIMARY }}>신규 {counts.new}</span>
+          {counts.regenerated > 0 && (
+            <span style={{ color: "#374151" }}>
+              재생성 {counts.regenerated}
+            </span>
+          )}
+          {counts.from_file > 0 && (
+            <span style={{ color: PRIMARY }}>신규 파일 {counts.from_file}</span>
           )}
         </div>
       </div>
@@ -611,34 +636,58 @@ function BatchGridWithFrozen({
             </div>
           );
         })}
-        {newBatches.map((b) => {
-          const badge = statusBadge("new");
-          return (
-            <div
-              key={`new-${b.batch_id}`}
-              className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
-              style={{ borderColor: "#F3F4F6" }}
+        {regeneratedCount > 0 && (
+          <div
+            className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0 flex-wrap"
+            style={{ borderColor: "#F3F4F6" }}
+          >
+            <span
+              className="rounded px-1.5 py-0.5 font-medium"
+              style={{
+                backgroundColor: statusBadge("regenerated").bg,
+                color: statusBadge("regenerated").fg,
+              }}
             >
-              <span
-                className="rounded px-1.5 py-0.5 font-medium"
-                style={{ backgroundColor: badge.bg, color: badge.fg }}
-              >
-                {badge.label}
-              </span>
-              <span
-                className="rounded px-1.5 py-0.5 font-medium"
-                style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
-              >
-                배치#{b.batch_id}
-              </span>
-              <span className="font-medium text-gray-700">{b.process}</span>
-              <span className="text-gray-400">주문 {b.order_count}건</span>
-              <span className="text-gray-400 ml-auto tabular-nums">
-                {b.total_quantity.toLocaleString()} m
-              </span>
-            </div>
-          );
-        })}
+              {statusBadge("regenerated").label}
+            </span>
+            <span className="font-medium text-gray-700">
+              재생성(비동결 전체) {regeneratedCount}개
+            </span>
+            {Object.entries(newSummary.by_process ?? {}).map(
+              ([process, count]) => (
+                <span key={process} className="text-gray-500 tabular-nums">
+                  {process} {count}
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {fromFileCount > 0 && (
+          <div
+            className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0 flex-wrap"
+            style={{ borderColor: "#F3F4F6" }}
+          >
+            <span
+              className="rounded px-1.5 py-0.5 font-medium"
+              style={{
+                backgroundColor: statusBadge("from_file").bg,
+                color: statusBadge("from_file").fg,
+              }}
+            >
+              {statusBadge("from_file").label}
+            </span>
+            <span className="font-medium text-gray-700">
+              이 파일로 추가 {fromFileCount}개
+            </span>
+            {Object.entries(newFromFile?.by_process ?? {}).map(
+              ([process, count]) => (
+                <span key={process} className="text-gray-500 tabular-nums">
+                  {process} {count}
+                </span>
+              ),
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1476,12 +1525,15 @@ function ErpUploadSection({
             <OrderDiffSummaryPanel diff={result.diff_summary} />
           )}
 
-          {/* Batch summary — frozen(진행중/완료 보존) + 재생성 배치 병합 렌더링 (T2a) */}
-          {((result.batches && result.batches.length > 0) ||
+          {/* Batch summary — frozen(진행중/완료 보존) + 재생성 + 이 파일로 추가 (T2a) */}
+          {((result.batches?.total_batches ?? 0) > 0 ||
             (result.frozen_batches && result.frozen_batches.length > 0)) && (
             <BatchGridWithFrozen
               frozenBatches={result.frozen_batches ?? []}
-              newBatches={result.batches ?? []}
+              newSummary={
+                result.batches ?? { total_batches: 0, by_process: {} }
+              }
+              newFromFile={result.new_from_file ?? null}
             />
           )}
 

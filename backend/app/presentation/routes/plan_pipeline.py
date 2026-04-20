@@ -341,6 +341,7 @@ async def run_stage1_update(
         # ── 2. Planned + mutable_scheduled 배치/스케줄 삭제 ─────────────────────
         # (FK 순서: audit_log → schedule_task → production_batch)
         from app.infrastructure.models.audit_log import AuditLog
+        from app.infrastructure.models.schedule_task import ScheduleTask
 
         # 삭제 대상 1: protected_batch_ids에 속하지 않는 planned 배치
         planned_query = db.query(ProductionBatch.batch_id).filter(
@@ -403,6 +404,12 @@ async def run_stage1_update(
 
         if upload_mode == "incremental":
             # 기존 orders 유지 + 새 orders만 추가
+            pre_parse_order_keys: set[tuple] = {
+                (row[0], row[1])
+                for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
+                .filter(SalesOrder.run_label == run_label)
+                .all()
+            }
             parse_result = parse_erp_file_incremental(erp_content, run_label, db)
         else:
             # full: frozen orders의 SalesOrder는 보존, 나머지 삭제 후 새 파일로 교체
@@ -429,6 +436,14 @@ async def run_stage1_update(
                 ).delete(synchronize_session=False)
 
             db.flush()
+            # "이 파일로 실제 추가된 주문" 키셋 계산을 위한 pre-parse 스냅샷 —
+            # full 모드에선 non-frozen 삭제 이후 == frozen 만 남은 상태.
+            pre_parse_order_keys = {
+                (row[0], row[1])
+                for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
+                .filter(SalesOrder.run_label == run_label)
+                .all()
+            }
             # 새 파일에서 파싱 — incremental 파서를 사용하여 frozen orders와의 중복 방지
             parse_result = parse_erp_file_incremental(erp_content, run_label, db)
 
@@ -484,6 +499,40 @@ async def run_stage1_update(
             raise HTTPException(
                 status_code=500, detail=f"배치 생성 실패: {exc}"
             ) from exc
+
+        # ── 6a. "이 파일로 추가된 주문에서 나온 배치" 분리 집계 ───────────────
+        # Why: batch_result.total_batches 는 "비동결 수주 전체를 다시 배치화한
+        # 재생성 총계" 다. 사용자가 업로드한 파일의 실제 증분이 얼마인지 알기
+        # 어려워 오해가 발생 (e.g. 20건 업로드 → 952 배치 표시). pre-parse 스냅샷
+        # 과 차집합으로 new_from_file_order_keys 를 계산, 해당 주문에 속한
+        # planned 배치만 공정별로 다시 집계해 new_from_file 로 응답에 포함.
+        post_parse_order_keys: set[tuple] = {
+            (row[0], row[1])
+            for row in db.query(SalesOrder.order_id, SalesOrder.order_line)
+            .filter(SalesOrder.run_label == run_label)
+            .all()
+        }
+        new_from_file_keys = post_parse_order_keys - pre_parse_order_keys
+        new_from_file_summary: dict = {"total_batches": 0, "by_process": {}}
+        if new_from_file_keys:
+            new_order_ids = {k[0] for k in new_from_file_keys}
+            new_file_batches = (
+                db.query(ProductionBatch.process_name)
+                .filter(
+                    ProductionBatch.run_label == run_label,
+                    ProductionBatch.status == "planned",
+                    ProductionBatch.sales_order_id.in_(new_order_ids),
+                )
+                .all()
+            )
+            by_proc: dict[str, int] = {}
+            for row in new_file_batches:
+                proc = row[0] or "기타"
+                by_proc[proc] = by_proc.get(proc, 0) + 1
+            new_from_file_summary = {
+                "total_batches": len(new_file_batches),
+                "by_process": by_proc,
+            }
 
         db.commit()
 
@@ -584,6 +633,8 @@ async def run_stage1_update(
             "parse": parse_result,
             "wip": wip_result,
             "batches": batch_result,
+            # T2a-2: 이 파일로 추가된 주문에서 나온 planned 배치 집계 (라벨 구분용)
+            "new_from_file": new_from_file_summary,
             "warnings": warnings,
             "split_candidates": split_candidates,
             "auto_split": auto_split_result,
