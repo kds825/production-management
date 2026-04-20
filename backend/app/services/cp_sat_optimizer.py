@@ -1091,19 +1091,27 @@ def cp_sat_schedule(
             # P9-B: 납기 hard constraint — end_var ≤ due_wmin 로 직접 강제.
             # due 가 있을 때만 제약 추가. (due_wmin == _MAX_HORIZON_MIN 인 no-due
             # 그룹은 제약 추가해도 무의미하게 통과하므로 skip — 모델 경량화.)
-            # tardiness_vars 는 생성 자체 생략 → objective 에서 제외.
             #
-            # Round 2 MED #13: past-due (due_wmin < 0) 는 hard 모드에선 어차피
-            # INFEASIBLE (e ≥ dur ≥ 1 > negative). 제약 추가 skip + warning —
-            # 호출부(_reschedule_affected_groups_cpsat)가 INFEASIBLE 폴백으로
-            # soft 모드 재시도하면 거기서 음수 due_wmin 이 큰 penalty 로 작동.
+            # Past-due 처리 (개정): 기존에는 due_wmin<0 이면 제약도 skip, tardiness_vars
+            # 도 미생성 → solver 가 past-due 그룹을 "자유변수(어디 배치해도 obj 영향 0)"
+            # 로 보고 임의 위치 선택 → EDD 순서 역전(납기 빠른 게 뒤로 밀림) 관찰됨.
+            # 수정: past-due 는 hard 불가이지만 **soft tardiness 항은 생성** 해서
+            # `weight × (end + |past|)` 이 objective 에 반영되게 함. 이렇게 하면
+            # solver 가 past-due 그룹의 end 를 작게 하려 앞쪽에 배치 → EDD 실현.
             if meta.get("earliest_due") is not None:
                 if meta["due_wmin"] < 0:
                     result["warnings"].append(
                         f"그룹 {gk}: 납기 {meta['earliest_due']} 이미 "
-                        f"{abs(meta['due_wmin'])}min 지남 — tardiness hard 강제 skip"
+                        f"{abs(meta['due_wmin'])}min 지남 — tardiness hard 강제 skip, "
+                        f"soft penalty 로 전환"
                     )
-                    # 제약 추가하지 않음 → solver 는 dur 하한만 적용
+                    # Past-due: soft tardiness 생성. tard = max(0, e - due_wmin)
+                    # due_wmin<0 이므로 tard = e - due_wmin = e + |past| (항상 양수)
+                    tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_past_{gk}")
+                    model.add_max_equality(
+                        tard, [e - meta["due_wmin"], model.new_constant(0)]
+                    )
+                    tardiness_vars[gk] = tard
                 else:
                     model.add(e <= meta["due_wmin"])
             # placeholder — 이후 코드가 tardiness_vars[gk] 를 참조하지 않아도 안전
@@ -1379,13 +1387,21 @@ def cp_sat_schedule(
             idle_terms.append(_idle)
 
     # objective 초기화:
-    #   tardiness_hard=True  → idle (tardiness 항 제거, hard 제약으로 강제)
+    #   tardiness_hard=True  → idle + past-due tardiness (on-time 은 hard 제약)
     #   tardiness_hard=False → sum(weight*tardiness) + idle (기존 soft 유지)
     # 시스 색상 교체 비용은 6-g 에서 sequence-dependent gap 으로 duration 에 직접
     # 반영 (soft penalty 가 아닌 hard interval gap). Solver 가 실제 wall-clock
     # 을 정확히 인식 → tardiness 와의 tradeoff 를 모든 시스 그룹 쌍 단위로 평가.
+    #
+    # Past-due 가 tardiness_hard=True 에서도 tardiness_vars 에 포함됨 (위 개정).
+    # objective 에서도 해당 항을 반영해야 solver 가 past-due 그룹을 앞으로 배치.
     if tardiness_hard:
         _objective = _IDLE_WEIGHT * sum(idle_terms) if idle_terms else 0
+        # Past-due: tardiness_vars 에 담긴 그룹만 weight-soft penalty (hard 는 못 검)
+        if tardiness_vars:
+            _objective = _objective + sum(
+                group_meta[gk]["weight"] * tardiness_vars[gk] for gk in tardiness_vars
+            )
     else:
         _objective = sum(
             meta["weight"] * tardiness_vars[gk] for gk, meta in group_meta.items()
@@ -1528,7 +1544,7 @@ def cp_sat_schedule(
                 start_vars[_gk_a] >= end_vars[_gk_b] + _sheath_color_gap_min
             ).only_enforce_if([_same_eq, _a_before_b.Not()])
 
-    # 6-g-tiebreak. 시스 그룹 makespan bias (tie-breaker).
+    # 6-g-tiebreak. 시스 그룹 makespan bias (색상 묶음 tie-breaker).
     #
     # Why: 위 sequence-dependent gap 제약은 실제 wall-clock 을 반영하지만 objective
     # 에 makespan 항이 없으면 "납기 여유 많고 설비 여유 많은" 경우 동일 objective
@@ -1541,6 +1557,54 @@ def cp_sat_schedule(
     _sheath_end_terms = [end_vars[_g] for _g in _sheath_gks_all]
     if _sheath_end_terms:
         _objective = _objective + sum(_sheath_end_terms)
+
+    # 6-h. EDD 전역 tie-breaker — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
+    # 납기 빠른 쪽이 뒤에 시작하면 +1 penalty.
+    #
+    # Why: 위 past-due tardiness 가 overdue 그룹을 앞으로 끌지만 **on-time 그룹 간**
+    # 순서는 자유 (모두 due 이내면 tardiness 동일). 사용자 요구 "동일 조건 배치 시
+    # 납기 빠른 게 먼저" 를 만족시키려면 tie-break 기준을 명시적으로 objective 에
+    # 넣어야 함.
+    # 대상 축소 (폭주 방지):
+    #   1) 같은 공정 — 다른 공정끼리는 precedence 가 이미 순서 결정
+    #   2) 공통 eligible 설비 존재 — 같은 설비에 놓일 가능성 있어야 순서가 의미
+    #   3) due_wmin 이 _MAX_HORIZON_MIN (no-due) 또는 동일한 쌍은 skip
+    # weight = 1 per pair. N 쌍 = 쌍 수 의 linear. 실측 shared-eq 쌍은 보통
+    # 수천 이내 → tardiness (1e5+/min) 대비 충분히 small tie-breaker.
+    _edd_pair_terms: list = []
+    _process_gks: dict[str, list[str]] = {}
+    for _gk, _meta in group_meta.items():
+        _process_gks.setdefault(_meta["rep"].process_name, []).append(_gk)
+    for _proc, _gks_proc in _process_gks.items():
+        for _i in range(len(_gks_proc)):
+            for _j in range(_i + 1, len(_gks_proc)):
+                _gk_a = _gks_proc[_i]
+                _gk_b = _gks_proc[_j]
+                _due_a = group_meta[_gk_a]["due_wmin"]
+                _due_b = group_meta[_gk_b]["due_wmin"]
+                # no-due 또는 동일 due 는 EDD 의미 없음
+                if _due_a == _MAX_HORIZON_MIN or _due_b == _MAX_HORIZON_MIN:
+                    continue
+                if _due_a == _due_b:
+                    continue
+                # 공통 eligible 설비 없으면 경쟁 관계 아님 → skip
+                if not (set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())):
+                    continue
+                # 납기 빠른 쪽(earlier)이 뒤에 시작하면 wrong = 1
+                if _due_a < _due_b:
+                    _earlier, _later = _gk_a, _gk_b
+                else:
+                    _earlier, _later = _gk_b, _gk_a
+                _wrong = model.new_bool_var(f"edd_wrong_{_earlier}__{_later}")
+                model.add(start_vars[_earlier] > start_vars[_later]).only_enforce_if(
+                    _wrong
+                )
+                model.add(start_vars[_earlier] <= start_vars[_later]).only_enforce_if(
+                    _wrong.Not()
+                )
+                _edd_pair_terms.append(_wrong)
+    if _edd_pair_terms:
+        _objective = _objective + sum(_edd_pair_terms)
 
     # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
     # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
