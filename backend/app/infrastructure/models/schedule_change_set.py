@@ -36,3 +36,10 @@ class ScheduleChangeSet(Base):
     snapshot_after = Column(JSONB, nullable=False)
     # PoC 에선 인증이 없어 빈 값. 향후 auth 연결 시 user_id 를 기록.
     applied_by = Column(String, nullable=True)
+    # change_set 종류 구분용. 가능한 값: "cascade" | "urgent" | "manual".
+    # - cascade: bulk-update v2 의 선후공정 cascade apply 결과 (Task 12 기본값)
+    # - urgent : 긴급수주 반영 시 before/after 스냅샷
+    # - manual : 수동 편집(향후 확장)
+    # default="cascade" 는 기존 데이터 호환 (alembic upgrade 시 NOT NULL DEFAULT 'cascade').
+    # diff API 에서 종류별 필터링 빈도가 높아 index=True.
+    kind = Column(String(20), nullable=False, default="cascade", index=True)
