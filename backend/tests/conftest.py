@@ -6,12 +6,21 @@
   rollback만으로 충분히 세션 내 변경을 제거할 수 있다.
 """
 
+import os
 from collections.abc import Generator
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.infrastructure.database import SessionLocal
+# CP-SAT 워커 수를 1로 강제 — 테스트 결정론 보장.
+# 왜 모듈 최상단: cp_sat_optimizer 가 import 시점에 env 를 한번 읽지 않고, solve()
+# 호출 시마다 `_resolve_num_workers()` 로 재조회하므로 프로세스 전체에서 유효.
+# autouse fixture 로 해도 되지만, session scope 이전에 import 된 모듈 상수에
+# 영향을 주지 않도록 import 이전 단계에 세팅. 기존 값이 있으면 보존하지 않음
+# (테스트 의도: 결정론 > 사용자 편의).
+os.environ["CPSAT_WORKERS"] = "1"
+
+from app.infrastructure.database import SessionLocal  # noqa: E402
 
 
 @pytest.fixture

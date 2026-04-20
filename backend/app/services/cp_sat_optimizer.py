@@ -74,6 +74,22 @@ _MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY_DEFAULT
 # CP-SAT 솔버 시간 제한(초)
 _SOLVER_TIME_LIMIT_SEC = 30
 
+
+# CP-SAT 포트폴리오 워커 수. 환경변수 `CPSAT_WORKERS` 로 오버라이드 가능.
+# 운영 기본값 8 — OR-Tools CP-SAT 은 워커별로 서로 다른 탐색 전략(LP/core/feasibility
+# pump 등)을 독립 스레드로 돌리고 먼저 해를 찾는 쪽이 이긴다. 4→8 로 bump 시
+# sublinear (1.5~2×) speedup 기대. 컨테이너/CI 환경 호스트 CPU 초과 방지를 위해
+# 환경변수 기반 오버라이드. 테스트 결정론을 위해 conftest 에서 `CPSAT_WORKERS=1`
+# 을 강제한다 (멀티워커는 타이밍 의존 비결정성 위험).
+def _resolve_num_workers() -> int:
+    raw = os.environ.get("CPSAT_WORKERS", "8")
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 8
+    return max(1, n)
+
+
 # 납기 초과 가중치 — tardiness_hard=False 모드에서만 사용.
 # tardiness_hard=True (기본) 에서는 model.add(e <= due_wmin) 로 직접 강제.
 # _DUE_HARD_WEIGHT: 아이들(1)/체인(120)/선점 등 다른 목적함수 항들을 압도해
@@ -1388,14 +1404,23 @@ def cp_sat_schedule(
     # ── 7. 솔버 실행 ──────────────────────────────────────────────────────
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = _SOLVER_TIME_LIMIT_SEC
-    solver.parameters.num_search_workers = 4
+    # 워커 수: 환경변수 기반 해상도. 운영 기본 8, CI/테스트는 1로 강제 (결정론).
+    _num_workers = _resolve_num_workers()
+    solver.parameters.num_search_workers = _num_workers
     solver.parameters.log_search_progress = False
     # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
     solver.parameters.random_seed = int(random_seed)
 
+    # 계측: solve() wall-time. 성능 개선 판정의 baseline 데이터 소스.
+    # result 에 직접 기록 → 상위 호출자가 Prometheus/로그로 집계 가능.
+    _solve_t0 = time.perf_counter()
     status = solver.solve(model)
+    _solve_wall_s = time.perf_counter() - _solve_t0
     status_name = solver.status_name(status)
     result["solver_status"] = status_name
+    result["solver_wall_time_s"] = round(_solve_wall_s, 3)
+    result["solver_n_groups"] = len(groups)
+    result["solver_num_workers"] = _num_workers
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         result["warnings"].append(
