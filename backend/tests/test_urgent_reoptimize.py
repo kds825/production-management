@@ -262,6 +262,143 @@ def test_reschedule_use_cpsat_ghost_affected_safe(db: Session) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# P4-6: warm_start_hints / time_limit_sec / 계측 카운터 시그니처·동작 검증
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 배경: P4-2 에서 cp_sat_schedule 에 두 파라미터 + 계측 카운터 추가. 시그니처
+# 호환성 + 방어 로직 + 관측 가능성(result dict 키 노출) 을 빈 run_label 경로에서
+# 검증. 실데이터 품질 검증(힌트가 실제로 speedup 을 주는지)은 벤치마크 스크립트
+# (backend/scripts/run_stage2_direct.py + wall_time 로그) 범위.
+
+
+def test_cp_sat_warm_start_hints_accepts_none(db: Session) -> None:
+    """warm_start_hints=None 은 기존 동작과 동일 (하위 호환).
+
+    auto_schedule / reschedule 등 기존 호출부는 이 파라미터를 전달하지 않는다.
+    """
+    r = cp_sat_schedule("NON_EXISTENT_RUN_P4_WARM_NONE", db, warm_start_hints=None)
+    assert isinstance(r, dict)
+    assert r["warm_start_applied"] == 0
+    assert r["warm_start_skipped"] == 0
+
+
+def test_cp_sat_warm_start_hints_accepts_empty(db: Session) -> None:
+    """warm_start_hints={} (빈 dict) 은 no-op — 카운터 모두 0."""
+    r = cp_sat_schedule("NON_EXISTENT_RUN_P4_WARM_EMPTY", db, warm_start_hints={})
+    assert r["warm_start_applied"] == 0
+    assert r["warm_start_skipped"] == 0
+
+
+def test_cp_sat_warm_start_ghost_key_counted_as_skipped(db: Session) -> None:
+    """스테일 batch_group 힌트는 skip 카운터로 집계되고 예외 없이 반환.
+
+    add_hint() 는 silent-fail 이므로 존재하지 않는 key 도 솔버를 죽이면 안 된다.
+    start_vars 에 없는 key 는 skipped 로 분류.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P4_WARM_GHOST",
+        db,
+        warm_start_hints={
+            "GHOST_GROUP_KEY": {
+                "start_wmin": 100,
+                "equipment_code": "SH-A120",
+            }
+        },
+    )
+    # 빈 run_label → groups 자체가 비어서 applied=0, skipped>=1 (GHOST 가 skip 됨)
+    # 또는 groups 가 비면 warm_start 블록 자체가 미실행 — 둘 다 수용.
+    assert r["warm_start_applied"] == 0
+
+
+def test_cp_sat_warm_start_malformed_snap_skipped(db: Session) -> None:
+    """snap 이 dict 가 아니거나 필드 누락이어도 예외 없이 skip.
+
+    프론트/호출자가 잘못된 형식을 넘기더라도 솔버 전체를 실패시키면 안 된다.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P4_WARM_MALFORMED",
+        db,
+        warm_start_hints={
+            "GROUP_A": "not_a_dict",  # type: ignore[dict-item]
+            "GROUP_B": {"equipment_code": "SH-A120"},  # start_wmin 없음
+            "GROUP_C": {"start_wmin": "not_an_int"},  # type: ignore[dict-item]
+        },
+    )
+    assert isinstance(r, dict)
+    assert r["warm_start_applied"] == 0
+
+
+def test_cp_sat_time_limit_sec_accepts(db: Session) -> None:
+    """time_limit_sec 파라미터 시그니처 호환성. None / 양수 / 0 / 음수 모두 안전."""
+    for tl in (None, 10, 60, 0, -5):
+        r = cp_sat_schedule(
+            "NON_EXISTENT_RUN_P4_TL",
+            db,
+            time_limit_sec=tl,  # type: ignore[arg-type]
+        )
+        assert isinstance(r, dict)
+        assert "warnings" in r
+
+
+def test_cp_sat_result_contains_instrumentation_keys(db: Session) -> None:
+    """P4-1 계측 키 (solver_wall_time_s / solver_n_groups / solver_num_workers)
+    가 result 에 노출되는지.
+
+    배치가 없어도 "해당 키가 초기값으로라도 존재"해야 관측자(로그/메트릭)가
+    NoneType 으로 깨지지 않는다. 빈 결과 경로는 solver 실행 없이 early return
+    이므로 키가 미설정일 수 있음 — warm_start 카운터는 초기 result dict 에서 보장.
+    """
+    r = cp_sat_schedule("NON_EXISTENT_RUN_P4_INSTR", db)
+    # warm_start 카운터는 __init__ 에서 항상 노출 (무조건)
+    assert "warm_start_applied" in r
+    assert "warm_start_skipped" in r
+    assert isinstance(r["warm_start_applied"], int)
+    assert isinstance(r["warm_start_skipped"], int)
+
+
+def test_cp_sat_warm_start_combines_with_frozen(db: Session) -> None:
+    """frozen_group_keys 와 warm_start_hints 를 동시에 넘겨도 예외 없음.
+
+    두 기능이 배타 (frozen 은 hard-pin, warm_start 는 자유 변수 hint) 인데,
+    호출부가 모든 scheduled 을 warm_start 로 + 일부를 frozen 으로 넘기는 시나리오
+    (reschedule() 경로) 가 일반적이다. 같은 key 가 양쪽에 있으면 warm_start 쪽이
+    skip 되어야 한다.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P4_COMBO",
+        db,
+        frozen_group_keys={"GROUP_X"},
+        warm_start_hints={
+            "GROUP_X": {"start_wmin": 0, "equipment_code": "SH-A100"},
+            "GROUP_Y": {"start_wmin": 100, "equipment_code": "SH-A120"},
+        },
+    )
+    assert isinstance(r, dict)
+    # 빈 run_label 이라 실제 집계는 0 — 시그니처 호환성만 확인
+    assert r["warm_start_applied"] == 0
+
+
+def test_cp_sat_warm_start_signature_full_combo(db: Session) -> None:
+    """모든 신규 파라미터 (warm_start_hints + time_limit_sec + frozen +
+    sheath_color_hard + tardiness_hard) 동시 전달 시 예외 없음.
+
+    통합 호출 경로 시그니처 회귀 방어.
+    """
+    r = cp_sat_schedule(
+        "NON_EXISTENT_RUN_P4_FULL",
+        db,
+        random_seed=0,
+        frozen_group_keys={"GHOST_FZ"},
+        sheath_color_hard=True,
+        tardiness_hard=True,
+        time_limit_sec=10,
+        warm_start_hints={"GHOST_WS": {"start_wmin": 0, "equipment_code": "SH-A100"}},
+    )
+    assert isinstance(r, dict)
+    assert r["warm_start_applied"] == 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # P6: apply_urgent_incremental 반환 dict 시그니처 (snapshot/change_set_id 키)
 # ──────────────────────────────────────────────────────────────────────────────
 
