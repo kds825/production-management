@@ -207,16 +207,20 @@ async def run_stage1_update(
     base_date: str | None = Form(
         None,
         description=(
-            "기준일자 (YYYY-MM-DD, incremental 모드 전용). "
-            "이 날짜 이전에 scheduled 된 배치는 동결, "
-            "이후 배치는 긴급수주와 합산 재생성."
+            "기준일자 (YYYY-MM-DD). Stage 1에서는 필터가 아니라 기록/Stage 2 "
+            "자동배열 앵커 용도. frozen 기준은 상태(status)만 사용: "
+            "in_progress / completed / wip_complete 만 보존, 나머지 "
+            "planned / scheduled 는 업데이트된 수주로 재생성."
         ),
     ),
     db: Session = Depends(get_db),
 ) -> dict:
     """Stage 1 증분/전체 업데이트 — Freeze & Rebuild.
 
-    완료/진행중 배치를 동결하고, planned 배치만 삭제 후 새 ERP 파일로 재계산한다.
+    frozen 기준은 상태(status)만 사용한다.
+      frozen  : in_progress / completed / wip_complete (물리적으로 시작/완료됨)
+      mutable : planned + scheduled 전부 → 삭제 후 재생성
+    아직 물리 시작되지 않은 scheduled 배치도 업데이트된 수주와 함께 재배치 대상.
     run_label은 parent_run_label을 그대로 재사용하여 create_batches 필터링 호환성을 유지한다.
 
     upload_mode:
@@ -260,76 +264,33 @@ async def run_stage1_update(
 
     try:
         # ── 1. Frozen 배치 식별 ───────────────────────────────────────────────
-        # base_date(기준일자) 지정 시 (incremental 모드):
-        #   hard_frozen  : in_progress / completed / wip_complete — 항상 동결
-        #   soft_frozen  : 기준일자 이전에 scheduled 된 배치 — 동결
-        #   mutable      : 기준일자 이후 scheduled + 모든 planned → 삭제 후 재생성
-        #                  (create_batches 가 원래 수주 + 긴급수주를 합산해 새 배치 생성)
-        # base_date 미지정 시: planned 외 모든 상태를 보호 (기존 동작)
-        from app.infrastructure.models.schedule_task import ScheduleTask
-
-        cutoff_date: date | None = None
-        if upload_mode == "incremental" and base_date:
-            try:
-                cutoff_date = date.fromisoformat(base_date)
-            except ValueError:
-                pass
-
-        mutable_scheduled_ids: set[int] = set()
-
-        if cutoff_date:
-            cutoff_dt = datetime(
-                cutoff_date.year, cutoff_date.month, cutoff_date.day, 0, 0, 0
+        # 룰: 상태(status) 기준만 사용.
+        #   frozen  : in_progress / completed / wip_complete — 물리적으로 시작/완료된 건만 보존
+        #   mutable : planned + scheduled 전부 → 삭제 후 재생성
+        #             (업데이트된 수주 리스트로 create_batches 재실행)
+        # base_date 는 Stage 1에서 필터 기준이 아님. Stage 2 자동배열 시 앵커로 전달.
+        # (구 soft_frozen 로직 — "기준일자 이전 scheduled 보존" — 은 도메인 룰에 따라
+        #  제거됨. 아직 물리적으로 시작되지 않은 scheduled 배치는 긴급수주 도착 시
+        #  재배치 대상이 되어야 한다.)
+        frozen = (
+            db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status.in_(
+                    ["in_progress", "completed", "wip_complete"]
+                ),
             )
-            # 기준일자 이전 ScheduleTask 의 batch_id → soft_frozen 대상
-            before_task_batch_ids: set[int] = {
-                r[0]
-                for r in db.query(ScheduleTask.batch_id)
-                .filter(
-                    ScheduleTask.run_label == run_label,
-                    ScheduleTask.start_datetime.isnot(None),
-                    ScheduleTask.start_datetime < cutoff_dt,
-                )
-                .all()
-            }
-            all_scheduled = (
-                db.query(ProductionBatch)
-                .filter(
-                    ProductionBatch.run_label == run_label,
-                    ProductionBatch.status == "scheduled",
-                )
-                .all()
+            .all()
+        )
+        mutable_scheduled_ids: set[int] = {
+            b.batch_id
+            for b in db.query(ProductionBatch)
+            .filter(
+                ProductionBatch.run_label == run_label,
+                ProductionBatch.status == "scheduled",
             )
-            hard_frozen = (
-                db.query(ProductionBatch)
-                .filter(
-                    ProductionBatch.run_label == run_label,
-                    ProductionBatch.status.in_(
-                        ["in_progress", "completed", "wip_complete"]
-                    ),
-                )
-                .all()
-            )
-            # 기준일자 이전 scheduled → frozen
-            soft_frozen = [
-                b for b in all_scheduled if b.batch_id in before_task_batch_ids
-            ]
-            # 기준일자 이후(또는 태스크 없는) scheduled → mutable: 삭제 후 재생성
-            mutable_scheduled = [
-                b for b in all_scheduled if b.batch_id not in before_task_batch_ids
-            ]
-            mutable_scheduled_ids = {b.batch_id for b in mutable_scheduled}
-            frozen = hard_frozen + soft_frozen
-        else:
-            # base_date 미지정: 기존 동작 — planned 외 모든 상태 동결
-            frozen = (
-                db.query(ProductionBatch)
-                .filter(
-                    ProductionBatch.run_label == run_label,
-                    ProductionBatch.status != "planned",
-                )
-                .all()
-            )
+            .all()
+        }
 
         # frozen orders: batch_seq >= 1인 실제 수주 배치에서 추출
         frozen_order_keys: set[tuple] = {
