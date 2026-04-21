@@ -39,3 +39,6 @@ graphify-out/
 
 # Playwright test artifacts
 frontend/test-results/
+
+# Solver snapshots (진단 덤프 — 크기가 크고 환경별로 달라지므로 커밋 제외)
+04_output/solver_snapshots/

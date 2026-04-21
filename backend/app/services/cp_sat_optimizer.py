@@ -19,6 +19,7 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import time
@@ -169,6 +170,173 @@ _EDD_PAIR_WEIGHT = 10_000
 # 아닌 soft proxy 이지만, 현재 모델 구조 (group=single interval) 에서 실용적 절충안.
 # 완전한 circuit-constraint 기반 모델링은 별도 phase.
 _TRANSITION_WEIGHT = 180
+
+
+# ── 진단: solver 스냅샷 덤프 ──────────────────────────────────────────────
+# Why: EDD 역전·frozen 고정 등 scheduling 이상을 사후 추적하려면 solver 의 입력
+# (group_meta, frozen 집합) 과 출력(start/end/equipment/tardiness 및 각 목적함수
+# 항의 기여값) 이 한 파일에 묶여 있어야 재현 가능한 진단이 된다. 로그만으로는
+# run_label 당 데이터를 재구성하기 어려움. 실패(쓰기 오류) 는 solver 결과를
+# 막지 않도록 조용히 삼킨다.
+
+
+def _snapshot_output_dir() -> str:
+    """프로젝트 루트의 04_output/solver_snapshots 경로.
+
+    파일 위치: backend/app/services/cp_sat_optimizer.py → 3단계 상위(.. .. ..)가 루트.
+    (services → app → backend → 루트). 환경변수 `SOLVER_SNAPSHOT_DIR` 로
+    테스트/배포별 경로 오버라이드 가능.
+    """
+    override = os.environ.get("SOLVER_SNAPSHOT_DIR")
+    if override:
+        return override
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(
+        os.path.join(here, "..", "..", "..", "04_output", "solver_snapshots")
+    )
+
+
+def _write_solver_snapshot(
+    *,
+    run_label: str,
+    base_date: datetime | None,
+    group_meta: dict,
+    frozen_group_keys: set[str] | None,
+    solver: Any,
+    solver_status_name: str,
+    start_vars: dict,
+    end_vars: dict,
+    equip_vars: dict,
+    tardiness_vars: dict,
+    edd_pair_vars: list,
+    slack_terms_meta: list,
+    idle_terms: list | None = None,
+    transition_terms: list | None = None,
+    sheath_end_terms: list | None = None,
+) -> None:
+    """Solver 입출력 + objective breakdown 을 `04_output/solver_snapshots/{run}.json` 에 저장."""
+    try:
+        out_dir = _snapshot_output_dir()
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{run_label}.json")
+
+        frozen_set = set(frozen_group_keys or [])
+
+        groups_section: list[dict] = []
+        tardiness_contrib_total = 0
+        for gk, meta in group_meta.items():
+            rep = meta["rep"]
+            s_val = solver.value(start_vars[gk]) if gk in start_vars else None
+            e_val = solver.value(end_vars[gk]) if gk in end_vars else None
+            eq_chosen: str | None = None
+            for ec, bool_var in equip_vars.get(gk, {}).items():
+                if solver.value(bool_var) == 1:
+                    eq_chosen = ec
+                    break
+            tard_val = (
+                solver.value(tardiness_vars[gk]) if gk in tardiness_vars else None
+            )
+            tard_contrib = (
+                int(meta["weight"]) * int(tard_val) if tard_val is not None else 0
+            )
+            tardiness_contrib_total += tard_contrib
+
+            _due_wmin_v = int(meta["due_wmin"])
+            if _due_wmin_v < 0 and _due_wmin_v != -_MAX_HORIZON_MIN * 2:
+                # _due_work_min legacy 경로와 동일 축(_WORK_MIN_PER_DAY=840) 사용.
+                _past_days = round(max(0, (-_due_wmin_v) / _WORK_MIN_PER_DAY), 2)
+            else:
+                _past_days = 0.0
+
+            groups_section.append(
+                {
+                    "batch_group": gk,
+                    "process_name": rep.process_name,
+                    "sq_mm2": float(rep.sq_mm2 or 0),
+                    "voltage": rep.voltage,
+                    "due_date": (
+                        meta["earliest_due"].isoformat()
+                        if meta.get("earliest_due")
+                        else None
+                    ),
+                    "due_wmin": _due_wmin_v,
+                    "past_days": _past_days,
+                    "weight": int(meta["weight"]),
+                    "cpsat_dur": int(meta["cpsat_dur"]),
+                    "eligible_equipment": [e.equipment_code for e in meta["eligible"]],
+                    "is_frozen": gk in frozen_set,
+                    "n_batches": len(meta["batches"]),
+                    "order_ids": sorted(
+                        {b.sales_order_id for b in meta["batches"] if b.sales_order_id}
+                    ),
+                    "solver_start_wmin": s_val,
+                    "solver_end_wmin": e_val,
+                    "solver_equipment": eq_chosen,
+                    "solver_tardiness_wmin": tard_val,
+                    "solver_tardiness_contribution": tard_contrib,
+                }
+            )
+
+        edd_wrong_count = (
+            sum(int(solver.value(v)) for v in edd_pair_vars) if edd_pair_vars else 0
+        )
+        edd_contribution = int(edd_wrong_count) * _EDD_PAIR_WEIGHT
+
+        slack_contribution_total = 0
+        for _gk_s, _w_s, _end_var_s in slack_terms_meta:
+            slack_contribution_total += int(_w_s) * int(solver.value(_end_var_s))
+
+        idle_sum = sum(int(solver.value(v)) for v in idle_terms) if idle_terms else 0
+        idle_contribution = idle_sum * _IDLE_WEIGHT
+        transition_sum = (
+            sum(int(solver.value(v)) for v in transition_terms)
+            if transition_terms
+            else 0
+        )
+        transition_contribution = transition_sum * _TRANSITION_WEIGHT
+        sheath_end_sum = (
+            sum(int(solver.value(v)) for v in sheath_end_terms)
+            if sheath_end_terms
+            else 0
+        )
+
+        snapshot = {
+            "run_label": run_label,
+            "base_date": base_date.isoformat() if base_date else None,
+            "solver_status": solver_status_name,
+            "objective_value": (
+                int(solver.objective_value)
+                if solver_status_name in ("OPTIMAL", "FEASIBLE")
+                else None
+            ),
+            "frozen_group_keys": sorted(frozen_set),
+            "constants": {
+                "TARDINESS_WEIGHT_normal": _TARDINESS_WEIGHT["normal"],
+                "PAST_SEVERITY_K": _PAST_SEVERITY_K,
+                "SLACK_WEIGHT_BASE": _SLACK_WEIGHT_BASE,
+                "EDD_PAIR_WEIGHT": _EDD_PAIR_WEIGHT,
+                "TRANSITION_WEIGHT": _TRANSITION_WEIGHT,
+                "CHAIN_WEIGHT": _CHAIN_WEIGHT,
+                "IDLE_WEIGHT": _IDLE_WEIGHT,
+            },
+            "breakdown": {
+                "tardiness_contribution_total": tardiness_contrib_total,
+                "edd_pair_wrong_count": int(edd_wrong_count),
+                "edd_pair_contribution": edd_contribution,
+                "slack_contribution_total": slack_contribution_total,
+                "idle_sum_wmin": idle_sum,
+                "idle_contribution": idle_contribution,
+                "transition_sum_pairs": transition_sum,
+                "transition_contribution": transition_contribution,
+                "sheath_end_sum_wmin": sheath_end_sum,
+            },
+            "groups": groups_section,
+        }
+
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(snapshot, fh, ensure_ascii=False, indent=2, default=str)
+    except Exception:  # noqa: BLE001 — 진단 쓰기 실패가 solver 결과를 막지 않도록
+        pass
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────
@@ -1641,6 +1809,8 @@ def cp_sat_schedule(
     #   `_IDLE_WEIGHT=1` < slack_w (수~수백/min) < `_TARDINESS_WEIGHT=1e5/min`.
     #   past-due penalty 를 이기지 못해 안전, idle_terms 와 경쟁 가능.
     _slack_terms: list = []
+    # 진단 스냅샷용 — (gk, weight, end_var) 로 기여도를 사후 분해할 수 있도록 보존.
+    _slack_terms_meta: list = []
     for _gk, _meta in group_meta.items():
         _due = _meta["due_wmin"]
         if _due == _MAX_HORIZON_MIN:
@@ -1650,6 +1820,7 @@ def cp_sat_schedule(
         _slack_min = max(1, int(_due))
         _w = max(1, _SLACK_WEIGHT_BASE // _slack_min)
         _slack_terms.append(_w * end_vars[_gk])
+        _slack_terms_meta.append((_gk, _w, end_vars[_gk]))
     if _slack_terms:
         _objective = _objective + sum(_slack_terms)
 
@@ -1811,6 +1982,27 @@ def cp_sat_schedule(
         return result
 
     result["objective_value"] = int(solver.objective_value)
+
+    # ── 진단 스냅샷: solver 입력(group_meta) + 출력(start/end/equip/tardiness) +
+    # 주요 objective 항의 실제 기여값을 JSON 한 벌로 저장. 원인 분석 시
+    # "어떤 그룹이 왜 그 위치에 갔는가" 를 사후에 재현할 수 있도록.
+    _write_solver_snapshot(
+        run_label=run_label,
+        base_date=base_date,
+        group_meta=group_meta,
+        frozen_group_keys=frozen_group_keys,
+        solver=solver,
+        solver_status_name=status_name,
+        start_vars=start_vars,
+        end_vars=end_vars,
+        equip_vars=equip_vars,
+        tardiness_vars=tardiness_vars,
+        edd_pair_vars=_edd_pair_terms,
+        slack_terms_meta=_slack_terms_meta,
+        idle_terms=idle_terms,
+        transition_terms=transition_terms,
+        sheath_end_terms=_sheath_end_terms,
+    )
 
     # ── 8. CP-SAT 순서대로 캘린더 그리디로 실제 배치 ─────────────────────
     #

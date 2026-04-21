@@ -571,6 +571,34 @@ async def run_stage1_update(
             + batch_result.get("warnings", [])
         )
 
+        # ── 진단 warning: frozen 판정 결과를 명시적으로 노출 ───────────────────
+        # Why: "이전 런의 어떤 배치가 frozen 으로 복제돼 새 런에서도 그 자리에
+        # 박혔는지" 가 EDD 역전·비정상 배치 원인 추적의 핵심. 기존에는 frozen
+        # 카운트만 response 에 있어 "어떤 batch_group 이 왜 frozen 됐나" 를 UI
+        # 에서 알 수 없었음. status 별 요약 + 상위 N 개 batch_group 을 warning
+        # 에 평문 추가해 사용자/개발자가 plan_pipeline 응답만으로 진단 가능.
+        if frozen:
+            _frozen_by_status: dict[str, int] = {}
+            _frozen_groups: dict[str, int] = {}
+            for _fb in frozen:
+                _frozen_by_status[_fb.status] = _frozen_by_status.get(_fb.status, 0) + 1
+                _bg = _fb.batch_group or f"_single_{_fb.batch_id}"
+                _frozen_groups[_bg] = _frozen_groups.get(_bg, 0) + 1
+            _status_parts = ", ".join(
+                f"{_s}×{_c}" for _s, _c in sorted(_frozen_by_status.items())
+            )
+            warnings.append(
+                f"[Frozen] parent_run={parent_run_label} → {len(frozen)}건 복제 "
+                f"({_status_parts}) / batch_group {len(_frozen_groups)}개"
+            )
+            # 상위 10개 batch_group 을 별도 warning 으로 노출 (UI 에서 잘림 방지).
+            _top_groups = sorted(_frozen_groups.items(), key=lambda kv: -kv[1])[:10]
+            if _top_groups:
+                warnings.append(
+                    "[Frozen groups] "
+                    + ", ".join(f"{_bg}×{_c}" for _bg, _c in _top_groups)
+                )
+
         # ── 12. Frozen 배치 요약 (T2a) — 복제된 new_run_label 기준 ───────────
         # 프론트엔드가 "진행중/완료 보존" 뱃지로 표시할 수 있도록 frozen 배치의
         # 최소 필드를 직렬화해 응답에 포함. 복제본의 batch_id (new_run_label 안)
