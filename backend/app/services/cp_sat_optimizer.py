@@ -162,6 +162,25 @@ _PAST_SEVERITY_K = 5
 #     은 여전히 tardiness 로 강제 (EDD 는 on-time 간 정렬 전용)
 _EDD_PAIR_WEIGHT = 10_000
 
+# "past-due ↔ on-time" 혼합 쌍 전용 heavy penalty (Hybrid C 철학).
+# Why: 과포화 설비에 past-due 긴 그룹 + on-time 짧은 그룹이 함께 올라간 상황
+# (KBI PoC 54BO1 실 사례: past-due 150SQ dur 3096min vs on-time 300SQ_2차 dur
+# 990min). 순수 가중 tardiness sum 관점에선 on-time 을 앞에 놓는 게 optimal 이
+# 될 수 있으나 (150SQ 가 어차피 납기 불가능하므로 작은 on-time 을 앞에 끼워
+# 넣는 게 총합 유리) 공장관리자 mental model 은 "past-due 가 무조건 먼저".
+#
+# 구현: past-due 가 on-time 뒤에 놓이면 `_EDD_MIXED_PASTDUE_WEIGHT` 만큼 penalty.
+# tardiness weight (1e6~1e7/min × 수천 min = 1e9~1e10/그룹) 스케일에 맞춰
+# 1e9 로 설정 — 단일 violation 이 그룹당 tardiness 한 항 수준의 기여로 생김.
+# "past-due 앞당김으로 얻는 tardiness 감소 < EDD 위반 페널티" 관계를 만들어
+# solver 가 항상 past-due 를 먼저 놓게 유도. hard constraint 가 아닌 soft 이유:
+# past-due 가 물리적으로 먼저 끝날 수 없는 corner case (dur 이 상상 초월) 에
+# feasibility 를 유지하기 위함.
+#
+# 스케일 근거: 실측 case 에서 Option A↔B 의 tardiness delta 가 1.7e9 수준.
+# _EDD_MIXED_PASTDUE_WEIGHT = 1e9 은 단일 violation 으로도 이 delta 를 압도.
+_EDD_MIXED_PASTDUE_WEIGHT = 1_000_000_000
+
 # Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
 # 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
 # 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
@@ -213,6 +232,7 @@ def _write_solver_snapshot(
     idle_terms: list | None = None,
     transition_terms: list | None = None,
     sheath_end_terms: list | None = None,
+    edd_mixed_pastdue_vars: list | None = None,
 ) -> None:
     """Solver 입출력 + objective breakdown 을 `04_output/solver_snapshots/{run}.json` 에 저장."""
     try:
@@ -281,6 +301,12 @@ def _write_solver_snapshot(
             sum(int(solver.value(v)) for v in edd_pair_vars) if edd_pair_vars else 0
         )
         edd_contribution = int(edd_wrong_count) * _EDD_PAIR_WEIGHT
+        edd_mixed_wrong_count = (
+            sum(int(solver.value(v)) for v in edd_mixed_pastdue_vars)
+            if edd_mixed_pastdue_vars
+            else 0
+        )
+        edd_mixed_contribution = int(edd_mixed_wrong_count) * _EDD_MIXED_PASTDUE_WEIGHT
 
         slack_contribution_total = 0
         for _gk_s, _w_s, _end_var_s in slack_terms_meta:
@@ -315,6 +341,7 @@ def _write_solver_snapshot(
                 "PAST_SEVERITY_K": _PAST_SEVERITY_K,
                 "SLACK_WEIGHT_BASE": _SLACK_WEIGHT_BASE,
                 "EDD_PAIR_WEIGHT": _EDD_PAIR_WEIGHT,
+                "EDD_MIXED_PASTDUE_WEIGHT": _EDD_MIXED_PASTDUE_WEIGHT,
                 "TRANSITION_WEIGHT": _TRANSITION_WEIGHT,
                 "CHAIN_WEIGHT": _CHAIN_WEIGHT,
                 "IDLE_WEIGHT": _IDLE_WEIGHT,
@@ -323,6 +350,8 @@ def _write_solver_snapshot(
                 "tardiness_contribution_total": tardiness_contrib_total,
                 "edd_pair_wrong_count": int(edd_wrong_count),
                 "edd_pair_contribution": edd_contribution,
+                "edd_mixed_pastdue_wrong_count": int(edd_mixed_wrong_count),
+                "edd_mixed_pastdue_contribution": edd_mixed_contribution,
                 "slack_contribution_total": slack_contribution_total,
                 "idle_sum_wmin": idle_sum,
                 "idle_contribution": idle_contribution,
@@ -1844,6 +1873,8 @@ def cp_sat_schedule(
     #   2) 공통 eligible 설비 존재 — 같은 설비에 놓일 가능성 있어야 순서가 의미
     #   3) due_wmin 이 _MAX_HORIZON_MIN (no-due) 또는 동일한 쌍은 skip
     _edd_pair_terms: list = []
+    # Hybrid C: past-due ↔ on-time 혼합 쌍 별도 리스트 (heavy weight 적용).
+    _edd_mixed_pastdue_terms: list = []
     _process_gks: dict[str, list[str]] = {}
     for _gk, _meta in group_meta.items():
         _process_gks.setdefault(_meta["rep"].process_name, []).append(_gk)
@@ -1874,9 +1905,22 @@ def cp_sat_schedule(
                 model.add(start_vars[_earlier] <= start_vars[_later]).only_enforce_if(
                     _wrong.Not()
                 )
-                _edd_pair_terms.append(_wrong)
+                # 쌍 분류: "past-due ↔ on-time" 혼합이면 heavy weight.
+                # earlier 는 납기 빠른 쪽 (= due_wmin 작은 쪽). past-due 는 음수, on-time
+                # 은 양수. `earlier 가 past-due 이고 later 가 on-time` 이면 혼합 case.
+                _earlier_due = group_meta[_earlier]["due_wmin"]
+                _later_due = group_meta[_later]["due_wmin"]
+                _is_mixed_pastdue = _earlier_due < 0 <= _later_due
+                if _is_mixed_pastdue:
+                    _edd_mixed_pastdue_terms.append(_wrong)
+                else:
+                    _edd_pair_terms.append(_wrong)
     if _edd_pair_terms:
         _objective = _objective + _EDD_PAIR_WEIGHT * sum(_edd_pair_terms)
+    if _edd_mixed_pastdue_terms:
+        _objective = _objective + _EDD_MIXED_PASTDUE_WEIGHT * sum(
+            _edd_mixed_pastdue_terms
+        )
 
     # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
     # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
@@ -2008,6 +2052,7 @@ def cp_sat_schedule(
         idle_terms=idle_terms,
         transition_terms=transition_terms,
         sheath_end_terms=_sheath_end_terms,
+        edd_mixed_pastdue_vars=_edd_mixed_pastdue_terms,
     )
 
     # ── 8. CP-SAT 순서대로 캘린더 그리디로 실제 배치 ─────────────────────
