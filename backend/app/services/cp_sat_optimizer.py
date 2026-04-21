@@ -1241,9 +1241,15 @@ def cp_sat_schedule(
         # Past-due 심각도 배율 — due_wmin < 0 일수록 더 큰 가중치.
         # 예: 10일 과거 → past_days = 10 → severity_mul = 1 + 10/5 = 3.0.
         # on-time 그룹은 past_days=0 → ×1.0 (기존 priority 가중치 그대로).
-        _past_days = (
-            max(0, (-due_wmin) / _WORK_MIN_PER_DAY_DEFAULT) if due_wmin < 0 else 0.0
-        )
+        #
+        # divisor 는 `_WORK_MIN_PER_DAY` (840, 1근무일) — `_due_work_min` 이
+        # legacy fallback 에서 `wd * _WORK_MIN_PER_DAY` 로 산출하므로 동일
+        # 축. 기존 구현은 `_WORK_MIN_PER_DAY_DEFAULT` (1440, 24h full) 로
+        # 나눠 past_days 가 840/1440 ≈ 0.58배 과소평가, severity 배율이
+        # 설계치의 68% 수준으로 약화됐음 (c5be1a6 의 의도와 어긋남).
+        # 실측: 150SQ 실 past 4일 → snapshot past_days=1.17 (= 4 × 840/1440),
+        # severity 1.23 (정상 1.8). 수정 후 past_days=4.0, severity 1.8 회복.
+        _past_days = max(0, (-due_wmin) / _WORK_MIN_PER_DAY) if due_wmin < 0 else 0.0
         _severity_mul = 1.0 + _past_days / _PAST_SEVERITY_K
         _weight = int(
             _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)] * _severity_mul
