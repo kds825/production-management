@@ -10,40 +10,42 @@
 
 ---
 
-## Infrastructure constants (use these exact values everywhere)
+## Infrastructure constants (Rev 3 — Path D: Supabase-native)
 
 ```bash
 # .env.worktree.example — copied to each worktree as .env.worktree (gitignored)
-COMPOSE_PROJECT_NAME=kbi_main   # kbi_track_a / kbi_track_b in those worktrees
-POSTGRES_HOST_PORT=5432         # 5433 track_a, 5434 track_b
+# Per-worktree backend + frontend ports only. All worktrees share the Supabase DB.
 BACKEND_PORT=8000               # 8001 track_a, 8002 track_b
 FRONTEND_PORT=3000              # 3001 track_a, 3002 track_b
+LLM_PROVIDER=template           # parity/CI default; set anthropic for dev
 
-# Real DB creds (per README.md:41; NEVER use kbi_user/kbi_pass — that is wrong)
-DB_USER=kbi
-DB_PASSWORD=kbi_poc_2026
-DB_NAME=kbi_scheduler
+# Active dev DB = Supabase — connection string in gitignored backend/.env
+# DATABASE_URL=postgresql://postgres.<project>:<pwd>@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres
+#
+# docker-compose.yml has a `db` service (Postgres 16) with creds kbi/kbi_poc_2026/kbi_scheduler
+# but it is UNUSED in normal dev. Treat it as a throwaway CI-like local testbed only.
 
-# Native dev workflow — Docker only for Postgres
-# Backend: cd backend && source venv/bin/activate && pytest / uvicorn app.main:app
+# Native dev workflow (no Docker required for day-to-day work):
+# Backend:  cd backend && source venv/bin/activate && pytest / uvicorn app.main:app
 # Frontend: cd frontend && npm run dev
-# DB: docker compose up -d db   (service name is "db", NOT "postgres"/"backend")
 
 # Health endpoint (NOT /health)
 HEALTH_URL=http://localhost:${BACKEND_PORT}/api/health
 
 # Next.js 16 + React 19 (read frontend/AGENTS.md before FE tasks)
-LLM_PROVIDER=template   # parity/CI default; set anthropic for dev
 ```
+
+**Shared-DB discipline**: all worktrees read `DATABASE_URL` from `backend/.env` (pointing at Supabase). DB isolation during tests = `db.begin_nested()` + rollback. Migrations are Track B's exclusive lane: when a migration merges to main, every worktree must `git pull` before running code.
 
 ---
 
 ## Prerequisites
 
-- [ ] Read spec Rev 2 end-to-end.
+- [ ] Read spec Rev 3 end-to-end.
 - [ ] Read `backend/README.md` (native dev) and `frontend/AGENTS.md` (Next 16 warnings).
-- [ ] macOS with ≥16GB RAM (2 worktrees × Postgres + dev servers).
-- [ ] Python 3.11, Node 20+, Docker Desktop, `gh` CLI.
+- [ ] `backend/.env` has `DATABASE_URL` set (Supabase connection string).
+- [ ] macOS with ≥8GB RAM (dev servers + editor; Docker not required for normal work).
+- [ ] Python 3.11, Node 20+, `gh` CLI. Docker Desktop only if you want to test CI-style fresh-DB locally.
 
 ---
 
@@ -51,36 +53,114 @@ LLM_PROVIDER=template   # parity/CI default; set anthropic for dev
 
 All tasks in `KBI_PoC` (main) until 0.7 creates sibling worktrees.
 
-### Task 0.1: `docs/archive/` baseline artifacts
+### Task 0.1: `docs/archive/` baseline artifacts ✅ (Rev 2 draft; amended by Rev 3)
 
-Files: `docs/archive/schema_asis_20260423.sql`, `docs/archive/constraint_config_sample_20260423.json`, `docs/archive/README.md`, `scripts/dump_constraint_config.py`.
+**Status**: Landed at commit `c70adaf` with concerns. Rev 3 updated `docs/archive/README.md` to reflect Supabase as the active DB (the dump was actually taken from Supabase since the docker-compose `db` service was empty). README commit amends the Task 0.1 commit or is landed as a follow-up commit.
 
-- [ ] **Step 1: Schema dump via native psql (correct creds)**
+Files: `docs/archive/schema_asis_20260423.sql` (1060 lines), `docs/archive/constraint_config_sample_20260423.json` (38 rows), `docs/archive/README.md`, `scripts/dump_constraint_config.py` — all present.
 
-```bash
-docker compose up -d db
-sleep 3
-docker compose exec -T db pg_dump --schema-only --no-owner --no-privileges -U kbi kbi_scheduler > docs/archive/schema_asis_20260423.sql
-wc -l docs/archive/schema_asis_20260423.sql   # ≥ 500 lines expected
-```
+---
 
-- [ ] **Step 2: Write `scripts/dump_constraint_config.py`** serializing every column of every `ConstraintConfig` row to JSON (see Rev 1 spec for field list — unchanged).
+### Task 0.1b (NEW — Rev 3): Fix alembic `batch_group` missing migration
 
-- [ ] **Step 3: Run dump**
+**Problem**: `backend/alembic/versions/c3d4e5f6a7b8_add_unassigned_index_and_reason.py` creates an index on `production_batch.batch_group`, but no migration in the chain creates that column. `alembic upgrade head` on a fresh Postgres fails with `UndefinedColumn: batch_group`. Blocks Task 0.5 (`make bootstrap`), Task 0.7 (worktree bootstrap), Task 0.8 (CI), and any future engineer's local setup.
+
+Supabase already has the column (it was added manually or via an out-of-band migration). The fix is to codify the column as a proper alembic migration **before** `c3d4e5f6a7b8`.
+
+Files:
+
+- Create: `backend/alembic/versions/<new_id>_add_batch_group_column.py` — inserted earlier in the chain than `c3d4e5f6a7b8`.
+
+- [ ] **Step 1: Locate the alembic revision that precedes `c3d4e5f6a7b8`**
 
 ```bash
 cd backend && source venv/bin/activate
-python ../scripts/dump_constraint_config.py > ../docs/archive/constraint_config_sample_20260423.json
-cd ..
+grep -E '^down_revision' alembic/versions/c3d4e5f6a7b8_add_unassigned_index_and_reason.py
+# Output tells us which revision is the parent.
 ```
 
-- [ ] **Step 4: Write `docs/archive/README.md`** with break-glass restore procedure using real creds.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Check which columns `production_batch` table on Supabase actually has**
 
 ```bash
-git add docs/archive/ scripts/dump_constraint_config.py
-git commit -m "docs(archive): Phase 0 baseline — schema + constraint_config"
+docker compose up -d db 2>/dev/null  # not needed; just query Supabase
+# Or use the Supabase DATABASE_URL from backend/.env:
+python - <<'PY'
+from app.infrastructure.database import SessionLocal
+from sqlalchemy import text
+db = SessionLocal()
+rows = db.execute(text("""
+  SELECT column_name, data_type FROM information_schema.columns
+   WHERE table_name = 'production_batch' ORDER BY ordinal_position
+""")).all()
+for r in rows: print(r)
+PY
+```
+
+Verify `batch_group` exists on Supabase + is `varchar` (or whatever type the SQLAlchemy model declares).
+
+- [ ] **Step 3: Write a new migration inserted BEFORE `c3d4e5f6a7b8`**
+
+Change the chain so: `<parent_of_c3d4e5f6a7b8>` → `<new_id>_add_batch_group_column` → `c3d4e5f6a7b8`.
+
+The new migration's `upgrade()`:
+
+```python
+def upgrade() -> None:
+    # Idempotent: Supabase already has this column; fresh DBs don't.
+    bind = op.get_bind()
+    result = bind.execute(sa.text("""
+        SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'production_batch' AND column_name = 'batch_group'
+    """)).first()
+    if result is None:
+        op.add_column(
+            "production_batch",
+            sa.Column("batch_group", sa.String(length=64), nullable=True),
+        )
+
+
+def downgrade() -> None:
+    bind = op.get_bind()
+    result = bind.execute(sa.text("""
+        SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'production_batch' AND column_name = 'batch_group'
+    """)).first()
+    if result is not None:
+        op.drop_column("production_batch", "batch_group")
+```
+
+Also update `c3d4e5f6a7b8_add_unassigned_index_and_reason.py`: its `down_revision = "<new_id>"` instead of the previous parent.
+
+Match the exact SQL type from `app/infrastructure/models/production_batch.py:66` — confirm length/type before committing.
+
+- [ ] **Step 4: Verify alembic history is linear and upgrade/downgrade round-trips work against a fresh throwaway Postgres**
+
+```bash
+# Use a fresh local Postgres for round-trip verification (don't touch Supabase):
+docker compose up -d db
+sleep 3
+export DATABASE_URL="postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler"
+cd backend && source venv/bin/activate
+alembic upgrade head      # Expect: success, no errors
+alembic downgrade base    # Expect: success
+alembic upgrade head      # Expect: success again (reversibility)
+unset DATABASE_URL
+docker compose down
+```
+
+- [ ] **Step 5: Verify against Supabase it's a no-op**
+
+```bash
+cd backend && source venv/bin/activate
+alembic current   # Should already be at or past the new migration
+alembic upgrade head   # If Supabase is behind, applies the new migration idempotently (no-op because column exists)
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/alembic/versions/
+git commit -m "fix(alembic): add missing batch_group column migration (unblock fresh-DB bootstrap)"
 ```
 
 ---
@@ -125,40 +205,142 @@ markers =
 
 ---
 
-### Task 0.5: Write `Makefile` with bootstrap / doctor / verify / parity targets
+### Task 0.5: Write `Makefile` (Rev 3 — Supabase-native; no Docker required)
 
-Full Makefile skeleton per spec §9. Key targets:
+Key targets:
 
-- `bootstrap` — idempotent: venv, pip install, `.env.worktree` from example, `docker compose up -d db`, `alembic upgrade head`, verify `/api/health`
-- `doctor` — 10-second preflight (port / alembic / pytest / vitest / branch-matches-worktree)
-- `verify` — runs lint + typecheck + test + parity
-- `parity`, `parity-quick`, `parity-fixture FIXTURE=NN`
-- `test`, `test-backend`, `test-frontend`, `seed`, `reset-db`, `lint`, `typecheck`
+- `bootstrap` — idempotent: creates backend venv, installs `backend/requirements.txt`, copies `.env.worktree.example` → `.env.worktree` if missing, verifies `backend/.env` has `DATABASE_URL` set, reports `alembic current` (does NOT auto-upgrade on shared Supabase).
+- `doctor` — 10-second preflight: `.env.worktree` present, `backend/.env` has `DATABASE_URL`, `alembic current` matches code head, pytest + vitest discoverable, branch matches worktree expectation.
+- `verify` — lint + typecheck + test + parity (parallelized where independent).
+- `parity`, `parity-quick`, `parity-fixture FIXTURE=NN`.
+- `test`, `test-backend`, `test-frontend`.
+- `lint`, `typecheck`.
+- `db-fresh` (CI-like helper): spins up docker-compose `db`, applies migrations, seeds — for anyone who wants to test against a throwaway local DB. Normal dev does NOT need this.
 
-- [ ] Write, test `make bootstrap && make doctor`, commit.
+Reference Makefile skeleton:
 
----
+```makefile
+SHELL := /bin/bash
+-include .env.worktree
+export
 
-### Task 0.6: `.env.worktree.example` + gitignore + `docker-compose.yml` parameterization
+.PHONY: bootstrap doctor verify parity parity-quick parity-fixture \
+        test test-backend test-frontend lint typecheck db-fresh
 
-- [ ] Write `.env.worktree.example` with comments per-worktree values.
-- [ ] Add `.env.worktree` to `.gitignore`.
-- [ ] Update `docker-compose.yml`: `ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]`. Keep existing `db` service name, env vars, pgdata volume.
+bootstrap:
+	@command -v python3.11 >/dev/null || { echo "python3.11 required"; exit 1; }
+	@test -d backend/venv || (cd backend && python3.11 -m venv venv)
+	@source backend/venv/bin/activate && pip install -q -r backend/requirements.txt
+	@test -f .env.worktree || cp .env.worktree.example .env.worktree
+	@test -f backend/.env || { echo "✗ backend/.env missing — set DATABASE_URL before bootstrap"; exit 1; }
+	@grep -q '^DATABASE_URL=' backend/.env || { echo "✗ backend/.env has no DATABASE_URL"; exit 1; }
+	@source backend/venv/bin/activate && cd backend && alembic current
+	@echo "Bootstrap complete. Try: make doctor"
+
+doctor:
+	@echo "═══ $$(basename $$(pwd)) — doctor ═══"
+	@test -f .env.worktree && echo "  ✓ .env.worktree present" || { echo "  ✗ run 'make bootstrap'"; exit 1; }
+	@test -f backend/.env && grep -q '^DATABASE_URL=' backend/.env \
+	  && echo "  ✓ DATABASE_URL configured" \
+	  || { echo "  ✗ backend/.env DATABASE_URL missing"; exit 1; }
+	@source backend/venv/bin/activate && cd backend \
+	  && HEAD=$$(alembic heads | awk '{print $$1}') \
+	  && CURR=$$(alembic current 2>/dev/null | awk '{print $$1}') \
+	  && [ "$$CURR" = "$$HEAD" ] \
+	  && echo "  ✓ alembic at head ($$HEAD)" \
+	  || echo "  ⚠ alembic drift: code head=$$HEAD current=$$CURR (run alembic upgrade head via Track B only)"
+	@source backend/venv/bin/activate && python -c "import pytest" 2>/dev/null \
+	  && echo "  ✓ pytest discoverable" \
+	  || echo "  ✗ pytest missing"
+	@cd frontend && npm ls vitest >/dev/null 2>&1 \
+	  && echo "  ✓ vitest discoverable" \
+	  || echo "  ⚠ vitest missing (run npm install)"
+	@BRANCH=$$(git branch --show-current); \
+	 WT=$$(basename $$(pwd)); \
+	 case "$$WT" in \
+	   KBI_PoC_track_a) [[ "$$BRANCH" == "refactoring/track-a-solver" ]] \
+	     && echo "  ✓ branch matches worktree" \
+	     || echo "  ✗ expected refactoring/track-a-solver, got $$BRANCH" ;; \
+	   KBI_PoC_track_b) [[ "$$BRANCH" == "refactoring/track-b-admin" ]] \
+	     && echo "  ✓ branch matches worktree" \
+	     || echo "  ✗ expected refactoring/track-b-admin, got $$BRANCH" ;; \
+	   *) echo "  ✓ main worktree ($$BRANCH)" ;; \
+	 esac
+
+verify: lint typecheck test parity
+
+parity:
+	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py -m parity -v
+
+parity-quick:
+	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py -m parity --parity-quick -v
+
+parity-fixture:
+	@test -n "$(FIXTURE)" || { echo "Usage: make parity-fixture FIXTURE=02"; exit 1; }
+	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py::test_parity -m parity -k "$(FIXTURE)" -v
+
+test: test-backend test-frontend
+
+test-backend:
+	cd backend && source venv/bin/activate && pytest -q
+
+test-frontend:
+	cd frontend && npm run test
+
+lint:
+	cd backend && source venv/bin/activate && ruff check .
+	cd frontend && npm run lint
+
+typecheck:
+	cd backend && source venv/bin/activate && mypy app/ || true
+	cd frontend && npm run typecheck
+
+db-fresh:
+	docker compose up -d db
+	sleep 3
+	@echo "⚠ This uses the throwaway docker-compose DB (kbi/kbi_poc_2026/kbi_scheduler), NOT Supabase."
+	DATABASE_URL="postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler" \
+	  bash -c 'cd backend && source venv/bin/activate && alembic upgrade head && python seed_db.py'
+```
+
+- [ ] Write the Makefile; run `make bootstrap && make doctor` in main worktree (green on Supabase).
+- [ ] Depends on **Task 0.1b** (alembic must work from empty for `make db-fresh`; for normal `bootstrap`/`doctor`, Supabase is already migrated so alembic just reports current).
 - [ ] Commit.
 
 ---
 
-### Task 0.7: Two sibling worktrees
+### Task 0.6: `.env.worktree.example` + gitignore (Rev 3 — no docker-compose change)
+
+Path D drops the Postgres port parameterization (all worktrees share Supabase). `.env.worktree` only carries backend/frontend port overrides + LLM provider preference.
+
+Files: `.env.worktree.example`, `.gitignore`.
+
+- [ ] Write `.env.worktree.example`:
+
+```bash
+# Per-worktree env — copy to .env.worktree (gitignored) in each worktree.
+BACKEND_PORT=8000   # 8001 in track_a, 8002 in track_b
+FRONTEND_PORT=3000  # 3001 in track_a, 3002 in track_b
+LLM_PROVIDER=template  # parity/CI default; set anthropic for dev
+```
+
+- [ ] Ensure `.env.worktree` is in `.gitignore` (add if missing).
+- [ ] Leave `docker-compose.yml` as-is (`db` service stays for CI-like local testing; no parameterization needed since we don't rely on it for dev).
+- [ ] Commit.
+
+---
+
+### Task 0.7: Two sibling worktrees (Rev 3 — Supabase shared)
 
 Files: `scripts/setup_worktrees.sh`, `scripts/worktree_status.sh`, `scripts/worktree_cd.sh`, `scripts/run_id_grep.sh`.
 
-- [ ] **setup_worktrees.sh**: creates `KBI_PoC_track_a` (branch `refactoring/track-a-solver`) and `KBI_PoC_track_b` (branch `refactoring/track-b-admin`); seeds per-worktree `.env.worktree` with correct ports.
+- [ ] **setup_worktrees.sh**: creates `KBI_PoC_track_a` (branch `refactoring/track-a-solver`) and `KBI_PoC_track_b` (branch `refactoring/track-b-admin`); seeds per-worktree `.env.worktree` with backend/frontend ports + copies `backend/.env` (symlink or copy — both worktrees need `DATABASE_URL` to reach the same Supabase DB).
 
-- [ ] **worktree_status.sh**: per spec §9; shows branch, last commit, dirty count for all 3 worktrees.
+- [ ] **worktree_status.sh**: shows branch, last commit, dirty count for all 3 worktrees.
 
 - [ ] **worktree_cd.sh**: shell function `kbi <main|a|b>` that `cd`s and sources `.env.worktree`.
 
-- [ ] **run_id_grep.sh <run_id>**: greps log file (tbd path) + `solver_run` + `solver_decision` + `schedule_change_sets` for the given UUID.
+- [ ] **run_id_grep.sh <run_id>**: greps log files + Supabase `solver_run`/`solver_decision`/`schedule_change_sets` for the given UUID.
 
 - [ ] Run setup; bootstrap each worktree:
 
@@ -168,6 +350,8 @@ for wt in . ../KBI_PoC_track_a ../KBI_PoC_track_b; do
   (cd "$wt" && make bootstrap && make doctor)
 done
 ```
+
+`make bootstrap` in each worktree: creates venv, installs deps, verifies `DATABASE_URL` (from shared `backend/.env`), reports `alembic current`. No Docker starts.
 
 - [ ] Commit.
 
@@ -191,7 +375,7 @@ services:
       --health-timeout 5s --health-retries 5
 ```
 
-Backend steps: setup-python 3.11 → pip install → alembic upgrade → `pytest -q --ignore=tests/test_parity_harness.py` (parity runs in separate workflow per Task 1.9). Env: `DATABASE_URL=postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler`, `LLM_PROVIDER=template`.
+Backend steps: setup-python 3.11 → pip install → `alembic upgrade head` (depends on Task 0.1b fix) → `pytest -q --ignore=tests/test_parity_harness.py` (parity runs in separate workflow per Task 1.9). Env: `DATABASE_URL=postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler`, `LLM_PROVIDER=template`. CI never talks to Supabase — it uses the throwaway services.postgres with the kbi/kbi_poc_2026/kbi_scheduler creds.
 
 Frontend steps: setup-node 20 → `npm ci` → `npm run lint && npm run typecheck && npm run test`.
 

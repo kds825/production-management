@@ -403,22 +403,22 @@ Unfilled reasons surface as a `사유 미기록 N건` badge on the gantt header 
 
 ## 9. Design Section 5 — 9-Week Delivery Plan + 2 Worktrees
 
-### Infrastructure constants (Rev 2 grounding)
+### Infrastructure constants (Rev 3 grounding — Path D: Supabase-native dev)
 
-| Item                          | Value                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| DB user / password / database | `kbi` / `kbi_poc_2026` / `kbi_scheduler`                                 |
-| Postgres compose service name | `db` (not `postgres` or `backend`)                                       |
-| Postgres default host port    | `5432` (parameterized per worktree: 5432 / 5433)                         |
-| Backend default port          | `8000`                                                                   |
-| Frontend default port         | `3000`                                                                   |
-| Health endpoint               | `/api/health` (not `/health`)                                            |
-| Next.js version               | **16.2.1** (per `frontend/AGENTS.md`)                                    |
-| React version                 | **19**                                                                   |
-| pytest config                 | `backend/pytest.ini` (created Week 0 — not currently present)            |
-| `conftest.py`                 | `backend/tests/conftest.py` (exists; sets `CPSAT_WORKERS=1`)             |
-| Backend/frontend runtime      | **Native** (docker only for Postgres) — Week 0 decision per DevEx review |
-| CI                            | GitHub Actions with `services.postgres` (new; Week 0 scaffold)           |
+| Item                              | Value                                                                                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Active dev DB**                 | **Supabase** (project `pgujccdnuidsjxuyqgyi`, region `ap-northeast-2`); connection via `DATABASE_URL` in gitignored `backend/.env`                      |
+| `docker-compose.yml` `db` service | **Unused in normal dev** — PoC leftover. Creds `kbi/kbi_poc_2026/kbi_scheduler` are idle defaults for CI-like throwaway local Postgres if ever needed.  |
+| Backend default port              | `8000`                                                                                                                                                  |
+| Frontend default port             | `3000`                                                                                                                                                  |
+| Health endpoint                   | `/api/health` (not `/health`)                                                                                                                           |
+| Next.js version                   | **16.2.1** (per `frontend/AGENTS.md`)                                                                                                                   |
+| React version                     | **19**                                                                                                                                                  |
+| pytest config                     | `backend/pytest.ini` (created Week 0 — not currently present)                                                                                           |
+| `conftest.py`                     | `backend/tests/conftest.py` (exists; sets `CPSAT_WORKERS=1`)                                                                                            |
+| Backend/frontend runtime          | **Native**; no Docker required for day-to-day dev                                                                                                       |
+| CI                                | GitHub Actions with `services.postgres` (throwaway fresh Postgres per run; needs alembic fix from Task 0.1b)                                            |
+| Alembic bootstrap status          | ⚠ Broken on empty DB until Task 0.1b — `c3d4e5f6a7b8_add_unassigned_index_and_reason` indexes `production_batch.batch_group` which no migration creates |
 
 ### 9-week schedule (Rev 2)
 
@@ -454,34 +454,42 @@ Unfilled reasons surface as a `사유 미기록 N건` badge on the gantt header 
 └── KBI_PoC_track_b/   # refactoring/track-b-admin
 ```
 
-**Port & Postgres allocation**:
+**Port allocation** (Rev 3 — Path D; all worktrees share the Supabase DB):
 
-| Worktree | `COMPOSE_PROJECT_NAME` | Postgres host port | Backend port | Frontend port |
-| -------- | ---------------------- | ------------------ | ------------ | ------------- |
-| main     | `kbi_main`             | 5432               | 8000         | 3000          |
-| track_a  | `kbi_track_a`          | 5433               | 8001         | 3001          |
-| track_b  | `kbi_track_b`          | 5434               | 8002         | 3002          |
+| Worktree | Backend port | Frontend port |
+| -------- | ------------ | ------------- |
+| main     | 8000         | 3000          |
+| track_a  | 8001         | 3001          |
+| track_b  | 8002         | 3002          |
 
-Parameterized in `docker-compose.yml`: `${POSTGRES_HOST_PORT:-5432}:5432`. Per-worktree `.env.worktree` sets `COMPOSE_PROJECT_NAME` + ports. Backend + frontend run **natively** on macOS (per DevEx review; matches README's existing instructions); only Postgres is containerized.
+Per-worktree `.env.worktree` sets `BACKEND_PORT` + `FRONTEND_PORT` only. Backend + frontend run **natively**. All worktrees read `DATABASE_URL` from the shared `backend/.env` (which points at Supabase). DB isolation during tests comes from `db.begin_nested()` + rollback, not from separate DB instances.
 
-### `make bootstrap` + `make doctor` (DevEx 10-star)
+### `make bootstrap` + `make doctor` (DevEx 10-star — Rev 3 Supabase-native)
 
-`make bootstrap` (idempotent):
+`make bootstrap` (idempotent, no Docker):
 
 1. Creates `backend/venv` if missing; installs `backend/requirements.txt`
 2. Copies `.env.worktree.example` → `.env.worktree` if missing
-3. `docker compose up -d db` (Postgres only)
-4. `cd backend && alembic upgrade head`
-5. Seeds baseline data if empty
-6. Verifies `curl http://localhost:${BACKEND_PORT}/api/health`
+3. Verifies `backend/.env` has `DATABASE_URL` set (else prints setup instructions)
+4. `cd backend && alembic current` — reports current migration; does NOT run `upgrade head` by default (Supabase is already migrated; running upgrade on a shared DB could affect other worktrees mid-work)
+5. Verifies `curl http://localhost:${BACKEND_PORT}/api/health` once backend is started manually
 
 `make doctor` (10-second preflight):
 
-- ✓ `.env.worktree` loaded with correct `COMPOSE_PROJECT_NAME`
-- ✓ Postgres container up on expected port
-- ✓ `alembic current` matches code head
+- ✓ `.env.worktree` loaded with correct `BACKEND_PORT` / `FRONTEND_PORT`
+- ✓ `backend/.env` has `DATABASE_URL` pointing at a Postgres instance
+- ✓ `alembic current` matches code head (warns if out of sync; does not auto-upgrade)
 - ✓ pytest and vitest are discoverable
 - ✓ current branch matches worktree expectation (track_a → `refactoring/track-a-solver`, etc.)
+
+### Shared-DB discipline (Rev 3)
+
+Because all worktrees share Supabase, migrations are a coordination point:
+
+1. Only Track B creates/applies migrations (per ownership map).
+2. Track B's migration lands on Supabase as part of the PR merge (`alembic upgrade head` run once after merge to main).
+3. Before running any code or tests, every worktree MUST `git pull` main to resync code with DB state.
+4. `make doctor` warns if `alembic current` is behind the code's latest revision (signal to `git pull` + re-read PR notes).
 
 ### Weekly merge protocol
 
@@ -631,3 +639,4 @@ CI rule: `> 2× p99` blocks merge; `> 1.5× p99` warns.
 | 2026-04-23 | Initial design through brainstorming session (6 design sections, 3 revisions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | jaewoo kim / Claude |
 | 2026-04-23 | Rev 1: manual-override UI branch (§8c), migration reversibility gate (§9), 2 risks (§12)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | jaewoo kim / Claude |
 | 2026-04-23 | **Rev 2**: Integrated 4-agent plan review. 9 judgment calls decided (D1-D9). Major changes: extend `/master/constraints` (D1-A), add Week 5 hardcoded→DB migration (D2-B), reduce to 2 worktrees (D3-B), batch_grouping→Week 3 (D4-B), dry-run→Week 6 (D5-B), Decision Card replaces popover (D6-B), LLM-proposes deferred (D7-C), best-guess success criteria (D8-B), strict hash only (D9-A). 15 must-fix corrections: docker services, DB creds, `/api/health`, Next.js 16, `schedule_change_sets` FK type, 32+ private-symbol re-exports, circular-import via `scheduling_shared/`, stable parity hash keys, transaction isolation, positional args, Postgres port param, `pytest.ini` + npm scripts, real CSS tokens (not placeholders). | jaewoo kim / Claude |
+| 2026-04-23 | **Rev 3 (Path D — Supabase-native)**: Rev 2 had assumed `docker-compose` `db` service was the active dev DB. Task 0.1 execution revealed it's a PoC leftover; the real DB is **Supabase** (`DATABASE_URL` in `backend/.env`). §9 rewritten: `make bootstrap`/`make doctor` drop Docker dependency; worktree table drops Postgres port column; shared-DB discipline section added. Task 0.1b inserted to fix pre-existing alembic `batch_group` missing-migration bug (blocks fresh-DB bootstrap + CI). Archive README corrected to reflect Supabase as source of truth.                                                                                                                                                                       | jaewoo kim / Claude |
