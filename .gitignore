@@ -14,6 +14,7 @@ frontend/out/
 .env.*.local
 frontend/.env.local
 backend/.env.bak*
+.env.worktree
 
 # OS
 .DS_Store
