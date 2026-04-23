@@ -19,10 +19,20 @@ from app.services.solver.constraint_loader import (
     load_active_constraints,
 )
 from app.services.solver.input_builder import SolverInput, build_solver_input
+from app.services.solver.trace_writer import (
+    TraceMetadata,
+    compute_input_hash,
+    compute_output_hash,
+    write_trace,
+)
 
 __all__ = [
     "ConstraintSpec",
     "SolverInput",
+    "TraceMetadata",
     "build_solver_input",
+    "compute_input_hash",
+    "compute_output_hash",
     "load_active_constraints",
+    "write_trace",
 ]

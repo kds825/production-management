@@ -20,11 +20,13 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import time
+import uuid
 from collections import OrderedDict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ortools.sat.python import cp_model
@@ -41,9 +43,6 @@ from app.services.calendar_engine import (
     calculate_end_datetime,
 )
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.solver import SolverInput
-from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
-from app.services.solver.objective import compose_objective
 from app.services.schedule_optimizer import (
     PREDECESSOR_PROCESS,
     _DEFAULT_WELDING_MIN,
@@ -61,6 +60,13 @@ from app.services.schedule_optimizer import (
     _st_sq,
     align_start_to_predecessor_end,
 )
+from app.services.solver import SolverInput
+from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
+from app.services.solver.objective import compose_objective
+
+# Logger for non-fatal trace-write failures: observability must not kill
+# solver correctness (see Task 2A.3 wiring note near `return result`).
+_logger = logging.getLogger(__name__)
 
 # 하루 근무 시간(분): 08:00~22:00 (CP-SAT 시간축 legacy 단위).
 # 실제 가용 분은 calendar_engine 기반 _working_minutes_between 이 계산하므로
@@ -1074,13 +1080,30 @@ def cp_sat_schedule(
         "warm_start_skipped": 0,
     }
 
-    # Task 1.1 (Rev 3): `run_id_override` 는 파러티 하니스용 결정론 훅 placeholder.
-    # 현재 `cp_sat_schedule` 은 자체 UUID 생성 경로가 없어 (uuid.uuid4 호출 無)
-    # override 를 쓸 대상이 없다 — 값만 result 에 전달해 caller/harness 가 동일
-    # 해시 키를 붙일 수 있게 한다. Task 1.2 (run_id persistence) 이후 실제
-    # UUID 생성 지점이 생기면 여기서 그 값을 대체하도록 확장.
-    if run_id_override is not None:
-        result["run_id"] = run_id_override
+    # Task 2A.3 (Rev 3): started_at is captured at the TOP of the function
+    # (before the DB-load branch) so the solver_run row's started_at
+    # accurately reflects total wall-clock cost — not just the CP-SAT
+    # solve step. The B8 speculative `result["run_id"] = run_id_override`
+    # stub that lived here (Task 1.1) is superseded by the real trace
+    # write at the final `return result`: the run_id is generated from
+    # either `run_id_override` (parity harness determinism, but mapped
+    # to a UUID-shaped string to fit SolverRun.run_id VARCHAR(36)) or
+    # a fresh uuid.uuid4().
+    _started_at = datetime.now(timezone.utc)
+    # PK contract: SolverRun.run_id is VARCHAR(36). Callers may pass a
+    # longer `run_id_override` (e.g., parity harness uses run_label =
+    # "20260421_parity_10_all_vs_none_constraints" = 42 chars) — we
+    # deterministically collapse it into a UUID5 so the same override
+    # yields the same PK every invocation (parity hash stability) but
+    # fits the column width. UUID-shaped overrides pass through.
+    if run_id_override is None:
+        _run_id = str(uuid.uuid4())
+    elif len(run_id_override) <= 36:
+        _run_id = run_id_override
+    else:
+        # Namespace is a fixed DNS UUID — the choice doesn't matter,
+        # only that it stays constant across invocations.
+        _run_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, run_id_override))
 
     # ── 1-3. DB 로드 또는 override rebind ────────────────────────────────
     # Task 1.1 (Rev 3): `solver_input_override` 가 None 이면 기존 DB 로드 블록을
@@ -2121,5 +2144,111 @@ def cp_sat_schedule(
         rem_b.status = "scheduled"
         rem_b.equipment_code = eq_code
         result["total_tasks"] += 1
+
+    # ── Task 2A.3: write one solver_run + N solver_decision rows ──────────
+    # Why here (final return path) and not at the early-exit paths:
+    #   - Early returns (no batches, no groups, solver INFEASIBLE) represent
+    #     degenerate states where an `assignments`-shaped trace would be
+    #     empty/meaningless. Week 4 may want to start tracing those too;
+    #     for now we trace only the "real" solve path that actually
+    #     produced ScheduleTask rows.
+    # Why inline import: the module-level auto-formatter strips unused
+    # imports during in-flight refactors; function-local keeps the
+    # dependency explicit and co-located with the call site (matches the
+    # existing `from app.infrastructure.models.wip_inventory import ...`
+    # pattern ~L1122).
+    # Why try/except: trace is observability, not correctness — if it
+    # fails (e.g., schema drift, network blip), log a warning and let the
+    # caller receive a valid `result`. The unit test suite asserts the
+    # happy path; parity 11/11 catches SAVEPOINT rollback regressions.
+    from app.services.solver.trace_writer import (
+        TraceMetadata,
+        compute_input_hash,
+        compute_output_hash,
+        write_trace,
+    )
+
+    try:
+        # Reconstruct an assignments shape that `compute_output_hash`
+        # understands. We read from ScheduleTask (already flushed by the
+        # scheduler passes above) rather than maintaining an in-memory
+        # mirror — one source of truth, robust against future loops
+        # inserting/updating rows we don't track here.
+        _trace_tasks = (
+            db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+        )
+        _trace_assignments: list[dict[str, Any]] = [
+            {
+                "group_key": t.batch_group or f"_single_{t.batch_id}",
+                "equipment_id": t.equipment_code,
+                "production_batch_id": t.batch_id,
+                "assigned_start": t.start_datetime,
+            }
+            for t in _trace_tasks
+        ]
+        # base_date is guaranteed non-None here: either rebound from
+        # solver_input_override at §1-3 or derived at §2 of the DB-load
+        # branch; all pre-solver early-exits return before reaching us.
+        _trace_output_hash = (
+            compute_output_hash(run_label, _trace_assignments, base_date)
+            if _trace_assignments
+            else None
+        )
+        _trace_input_hash = (
+            compute_input_hash(solver_input_override, run_label)
+            if solver_input_override is not None
+            # Non-override DB-load path: build the same shape synthetically
+            # from the ProductionBatch rows we loaded at §1.
+            else (
+                compute_input_hash(
+                    type("_S", (), {"batches": batches})(),  # lightweight shim
+                    run_label,
+                )
+            )
+        )
+        _trace_meta = TraceMetadata(
+            run_label=run_label,
+            run_id=_run_id,
+            started_at=_started_at,
+            finished_at=datetime.now(timezone.utc),
+            solver_status=result.get("solver_status", "UNKNOWN"),
+            objective_value=(
+                float(result["objective_value"])
+                if result.get("objective_value") is not None
+                else None
+            ),
+            input_hash=_trace_input_hash,
+            output_hash=_trace_output_hash,
+            constraint_config_version=None,  # Week 4+
+            solver_params={
+                "num_search_workers": result.get("solver_num_workers"),
+                "random_seed": int(random_seed),
+                "time_limit_sec": (
+                    int(time_limit_sec)
+                    if time_limit_sec and int(time_limit_sec) > 0
+                    else _SOLVER_TIME_LIMIT_SEC
+                ),
+                "sheath_color_hard": bool(sheath_color_hard),
+                "tardiness_hard": bool(tardiness_hard),
+            },
+        )
+        write_trace(
+            db,
+            _trace_meta,
+            # Week 2: BuiltModel doesn't yet expose per-constraint
+            # penalty/hard-literal values — Week 4 Task 2A.4 wires them.
+            # The solver_run row still captures the run itself.
+            penalty_values={},
+            hard_literal_values={},
+            specs=[],
+            assignments=_trace_assignments,
+        )
+        result["run_id"] = _run_id
+    except Exception as _trace_exc:  # pragma: no cover — observability
+        # Do not surface as `result["warnings"]` — the user-facing
+        # warnings list is reserved for scheduling-semantic issues.
+        _logger.warning(
+            "trace_writer failed (non-fatal): %s", _trace_exc, exc_info=True
+        )
 
     return result
