@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import settings
+from app.infrastructure.logging import RunIdMiddleware
 from app.presentation.routes import audit  # noqa: F401
 from app.presentation.routes import constraints  # noqa: F401
 from app.presentation.routes import equipment  # noqa: F401
@@ -26,7 +27,10 @@ app = FastAPI(
     description="KBI Cosmolink 생산 스케줄 관리 API (PoC)",
 )
 
-# CORS 설정 — 프론트엔드 개발 서버 허용
+# CORS 설정 — 프론트엔드 개발 서버 허용. Added FIRST so RunIdMiddleware
+# becomes the OUTERMOST layer (Starlette prepends to user_middleware,
+# so last-added = outermost). This ensures CORS preflight (OPTIONS)
+# responses ALSO carry X-Run-Id, satisfying spec §10a "every response".
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -34,6 +38,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Task 2A.4 (spec §10a): RunIdMiddleware — stamps X-Run-Id on every
+# response (including CORS preflight) and sets the contextvar for log
+# correlation. Added LAST so it wraps CORS on the outside: request-side
+# runs first (contextvar set before route/logging + before CORS), and
+# response-side runs last (stamps header after CORS produces its response,
+# so preflight OPTIONS also get X-Run-Id).
+app.add_middleware(RunIdMiddleware)
 
 # 라우터 등록 (모두 /api 접두사)
 app.include_router(equipment.router, prefix="/api")

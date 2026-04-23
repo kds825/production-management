@@ -14,6 +14,25 @@ DB-로드 블록을 pure 함수 `build_solver_input` 으로 추출한다.
 외부 노출은 `build_solver_input` 과 `SolverInput` 두 심볼로 충분하다.
 """
 
+from app.services.solver.constraint_loader import (
+    ConstraintSpec,
+    load_active_constraints,
+)
 from app.services.solver.input_builder import SolverInput, build_solver_input
+from app.services.solver.trace_writer import (
+    TraceMetadata,
+    compute_input_hash,
+    compute_output_hash,
+    write_trace,
+)
 
-__all__ = ["SolverInput", "build_solver_input"]
+__all__ = [
+    "ConstraintSpec",
+    "SolverInput",
+    "TraceMetadata",
+    "build_solver_input",
+    "compute_input_hash",
+    "compute_output_hash",
+    "load_active_constraints",
+    "write_trace",
+]

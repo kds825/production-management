@@ -267,9 +267,18 @@ services/scheduling_shared/   # NEW (Rev 2) — resolves circular import
 
 Unchanged from Rev 1. After Week 5 migration, `weight` becomes causally linked to the objective (currently: admin UI displays it; Week 5 makes it take effect).
 
-### Invariant: solver never imports SQLAlchemy
+### Invariant: solver's SQLAlchemy access is allow-listed
 
-CI test: grep `from app.infrastructure` inside `services/solver/` returns only `constraint_loader.py`.
+CI test (`backend/tests/test_solver_boundary.py`): grep-style AST
+check that only the following modules under `services/solver/`
+import `from app.infrastructure`:
+
+- `constraint_loader.py` — reads ConstraintConfig → ConstraintSpec
+- `input_builder.py` — reads masterdata → SolverInput
+- `trace_writer.py` — writes solver_run + solver_decision
+
+Adding a new boundary-crosser requires updating both the allow-list
+in the test and this spec section.
 
 ---
 

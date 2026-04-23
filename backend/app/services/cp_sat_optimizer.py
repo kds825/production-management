@@ -20,11 +20,13 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import time
+import uuid
 from collections import OrderedDict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ortools.sat.python import cp_model
@@ -41,7 +43,6 @@ from app.services.calendar_engine import (
     calculate_end_datetime,
 )
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.solver import SolverInput
 from app.services.schedule_optimizer import (
     PREDECESSOR_PROCESS,
     _DEFAULT_WELDING_MIN,
@@ -59,6 +60,13 @@ from app.services.schedule_optimizer import (
     _st_sq,
     align_start_to_predecessor_end,
 )
+from app.services.solver import SolverInput
+from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
+from app.services.solver.objective import compose_objective
+
+# Logger for non-fatal trace-write failures: observability must not kill
+# solver correctness (see Task 2A.3 wiring note near `return result`).
+_logger = logging.getLogger(__name__)
 
 # 하루 근무 시간(분): 08:00~22:00 (CP-SAT 시간축 legacy 단위).
 # 실제 가용 분은 calendar_engine 기반 _working_minutes_between 이 계산하므로
@@ -1072,13 +1080,53 @@ def cp_sat_schedule(
         "warm_start_skipped": 0,
     }
 
-    # Task 1.1 (Rev 3): `run_id_override` 는 파러티 하니스용 결정론 훅 placeholder.
-    # 현재 `cp_sat_schedule` 은 자체 UUID 생성 경로가 없어 (uuid.uuid4 호출 無)
-    # override 를 쓸 대상이 없다 — 값만 result 에 전달해 caller/harness 가 동일
-    # 해시 키를 붙일 수 있게 한다. Task 1.2 (run_id persistence) 이후 실제
-    # UUID 생성 지점이 생기면 여기서 그 값을 대체하도록 확장.
-    if run_id_override is not None:
-        result["run_id"] = run_id_override
+    # Task 2A.3 (Rev 3): started_at is captured at the TOP of the function
+    # (before the DB-load branch) so the solver_run row's started_at
+    # accurately reflects total wall-clock cost — not just the CP-SAT
+    # solve step. The B8 speculative `result["run_id"] = run_id_override`
+    # stub that lived here (Task 1.1) is superseded by the real trace
+    # write at the final `return result`: the run_id is generated from
+    # either `run_id_override` (parity harness determinism, but mapped
+    # to a UUID-shaped string to fit SolverRun.run_id VARCHAR(36)) or
+    # a fresh uuid.uuid4().
+    _started_at = datetime.now(timezone.utc)
+    # PK contract: SolverRun.run_id is VARCHAR(36). Callers may pass a
+    # longer `run_id_override` (e.g., parity harness uses run_label =
+    # "20260421_parity_10_all_vs_none_constraints" = 42 chars) — we
+    # deterministically collapse it into a UUID5 so the same override
+    # yields the same PK every invocation (parity hash stability) but
+    # fits the column width. UUID-shaped overrides pass through.
+    if run_id_override is None:
+        _run_id = str(uuid.uuid4())
+    elif len(run_id_override) <= 36:
+        _run_id = run_id_override
+    else:
+        # Namespace is a fixed DNS UUID — the choice doesn't matter,
+        # only that it stays constant across invocations.
+        _run_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, run_id_override))
+
+    # Task 2A.4 (spec §10a): set run_id into the contextvar so every
+    # log emitted during the solve — including downstream helpers
+    # like calendar_engine and trace_writer — carries the same
+    # [run_id=<uuid>] prefix automatically. Inline import keeps the
+    # dependency co-located with the call site (matches the existing
+    # trace_writer inline-import pattern near `return result`) and
+    # survives the auto-formatter's unused-import sweep.
+    #
+    # Reset semantics: for HTTP callers, the outer RunIdMiddleware
+    # resets the contextvar in its own try/finally using its own
+    # token — so even if this function's early-return paths skip
+    # their own reset, the middleware's outer reset restores the
+    # contextvar to its pre-request state. For non-HTTP callers
+    # (parity harness, direct test invocation) the contextvar is
+    # scoped to the current context, not to the process, so it
+    # does not leak across contexts. We still call _reset at the
+    # final return path for defense-in-depth on the happy path.
+    from app.infrastructure.logging import (
+        set_run_id as _set_run_id,
+    )
+
+    _ctx_token = _set_run_id(_run_id)
 
     # ── 1-3. DB 로드 또는 override rebind ────────────────────────────────
     # Task 1.1 (Rev 3): `solver_input_override` 가 None 이면 기존 DB 로드 블록을
@@ -1355,115 +1403,10 @@ def cp_sat_schedule(
         return result
 
     # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────
-    model = cp_model.CpModel()
-    groups = list(group_meta.keys())
-
-    # 6-a. 설비 유니버스
-    all_eq_codes = sorted(
-        {e.equipment_code for eqs in equipment_by_process.values() for e in eqs}
-    )
-
-    # 6-b. 결정변수: start / end / equip_bool / tardiness
-    start_vars: dict[str, cp_model.IntVar] = {}
-    end_vars: dict[str, cp_model.IntVar] = {}
-    equip_vars: dict[str, dict[str, cp_model.IntVar]] = {}
-    tardiness_vars: dict[str, cp_model.IntVar] = {}
-
-    # Round 2 HIGH #5: 그룹별 "effective dur" — per_eq_dur_enabled 이면 설비 bool
-    # 에 종속된 선형합으로 표현, 아니면 스칼라. end = start + dur 로 고정.
-    # dur_vars[gk]: None (스칼라) 또는 IntVar.
-    dur_vars: dict[str, Any] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        dur = meta["cpsat_dur"]
-        per_eq = meta.get("per_eq_dur_enabled", False)
-        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
-
-        if per_eq and dur_by_eq:
-            # 설비별 dur: dur_var = sum(eq_bool_i * dur_i). equip_vars 는 exactly_one
-            # 이므로 dur_var 는 정확히 한 설비의 dur 를 갖게 된다 (scalar product).
-            _min_dur = min(dur_by_eq.values())
-            _max_dur = max(dur_by_eq.values())
-            dur_var = model.new_int_var(_min_dur, _max_dur, f"dur_{gk}")
-            # s upper bound: horizon - min_dur (그래야 어떤 설비 선택에도 e ≤ horizon)
-            s = model.new_int_var(0, _MAX_HORIZON_MIN - _min_dur, f"s_{gk}")
-            e = model.new_int_var(_min_dur, _MAX_HORIZON_MIN, f"e_{gk}")
-            model.add(e == s + dur_var)
-            dur_vars[gk] = dur_var
-        else:
-            s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"s_{gk}")
-            e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"e_{gk}")
-            model.add(e == s + dur)
-            dur_vars[gk] = None
-
-        start_vars[gk] = s
-        end_vars[gk] = e
-
-        if tardiness_hard:
-            # P9-B: 납기 hard constraint — end_var ≤ due_wmin 로 직접 강제.
-            # due 가 있을 때만 제약 추가. (due_wmin == _MAX_HORIZON_MIN 인 no-due
-            # 그룹은 제약 추가해도 무의미하게 통과하므로 skip — 모델 경량화.)
-            #
-            # Past-due 처리 (개정): 기존에는 due_wmin<0 이면 제약도 skip, tardiness_vars
-            # 도 미생성 → solver 가 past-due 그룹을 "자유변수(어디 배치해도 obj 영향 0)"
-            # 로 보고 임의 위치 선택 → EDD 순서 역전(납기 빠른 게 뒤로 밀림) 관찰됨.
-            # 수정: past-due 는 hard 불가이지만 **soft tardiness 항은 생성** 해서
-            # `weight × (end + |past|)` 이 objective 에 반영되게 함. 이렇게 하면
-            # solver 가 past-due 그룹의 end 를 작게 하려 앞쪽에 배치 → EDD 실현.
-            if meta.get("earliest_due") is not None:
-                if meta["due_wmin"] < 0:
-                    result["warnings"].append(
-                        f"그룹 {gk}: 납기 {meta['earliest_due']} 이미 "
-                        f"{abs(meta['due_wmin'])}min 지남 — tardiness hard 강제 skip, "
-                        f"soft penalty 로 전환"
-                    )
-                    # Past-due: soft tardiness 생성. tard = max(0, e - due_wmin)
-                    # due_wmin<0 이므로 tard = e - due_wmin = e + |past| (항상 양수)
-                    tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_past_{gk}")
-                    model.add_max_equality(
-                        tard, [e - meta["due_wmin"], model.new_constant(0)]
-                    )
-                    tardiness_vars[gk] = tard
-                else:
-                    model.add(e <= meta["due_wmin"])
-            # placeholder — 이후 코드가 tardiness_vars[gk] 를 참조하지 않아도 안전
-        else:
-            # Soft 모드 (폴백용): 기존 weight-based tardiness.
-            # Round 2 MED #13: due_wmin 음수 허용. `end - due_wmin` 이 음수 due 에
-            # 대해 `end + |past|` 로 자연 증가 → "3일 overdue 는 1일 overdue 의
-            # 3배 penalty" 실현. tard upper bound 를 2×horizon 으로 확장해
-            # 음수 due_wmin 에서도 max_equality 가 안전하게 동작.
-            tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_{gk}")
-            # tardiness = max(0, end - due)
-            model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
-            tardiness_vars[gk] = tard
-
-        eq_bools: dict[str, cp_model.IntVar] = {}
-        for eq in meta["eligible"]:
-            eq_bools[eq.equipment_code] = model.new_bool_var(
-                f"eq_{gk}_{eq.equipment_code}"
-            )
-        equip_vars[gk] = eq_bools
-        model.add_exactly_one(eq_bools.values())
-
-        # Round 2 HIGH #5: per_eq_dur_enabled 이면 dur_var == sum(bool_i * dur_i).
-        # exactly_one 이 보장되어 있으므로 선형합 = 선택된 설비의 dur.
-        if dur_vars.get(gk) is not None:
-            _dur_by_eq_local = meta["cpsat_dur_by_eq"]
-            model.add(
-                dur_vars[gk]
-                == sum(
-                    eq_bools[_ec] * int(_dur_by_eq_local[_ec])
-                    for _ec in eq_bools.keys()
-                )
-            )
-
-    # 6-b-2. Frozen groups — 기존 ScheduleTask 로 start/end/equipment 고정
-    # Why: 긴급수주 재최적화 시 이미 진행 중/완료/base_date 이전 'scheduled' 배치는
-    # 움직이면 안 된다 (실제 생산 중인 블록을 이동시키면 작업 중단/폐기 비용 발생).
-    # 호출자가 frozen_group_keys 로 대상을 명시하면 해당 그룹의 start_var/end_var/
-    # equip_var 를 DB 값으로 박아 솔버가 나머지 그룹만 자유변수로 최적화.
-    # 방어적 동작: DB 에 해당 task 없으면 warning 만 기록하고 skip (stale key 대응).
+    # Task 2A.2 (Rev 3): §6 블록은 `app.services.solver.model_builder.build_model`
+    # 로 이전됐다. DB 접근이 필요한 `frozen_group_keys` 는 여기서 스냅샷 dict 로
+    # 변환하여 pure 함수에 주입한다 (services/solver/ 경계 불변식).
+    frozen_tasks_snapshot: dict[str, dict[str, Any]] | None = None
     if frozen_group_keys:
         # run_label 범위 ScheduleTask 를 한번에 로드 (N+1 쿼리 방지)
         frozen_batches_q = (
@@ -1486,546 +1429,67 @@ def cp_sat_schedule(
             _bg = _pb.batch_group
             if _bg and _bg not in frozen_task_by_gk:
                 frozen_task_by_gk[_bg] = _tk
+        frozen_tasks_snapshot = {
+            _bg: {
+                "start_wmin": _datetime_to_wmin(_tk.start_datetime, base_date),
+                "equipment_code": _tk.equipment_code,
+            }
+            for _bg, _tk in frozen_task_by_gk.items()
+        }
 
-        for _gk in frozen_group_keys:
-            if _gk not in group_meta:
-                # group_meta 에 없음 — 이미 스케줄링 불가(설비 없음) 또는 WIP skip
-                result["warnings"].append(
-                    f"frozen_group_keys: '{_gk}' 은(는) group_meta 에 없어 고정 불가 (skip)"
-                )
-                continue
-            _tk = frozen_task_by_gk.get(_gk)
-            if _tk is None:
-                result["warnings"].append(
-                    f"frozen_group_keys: '{_gk}' 에 해당하는 ScheduleTask 없음 (skip)"
-                )
-                continue
-
-            _fixed_start_wmin = _datetime_to_wmin(_tk.start_datetime, base_date)
-            _fixed_eq_code = _tk.equipment_code
-
-            # 변수 domain 범위를 벗어나면 모델이 INFEASIBLE → clamp 후 warning
-            _dur = group_meta[_gk]["cpsat_dur"]
-            if _fixed_start_wmin > _MAX_HORIZON_MIN - _dur:
-                result["warnings"].append(
-                    f"frozen_group_keys: '{_gk}' start 가 horizon 초과 → 고정 skip"
-                )
-                continue
-
-            model.add(start_vars[_gk] == _fixed_start_wmin)
-            # end 는 (start + dur) 로 이미 묶여있으므로 end 고정은 start 고정과 동치.
-            # 방어적으로 end 도 같이 박되 실패하지 않도록 별도 equality 불필요.
-            # 단, cpsat_dur 와 실제 DB duration 이 다를 수 있어 end 를 명시 고정하면
-            # INFEASIBLE 가능 → start 만 박는다.
-
-            # 설비 고정: 해당 설비 bool=1, 나머지=0
-            if _fixed_eq_code in equip_vars[_gk]:
-                for _ec, _bv in equip_vars[_gk].items():
-                    if _ec == _fixed_eq_code:
-                        model.add(_bv == 1)
-                    else:
-                        model.add(_bv == 0)
-            else:
-                # eligible 에 없는 설비로 실행 중 → eligible 확장 없이 warning
-                # (eligible 재계산은 spec 범위 밖 — 재최적화가 해당 그룹 재배치 시도)
-                result["warnings"].append(
-                    f"frozen_group_keys: '{_gk}' 의 고정 설비 '{_fixed_eq_code}' 가 "
-                    f"eligible 에 없음 → 설비 고정 skip (시간만 고정)"
-                )
-
-    # ── 6-b2. 웜스타트 힌트 주입 (자유 변수 대상) ────────────────────────
-    # 왜 여기: frozen_group_keys 의 hard-pin 이 먼저 적용된 후에 주입해야
-    # 배타성이 자연스럽다 (pinned 그룹에 힌트 주는 건 no-op). 또한 모든
-    # start_vars/equip_vars 선언이 끝난 시점이라 dict 조회가 안전.
-    #
-    # add_hint() 특성:
-    #   - hard constraint 가 아닌 "탐색 시작점" 제안. 더 나은 해 발견 시 자유 이동.
-    #   - 힌트가 현 제약과 충돌하면 silent-fail (솔버는 죽지 않고 전역 탐색으로).
-    #   - 포트폴리오 워커 간 공유되어 여러 워커가 근방에서 병렬 탐색.
-    #
-    # ERP 재업로드·증분 시나리오에서 이전 해의 대부분 feasibility 를 유지한 채
-    # 변경 부분만 재탐색 → 실측 2.5~5× speedup 기대 (PoC 데이터 측정 필요).
-    if warm_start_hints:
-        _frozen_set = frozen_group_keys or set()
-        _applied = 0
-        _skipped = 0
-        for _gk, _snap in warm_start_hints.items():
-            # 이미 hard-pin — 힌트 redundant
-            if _gk in _frozen_set:
-                _skipped += 1
-                continue
-            # 모델에 없는 그룹 (스테일 키)
-            if _gk not in start_vars:
-                _skipped += 1
-                continue
-            if not isinstance(_snap, dict):
-                _skipped += 1
-                continue
-            _hint_applied_one = False
-            # 시작 시각 힌트 — horizon 범위 체크 후 주입
-            _start_wmin = _snap.get("start_wmin")
-            if isinstance(_start_wmin, int):
-                _dur = group_meta[_gk]["cpsat_dur"]
-                if 0 <= _start_wmin <= _MAX_HORIZON_MIN - _dur:
-                    try:
-                        model.add_hint(start_vars[_gk], _start_wmin)
-                        _hint_applied_one = True
-                    except Exception:
-                        # add_hint 가 어떤 이유로든 실패해도 전체 optimize 를
-                        # 깨뜨리면 안 됨 — silent degrade.
-                        pass
-            # 설비 힌트 — eligible 에 있을 때만
-            _eq_code = _snap.get("equipment_code")
-            if _eq_code and _eq_code in equip_vars.get(_gk, {}):
-                try:
-                    for _ec, _bv in equip_vars[_gk].items():
-                        model.add_hint(_bv, 1 if _ec == _eq_code else 0)
-                    _hint_applied_one = True
-                except Exception:
-                    pass
-            if _hint_applied_one:
-                _applied += 1
-            else:
-                _skipped += 1
-        result["warm_start_applied"] = _applied
-        result["warm_start_skipped"] = _skipped
-
-    # 6-c. 설비 충돌 방지 (no_overlap)
-    # Round 2 HIGH #5: per_eq_dur_enabled 이면 interval size 는 설비별 상수 dur_i.
-    # 해당 설비 bool=1 일 때만 interval active 이므로 (optional_interval + bv), 각
-    # 설비 interval 이 자신의 고유 dur 를 사용 → solver 가 "빠른 설비에 가면
-    # overlap 덜 발생" 을 정확히 인식. end_vars[gk] 는 여전히 sum 기반 dur_var 와
-    # 연동되므로 선택된 설비의 interval 만 e 와 일치 (나머지는 비활성).
-    itv_vars: dict[tuple[str, str], Any] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        dur_scalar = meta["cpsat_dur"]
-        per_eq_enabled = meta.get("per_eq_dur_enabled", False)
-        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
-        for eq_code, bv in equip_vars[gk].items():
-            # Per-equipment interval size: 활성 설비의 고유 dur.
-            _itv_size = (
-                int(dur_by_eq.get(eq_code, dur_scalar))
-                if per_eq_enabled
-                else dur_scalar
-            )
-            # end_vars[gk] 와 선택된 설비의 interval 만 정합 — 비활성 interval 은
-            # start/size/end 값 검증 안됨 (CP-SAT optional 의미). 단 안전을 위해
-            # 고정 size interval 을 위한 별도 end helper 사용:
-            if per_eq_enabled:
-                # optional interval 은 size=상수 일 때 자체 end IntVar 를 요구.
-                # start 는 공통 start_vars[gk] 사용, end 는 helper 생성.
-                _e_eq = model.new_int_var(
-                    _itv_size, _MAX_HORIZON_MIN, f"e_{gk}_{eq_code}"
-                )
-                # bv=1 일 때만 (s + size == _e_eq AND _e_eq == end_vars[gk]) 강제.
-                # bv=0 이면 interval 비활성이므로 _e_eq 값 임의 — 제약 없음.
-                model.add(_e_eq == start_vars[gk] + _itv_size).only_enforce_if(bv)
-                model.add(_e_eq == end_vars[gk]).only_enforce_if(bv)
-                itv = model.new_optional_interval_var(
-                    start_vars[gk], _itv_size, _e_eq, bv, f"itv_{gk}_{eq_code}"
-                )
-            else:
-                itv = model.new_optional_interval_var(
-                    start_vars[gk], dur_scalar, end_vars[gk], bv, f"itv_{gk}_{eq_code}"
-                )
-            itv_vars[(gk, eq_code)] = itv
-
-    for eq_code in all_eq_codes:
-        itvs = [
-            itv_vars[(gk, eq_code)]
-            for gk in groups
-            if eq_code in equip_vars.get(gk, {})
-        ]
-        if len(itvs) >= 2:
-            model.add_no_overlap(itvs)
-
-    # 6-d. 공정 선후관계: 앞 공정 첫 드럼 완료 후 뒤 공정 시작
-    proc_groups_by_sq: dict[tuple[str, int], list[str]] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        proc_groups_by_sq.setdefault((meta["rep"].process_name, meta["sq"]), []).append(
-            gk
-        )
-
-    for gk in groups:
-        meta = group_meta[gk]
-        pred_proc = PREDECESSOR_PROCESS.get(meta["rep"].process_name)
-        if not pred_proc:
-            continue
-        for pred_gk in proc_groups_by_sq.get((pred_proc, meta["sq"]), []):
-            pred_meta = group_meta[pred_gk]
-            pred_header = next(
-                (b for b in pred_meta["batches"] if b.batch_seq == -1), None
-            )
-            if pred_header:
-                lot_count = max(int(pred_header.drum_count or 1), 1)
-            elif _is_core_group(pred_gk):
-                lot_count = max(
-                    sum(int(b.drum_count or 1) for b in pred_meta["batches"]), 1
-                )
-            else:
-                lot_count = max(len(pred_meta["batches"]), 1)
-            first_drum = max(1, math.ceil(pred_meta["cpsat_dur"] / lot_count))
-            model.add(start_vars[gk] >= start_vars[pred_gk] + first_drum)
-            # 파이프라인 유휴 최소 역산: 후공정 끝 ≥ 선행공정 끝
-            model.add(end_vars[gk] >= end_vars[pred_gk])
-
-    # 6-e. CORE → ST 선행 (AL6BO 첫 드럼 → 54BO 시작)
-    for core_gk in [gk for gk in groups if _is_core_group(gk)]:
-        main_sq = _extract_core_main_sq(core_gk)
-        if main_sq is None:
-            continue
-        core_meta = group_meta[core_gk]
-        lot_c = max(sum(int(b.drum_count or 1) for b in core_meta["batches"]), 1)
-        first_drum = max(1, math.ceil(core_meta["cpsat_dur"] / lot_c))
-        for st_gk in [
-            gk for gk in groups if gk.startswith("ST-") and _st_sq(gk) == main_sq
-        ]:
-            model.add(start_vars[st_gk] >= start_vars[core_gk] + first_drum)
-
-    # 6-f. 목적함수: 파이프라인 유휴 최소화 + 색상 체인 최소화 (+ soft 모드에선 tardiness)
-    # 유휴 = succ_end - pred_end (≥ 0, 6-d 하드 제약으로 보장). 납기 가중치(수십~수백)
-    # 대비 훨씬 낮은 _IDLE_WEIGHT 로 soft 최적화 — 파이프라인이 빠른 공정일수록
-    # 솔버가 start_vars 를 늦춰서 pred_end 와 succ_end 를 정렬시킨다.
-    idle_terms: list = []
-    for _gk in groups:
-        _pred_proc = PREDECESSOR_PROCESS.get(group_meta[_gk]["rep"].process_name)
-        if not _pred_proc:
-            continue
-        for _pred_gk in proc_groups_by_sq.get((_pred_proc, group_meta[_gk]["sq"]), []):
-            _idle = model.new_int_var(0, _MAX_HORIZON_MIN, f"idle_{_pred_gk}_{_gk}")
-            model.add(_idle == end_vars[_gk] - end_vars[_pred_gk])
-            idle_terms.append(_idle)
-
-    # objective 초기화:
-    #   tardiness_hard=True  → idle + past-due tardiness (on-time 은 hard 제약)
-    #   tardiness_hard=False → sum(weight*tardiness) + idle (기존 soft 유지)
-    # 시스 색상 교체 비용은 6-g 에서 sequence-dependent gap 으로 duration 에 직접
-    # 반영 (soft penalty 가 아닌 hard interval gap). Solver 가 실제 wall-clock
-    # 을 정확히 인식 → tardiness 와의 tradeoff 를 모든 시스 그룹 쌍 단위로 평가.
-    #
-    # Past-due 가 tardiness_hard=True 에서도 tardiness_vars 에 포함됨 (위 개정).
-    # objective 에서도 해당 항을 반영해야 solver 가 past-due 그룹을 앞으로 배치.
-    if tardiness_hard:
-        _objective = _IDLE_WEIGHT * sum(idle_terms) if idle_terms else 0
-        # Past-due: tardiness_vars 에 담긴 그룹만 weight-soft penalty (hard 는 못 검)
-        if tardiness_vars:
-            _objective = _objective + sum(
-                group_meta[gk]["weight"] * tardiness_vars[gk] for gk in tardiness_vars
-            )
-    else:
-        _objective = sum(
-            meta["weight"] * tardiness_vars[gk] for gk, meta in group_meta.items()
-        )
-        if idle_terms:
-            _objective = _objective + _IDLE_WEIGHT * sum(idle_terms)
-
-    # 6-f-hard. 시스 색상 체인 Hard Constraint (sheath_color_hard=True 일 때만)
-    #
-    # Why: 긴급수주 반영 시 사용자 결정사항 — "블록 배치에서 색상 우선을 강제".
-    # 기존 6-g 의 soft penalty(chain_terms, weight=1) 는 tardiness_weight 에 밀려
-    # 실질적으로 무력해지는 경우가 있었음. Hard 승격 시:
-    #   1) 같은 클러스터(설비 카테고리 + 주차 버킷 + 색상) 내 정렬된 인접 쌍이
-    #      반드시 같은 설비에서 선행(gk_a → gk_b) 으로 순차 배치.
-    #   2) 두 작업 사이 간격 ≥ color_changeover_min (ConstraintConfig 4-2
-    #      sheath_color_min, 기본 120 분). 같은 색상이므로 이론상 교체 0 분이 맞지만,
-    #      클러스터 단위 연속성을 보장하기 위한 최소 gap 으로만 사용.
-    #
-    # 방어 로직:
-    #   - build_sheath_clusters 빈 list → 제약 추가 없이 pass
-    #   - frozen 그룹 pair → skip (start 이미 고정됨, 추가 제약 불필요)
-    #   - 인접 쌍 중 하나라도 start_vars/equip_vars 에 없으면 skip
-    #   - 클러스터 group_keys 가 1개 이하 → skip (인접 쌍 없음)
-    if sheath_color_hard:
-        from app.services.sheath_cluster import (
-            build_sheath_clusters as _build_sheath_clusters_hard,
-        )
-
-        _clusters_hard = _build_sheath_clusters_hard(group_meta)
-        # ConstraintConfig 4-2 에서 색상 교체 시간 조회. SpeedMaster 값 없이
-        # fallback 경로만 써서 설비별 편차 무시 (클러스터 단위 gap 의미).
-        _color_gap_min = int(
-            round(
-                resolve_color_change_min(
-                    sm_color_min=None,
-                    params=constraint_params,
-                )
-            )
-        )
-        _frozen_set = frozen_group_keys or set()
-
-        for _cluster in _clusters_hard:
-            _gks_ord = _cluster.group_keys
-            if len(_gks_ord) < 2:
-                continue
-            for _i in range(len(_gks_ord) - 1):
-                _gk_a = _gks_ord[_i]
-                _gk_b = _gks_ord[_i + 1]
-                # 둘 다 모델에 있는지 확인 (group_meta 에서 제외된 키 방어)
-                if _gk_a not in start_vars or _gk_b not in start_vars:
-                    continue
-                if _gk_a not in equip_vars or _gk_b not in equip_vars:
-                    continue
-                # 두 그룹 모두 frozen 이면 start 이미 고정 → 추가 제약은 중복/모순 위험
-                if _gk_a in _frozen_set and _gk_b in _frozen_set:
-                    continue
-                # Hard: gk_b 는 gk_a 종료 후 color_gap 이상 이후에 시작
-                model.add(start_vars[_gk_b] >= end_vars[_gk_a] + _color_gap_min)
-                # 같은 설비 강제: 두 그룹이 공통으로 eligible 한 설비 bool 을 동기화.
-                # 교집합 eq 가 없는 경우(서로 다른 설비 후보) → gap 제약만 적용.
-                _shared_eqs = equip_vars[_gk_a].keys() & equip_vars[_gk_b].keys()
-                for _eq in _shared_eqs:
-                    model.add(equip_vars[_gk_a][_eq] == equip_vars[_gk_b][_eq])
-
-    # 6-g. 시스 색상 Sequence-Dependent Setup (정식 모델링).
-    #
-    # Why: 기존 chain_terms (|start_a - start_b| soft) 은 proximity 만 minimize 하여
-    # 실제 "같은 설비에서 다른 색상 인접 시 +color_gap 분" 을 solver 가 인식 못 함.
-    # Post-solve 캘린더 엔진만 color_change_min 을 duration 에 더해 solver 목적
-    # 함수와 실제 스케줄이 괴리 (solver 는 갈→회→갈→회 와 갈갈→회회 를 동일 비용
-    # 으로 착각). 결과: objective 동점 해 중 색상 흩어진 해가 빈번히 선택됨.
-    #
-    # 수정: 시스 공정 그룹 쌍(gk_a, gk_b) 중 색상 다르고 공통 eligible 설비 있는
-    # 경우에 대해, "같은 설비 + 순서" booleans 로 conditional gap 제약을 부여한다.
-    #   same_eq = OR_{ec ∈ shared}(equip_a[ec] ∧ equip_b[ec])
-    #   a_before_b ∈ {0,1} (solver 자율 선택)
-    #   same_eq=1 ∧ a_before_b=1  ⇒  start_b ≥ end_a + color_gap
-    #   same_eq=1 ∧ a_before_b=0  ⇒  start_a ≥ end_b + color_gap
-    # 효과:
-    #   - Solver 가 실제 교체 시간(120 분) 을 duration 으로 반영 → tardiness
-    #     vs 색상 묶음 tradeoff 를 정확히 평가.
-    #   - 납기 여유 있으면 같은 색상 연속 배치를 자연 선호 (makespan/idle 감소).
-    #   - 여유 없으면 색상 포기 (tardiness 피하기 위해).
-    #   - AddCircuit / successor-var 기반 완전 TSP 모델 대비 단순. O(n²) 쌍에
-    #     per-pair bool 2-3 개 + conditional constraint 4 개 → n≈60 기준 ~3K 변수.
-    #
-    # Note: 같은 색상 pair 는 gap 0 이면 no_overlap 만으로 충분하므로 skip (모델
-    # 경량화). 다른 색상에만 제약 추가.
-    _sheath_color_gap_min = int(
-        round(
-            resolve_color_change_min(
-                sm_color_min=None,
-                params=constraint_params,
-            )
-        )
+    # Week 2 에서는 가중치/horizon 상수를 module global 에서 묶어 전달 (parity 보존).
+    # Week 5 에서 `ConstraintSpec.weight` 기반으로 교체된다 (plan §Task 2A.2).
+    _weights = ModelWeights(
+        DUE_HARD_WEIGHT=_DUE_HARD_WEIGHT,
+        TARDINESS_WEIGHT=_TARDINESS_WEIGHT,
+        CHAIN_WEIGHT=_CHAIN_WEIGHT,
+        IDLE_WEIGHT=_IDLE_WEIGHT,
+        SLACK_WEIGHT_BASE=_SLACK_WEIGHT_BASE,
+        PAST_SEVERITY_K=_PAST_SEVERITY_K,
+        EDD_PAIR_WEIGHT=_EDD_PAIR_WEIGHT,
+        EDD_MIXED_PASTDUE_WEIGHT=_EDD_MIXED_PASTDUE_WEIGHT,
+        TRANSITION_WEIGHT=_TRANSITION_WEIGHT,
+        MAX_HORIZON_MIN=_MAX_HORIZON_MIN,
+        WORK_MIN_PER_DAY=_WORK_MIN_PER_DAY,
     )
-    _sheath_gks_all = [
-        _g
-        for _g, _m in group_meta.items()
-        if _m["rep"].process_name in ("저압시스", "고압시스")
-    ]
-    for _i in range(len(_sheath_gks_all)):
-        for _j in range(_i + 1, len(_sheath_gks_all)):
-            _gk_a = _sheath_gks_all[_i]
-            _gk_b = _sheath_gks_all[_j]
-            _color_a = (group_meta[_gk_a]["rep"].sheath_color or "").strip()
-            _color_b = (group_meta[_gk_b]["rep"].sheath_color or "").strip()
-            # 색상 미지정/동일: 실물 교체 없음 → 제약 불필요 (no_overlap 으로 충분).
-            if not _color_a or not _color_b or _color_a == _color_b:
-                continue
-            # 공통 eligible 설비 없으면 same_eq 가 항상 0 → 제약 항상 비활성 → skip.
-            _shared_eqs_color = set(equip_vars[_gk_a].keys()) & set(
-                equip_vars[_gk_b].keys()
-            )
-            if not _shared_eqs_color:
-                continue
-            # same_eq bool: 공통 설비 중 하나에서 둘 다 활성화됐는지.
-            # exactly_one(equip_vars[g]) 이 각 그룹에 강제되어 있으므로 설비별
-            # both_on 의 합 ≤ 1 (둘이 같은 설비에 있거나 없거나).
-            _both_bools = []
-            for _ec in _shared_eqs_color:
-                _both = model.new_bool_var(f"sh_both_{_gk_a}_{_gk_b}_{_ec}")
-                model.add_bool_and(
-                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
-                ).only_enforce_if(_both)
-                model.add_bool_or(
-                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
-                ).only_enforce_if(_both.Not())
-                _both_bools.append(_both)
-            _same_eq = model.new_bool_var(f"sh_same_eq_{_gk_a}_{_gk_b}")
-            model.add(_same_eq == sum(_both_bools))
-            # a_before_b: no_overlap 이 둘 중 한 방향을 강제하지만, 어느 방향
-            # 인지를 솔버가 선택할 수 있도록 bool 로 bind. objective(+gap) 을
-            # 고려해 solver 가 자연스럽게 최적 순서 결정.
-            _a_before_b = model.new_bool_var(f"sh_order_{_gk_a}_{_gk_b}")
-            model.add(
-                start_vars[_gk_b] >= end_vars[_gk_a] + _sheath_color_gap_min
-            ).only_enforce_if([_same_eq, _a_before_b])
-            model.add(
-                start_vars[_gk_a] >= end_vars[_gk_b] + _sheath_color_gap_min
-            ).only_enforce_if([_same_eq, _a_before_b.Not()])
 
-    # 6-g-tiebreak. 시스 그룹 makespan bias (색상 묶음 tie-breaker).
-    #
-    # Why: 위 sequence-dependent gap 제약은 실제 wall-clock 을 반영하지만 objective
-    # 에 makespan 항이 없으면 "납기 여유 많고 설비 여유 많은" 경우 동일 objective
-    # 의 grouped/scattered 해가 공존 → solver 가 non-deterministic 으로 scattered
-    # 선택 가능 (예: 4 배치 {흑,흑,청,청} 모두 tardiness=0 feasible → 흑청흑청도 유효).
-    # 작은 가중치로 시스 그룹의 end_var 합을 목적함수에 더해 "빨리 끝내는 해" 를
-    # 선호시키면 자연스럽게 grouped 선택 (gap 적은 해 = makespan 작은 해).
-    # weight=1 → tardiness(1e5~1e7 per min) 대비 5 orders 작아 실제 tradeoff 훼손 X,
-    # objective tie 상황에서만 작동.
-    _sheath_end_terms = [end_vars[_g] for _g in _sheath_gks_all]
-    if _sheath_end_terms:
-        _objective = _objective + sum(_sheath_end_terms)
+    _built: BuiltModel = build_model(
+        group_meta=group_meta,
+        equipment_by_process=equipment_by_process,
+        weights=_weights,
+        constraint_params=constraint_params,
+        random_seed=random_seed,
+        frozen_group_keys=frozen_group_keys,
+        frozen_tasks_snapshot=frozen_tasks_snapshot,
+        sheath_color_hard=sheath_color_hard,
+        tardiness_hard=tardiness_hard,
+        warm_start_hints=warm_start_hints,
+        base_date=base_date,
+        warnings_out=result["warnings"],
+    )
+    compose_objective(
+        _built,
+        weights=_weights,
+        group_meta=group_meta,
+        tardiness_hard=tardiness_hard,
+    )
 
-    # 6-g-slack. On-time 그룹 slack-weighted completion — 납기 임박 우선 정렬.
-    #
-    # Why: 기존 on-time 그룹은 `e ≤ due_wmin` hard constraint 만 걸리고 objective
-    # 항이 없어 슬랙 차이가 무시됨 → "납기 여유 있는 그룹이 납기 임박 그룹보다
-    # 앞에 배치" 현상 (KBI PoC 관찰: 300SQ 납기 4/30 이 150SQ 납기 4/17 보다
-    # 먼저 같은 설비에 배치). EDD pair tie-breaker (weight=1/pair) 만으론 idle /
-    # chain / transition 항에 밀려 역전 발생 가능.
-    #
-    # 구현: on-time 그룹 각각에 `w × end` 항 추가. w 는 슬랙에 반비례 → 임박한
-    # 그룹일수록 end 를 작게 하려는 힘 강함. 연선/절연/시스 등 모든 후속 공정에
-    # 일괄 적용 (요구사항: "연선 뿐만 아니라 절연 등 후속공정에도 모두").
-    #
-    # 필터:
-    #   - no-due (`due_wmin == _MAX_HORIZON_MIN`): 납기 없는 그룹은 skip.
-    #   - past-due (`due_wmin < 0`): 기존 `_TARDINESS_WEIGHT × tardiness_vars` 가
-    #     담당 — 중복 부과 방지.
-    #
-    # 가중치 스케일:
-    #   `_IDLE_WEIGHT=1` < slack_w (수~수백/min) < `_TARDINESS_WEIGHT=1e5/min`.
-    #   past-due penalty 를 이기지 못해 안전, idle_terms 와 경쟁 가능.
-    _slack_terms: list = []
-    # 진단 스냅샷용 — (gk, weight, end_var) 로 기여도를 사후 분해할 수 있도록 보존.
-    _slack_terms_meta: list = []
-    for _gk, _meta in group_meta.items():
-        _due = _meta["due_wmin"]
-        if _due == _MAX_HORIZON_MIN:
-            continue
-        if _due < 0:
-            continue
-        _slack_min = max(1, int(_due))
-        _w = max(1, _SLACK_WEIGHT_BASE // _slack_min)
-        _slack_terms.append(_w * end_vars[_gk])
-        _slack_terms_meta.append((_gk, _w, end_vars[_gk]))
-    if _slack_terms:
-        _objective = _objective + sum(_slack_terms)
-
-    # 6-h. EDD 전역 penalty — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
-    # 납기 빠른 쪽이 뒤에 시작하면 `_EDD_PAIR_WEIGHT` penalty.
-    #
-    # Why: past-due tardiness 는 overdue 그룹만 앞으로 끌고, slack penalty 는
-    # on-time 그룹 간 duration 차이가 크면 WSPT(짧은 작업 먼저) 이익에 밀림.
-    # 관찰 사례: 150SQ 33000m 납기 4/17 이 300SQ 9500m 납기 4/30 보다 뒤에
-    # 배치. 두 그룹 모두 on-time 이라 tardiness 0, slack w_150≈4 / w_300≈2 의
-    # 2× 차이보다 WSPT duration 차이(51h/16h = 3×) 가 더 강해 역전 발생.
-    # → EDD 위반 penalty 를 충분히 크게 해 duration 이익을 압도하게 만듦.
-    # 대상 축소 (폭주 방지):
-    #   1) 같은 공정 — 다른 공정끼리는 precedence 가 이미 순서 결정
-    #   2) 공통 eligible 설비 존재 — 같은 설비에 놓일 가능성 있어야 순서가 의미
-    #   3) due_wmin 이 _MAX_HORIZON_MIN (no-due) 또는 동일한 쌍은 skip
-    _edd_pair_terms: list = []
-    # Hybrid C: past-due ↔ on-time 혼합 쌍 별도 리스트 (heavy weight 적용).
-    _edd_mixed_pastdue_terms: list = []
-    _process_gks: dict[str, list[str]] = {}
-    for _gk, _meta in group_meta.items():
-        _process_gks.setdefault(_meta["rep"].process_name, []).append(_gk)
-    for _proc, _gks_proc in _process_gks.items():
-        for _i in range(len(_gks_proc)):
-            for _j in range(_i + 1, len(_gks_proc)):
-                _gk_a = _gks_proc[_i]
-                _gk_b = _gks_proc[_j]
-                _due_a = group_meta[_gk_a]["due_wmin"]
-                _due_b = group_meta[_gk_b]["due_wmin"]
-                # no-due 또는 동일 due 는 EDD 의미 없음
-                if _due_a == _MAX_HORIZON_MIN or _due_b == _MAX_HORIZON_MIN:
-                    continue
-                if _due_a == _due_b:
-                    continue
-                # 공통 eligible 설비 없으면 경쟁 관계 아님 → skip
-                if not (set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())):
-                    continue
-                # 납기 빠른 쪽(earlier)이 뒤에 시작하면 wrong = 1
-                if _due_a < _due_b:
-                    _earlier, _later = _gk_a, _gk_b
-                else:
-                    _earlier, _later = _gk_b, _gk_a
-                _wrong = model.new_bool_var(f"edd_wrong_{_earlier}__{_later}")
-                model.add(start_vars[_earlier] > start_vars[_later]).only_enforce_if(
-                    _wrong
-                )
-                model.add(start_vars[_earlier] <= start_vars[_later]).only_enforce_if(
-                    _wrong.Not()
-                )
-                # 쌍 분류: "past-due ↔ on-time" 혼합이면 heavy weight.
-                # earlier 는 납기 빠른 쪽 (= due_wmin 작은 쪽). past-due 는 음수, on-time
-                # 은 양수. `earlier 가 past-due 이고 later 가 on-time` 이면 혼합 case.
-                _earlier_due = group_meta[_earlier]["due_wmin"]
-                _later_due = group_meta[_later]["due_wmin"]
-                _is_mixed_pastdue = _earlier_due < 0 <= _later_due
-                if _is_mixed_pastdue:
-                    _edd_mixed_pastdue_terms.append(_wrong)
-                else:
-                    _edd_pair_terms.append(_wrong)
-    if _edd_pair_terms:
-        _objective = _objective + _EDD_PAIR_WEIGHT * sum(_edd_pair_terms)
-    if _edd_mixed_pastdue_terms:
-        _objective = _objective + _EDD_MIXED_PASTDUE_WEIGHT * sum(
-            _edd_mixed_pastdue_terms
-        )
-
-    # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
-    # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
-    # 부과 → solver 가 "같은 SQ 들을 한 설비에 모으는" 배치를 선호. adjacency
-    # 단위 sequence-dependent setup 의 정확 모델링은 아니지만 (circuit constraint
-    # 필요) 현재 group=single-interval 구조에서 실용적 proxy.
-    #
-    # 적용 범위: rep.process_name == "연선" (CORE 포함). 납기 ordinal 이 14일 이상
-    # 벌어진 쌍은 skip (멀리 있으면 sequence 영향 희미). 납기 ordinal 없으면 skip.
-    #
-    # 각 (gk_a, gk_b) 쌍에 대해:
-    #   transition_bool = AND(equip_a == equip_b, sq_a != sq_b)
-    # 두 그룹이 같은 설비에 배치 AND SQ 다름 시 1, 아니면 0.
-    # 경량화: SQ 같으면 penalty 0 이므로 쌍 skip. SQ 다를 때만 bool var 생성.
-    transition_terms: list = []
-    _stranding_gks = [
-        _g for _g, _m in group_meta.items() if _m["rep"].process_name == "연선"
-    ]
-    for _i in range(len(_stranding_gks)):
-        for _j in range(_i + 1, len(_stranding_gks)):
-            _gk_a = _stranding_gks[_i]
-            _gk_b = _stranding_gks[_j]
-            _meta_a = group_meta[_gk_a]
-            _meta_b = group_meta[_gk_b]
-            # 동일 SQ → setup 0 or 30 — penalty 의미 없음 (현재 모델에서는 동급)
-            if _meta_a["sq"] == _meta_b["sq"]:
-                continue
-            # 공통 eligible 설비 없으면 same_equip 불가 → skip
-            _shared = set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())
-            if not _shared:
-                continue
-            # 납기 14일 초과 벌어지면 sequence 영향 미미 → skip
-            _due_a = _meta_a.get("due_date_ord")
-            _due_b = _meta_b.get("due_date_ord")
-            if _due_a is not None and _due_b is not None and abs(_due_b - _due_a) > 14:
-                continue
-            # same_equip bool: 공통 설비 _s 에 대해 eq_a[s] AND eq_b[s] 가 한 번이라도
-            # 참이면 1. 각 공통 설비별 AND 변수 만들고 OR 로 합산.
-            _same_eq_bools: list = []
-            for _ec in _shared:
-                _both = model.new_bool_var(f"both_{_gk_a}_{_gk_b}_{_ec}")
-                # _both = eq_a[ec] AND eq_b[ec]
-                model.add_bool_and(
-                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
-                ).only_enforce_if(_both)
-                model.add_bool_or(
-                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
-                ).only_enforce_if(_both.Not())
-                _same_eq_bools.append(_both)
-            # 설비 exactly_one 이므로 _same_eq_bools 중 최대 1개만 참 → sum = OR
-            _trans = model.new_bool_var(f"trans_{_gk_a}_{_gk_b}")
-            model.add(_trans == sum(_same_eq_bools))
-            transition_terms.append(_trans)
-
-    if transition_terms:
-        _objective = _objective + _TRANSITION_WEIGHT * sum(transition_terms)
-
-    model.minimize(_objective)
+    # §6 의 로컬 변수를 `cp_sat_schedule` 후속 코드(§7~§9 + 스냅샷 writer)가 쓸
+    # 수 있도록 unpack. 이름은 기존 코드와 1:1 호환되도록 유지 (파러티 보존).
+    model = _built.model
+    groups = _built.groups
+    start_vars = _built.start_vars
+    end_vars = _built.end_vars
+    equip_vars = _built.equip_vars
+    tardiness_vars = _built.tardiness_vars
+    idle_terms = _built.idle_terms
+    transition_terms = _built.transition_terms
+    _sheath_end_terms = _built.sheath_end_terms
+    _slack_terms_meta = _built.slack_terms_meta
+    _edd_pair_terms = _built.edd_pair_terms
+    _edd_mixed_pastdue_terms = _built.edd_mixed_pastdue_terms
+    result["warm_start_applied"] = _built.warm_start_applied
+    result["warm_start_skipped"] = _built.warm_start_skipped
 
     # ── 7. 솔버 실행 ──────────────────────────────────────────────────────
     solver = cp_model.CpSolver()
@@ -2704,4 +2168,122 @@ def cp_sat_schedule(
         rem_b.equipment_code = eq_code
         result["total_tasks"] += 1
 
+    # ── Task 2A.3: write one solver_run + N solver_decision rows ──────────
+    # Why here (final return path) and not at the early-exit paths:
+    #   - Early returns (no batches, no groups, solver INFEASIBLE) represent
+    #     degenerate states where an `assignments`-shaped trace would be
+    #     empty/meaningless. Week 4 may want to start tracing those too;
+    #     for now we trace only the "real" solve path that actually
+    #     produced ScheduleTask rows.
+    # Why inline import: the module-level auto-formatter strips unused
+    # imports during in-flight refactors; function-local keeps the
+    # dependency explicit and co-located with the call site (matches the
+    # existing `from app.infrastructure.models.wip_inventory import ...`
+    # pattern ~L1122).
+    # Why try/except: trace is observability, not correctness — if it
+    # fails (e.g., schema drift, network blip), log a warning and let the
+    # caller receive a valid `result`. The unit test suite asserts the
+    # happy path; parity 11/11 catches SAVEPOINT rollback regressions.
+    from app.services.solver.trace_writer import (
+        TraceMetadata,
+        compute_input_hash,
+        compute_output_hash,
+        write_trace,
+    )
+
+    try:
+        # Reconstruct an assignments shape that `compute_output_hash`
+        # understands. We read from ScheduleTask (already flushed by the
+        # scheduler passes above) rather than maintaining an in-memory
+        # mirror — one source of truth, robust against future loops
+        # inserting/updating rows we don't track here.
+        _trace_tasks = (
+            db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+        )
+        _trace_assignments: list[dict[str, Any]] = [
+            {
+                "group_key": t.batch_group or f"_single_{t.batch_id}",
+                "equipment_id": t.equipment_code,
+                "production_batch_id": t.batch_id,
+                "assigned_start": t.start_datetime,
+            }
+            for t in _trace_tasks
+        ]
+        # base_date is guaranteed non-None here: either rebound from
+        # solver_input_override at §1-3 or derived at §2 of the DB-load
+        # branch; all pre-solver early-exits return before reaching us.
+        _trace_output_hash = (
+            compute_output_hash(run_label, _trace_assignments, base_date)
+            if _trace_assignments
+            else None
+        )
+        _trace_input_hash = (
+            compute_input_hash(solver_input_override, run_label)
+            if solver_input_override is not None
+            # Non-override DB-load path: build the same shape synthetically
+            # from the ProductionBatch rows we loaded at §1.
+            else (
+                compute_input_hash(
+                    type("_S", (), {"batches": batches})(),  # lightweight shim
+                    run_label,
+                )
+            )
+        )
+        _trace_meta = TraceMetadata(
+            run_label=run_label,
+            run_id=_run_id,
+            started_at=_started_at,
+            finished_at=datetime.now(timezone.utc),
+            solver_status=result.get("solver_status", "UNKNOWN"),
+            objective_value=(
+                float(result["objective_value"])
+                if result.get("objective_value") is not None
+                else None
+            ),
+            input_hash=_trace_input_hash,
+            output_hash=_trace_output_hash,
+            constraint_config_version=None,  # Week 4+
+            solver_params={
+                "num_search_workers": result.get("solver_num_workers"),
+                "random_seed": int(random_seed),
+                "time_limit_sec": (
+                    int(time_limit_sec)
+                    if time_limit_sec and int(time_limit_sec) > 0
+                    else _SOLVER_TIME_LIMIT_SEC
+                ),
+                "sheath_color_hard": bool(sheath_color_hard),
+                "tardiness_hard": bool(tardiness_hard),
+            },
+        )
+        write_trace(
+            db,
+            _trace_meta,
+            # Week 2: BuiltModel doesn't yet expose per-constraint
+            # penalty/hard-literal values — Week 4 Task 2A.4 wires them.
+            # The solver_run row still captures the run itself.
+            penalty_values={},
+            hard_literal_values={},
+            specs=[],
+            assignments=_trace_assignments,
+        )
+        result["run_id"] = _run_id
+    except Exception as _trace_exc:  # pragma: no cover — observability
+        # Do not surface as `result["warnings"]` — the user-facing
+        # warnings list is reserved for scheduling-semantic issues.
+        # Task 2A.4 (spec §10a): use get_run_logger so this failure
+        # message carries the [run_id=...] prefix — the one log line
+        # where run_id tagging matters most for support triage.
+        from app.infrastructure.logging import get_run_logger as _get_run_logger
+
+        _get_run_logger(__name__).warning(
+            "trace_writer failed (non-fatal): %s", _trace_exc, exc_info=True
+        )
+
+    # Task 2A.4 (spec §10a): reset the contextvar on the happy path.
+    # Early-return sites are covered by the outer RunIdMiddleware's
+    # own reset (HTTP path) or by pytest's per-test context (test
+    # path); see the comment near the _set_run_id call above.
+    from app.infrastructure.logging import reset_run_id as _reset_run_id
+
+    _reset_run_id(_ctx_token)
     return result
