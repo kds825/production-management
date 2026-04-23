@@ -16,6 +16,8 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.audit_log import AuditLog
 from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.wip_upload_log import WipUploadLog
+from app.infrastructure.models.solver_run import SolverRun
+from app.infrastructure.models.solver_decision import SolverDecision
 
 __all__ = [
     "CustomerMaster",
@@ -34,4 +36,6 @@ __all__ = [
     "AuditLog",
     "ScheduleChangeSet",
     "WipUploadLog",
+    "SolverRun",
+    "SolverDecision",
 ]
