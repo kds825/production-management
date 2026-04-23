@@ -1,0 +1,86 @@
+# Path D: Supabase-native for dev; CI uses throwaway Postgres service
+name: CI
+
+on:
+  push:
+    branches:
+      [main, refactoring, refactoring-track-a-solver, refactoring-track-b-admin]
+  pull_request:
+    branches:
+      [main, refactoring, refactoring-track-a-solver, refactoring-track-b-admin]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: kbi
+          POSTGRES_PASSWORD: kbi_poc_2026
+          POSTGRES_DB: kbi_scheduler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kbi -d kbi_scheduler"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler
+      LLM_PROVIDER: template
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run alembic migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Run pytest (parity harness excluded; see Task 1.9)
+        working-directory: backend
+        run: pytest -q --ignore=tests/test_parity_harness.py
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: frontend
+        run: npm run test
