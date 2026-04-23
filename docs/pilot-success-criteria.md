@@ -20,7 +20,7 @@ It is consumed by three audiences:
 3. **Internal engineering (this refactor)** — knows what gates Week 9 merge
    and what the CI parity / perf gates have to protect.
 
-**Current status:** best-guess written in Week 1 per spec §6 Q6 and plan
+**Current status:** best-guess written in Week 1 per spec §13 Q6 and plan
 decision D8-B. Every numeric target is labeled:
 
 - `[BEST-GUESS]` — a reasonable starting number the engagement team chose;
@@ -124,12 +124,12 @@ Each must be verifiable by observation — not belief, not "feels right."
 - **Decision Card never empty.** Every assignment has non-blank weight bar
   chart + LLM one-liner. When LLM is unavailable (rate-limited, network
   down), graceful degradation to template narrator (`LLM_PROVIDER=template`).
-  User never sees "error" or blank panel. `[FROM SPEC]` (spec §8d)
+  User never sees "error" or blank panel. `[FROM SPEC]` (spec §8e)
 
 - **LLM hallucination rate ≤ 5%.** Kiwipiepy-based Korean morphological
   filter catches ungrounded claims. Method: run LLM narrator over the 11
   parity fixture outputs; count grounded vs ungrounded claims. Target:
-  ≥ 95% grounded. `[FROM SPEC]` (spec §8d)
+  ≥ 95% grounded. `[FROM SPEC]` (spec §8e)
 
 - **Operator can undo any override within 1 click.** Verified by Playwright
   script simulating scheduler workflow: override → observe schedule change
@@ -206,9 +206,12 @@ Thresholds are `[BEST-GUESS]` except parity (from spec).
 **Cross-references:**
 
 - Spec: `docs/specs/2026-04-23-production-handoff-refactor-design.md`
-  (§6 Q6 best-guess rationale; §8d LLM narrator + kiwipiepy filter;
-  §9 observability + run_id triad + migration reversibility; §14
-  Deliverables — this doc listed).
+  (§13 Q6 best-guess rationale; §8e LLM narrator + kiwipiepy filter;
+  §10 observability + run_id triad; §9 migration reversibility;
+  §14 Deliverables — this doc listed). Note: "11 fixture files"
+  (01-09 + 10a + 10b) = 10 scenarios; scenario 10 has `all`/`none`
+  variants. See plan "Known compromises" for the 10a/10b byte-identical
+  caveat — 11/11 green is real but 10b currently duplicates 10a.
 - Plan: `docs/plans/2026-04-23-production-handoff-refactor-plan.md`
   (Task 1.5 parity harness; Task 1.6 perf regression gate; Task 1.8
   this document; Task 5.\* pilot cutover & rollback).
