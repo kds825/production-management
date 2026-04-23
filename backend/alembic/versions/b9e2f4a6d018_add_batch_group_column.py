@@ -4,6 +4,11 @@ Revision ID: b9e2f4a6d018
 Revises: f2900467a547
 Create Date: 2026-04-23
 
+Scope:
+  이 마이그레이션은 `production_batch.batch_group` 하나만 다룬다.
+  동명이인인 `schedule_task.batch_group` 은 이 마이그레이션의 관심사가 아니다
+  (다른 테이블, 다른 생명주기).
+
 왜 이 마이그레이션이 필요한가:
   c3d4e5f6a7b8_add_unassigned_index_and_reason 가
   production_batch.batch_group 컬럼에 partial index 를 생성하지만,
@@ -46,14 +51,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    exists = bind.execute(
-        sa.text(
-            """
-            SELECT 1 FROM information_schema.columns
-             WHERE table_name = 'production_batch' AND column_name = 'batch_group'
-            """
-        )
-    ).first()
-    if exists is not None:
-        op.drop_column("production_batch", "batch_group")
+    """No-op.
+
+    This migration backfills a column that pre-existed on Supabase (added via
+    out-of-band SQL before alembic was tracking it). Dropping the column on
+    downgrade would destroy real production data on Supabase. On fresh DBs,
+    the column simply remains; a subsequent full-teardown (drop all tables)
+    will remove it harmlessly.
+    """
+    pass
