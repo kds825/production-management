@@ -20,6 +20,18 @@
 
 set -euo pipefail
 
+# Belt-and-suspenders Path D guard. The script builds its own local
+# DATABASE_URL on line 71 and exports it before any alembic call, so
+# structurally it cannot touch Supabase. This extra check makes the
+# boundary textually explicit and catches POSTGRES_HOST=*.supabase.co
+# which would slip past the structural defense.
+if [[ "${POSTGRES_HOST:-}" == *"supabase.co"* ]] \
+   || [[ "${DATABASE_URL:-}" == *"supabase.co"* ]]; then
+    echo "ERROR: Refusing to run — POSTGRES_HOST or DATABASE_URL targets Supabase." >&2
+    echo "       Path D contract: downgrade never runs against Supabase." >&2
+    exit 2
+fi
+
 readonly POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 readonly POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 readonly POSTGRES_USER="${POSTGRES_USER:-postgres}"
