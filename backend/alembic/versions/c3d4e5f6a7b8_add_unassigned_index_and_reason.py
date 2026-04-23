@@ -1,7 +1,7 @@
 """add unassigned partial index + unassign_reason column
 
 Revision ID: c3d4e5f6a7b8
-Revises: f2900467a547
+Revises: b9e2f4a6d018
 Create Date: 2026-04-17 10:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = "c3d4e5f6a7b8"
-down_revision: Union[str, Sequence[str], None] = "f2900467a547"
+down_revision: Union[str, Sequence[str], None] = "b9e2f4a6d018"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
