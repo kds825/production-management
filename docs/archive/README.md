@@ -50,11 +50,14 @@ If a migration corrupts Supabase during the pilot:
 
 ## Known constraints on restoration
 
-- As of 2026-04-23, `alembic upgrade head` from an empty schema **fails** because
-  migration `c3d4e5f6a7b8_add_unassigned_index_and_reason` references
-  `production_batch.batch_group` but no migration in the chain creates that column.
-  Tracked as Task 0.1b of the refactor plan; restoration from a fully-fresh DB
-  will not work until that bug is fixed.
+- **Resolved 2026-04-23 (commit `6126ee0`):** previously, `alembic upgrade head`
+  from an empty schema failed because `c3d4e5f6a7b8_add_unassigned_index_and_reason`
+  referenced `production_batch.batch_group` but no migration in the chain created
+  that column. Task 0.1b of the refactor plan inserted
+  `b9e2f4a6d018_add_batch_group_column` between `f2900467a547` and
+  `c3d4e5f6a7b8`. Fresh-DB restoration now works end-to-end. The new migration's
+  `upgrade()` is idempotent (information_schema guard) and `downgrade()` is a
+  deliberate no-op to prevent accidental data loss on Supabase.
 - The `docker-compose.yml` `db` service uses `postgres:16-alpine` with creds
   `kbi/kbi_poc_2026/kbi_scheduler`. These are defaults for CI-like throwaway local
   testing only. They do not match Supabase credentials.
