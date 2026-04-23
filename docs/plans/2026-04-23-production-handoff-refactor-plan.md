@@ -165,11 +165,13 @@ git commit -m "fix(alembic): add missing batch_group column migration (unblock f
 
 ---
 
-### Task 0.2: Tag Phase 0 marker in `constraint_config_history`
+### Task 0.2: Tag Phase 0 marker in `constraint_config_history` ✅
 
-File: `scripts/tag_phase0_baseline.py` — idempotent; inserts rows with `notes='PHASE0_INITIAL_20260423'`. Week 2 migration retroactively flips `is_baseline=TRUE` on these rows.
+**Status**: Landed at commit `b180b97`.
 
-- [ ] Run + verify via psql + commit.
+**Rev 3 reality adjustment**: `constraint_config_history` turned out to be a narrow change-log (`history_id`, `constraint_id`, `changed_at`, `changed_by`, `old_params_json`, `new_params_json`), not a wide snapshot. Script adapted: marker stored in `changed_by='PHASE0_INITIAL_20260423'`; `new_params_json=r.params_json`; `old_params_json=NULL`. 38 rows inserted matching `constraint_config` row count. Idempotency verified (re-run prints `Already tagged at ...`).
+
+Week 2 Task 2B.1 will rename these rows to the `BASELINE_phase0-initial_20260423T101449Z` convention (see §8b and Task 2B.1 below).
 
 ---
 
@@ -522,20 +524,28 @@ Runs `make parity` + performance regression check. Triggered on PR. Uses same Po
 
 **Week 2 merge order exception** — Track B goes first because Track A Task 2A.3 depends on new tables.
 
-### Task 2B.1 (track_b): Alembic migration
+### Task 2B.1 (track_b): Alembic migration (Rev 3 reshape per Task 0.2 discovery)
 
 One migration file adding:
 
 - `solver_run` (new table)
 - `solver_decision` (new table) — `manual_override_change_set_id` is `sa.String(36)`, FK `schedule_change_sets.change_set_id` (table name **plural**, PK is String)
-- `change_set.override_reason TEXT NULL` — _but_ the existing table is `schedule_change_sets`; confirm exact name/columns first with `psql \d+ schedule_change_sets`
-- `constraint_config_history`: `is_baseline BOOL DEFAULT false`, `baseline_tag_name VARCHAR(100)`, `baseline_created_by VARCHAR(100)`, `baseline_created_at TIMESTAMPTZ`, `version_id UUID`
+- `schedule_change_sets.override_reason TEXT NULL` — confirm exact table name first with `\d+ schedule_change_sets`
 
-Post-upgrade `op.execute(...)` retroactively sets `is_baseline=TRUE` for Phase-0-marker rows.
+**Removed from scope (Rev 3 §8b reshape)**: no `constraint_config_history` columns added. Baselines are implemented via the `changed_by=BASELINE_<tag>_<ts>` marker convention on the existing schema. No schema change needed.
 
-`downgrade()` drops in reverse order.
+Post-upgrade `op.execute(...)`: rename existing Phase 0 marker for convention consistency:
 
-- [ ] Write migration; run `./scripts/test_migration_reversibility.sh` (upgrade → downgrade → upgrade round-trip).
+```sql
+UPDATE constraint_config_history
+   SET changed_by = 'BASELINE_phase0-initial_20260423T101449Z'
+ WHERE changed_by = 'PHASE0_INITIAL_20260423';
+```
+
+`downgrade()` drops in reverse order (drop FK, drop `solver_decision`, drop `solver_run`, drop `override_reason` column). Phase 0 rename downgrade: revert `changed_by` back to `PHASE0_INITIAL_20260423`.
+
+- [ ] Write migration; run `./scripts/test_migration_reversibility.sh` (upgrade → downgrade → upgrade round-trip against throwaway local Postgres, NOT Supabase).
+- [ ] Against Supabase: `alembic upgrade head` applies only the additive tables/column (Phase 0 rename is idempotent — if already renamed, `UPDATE ... WHERE old_name` matches 0 rows).
 - [ ] Commit.
 
 ---
