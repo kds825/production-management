@@ -12,7 +12,7 @@ openpyxl==3.1.5
 tzdata>=2024.1
 python-multipart==0.0.9
 pytest==8.3.0
-pytest-asyncio==0.23.0
+pytest-asyncio==0.23.8
 pytest-benchmark>=4.0
 ortools>=9.10
 prometheus-client>=0.20
