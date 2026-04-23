@@ -31,10 +31,15 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.constraint_config import ConstraintConfig
 
-# Implementation-type taxonomy from spec §1. Typed as `| str` so legacy /
-# NULL rows don't break the loader — downstream consumers (trace_writer,
-# narrator) can still decide to warn or skip on unknown values.
-ImplementationType = Literal["solver_term", "pre_filter", "post_filter"]
+# Implementation-type taxonomy — canonical per DB reality (33 active rows
+# on 2026-04-23 use these three values exclusively). Plan "Known compromises"
+# records the resolution: DB wins over the aspirational spec vocabulary.
+#   code_logic : constraint posted as a CP-SAT term (solver-side)
+#   hybrid     : both solver-side and pre/post-filter logic
+#   table_param: pure params_json lookup (no solver branch)
+# Typed as `| str` so legacy / NULL rows don't break the loader —
+# downstream consumers (trace_writer, narrator) can warn on unknown values.
+ImplementationType = Literal["code_logic", "hybrid", "table_param"]
 
 
 @dataclass(frozen=True)
