@@ -185,11 +185,16 @@ def test_parity(parity_db: Session, fixture_path: Path) -> None:
 
     # D9-A strict: no tolerance.
     if actual_hash != expected_hash:
+        # Task 1.5 freeze captured `expected_assignments` (top-5 per fixture)
+        # for richer EXPECTED-vs-ACTUAL diffs. Pass it through if present;
+        # `_format_auditor_diff` gracefully falls back to ACTUAL-only when
+        # the fixture is pre-freeze (key absent → .get returns None).
         diff_msg = _format_auditor_diff(
             scenario_id=scenario_id,
             expected_hash=expected_hash,
             actual_hash=actual_hash,
             actual_assignments=assignments,
             horizon_start=horizon_start,
+            expected_assignments=fixture.get("expected_assignments"),
         )
         pytest.fail(diff_msg)

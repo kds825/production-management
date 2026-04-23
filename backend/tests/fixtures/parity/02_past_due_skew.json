@@ -1,7 +1,29 @@
 {
-  "expected_objective_value": null,
-  "expected_output_hash": "",
-  "expected_solver_status": "",
+  "expected_assignments": [
+    {
+      "batch_group": "_single_0",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_1",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 120
+    },
+    {
+      "batch_group": "_single_2",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 240
+    },
+    {
+      "batch_group": "_single_3",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 300
+    }
+  ],
+  "expected_objective_value": 23372402136,
+  "expected_output_hash": "sha256:f144c6dcf477909ef698c5a39245dd8624a1e8821ac284c4b04e98e6ceaec7f7",
+  "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_02_past_due_skew",
   "scenario_id": "02_past_due_skew",
   "solver_input": {

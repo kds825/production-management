@@ -1,7 +1,24 @@
 {
-  "expected_objective_value": null,
-  "expected_output_hash": "",
-  "expected_solver_status": "",
+  "expected_assignments": [
+    {
+      "batch_group": "_single_0",
+      "equipment_id": "ST-54BO1",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_1",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_2",
+      "equipment_id": "SH-A120",
+      "start_offset_min": 0
+    }
+  ],
+  "expected_objective_value": 2835,
+  "expected_output_hash": "sha256:073a6465b6ba02120b86f9062ae44af71a9e863867e56398413f3c87d75121fb",
+  "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_10_all_vs_none_constraints",
   "scenario_id": "10b_none_constraints",
   "solver_input": {

@@ -1,7 +1,19 @@
 {
-  "expected_objective_value": null,
-  "expected_output_hash": "",
-  "expected_solver_status": "",
+  "expected_assignments": [
+    {
+      "batch_group": "_single_0",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_1",
+      "equipment_id": "SH-A120",
+      "start_offset_min": 50
+    }
+  ],
+  "expected_objective_value": 1925,
+  "expected_output_hash": "sha256:72160f76af8823eb533ca96da02d78e7deb9a26c5d3b8eceab8aa6a9a00b2893",
+  "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_06_stage2_child",
   "scenario_id": "06_stage1_stage2_handoff",
   "solver_input": {

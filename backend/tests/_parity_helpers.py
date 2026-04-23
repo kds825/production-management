@@ -142,6 +142,16 @@ def _rehydrate_batch(row: dict[str, Any]) -> ProductionBatch:
     instance so DB assigns a real `batch_id` (the fixture's remapped
     0..N-1 is overwritten on flush — we use the DB value downstream).
     """
+    # Task 1.4 follow-up: document the contract that every fixture row
+    # carries the remapped `batch_id` (0..N-1) from Task 1.3 capture. If
+    # this ever fires, the fixture JSON is corrupt — fail fast here
+    # rather than silently dropping the implicit "no batch_id" row later
+    # in `_fixture_to_solver_input` where the mapping dict would quietly
+    # miss an entry.
+    assert "batch_id" in row, (
+        f"fixture batch row missing `batch_id` — corrupt fixture? row keys: "
+        f"{sorted(row.keys())}"
+    )
     kwargs: dict[str, Any] = {}
     for k, v in row.items():
         if k in _BATCH_SKIP_COLS:
@@ -251,6 +261,12 @@ def _fixture_to_solver_input(
             color_setup_map[code] = sr.setup_color_min
 
     constraint_params = ConstraintParams.load(db)
+    # The default must match input_builder.build_solver_input's fallback.
+    # If the Week-3 refactor silently retires `_DEFAULT_WELDING_MIN` and
+    # switches to a different constant, hashes drift across all fixtures
+    # that hit this branch. Keep these two paths wired through the same
+    # symbol so a rename forces a compiler-visible breakage instead of a
+    # silent parity regression.
     welding_min = constraint_params.get(
         "4-4", "welding_min", default=_DEFAULT_WELDING_MIN
     )
@@ -351,22 +367,50 @@ def _format_auditor_diff(
     actual_assignments: list[dict[str, Any]],
     horizon_start: datetime,
     top_n: int = 5,
+    expected_assignments: list[dict[str, Any]] | None = None,
 ) -> str:
     """Emit a structured, debuggable diff message on hash mismatch.
 
     Per design spec §6 and D9-A (strict — no tolerance). Shows:
       - scenario_id
-      - expected vs actual hash (truncated to first 16 hex chars each)
-      - top-N assignments sorted by batch_group, each with equipment
-        and integer start-minute offset from horizon_start.
+      - expected vs actual hash (truncated) and full hash on second line
+      - side-by-side top-N EXPECTED vs ACTUAL assignments when the fixture
+        carries `expected_assignments` (Task 1.5 freeze contract). Each row
+        compares (batch_group, equipment, start_offset_min).
 
-    Note: without the EXPECTED assignment list (only stored in the
-    fixture as a single hash), we cannot show per-assignment "expected
-    vs actual" diffs in this harness. Task 1.5 may extend fixtures to
-    carry an optional `expected_assignments` list for richer diffs;
-    until then this message prints ACTUAL only, which is still the
-    info Task 1.5's freeze protocol needs.
+    When `expected_assignments` is None (fixture pre-freeze or malformed)
+    we fall back to printing ACTUAL only, which is the same info the
+    Task 1.5 freeze protocol originally relied on.
     """
+    # Project actuals to the same (batch_group, equipment, start_min)
+    # tuple shape that `expected_assignments` uses — lets us render
+    # EXPECTED vs ACTUAL rows aligned on (batch_group, equipment) key.
+    actual_sorted = sorted(
+        actual_assignments,
+        key=lambda a: (a.get("group_key") or "", a["equipment_id"]),
+    )
+    actual_rows: list[tuple[str, str, int]] = [
+        (
+            a.get("group_key") or "",
+            a["equipment_id"],
+            int((a["assigned_start"] - horizon_start).total_seconds() // 60),
+        )
+        for a in actual_sorted[:top_n]
+    ]
+    expected_rows: list[tuple[str, str, int]] | None = None
+    if expected_assignments is not None:
+        expected_rows = sorted(
+            (
+                (
+                    e.get("batch_group") or "",
+                    e["equipment_id"],
+                    int(e.get("start_offset_min", 0)),
+                )
+                for e in expected_assignments[:top_n]
+            ),
+            key=lambda t: (t[0], t[1]),
+        )
+
     lines = [
         "",
         "═══ PARITY HASH MISMATCH ═══",
@@ -376,20 +420,41 @@ def _format_auditor_diff(
         f"horizon   : {horizon_start.isoformat()}",
         f"n_assign  : {len(actual_assignments)}",
         "",
-        "Actual assignments (top-{n} by batch_group):".format(
-            n=min(top_n, len(actual_assignments))
-        ),
-        f"  {'batch_group':<32} {'equipment':<12} {'start_min':>10}",
     ]
-    sorted_assigns = sorted(
-        actual_assignments, key=lambda a: (a.get("group_key") or "", a["equipment_id"])
-    )
-    for a in sorted_assigns[:top_n]:
-        start_min = int((a["assigned_start"] - horizon_start).total_seconds() // 60)
+    if expected_rows is not None:
         lines.append(
-            f"  {(a.get('group_key') or '')[:32]:<32} "
-            f"{a['equipment_id']:<12} {start_min:>10}"
+            f"Top-{min(top_n, max(len(actual_rows), len(expected_rows)))} "
+            "EXPECTED vs ACTUAL (by batch_group, equipment):"
         )
+        header = (
+            f"  {'batch_group':<26}  {'eq (exp)':<10} "
+            f"{'start (exp)':>11}   {'eq (act)':<10} {'start (act)':>11}   diff?"
+        )
+        lines.append(header)
+        # Align by (batch_group, equipment); if shapes differ, show "—".
+        max_rows = max(len(expected_rows), len(actual_rows))
+        for i in range(max_rows):
+            exp = expected_rows[i] if i < len(expected_rows) else None
+            act = actual_rows[i] if i < len(actual_rows) else None
+            bg = (exp[0] if exp else act[0] if act else "")[:26]
+            exp_eq = exp[1] if exp else "—"
+            exp_min = f"{exp[2]}" if exp else "—"
+            act_eq = act[1] if act else "—"
+            act_min = f"{act[2]}" if act else "—"
+            differs = "✗" if (exp != act) else " "
+            lines.append(
+                f"  {bg:<26}  {exp_eq:<10} {exp_min:>11}   "
+                f"{act_eq:<10} {act_min:>11}   {differs}"
+            )
+    else:
+        lines.append(
+            "Actual assignments (top-{n} by batch_group):".format(
+                n=min(top_n, len(actual_assignments))
+            )
+        )
+        lines.append(f"  {'batch_group':<32} {'equipment':<12} {'start_min':>10}")
+        for bg, eq, start_min in actual_rows:
+            lines.append(f"  {bg[:32]:<32} {eq:<12} {start_min:>10}")
     if len(actual_assignments) > top_n:
         lines.append(f"  ... and {len(actual_assignments) - top_n} more")
     lines.append("")
@@ -414,12 +479,24 @@ QUICK_SCENARIOS: frozenset[str] = frozenset(
 )
 
 
+#: Non-scenario JSON files that live in the fixtures dir and MUST be
+#: excluded from parity test discovery. `baseline_performance.json` is
+#: Task 1.5's perf-envelope artifact (n=20 p50/p99 per fixture) — it
+#: lacks `scenario_id`/`solver_input` and is not a test input.
+_NON_SCENARIO_STEMS: frozenset[str] = frozenset({"baseline_performance"})
+
+
 def discover_fixtures(quick: bool = False) -> list[Path]:
     """Return sorted list of parity fixture JSON paths.
 
+    Excludes `_NON_SCENARIO_STEMS` (e.g., `baseline_performance.json` —
+    the n=20 perf baseline written by Task 1.5's freeze script).
+
     When `quick=True`, filter to `QUICK_SCENARIOS` for `--parity-quick`.
     """
-    all_paths = sorted(FIXTURES_DIR.glob("*.json"))
+    all_paths = sorted(
+        p for p in FIXTURES_DIR.glob("*.json") if p.stem not in _NON_SCENARIO_STEMS
+    )
     if not quick:
         return all_paths
     return [p for p in all_paths if p.stem in QUICK_SCENARIOS]

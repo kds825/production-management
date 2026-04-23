@@ -1,7 +1,34 @@
 {
-  "expected_objective_value": null,
-  "expected_output_hash": "",
-  "expected_solver_status": "",
+  "expected_assignments": [
+    {
+      "batch_group": "_single_0",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_1",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 60
+    },
+    {
+      "batch_group": "_single_10",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 1080
+    },
+    {
+      "batch_group": "_single_11",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 1200
+    },
+    {
+      "batch_group": "_single_12",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 1320
+    }
+  ],
+  "expected_objective_value": 544600,
+  "expected_output_hash": "sha256:2e962fefd044f5155760784a64e01791f1164034c00374dac79bd86a53c37c66",
+  "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_08_capacity_overflow",
   "scenario_id": "08_capacity_overflow",
   "solver_input": {

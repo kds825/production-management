@@ -1,7 +1,19 @@
 {
-  "expected_objective_value": null,
-  "expected_output_hash": "",
-  "expected_solver_status": "",
+  "expected_assignments": [
+    {
+      "batch_group": "_single_0",
+      "equipment_id": "EX-B100",
+      "start_offset_min": 0
+    },
+    {
+      "batch_group": "_single_1",
+      "equipment_id": "SH-A120",
+      "start_offset_min": 0
+    }
+  ],
+  "expected_objective_value": 1020,
+  "expected_output_hash": "sha256:dc3bee7b5a131c571f9c61b0f8a1514a70460a2a5ad476aa0695c99166668282",
+  "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_04_wip_match",
   "scenario_id": "04_wip_match",
   "solver_input": {
