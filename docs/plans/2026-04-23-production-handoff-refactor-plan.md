@@ -1014,6 +1014,7 @@ None. Where content depends on reading an existing file (2A.2 model_builder port
 - Task 2A.2 model-builder port has temporary hardcoded-constant usage until Week 5 migration (intentional; parity-preserving two-phase move).
 - Exact split boundaries for `batch_grouping.py` (3A.3) and file-by-file move lists are finalized at task-time after reading the file end-to-end.
 - Week 2 merge-order exception (Track B first) is explicit.
+- **Task 1.1 B8 (discovered in Task 1.3 review, 2026-04-23)**: `backend/app/services/solver/input_builder.py:196` performs an in-place ORM mutation `b.status = "wip_complete"` to preserve legacy side-effect (mirrors the pre-refactor `cp_sat_schedule` DB-load block). Consequence: `build_solver_input` is NOT a pure function. Downstream effect caught in Task 1.3 capture: `_invoke_cleanup` must `db.rollback()` before re-issuing DELETEs to avoid `StaleDataError`. Purification belongs to **Task 3A.x** (solver/input_builder refactor) — remove the in-place mutation, return an immutable SolverInput + a separate list of "status to update post-solve" batches, then drop the capture-side rollback workaround.
 
 ---
 
