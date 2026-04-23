@@ -457,8 +457,8 @@ Unfilled reasons surface as a `사유 미기록 N건` badge on the gantt header 
 ```
 ~/Desktop/Project/
 ├── KBI_PoC/           # main checkout — reference + weekly merge target
-├── KBI_PoC_track_a/   # refactoring/track-a-solver
-└── KBI_PoC_track_b/   # refactoring/track-b-admin
+├── KBI_PoC_track_a/   # refactoring-track-a-solver
+└── KBI_PoC_track_b/   # refactoring-track-b-admin
 ```
 
 **Port allocation** (Rev 3 — Path D; all worktrees share the Supabase DB):
@@ -487,7 +487,7 @@ Per-worktree `.env.worktree` sets `BACKEND_PORT` + `FRONTEND_PORT` only. Backend
 - ✓ `backend/.env` has `DATABASE_URL` pointing at a Postgres instance
 - ✓ `alembic current` matches code head (warns if out of sync; does not auto-upgrade)
 - ✓ pytest and vitest are discoverable
-- ✓ current branch matches worktree expectation (track_a → `refactoring/track-a-solver`, etc.)
+- ✓ current branch matches worktree expectation (track_a → `refactoring-track-a-solver`, etc.)
 
 ### Shared-DB discipline (Rev 3)
 
