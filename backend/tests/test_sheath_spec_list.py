@@ -135,6 +135,7 @@ def test_sheath_task_response_has_spec_list(db: Session):
         process_type="저압시스",
         equipment_id="SH-A120",
         voltage=None,
+        run_label=None,
         db=db,
     )
     # 테스트가 생성한 batch_group 의 시스 응답만 검사 (DB 기존 데이터 격리)
@@ -165,6 +166,7 @@ def test_non_sheath_task_spec_list_is_none(db: Session):
         process_type="저압절연",
         equipment_id="EX-B100",
         voltage=None,
+        run_label=None,
         db=db,
     )
     assert responses, "비시스 task 응답 없음"
