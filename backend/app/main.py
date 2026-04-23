@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import settings
+from app.infrastructure.logging import RunIdMiddleware
 from app.presentation.routes import audit  # noqa: F401
 from app.presentation.routes import constraints  # noqa: F401
 from app.presentation.routes import equipment  # noqa: F401
@@ -25,6 +26,13 @@ app = FastAPI(
     version="0.1.0",
     description="KBI Cosmolink 생산 스케줄 관리 API (PoC)",
 )
+
+# Task 2A.4 (spec §10a): RunIdMiddleware — stamps X-Run-Id on every
+# response and sets the contextvar for log correlation. Added BEFORE
+# CORSMiddleware so it is the outermost wrapper: request-side runs
+# first (contextvar set before route/logging), response-side runs
+# last (header stamped after CORS processing so it survives preflight).
+app.add_middleware(RunIdMiddleware)
 
 # CORS 설정 — 프론트엔드 개발 서버 허용
 app.add_middleware(

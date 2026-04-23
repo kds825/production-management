@@ -1105,6 +1105,29 @@ def cp_sat_schedule(
         # only that it stays constant across invocations.
         _run_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, run_id_override))
 
+    # Task 2A.4 (spec §10a): set run_id into the contextvar so every
+    # log emitted during the solve — including downstream helpers
+    # like calendar_engine and trace_writer — carries the same
+    # [run_id=<uuid>] prefix automatically. Inline import keeps the
+    # dependency co-located with the call site (matches the existing
+    # trace_writer inline-import pattern near `return result`) and
+    # survives the auto-formatter's unused-import sweep.
+    #
+    # Reset semantics: for HTTP callers, the outer RunIdMiddleware
+    # resets the contextvar in its own try/finally using its own
+    # token — so even if this function's early-return paths skip
+    # their own reset, the middleware's outer reset restores the
+    # contextvar to its pre-request state. For non-HTTP callers
+    # (parity harness, direct test invocation) the contextvar is
+    # scoped to the current context, not to the process, so it
+    # does not leak across contexts. We still call _reset at the
+    # final return path for defense-in-depth on the happy path.
+    from app.infrastructure.logging import (
+        set_run_id as _set_run_id,
+    )
+
+    _ctx_token = _set_run_id(_run_id)
+
     # ── 1-3. DB 로드 또는 override rebind ────────────────────────────────
     # Task 1.1 (Rev 3): `solver_input_override` 가 None 이면 기존 DB 로드 블록을
     # 한 바이트도 바꾸지 않고 그대로 수행 (parity 안전). override 가 주어지면
@@ -2247,8 +2270,20 @@ def cp_sat_schedule(
     except Exception as _trace_exc:  # pragma: no cover — observability
         # Do not surface as `result["warnings"]` — the user-facing
         # warnings list is reserved for scheduling-semantic issues.
-        _logger.warning(
+        # Task 2A.4 (spec §10a): use get_run_logger so this failure
+        # message carries the [run_id=...] prefix — the one log line
+        # where run_id tagging matters most for support triage.
+        from app.infrastructure.logging import get_run_logger as _get_run_logger
+
+        _get_run_logger(__name__).warning(
             "trace_writer failed (non-fatal): %s", _trace_exc, exc_info=True
         )
 
+    # Task 2A.4 (spec §10a): reset the contextvar on the happy path.
+    # Early-return sites are covered by the outer RunIdMiddleware's
+    # own reset (HTTP path) or by pytest's per-test context (test
+    # path); see the comment near the _set_run_id call above.
+    from app.infrastructure.logging import reset_run_id as _reset_run_id
+
+    _reset_run_id(_ctx_token)
     return result
