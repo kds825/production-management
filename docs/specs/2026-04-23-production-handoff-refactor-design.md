@@ -1,86 +1,113 @@
 # Production Handoff Refactor — Design Spec
 
-**Date**: 2026-04-23
-**Author**: jaewoo kim (작성: Claude via /superpowers:brainstorming)
-**Status**: Design approved; awaiting spec review before plan drafting
-**Target completion**: 8 weeks (~2026-06-18)
-**Pilot go-live target**: KBI operators use scheduler for real daily decisions post-Week 8
+**Date**: 2026-04-23 (Rev 1); 2026-04-23 (Rev 2)
+**Author**: jaewoo kim (drafted via `/superpowers:brainstorming` with Claude)
+**Status**: Rev 2 — integrates findings from 4 parallel plan-review agents (CEO / Eng / Design / DevEx)
+**Target completion**: **9 weeks** (~2026-06-25) — Rev 2 adds Week 5 for hardcoded-weight → DB migration
+**Pilot go-live target**: KBI operators use scheduler for real daily decisions post-Week 9
 
 ---
 
 ## 1. Mission
 
-Transition the KBI scheduling PoC to a **defensible, pilot-ready production system** over 8 weeks, without changing solver behavior. Every scheduling decision must be auditable, explainable to the plant manager in Korean, and reproducible from durable artifacts (schema snapshot, constraint config version, trace rows).
+Transition the KBI scheduling PoC to a **defensible, pilot-ready production system** over 9 weeks, without changing solver behavior. Every scheduling decision must be auditable, explainable to the plant manager in Korean, and reproducible from durable artifacts (schema snapshot, constraint config version, trace rows).
 
-This is a **renovation, not a reconstruction**. Clean architecture layers already exist; dynamic constraint infrastructure is ~70% built; 69 backend tests and a snapshot mechanism already exist. The work is to finish, formalize, decompose, and instrument — not to rebuild from scratch.
+This is a **renovation, not a reconstruction**, **plus one targeted augmentation**: the solver currently consumes hardcoded Python weight constants (`_TARDINESS_WEIGHT`, `_CHAIN_WEIGHT=120`, `_IDLE_WEIGHT=1`, etc.) — it does not read `ConstraintConfig.priority` or `impact_level`. Without migrating those constants into the DB (Week 5), the Admin UI priority slider edits _nothing_ and XAI weight breakdowns are theater. Rev 2 adds this migration as in-scope because fake-UI destroys defensibility.
 
 ---
 
 ## 2. Drivers (why now)
 
-- **Top driver**: Production handoff — KBI pilot go-live ~2026-06-18.
-- **Defensibility requirement**: CPA-level audit standard. For every schedule decision, we must answer "why" with durable evidence.
-- **Scaling inflection**: God-files (2,000–2,900 lines) make each constraint addition feel like a gamble. Splitting them is prerequisite to safe post-pilot iteration.
-- **Operator trust**: XAI layered surface (LLM narrative grounded in structured trace) lets a plant manager get an answer to "왜 여기?" in one click, with an expandable weights table for the skeptical case.
-
-## 3. Explicit scope decisions
-
-### What the original "Project RE-BORN" prompt got wrong, and what we dropped
-
-| Prompt claim                                                       | Reality                                                                                                                                                                                             | Decision                                                                                                          |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| "Clean architecture layers must be built from scratch"             | `domain/`, `application/`, `infrastructure/`, `presentation/` already exist                                                                                                                         | Keep existing layers; split god-files _within_ them                                                               |
-| "Three-Tier Constraint Architecture (Global / Process / Temporal)" | Actual `ConstraintConfig.category` values are free-text ("due_date", "color_group", "calendar", "setup_time") and don't map to 3 tiers                                                              | Keep `category` as free-text; derive taxonomy from data, not impose one. UI offers category filter, not hierarchy |
-| "Delete legacy Greedy algorithms"                                  | `schedule_optimizer.py` is NOT legacy — imported by `routes/schedules.py`, `plan_pipeline.py` (stage2), `urgent_scheduler.py`, and even `cp_sat_optimizer.py` itself. Two solvers coexist by design | Don't delete; split into `services/greedy/` with responsibility-based modules                                     |
-| "Dynamic Priority Engine as new coordinator module"                | `constraint_config` + `constraint_config_history` already carry priorities                                                                                                                          | No new subsystem — just a clean `constraint_loader` + `trace_writer`                                              |
-| "Sub-Agent A Full Frontend refactor"                               | Unclear what specifically breaks on FE                                                                                                                                                              | Scope FE work to surfaces consuming new endpoints (admin UI, XAI popover)                                         |
-
-### What was missing from the prompt and we added
-
-- **Phase 0 pre-flight**: pg_dump schema + ConstraintConfig JSON sample committed before any code change.
-- **Formal parity harness** with 10 golden-input fixtures, strict hash equality, intentional-change discipline.
-- **Multi-baseline constraint versioning** (promotable during pilot, not immutable).
-- **Operator comment field** at manual-override time — distinguishes "what changed" (snapshot_before/after) from "why changed" (semantic).
-- **Run-ID correlation logging** across solver → API → UI (Observability).
-- **Performance baseline** captured during Week 1 parity freeze for regression detection.
-- **LLM provider abstraction** with a `TemplateProvider` fallback so narrator never hard-fails.
-
-### In-scope god-files
-
-| File                                               | Lines | Priority | Target split                                             |
-| -------------------------------------------------- | ----- | -------- | -------------------------------------------------------- |
-| `services/cp_sat_optimizer.py`                     | 2,654 | P0       | `services/solver/` (5 modules)                           |
-| `app/(main)/scheduler/page.tsx`                    | 2,719 | P0       | hooks + sub-components                                   |
-| `features/scheduler/components/GanttTaskBlock.tsx` | 1,056 | P0       | extract XAI popover component                            |
-| `services/schedule_optimizer.py`                   | 2,870 | P1       | `services/greedy/` (3 modules)                           |
-| `presentation/routes/plan_pipeline.py`             | 2,660 | P1       | `services/pipeline/` (4 modules)                         |
-| `presentation/routes/schedules.py`                 | 1,702 | P1       | `routes/schedules/` sub-package                          |
-| `services/batch_grouping.py`                       | 1,971 | P1       | `services/batch_grouping/` (5 modules) + dead-code purge |
-| `features/scheduler/components/SchedulerView.tsx`  | 1,468 | P1       | diff-overlay + gantt-grid + task-row components          |
-| `features/scheduler/store/scheduleStore.ts`        | 1,291 | P1       | slice-per-concern (orders, batches, diff, filters)       |
-
-### Explicitly deferred to post-pilot backlog (P2)
-
-- `app/(main)/plan-register/page.tsx` (1,910) — stable, rare edits
-- `features/scheduling-review/components/ProductionBatchTable.tsx` (1,008)
-- `app/(main)/scheduling-review/page.tsx` (1,013)
-- Backup/DR procedure, on-call playbook, secrets rotation (Vault), PII anonymization, Grafana dashboards, RBAC
+- **Top driver**: Production handoff — KBI pilot go-live ~2026-06-25.
+- **Defensibility requirement**: CPA-level audit standard. For every decision, we must answer "why" with durable evidence that traces back to a live, editable policy.
+- **Scaling inflection**: God-files (1,900–2,900 lines) make each constraint addition feel like a gamble.
+- **Operator trust**: XAI **Decision Card** (inline slide-down; not popover) lets a plant manager understand "can I move this?" in under 5 seconds and "why here?" in under 15. Grounded by trace, not LLM guessing.
 
 ---
 
-## 4. Approach — Parallel Strangler-Fig (2 months, 2 tracks)
+## 3. Explicit scope decisions
+
+### Codebase reality corrections (from Eng review)
+
+| Earlier claim                                                                  | Verified reality                                                                                                                                                                                                                                 | Impact                                                                                                                                |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| "Dynamic constraint infrastructure is 70% built"                               | **FALSE for the solver path**. `cp_sat_optimizer.py` never reads `ConstraintConfig.priority/impact_level/implementation_type`. Weights are Python constants. Only `params_json` is consumed (via `ConstraintParams` cache).                      | Week 5 added: hardcoded constants → DB migration. **D2** decision.                                                                    |
+| `services/solver/` and `services/greedy/` are cleanly separable                | **FALSE**. Two solvers have bi-directional imports: `cp_sat_optimizer.py` top-imports 14 names from `schedule_optimizer.py`; `schedule_optimizer.py` deferred-imports 4 back. A third neutral `services/scheduling_shared/` package is required. | §7 updated                                                                                                                            |
+| Tests touch only public API                                                    | **FALSE**. 32+ tests import private `_`-prefixed symbols (`_CHAIN_WEIGHT`, `_find_available_slot`, `_tardiness_boost_retry`, `_purge_run_tasks`, etc.).                                                                                          | §7 updated: re-export shell must cover every grepped private symbol before any file moves; no `rm` of source files during the 9 weeks |
+| `change_set` table is UUID-keyed                                               | **FALSE**. Actual table is `schedule_change_sets` (plural) with `change_set_id Column(String, primary_key=True)`.                                                                                                                                | §5 schema updated to `String(36)` FK                                                                                                  |
+| `cp_sat_schedule()` is pure enough to parametrize over `solver_input_override` | **FALSE**. 18 `db.add/delete/flush` sites mid-function. Parity harness must wrap each fixture run in `db.begin_nested()` + rollback.                                                                                                             | §6 updated                                                                                                                            |
+| Parity hash on `production_batch.id` is stable                                 | **FALSE**. Batch IDs are UUID/counter-generated per run.                                                                                                                                                                                         | §6: hash uses `(run_label, group_key, equipment_code, start_offset_min)`                                                              |
+| Docker compose has backend + frontend services                                 | **FALSE**. Compose has only `db` service.                                                                                                                                                                                                        | §9 updated: **native** backend/frontend dev workflow; Docker only for Postgres; CI uses GitHub Actions services                       |
+| Project runs Next.js 14                                                        | **FALSE**. Next.js 16 + React 19. `frontend/AGENTS.md` warns explicitly.                                                                                                                                                                         | §9 updated                                                                                                                            |
+| DB creds are `kbi_user/kbi_pass/kbi`                                           | **FALSE**. Actual: `kbi / kbi_poc_2026 / kbi_scheduler` (from `README.md:41`)                                                                                                                                                                    | §9 constants block                                                                                                                    |
+
+### What the original "Project RE-BORN" prompt got wrong
+
+(Unchanged from Rev 1; carried forward for audit trail.)
+
+| Prompt claim                                                       | Reality                                                  | Decision                                    |
+| ------------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------- |
+| "Clean architecture layers must be built from scratch"             | Layers already exist                                     | Keep + split god-files within them          |
+| "Three-Tier Constraint Architecture (Global / Process / Temporal)" | Actual categories are free-text and don't map to 3 tiers | Keep `category` free-text; UI offers filter |
+| "Delete legacy Greedy algorithms"                                  | Not legacy — still called from 4 places                  | Don't delete; split into `services/greedy/` |
+| "Sub-Agent A Full Frontend refactor"                               | Unclear scope                                            | Scope to surfaces consuming new endpoints   |
+
+### What Rev 2 added (beyond the prompt and Rev 1)
+
+- **Hardcoded weight → DB migration** (Week 5) — makes the `priority`/`impact_level` slider actually affect the solver.
+- **`services/scheduling_shared/`** package — resolves circular import between solver and greedy.
+- **Extend `/master/constraints`** with a new `베이스라인` tab (D1); no new `/admin` route.
+- **Decision Card** inline slide-down replaces floating popover (D6).
+- **Non-blocking sticky toast** for operator comment (D6); replaces modal that blocks the rush-case flow.
+- **2-worktree layout** (Track A + Track B; plus `main` checkout) (D3); 4-worktree aspiration dropped.
+- **`make bootstrap` + `make doctor`** preflight — collapses "which worktree / creds / port" cognitive load (DevEx 10-star).
+- **Parity fixture seed scripts** — one per fixture; re-freeze 3 months later produces same hashes.
+- **`kiwipiepy`** Korean morphological analyzer for LLM hallucination post-filter (naive regex was brittle).
+- **LLM OFF in parity mode** (`LLM_PROVIDER=template`) — prevents cost blowup during CI.
+- **Pilot success criteria** written Week 1 (best-guess; validated with stakeholder) (D8).
+
+### In-scope god-files
+
+| File                                               | Lines | Priority     | Target split                                             | Week                             |
+| -------------------------------------------------- | ----- | ------------ | -------------------------------------------------------- | -------------------------------- |
+| `services/cp_sat_optimizer.py`                     | 2,654 | P0           | `services/solver/` (5 modules)                           | 2                                |
+| `services/batch_grouping.py`                       | 1,971 | **P0-moved** | `services/batch_grouping/` (5 modules) + dead-code purge | **3** (was Week 6; moved per D4) |
+| `features/scheduler/components/GanttTaskBlock.tsx` | 1,056 | P0           | Decision Card integration                                | 4                                |
+| `services/schedule_optimizer.py`                   | 2,870 | P1           | `services/greedy/` (3 modules)                           | 3                                |
+| `presentation/routes/plan_pipeline.py`             | 2,660 | P1           | `services/pipeline/` (4 modules)                         | 4                                |
+| `app/(main)/scheduler/page.tsx`                    | 2,719 | P1           | Hooks + page-sections                                    | 7                                |
+| `presentation/routes/schedules.py`                 | 1,702 | P1           | `routes/schedules/` sub-package                          | 7                                |
+| `features/scheduler/components/SchedulerView.tsx`  | 1,468 | P1           | Decision-card-aware split                                | 7                                |
+| `features/scheduler/store/scheduleStore.ts`        | 1,291 | P1           | Zustand slices                                           | 7                                |
+
+None of the god-file source files are `rm`'d during the 9 weeks. Each becomes a deprecation-warning re-export shell until Week 9 post-pilot, when grep confirms no callers remain.
+
+### Explicitly deferred to post-pilot backlog (P2)
+
+- `app/(main)/plan-register/page.tsx` (1,910)
+- `features/scheduling-review/components/ProductionBatchTable.tsx` (1,008)
+- `app/(main)/scheduling-review/page.tsx` (1,013)
+- **LLM-proposes-constraint-changes** (CEO 10-star; D7 stub captures override reasons now, analyzes post-pilot)
+- **`alternative_slots` async endpoint** (D7 deferred — defensibility doesn't require counterfactual in-pilot)
+- Backend+frontend containerization (native dev works; Dockerize post-pilot when multi-dev needed)
+- Backup/DR, on-call playbook, secrets rotation (Vault), PII anonymization, Grafana, RBAC
+
+---
+
+## 4. Approach — Parallel Strangler-Fig (9 weeks, 2 tracks)
 
 ```
-Week 0  Phase 0 pre-flight (schema dump, baseline tag)
-Week 1  Parity harness freeze (both tracks meet here)
-Weeks 2–7  Two long-lived branches run in parallel:
-           - Track A: solver / backend split, trace writer
-           - Track B: admin UI, XAI popover, LLM binding, migrations
-         Weekly merge to main, gated by 6 non-negotiable checks
-Week 8  KBI dry-run + buffer + handoff packet
+Week 0  Phase 0 pre-flight (schema dump, baselines tagged, 2 worktrees, bootstrap/doctor, CI scaffold)
+Week 1  Parity harness freeze (10 fixtures with reproducible seeds) + pilot-success-criteria.md
+Weeks 2–8  Two long-lived branches:
+           Track A: solver / backend splits + hardcoded→DB migration + trace writer
+           Track B: /master/constraints extension + Decision Card + LLM narrator + migrations
+         Weekly merge to main gated by 7 non-negotiable checks
+Week 6  KBI dry-run (moved from Week 7 per D5 — 3 weeks buffer for friction fixes)
+Week 9  Buffer + handoff packet + v1.0-pilot tag
 ```
 
-Rationale: parallel tracks prevent UX-work stalling while solver refactor churns. Strangler-fig (new modules live next to old; old deleted when parity confirms) prevents big-bang risk. Parity gate enables any-week rollback.
+**Rationale**: 9-week cadence with parallel tracks and parity gate preserves safety; D2-D5 resequencing catches input drift (batch_grouping) and operator-UX issues (dry-run) early enough to recover.
 
 ---
 
@@ -88,55 +115,54 @@ Rationale: parallel tracks prevent UX-work stalling while solver refactor churns
 
 ### Two new tables
 
-**`solver_run`** — one row per `cp_sat_schedule()` invocation.
+**`solver_run`** — one row per `cp_sat_schedule()` invocation. Unchanged from Rev 1 except indexes.
 
-| Column                      | Type                                  | Purpose                                           |
-| --------------------------- | ------------------------------------- | ------------------------------------------------- |
-| `run_id`                    | UUID PK                               | also the correlation id in logs                   |
-| `run_label`                 | str                                   | joins to existing `production_batch.run_label`    |
-| `started_at`, `finished_at` | ts                                    | pilot latency observability                       |
-| `solver_status`             | str                                   | OPTIMAL / FEASIBLE / INFEASIBLE / UNKNOWN         |
-| `objective_value`           | bigint                                |                                                   |
-| `constraint_config_version` | UUID FK → `constraint_config_history` | the audit-critical field: which config was active |
-| `input_hash`                | str (sha256)                          | parity harness compares                           |
-| `output_hash`               | str (sha256)                          | parity harness compares                           |
-| `solver_params_json`        | JSONB                                 | CP-SAT flags (max_time, workers, seeds)           |
+| Column                      | Type                                             | Purpose                                      |
+| --------------------------- | ------------------------------------------------ | -------------------------------------------- |
+| `run_id`                    | UUID PK                                          | correlation id in logs                       |
+| `run_label`                 | str                                              | joins to `production_batch.run_label`        |
+| `started_at`, `finished_at` | ts                                               | latency observability                        |
+| `solver_status`             | str                                              | OPTIMAL / FEASIBLE / INFEASIBLE / UNKNOWN    |
+| `objective_value`           | bigint                                           |                                              |
+| `constraint_config_version` | UUID FK → `constraint_config_history.version_id` | **audit-critical** — which config was active |
+| `input_hash`                | str(80)                                          | parity compares                              |
+| `output_hash`               | str(80)                                          | parity compares                              |
+| `solver_params_json`        | JSONB                                            | CP-SAT flags                                 |
 
-**`solver_decision`** — one row per scheduled batch per run.
+**`solver_decision`** — one row per scheduled batch per run. Rev 2 corrects FK type:
 
-| Column                           | Type                           | Purpose                                                                  |
-| -------------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
-| `decision_id`                    | UUID PK                        |                                                                          |
-| `run_id`                         | FK → solver_run                |                                                                          |
-| `production_batch_id`            | FK → production_batch          |                                                                          |
-| `assigned_equipment_id`          | FK → equipment_master          |                                                                          |
-| `assigned_start`, `assigned_end` | ts                             |                                                                          |
-| `contributions_json`             | JSONB                          | trace body: `[{constraint_id, weight_applied, bound, delta_if_removed}]` |
-| `binding_hard_constraints_json`  | JSONB                          | hard constraints that forced this placement                              |
-| `alternative_slots_json`         | JSONB, nullable                | **on-demand only** — populated when operator clicks "왜 여기가 아닌가?"  |
-| `is_manually_adjusted`           | bool, default false            | true when operator edits via UI                                          |
-| `manual_override_change_set_id`  | UUID FK → change_set, nullable | links to existing audit row (no duplicate snapshot data)                 |
-| `llm_summary_text`               | text, nullable                 | cached narrator output                                                   |
+| Column                           | Type                                                                                                                             | Purpose                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `decision_id`                    | UUID PK                                                                                                                          |                                                                          |
+| `run_id`                         | UUID FK → solver_run, CASCADE                                                                                                    |                                                                          |
+| `production_batch_id`            | str(64) FK → production_batch.id                                                                                                 |                                                                          |
+| `assigned_equipment_id`          | str(32)                                                                                                                          |                                                                          |
+| `assigned_start`, `assigned_end` | ts                                                                                                                               |                                                                          |
+| `contributions_json`             | JSONB                                                                                                                            | trace body: `[{constraint_id, weight_applied, bound, delta_if_removed}]` |
+| `binding_hard_constraints_json`  | JSONB                                                                                                                            | hard constraints that forced placement                                   |
+| `is_manually_adjusted`           | bool, default false                                                                                                              |                                                                          |
+| `manual_override_change_set_id`  | **`str(36)`** FK → **`schedule_change_sets.change_set_id`** (Rev 2 fix; was UUID → change_set which would have failed migration) |                                                                          |
+| `llm_summary_text`               | text, nullable                                                                                                                   | cached narrator output                                                   |
 
-### Contract with LLM narrator
+### LLM narrator grounding (unchanged)
 
-The narrator's **only** input is `contributions_json`. It cannot reference a constraint not in the list. Post-response filter rejects any Korean noun outside the catalog + allow-list, falling back to template.
+Narrator's only input is `contributions_json`. Post-response filter rejects constraint names not in the catalog. Fallback is `TemplateProvider`.
 
-### What this schema does NOT do (YAGNI)
+### What the schema does NOT do (YAGNI — Rev 2 confirms)
 
-- No new "priority coordinator" class.
-- No pre-computed alternatives on every run (cost: 2× solver time avoided).
+- No `alternative_slots_json` column (was in Rev 1; D7-C removed; deferred to post-pilot).
 - No 3-tier ontology.
+- No pre-computed alternatives.
 
 ### Write path
 
 ```
-cp_sat_schedule(inputs) inside services/solver/__init__.py:
+cp_sat_schedule() inside services/solver/__init__.py:
   1. specs = constraint_loader.load_active(db)
-  2. model, penalty_vars = model_builder.build(inputs, specs)
+  2. model, penalty_vars, hard_literals = model_builder.build(inputs, specs)
   3. objective.attach(model, penalty_vars, specs)
-  4. status = cp_solver.Solve(model)
-  5. trace_writer.write(solver, penalty_vars, specs, run_metadata, db)
+  4. status = cp_solver.Solve(model) with num_search_workers=1, seed=42 in parity mode
+  5. trace_writer.write(solver, penalty_vars, hard_literals, specs, run_metadata, db)
   6. return {solver_status, objective_value, assignments, run_id}
 ```
 
@@ -144,362 +170,342 @@ cp_sat_schedule(inputs) inside services/solver/__init__.py:
 
 ## 6. Design Section 2 — Parity Harness
 
-### Golden input set — 10 fixtures at `backend/tests/fixtures/parity/`
+### Golden input set — 10 fixtures with reproducible seed scripts
 
-| #   | Scenario                                 | Purpose                         |
-| --- | ---------------------------------------- | ------------------------------- |
-| 01  | Nominal monthly plan                     | base case                       |
-| 02  | Past-due skew (mixed past-due + on-time) | EDD / severity regressions      |
-| 03  | Urgent reschedule trigger                | `urgent_scheduler` path         |
-| 04  | WIP match-and-skip                       | `wip_matching` path             |
-| 05  | Sheath color chain                       | adjacency optimization          |
-| 06  | Stage1 → Stage2 handoff                  | two-stage pipeline              |
-| 07  | Calendar edge (Fri/Mon/holiday)          | `calendar_engine`               |
-| 08  | Capacity overflow (FEASIBLE ≠ OPTIMAL)   | non-optimal status still parity |
-| 09  | Single-batch degenerate                  | tiny-input bug catcher          |
-| 10  | All-constraints-on vs all-off            | "config not read" detector      |
+Location: `backend/tests/fixtures/parity/`. Each fixture has:
 
-### Contract
+- `{name}.json` — captured input + frozen hashes
+- `scripts/seed_parity_scenarios/{name}.py` — deterministic DB seed producing this scenario
 
-- **Primary gate**: `output_hash = sha256(sorted([(batch_id, equipment_id, start_iso, end_iso)]))` — exact equality required.
-- **Determinism pins**: `num_search_workers=1`, fixed seed. Parity runs slower than production, accepted trade.
-- **No tolerance mode**: if hash flips, the developer updates fixture in a _separate commit_ with rationale. CPA "explain every move" discipline.
+Without reproducible seeds, a 3-month-later re-freeze produces different batch IDs → fake hash-flip → loss of audit value.
+
+10 scenarios unchanged from Rev 1.
+
+### Hash contract (Rev 2 correction)
+
+```python
+output_hash = sha256(sorted(
+    (run_label, group_key, equipment_code, start_offset_minutes_from_horizon)
+    for d in decisions
+))
+```
+
+Key fields are the **solver's decision variables**, not post-hoc naming artifacts. `production_batch.id` is UUID/counter-generated and NOT stable across reseeds — so we exclude it.
+
+### Transaction isolation
+
+Each parity fixture runs inside `db.begin_nested()`; post-fixture assertion: `ScheduleTask` row count unchanged from pre-fixture. Prevents the 18-call `db.add/delete/flush` inside `cp_sat_schedule()` from dirtying the DB.
+
+### Strict hash discipline (D9-A)
+
+No semantic-parity tier. Hash flip = separate `parity-update:` prefixed commit with rationale. CI rule: fixture `.json` files may only be modified by commits whose first line starts with `parity-update:`.
+
+### Determinism pins
+
+`num_search_workers=1`, fixed `random_seed=42`. `backend/tests/conftest.py` already sets `CPSAT_WORKERS=1` — Rev 2 respects it rather than re-invents.
 
 ### Auditor's Trail diff log
 
-```
-❌ Parity Violation in Scenario #5 (Sheath Color Chain)
-────────────────────────────────────────────────────────
-  fixture          : tests/fixtures/parity/05_sheath_color_chain.json
-  expected hash    : sha256:4a2f... (frozen 2026-04-30 on cb3ce08)
-  actual hash      : sha256:9b81...
-  objective        : expected=142500 actual=141900 Δ=-600
-  solver_status    : expected=OPTIMAL actual=OPTIMAL
-────────────────────────────────────────────────────────
-  Assignment diff (3 batches moved):
-    MOVED  B042  eq_05@Mon 08:00 → eq_03@Mon 14:00
-    MOVED  B044  eq_03@Mon 14:00 → eq_05@Mon 08:00
-    MOVED  B071  eq_05@Mon 15-08:00 → eq_05@Mon 15-16:00
-  No batches added or removed.
-────────────────────────────────────────────────────────
-  Constraint contribution delta (Phase 2; available after Week 2):
-    c_edd_weight  expected=48000 actual=47400 Δ=-600 ← likely cause
-  Action: If intentional, update expected_hash in SEPARATE commit with rationale.
-```
+Unchanged from Rev 1. Phase 1 (before Week 2 trace writer): batch-movement + objective delta. Phase 2 (Week 3+): adds constraint-contribution delta.
 
-### Performance baseline (captured Week 1 at zero additional cost)
+### LLM off in parity mode
 
-- Parity run records `wall_clock_sec` per fixture × 5 repetitions → p50/p95.
-- Written to `tests/fixtures/parity/baseline_performance.json`.
-- CI rule: `> 1.5× baseline_p95` → warn; `> 3× baseline_p95` → block.
+`LLM_PROVIDER=template` forced in parity test env. Prevents 10 fixtures × ~200 batches × real LLM calls = cost blowup + flaky CI.
+
+### Performance baseline — p99 of n≥20 (Rev 2 correction)
+
+Week 1 captures 20 runs per fixture → p99 wall-clock. Rev 1's p95-of-5 had wider confidence interval than the observed value.
+
+CI rule: `current_runtime > 2× p99_baseline` → block (was Rev 1's 3×). Warn at 1.5×.
 
 ### Deliverables (Week 1)
 
-1. 10 fixture JSONs (committed with frozen hashes)
-2. `backend/tests/test_parity_harness.py` (pytest `-m parity`)
-3. `scripts/parity_freeze_current_behavior.py`
-4. `make parity-quick` local target (fixtures #01 + #10, ~60s)
-5. CI workflow step: `pytest -m parity` on every PR
-6. Baseline performance JSON
-7. `docs/parity-harness.md` (how to intentionally update a fixture)
+1. `backend/tests/fixtures/parity/*.json` — 10 frozen fixtures
+2. `scripts/seed_parity_scenarios/*.py` — 10 seed scripts
+3. `backend/tests/test_parity_harness.py` with `@pytest.mark.parity`
+4. `scripts/parity_freeze_current_behavior.py` — refreeze tool
+5. `make parity-quick` (fixtures #01 + #10, ~60s)
+6. `make parity-fixture FIXTURE=02` (single-fixture debug)
+7. `.github/workflows/parity.yml` (Postgres service; pytest + performance gate)
+8. Performance baseline JSON
+9. `docs/parity-harness.md`
+10. **`docs/pilot-success-criteria.md`** (D8)
 
 ---
 
 ## 7. Design Section 3 — Constraint-Engine Module Boundaries
 
-### `services/solver/` package
+### Three cooperating packages (Rev 2 adds `scheduling_shared/`)
 
 ```
-services/solver/
-├── __init__.py          # re-exports cp_sat_schedule() — backwards compat
-├── constraint_loader.py # DB → list[ConstraintSpec] — only SQLAlchemy touch
-├── model_builder.py     # (inputs, specs) → (cp_model, penalty_vars_dict)
-├── objective.py         # composes penalty_vars into minimized objective
-├── solver_io.py         # input normalization + hashes + result extraction
-└── trace_writer.py      # writes solver_run + solver_decision rows
-```
+services/solver/              # CP-SAT
+├── __init__.py               # re-exports cp_sat_schedule()
+├── constraint_loader.py      # DB → ConstraintSpec (only SQLAlchemy touch)
+├── model_builder.py          # (inputs, specs) → (model, penalty_vars, hard_literals)
+├── objective.py              # composes penalty terms into minimize()
+├── solver_io.py              # input/output normalization + hashing
+└── trace_writer.py           # solver_run + solver_decision rows
 
-### `services/greedy/` package (from `schedule_optimizer.py`)
+services/greedy/              # Stage2 + urgent fallback
+├── __init__.py               # re-exports auto_schedule, reschedule_affected_groups
+├── auto_schedule.py
+├── reschedule_affected.py
+└── slot_finder.py
 
-```
-services/greedy/
-├── __init__.py          # re-exports auto_schedule, reschedule_affected_groups, PREDECESSOR_PROCESS
-├── auto_schedule.py     # main greedy loop (stage2 caller)
-├── reschedule_affected.py  # urgent cascade handler
-└── slot_finder.py       # _find_available_slot, _find_eligible_equipment, _get_stranding_setup_min
-```
-
-Shared helpers → `domain/constants.py`.
-
-### `ConstraintSpec` value object (typed boundary)
-
-```python
-@dataclass(frozen=True)
-class ConstraintSpec:
-    constraint_id: str
-    name: str
-    category: str                    # free text from DB
-    is_enabled: bool
-    weight: int                      # ConstraintConfig.priority
-    impact_level: Literal["hard", "soft"]
-    params: dict
-    applicable_processes: list[str]
-    implementation_type: Literal["solver_term", "pre_filter", "post_filter"]
-```
-
-**`implementation_type` rationale**:
-
-- `pre_filter` — reduces CP-SAT variable count before solve (performance lever)
-- `solver_term` — real optimization penalty
-- `post_filter` — post-solve business-rule validation
-
-### `services/batch_grouping/` package (from `batch_grouping.py`, 1,971 lines)
-
-```
-services/batch_grouping/
+services/scheduling_shared/   # NEW (Rev 2) — resolves circular import
 ├── __init__.py
-├── header_grouper.py      # sheath header aggregation
-├── sub_batch_splitter.py  # overload splits + shortage batch
-├── lifecycle.py           # version copy, parent_run_label, frozen warnings
-├── dedup.py               # header / sub-batch post-hoc cleanup
-└── sort_policy.py         # cluster sort keys
+├── calendar_ops.py           # datetime_to_wmin, resolve_base_date (currently in cp_sat_optimizer)
+├── slot_filters.py           # narrow_by_stranding, filter_by_sheath_routing, align_start_to_predecessor_end
+└── group_ops.py              # compute_group_duration, schedule_multi_equipment
 ```
 
-**Dead-code purge during split**: `vulture` + `ruff --select F401,F841` run before each sub-module commit. Flagged items → `docs/deletion-log.md`.
+`domain/constants.py` holds data-only constants (`PREDECESSOR_PROCESS`, process order, weight baselines).
+
+**Before any file moves, Task 3A.1 Step 0 produces a grep list of every private symbol imported in tests. All must be covered by the re-export shell.**
+
+### `ConstraintSpec` value object
+
+Unchanged from Rev 1. After Week 5 migration, `weight` becomes causally linked to the objective (currently: admin UI displays it; Week 5 makes it take effect).
 
 ### Invariant: solver never imports SQLAlchemy
 
-CI rule: in `services/solver/`, grep for `from app.infrastructure` returns 0 hits outside `constraint_loader.py`. Boundary enforced as a unit test.
+CI test: grep `from app.infrastructure` inside `services/solver/` returns only `constraint_loader.py`.
 
 ---
 
-## 8. Design Section 4 — Admin UI + XAI Popover + LLM Narrator
+## 8. Design Section 4 — UI Surface (Admin + Decision Card + LLM)
 
-### 8a. Constraint Admin UI — `/admin/constraints`
+### 8a. Constraint Admin — **extend `/master/constraints`** (D1)
 
-- samildevkit design system (`pwc-design` skill + `verify-pwc-design` to confirm)
-- Table + side-drawer edit pattern
-- Filters: category multi-select, process multi-select, enabled-only toggle
-- Row actions: edit, reset-to-baseline (any listed baseline)
-- Footer actions: "Reset all to baseline", "Promote current as new baseline", "View version diff", "Export as JSON"
+Existing `/master/constraints/page.tsx` (280 lines) has 3 tabs: 파라미터 / 제약 on-off / 변경 이력. Rev 2 **adds a 4th tab**: `베이스라인`.
 
-**Backend validation**:
+**No new route**; Rev 1's `/admin/constraints` is dropped to prevent divergent pages.
 
-- `impact_level=hard` constraints cannot be disabled
-- `priority` ∈ [0, 100]
-- Every save writes a new `constraint_config_history` row
+**New tab contents**:
+
+- List of baselines chronologically with tag name, created_by, created_at
+- "Promote current as new baseline" button → dialog with (a) diff preview (reuses `VersionDiff`), (b) tag-name field with default `YYYY-MM-DD-HHmm-{initials}`, (c) 승인 근거 free-text, (d) confirm disabled until tag typed
+- Reset dropdown: any baseline; confirmation modal shows what will change
+- Read-only mode banner when an active `solver_run.finished_at IS NULL` exists (prevents mid-solve edits)
+- Soft-lock toast ("지금 다른 사용자가 편집 중입니다") via `updated_at` staleness check
+
+**Korean terminology**: umbrella remains `제약 파라미터` (existing); tabs named `파라미터 / on-off / 베이스라인 / 이력`.
 
 ### 8b. Multi-baseline versioning
 
 `constraint_config_history` schema additions (Week 2 migration):
 
-| Column                | Type                |
-| --------------------- | ------------------- |
-| `is_baseline`         | bool, default false |
-| `baseline_tag_name`   | str, nullable       |
-| `baseline_created_by` | str, nullable       |
-| `baseline_created_at` | ts, nullable        |
+| Column                | Type                                                    |
+| --------------------- | ------------------------------------------------------- |
+| `is_baseline`         | bool, default false                                     |
+| `baseline_tag_name`   | str(100), nullable                                      |
+| `baseline_created_by` | str(100), nullable                                      |
+| `baseline_created_at` | ts, nullable                                            |
+| `version_id`          | UUID (grouping key for one snapshot of all constraints) |
 
-"Promote current as new baseline" → snapshots current `constraint_config` rows into history with `is_baseline=true` + operator-supplied tag name. Reset dropdown lists all baselines chronologically.
+### 8c. XAI **Decision Card** — inline slide-down (D6 replaces popover)
 
-### 8c. XAI popover on `GanttTaskBlock`
-
-Click a batch → popover:
-
-```
-┌─ 왜 이 배치는 여기에 배정되었나? ─────────────────────┐
-│  [LLM 요약]                                           │
-│  이 배치는 10일 지연 납기를 회피하기 위해,            │
-│  선행 컬러군(파랑)과 인접 배정되었습니다.             │
-│  ───  상세 가중치 (펼치기 ▾)  ───                    │
-│  납기 준수       48,000  [binding]                    │
-│  컬러 인접성      8,500                               │
-│  셋업 시간        1,200                               │
-│  결정 근거 버전: v2026-05-20-14:30                    │
-│  [다른 슬롯 검토]  [버전 비교]                         │
-└───────────────────────────────────────────────────────┘
-```
-
-**If `is_manually_adjusted=true`** — explicit UI branch (the trace is no longer valid for this batch):
+When operator clicks a batch, the row highlights and an inline card slides down below it, pushing rows below. Three horizontal zones:
 
 ```
-┌─ 이 배치는 수동으로 조정되었습니다 ──────────────────────┐
-│  수동 조정되어 솔버 가중치 분석은 제공되지 않습니다.    │
-│                                                         │
-│  조정자:    오퍼레이터 @ 2026-05-20 14:32               │
-│  조정 사유: 현장 긴급 · "2호기 고장으로 이동"           │
-│                                                         │
-│  ─── 원래 솔버의 결정 (참조용) ───                      │
-│  eq_02 @ 2026-05-20 08:00 ~ 12:00                       │
-│  (이 결정에 대한 가중치 분석 보기 ▸)                     │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ [Zone 1] 한 줄 요약 + 이동 가능 여부 pill (from hard constraints)
+│   "이 배치는 납기 10일 지연 회피를 위해 선행 컬러군 뒤에 배정됨"
+│   [이동 가능] / [제약됨: 컬러 인접성] / [불가능: 필수 제약]
+├──────────────────────────────────────────────────────────────┤
+│ [Zone 2] 가중치 최대 3개 bar-chart mini-viz
+│   납기        ████████████  48K
+│   컬러        ██             8.5K
+│   셋업        ▏               1.2K
+│   (펼치기 ▾ 로 전체 가중치 표 확장)
+├──────────────────────────────────────────────────────────────┤
+│ [Zone 3] 결정 근거 v2026-05-20-14:30 · [버전 비교] · [닫기]
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Rationale**: Once a human overrides, the `contributions_json` describes why the solver _wanted_ something other than what's now on the gantt. Showing the solver's weights on a manually-moved batch is misleading at best, hallucinatory at worst. The explicit branch tells the truth: "this is a human decision; here's what the solver would have done, if you want to compare." Solver's original weights are **one click away**, not hidden — for audit — but **not the default view**.
+**Why not floating popover** (Design 10-star):
 
-Trace data for the manually-moved batch is **preserved unchanged** in `solver_decision` — only the UI rendering differs. Audit reports can still query both views.
+- Spatial continuity — batch stays in view; operator looks at neighbors while reading
+- Plant managers are popover-fatigued (Excel-trained); inline card reads as "more info about this row"
+- Bar chart teaches weight intuition; a number-only table never does
+- Manual-override renders as **yellow-bordered card** (vs. default blue) in the same slot → operators learn "솔버-파랑" vs "사람-노랑" visual vocabulary
+- Multi-select expansion is trivial post-pilot
 
-### 8d. Operator comment modal (new; at manual-override time)
+**Inverted-pyramid fix**: the question operators actually ask when clicking is "can I move this?" → binding hard constraints answer that. Weights are secondary (collapsed).
 
-When operator drag-drops a batch:
+**Manual-override branch** (from Rev 1; unchanged semantically, now rendered in the yellow card variant):
 
 ```
-┌─ 변경 사유 기록 ───────────────────┐
-│  Preset chips:                     │
-│    [납기 변경] [현장 긴급]          │
-│    [설비 고장] [WIP 변동] [기타]   │
-│  Free text (선택):  [____________] │
-│         [건너뛰기]  [저장]          │
-└────────────────────────────────────┘
+┌─ 사람이 결정한 배치 ──────────────────────────────────────┐
+│  수동으로 옮긴 배치라 솔버 분석은 표시하지 않습니다.     │
+│  (Rev 2 Korean: natural factory-register)               │
+│  조정 사유: 현장 긴급 · "2호기 고장으로 이동"            │
+│  조정 시각: 2026-05-20 14:32                             │
+│  ─── 원래 솔버의 결정 (참조용) ───                       │
+│  eq_02 @ 2026-05-20 08:00 ~ 12:00                        │
+│  (이 결정에 대한 분석 보기 ▸)                            │
+└──────────────────────────────────────────────────────────┘
 ```
 
-Writes to `change_set.override_reason` (new column).
+**Missing states (Design-review-sourced)**:
 
-### 8e. LLM narrator grounding contract
+- Decision row not yet written → "과거 버전에서 생성되어 분석 정보가 없습니다"
+- `TemplateProvider` fallback → `템플릿 요약` pill
+- LLM generating → 10-second timeout → "요약을 불러올 수 없습니다. 가중치만 표시합니다"
+- Empty `contributions_json` → "이 배치는 필수 제약만으로 결정되었습니다 (소프트 가중치 영향 없음)"
+- Phantom batch (404) → "배치가 재스케줄되었을 수 있습니다"
+- Network slow → 8s timeout → "연결이 느립니다 — 다시 시도"
 
-```python
-class LLMExplainerInput(BaseModel):
-    production_batch_id: str
-    assigned_equipment_name: str
-    assigned_start: datetime
-    contributions: list[ContributionItem]
-    binding_hard_constraints: list[str]
-    constraint_catalog: dict[str, ConstraintDisplayInfo]  # id → korean_name
+### 8d. Operator comment — **non-blocking sticky toast** (D6 per Design review)
+
+When operator drag-drops a batch, the move **completes immediately** (no modal blocking rush-case flow). A sticky toast appears bottom-right, persists 60s or until dismissed:
+
+```
+┌─ 변경 사유 기록 (선택) ──────────┐
+│  [납기 변경] [현장 긴급]         │
+│  [설비 고장] [자재 부족]         │  ← 기타 removed (per Design review)
+│  ┌─────────────────────────┐     │
+│  │ 간단히 (선택)…           │     │
+│  └─────────────────────────┘     │
+│                      [저장] [X]  │  ← dismiss = skip; no separate button
+└──────────────────────────────────┘
 ```
 
-**Template (locked)**:
+Unfilled reasons surface as a `사유 미기록 N건` badge on the gantt header → admin batch-review later. Rollback logic: if backend rejects the drag (equipment conflict), the saved reason is invalidated.
 
-> 당신은 공장 스케줄러 결과 설명자입니다. 다음 '기여 목록'에 명시된 제약조건만 언급하세요. 기여 목록에 없는 제약조건은 절대 언급하지 마세요. 한국어로 한 문장, 40자 이내.
+### 8e. LLM narrator grounding — 2 providers + Korean morphological filter (Rev 2)
 
-**Post-response validation**: extract Korean nouns from output → every noun must be in `constraint_catalog` + generic-word allow-list → else reject, fall back to template.
+**Providers** (reduced from 3 to 2 — OpenAI dropped per DevEx scope review):
 
-**Provider abstraction**:
+- `AnthropicProvider` (primary)
+- `TemplateProvider` (always-available fallback; used in parity mode via `LLM_PROVIDER=template`)
+- Future `PwCGatewayProvider` is a drop-in when internal gateway auth is ready; post-pilot.
 
-```python
-class LLMProvider(Protocol):
-    def explain(self, input: LLMExplainerInput) -> str: ...
-```
+**Hallucination post-filter** uses `kiwipiepy` Korean morphological analyzer (not naive regex — Rev 2 correction; "납기" vs "납기일" false-positive problem). Extract nouns from LLM output → every noun must be in `constraint_catalog` Korean names + allow-list → else reject, use template.
 
-Implementations: `AnthropicProvider`, `OpenAIProvider`, `TemplateProvider` (always-available). Selected via `LLM_PROVIDER` env. Future `PwCGatewayProvider` drops in without caller changes.
+**Cost control**: one LLM call per `solver_decision` at insert-time; cached in `solver_decision.llm_summary_text`. **Parity runs force `LLM_PROVIDER=template`** — zero LLM cost during CI.
 
-**Cost control**: LLM called once per decision at insert-time; result cached in `solver_decision.llm_summary_text`. Re-render only on explicit refresh.
+### 8f. API endpoints
 
-### 8f. New / modified API endpoints
+| Method                                       | Path               | Status  |
+| -------------------------------------------- | ------------------ | ------- |
+| GET `/api/constraints`                       | List active        | Exists  |
+| PATCH `/api/constraints/{id}`                | Edit one           | **New** |
+| POST `/api/constraints/promote-baseline`     | Promote current    | **New** |
+| POST `/api/constraints/reset-to-baseline`    | Reset to a version | **New** |
+| GET `/api/constraints/baselines`             | List baselines     | **New** |
+| GET `/api/constraints/versions/{a}/diff/{b}` | Version diff       | **New** |
+| GET `/api/decisions/{batch_id}/latest`       | Decision Card data | **New** |
 
-| Method                                           | Path                            | Status  |
-| ------------------------------------------------ | ------------------------------- | ------- |
-| GET `/api/constraints`                           | List active                     | Exists  |
-| PATCH `/api/constraints/{id}`                    | Edit one                        | **New** |
-| POST `/api/constraints/reset-to-baseline`        | Reset all to a baseline         | **New** |
-| POST `/api/constraints/{id}/reset-to-baseline`   | Reset one                       | **New** |
-| POST `/api/constraints/promote-baseline`         | Promote current as new baseline | **New** |
-| GET `/api/constraints/versions`                  | List baselines + history        | **New** |
-| GET `/api/constraints/versions/{a}/diff/{b}`     | Version diff                    | **New** |
-| GET `/api/decisions/{batch_id}/latest`           | Trace for XAI popover           | **New** |
-| POST `/api/decisions/{decision_id}/alternatives` | Async side-solve                | **New** |
+`POST /api/decisions/{decision_id}/alternatives` **removed** (D7-C deferred post-pilot).
 
 ---
 
-## 9. Design Section 5 — 8-Week Delivery Plan + Worktrees
+## 9. Design Section 5 — 9-Week Delivery Plan + 2 Worktrees
 
-### 8-week schedule
+### Infrastructure constants (Rev 2 grounding)
 
-| Week | Track A (backend/solver)                                                                                                                                                         | Track B (frontend + migrations)                                                                                      | Close gate                                  |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| 0    | Phase 0: `pg_dump --schema-only → docs/archive/schema_asis_20260423.sql`; `ConstraintConfig` rows → JSON; tag `baseline=Phase 0 initial`. `git worktree` setup.                  | —                                                                                                                    | Baseline rows + artifacts committed         |
-| 1    | Parity harness: 10 fixtures, freeze script, pytest, CI, `make parity-quick`, performance baseline                                                                                | —                                                                                                                    | Parity green; hashes + perf committed       |
-| 2    | `services/solver/` split (P0): constraint_loader, model_builder, objective, solver_io, trace_writer. Run-ID LoggerAdapter + middleware. `cp_sat_optimizer.py` → re-export shell. | Alembic: `solver_run`, `solver_decision`, `change_set.override_reason`, `constraint_config_history` baseline columns | Parity green; new tables populating         |
-| 3    | `services/greedy/` split (P1): auto_schedule, reschedule_affected, slot_finder. Shared → `domain/constants.py`                                                                   | Admin UI shell (samildevkit): route, table, side drawer, version-diff component (read-only first)                    | Parity green; admin UI staging read-only    |
-| 4    | `plan_pipeline.py` split (P1) → `services/pipeline/` (orchestrator, stage1, stage2, run_labeler)                                                                                 | XAI popover on `GanttTaskBlock` (P0) + LLM narrator binding + `LLMProvider` abstraction + UI run_id error display    | Parity green; click-batch → trace + summary |
-| 5    | `schedules.py` route split (P1) → `routes/schedules/` sub-package (list, detail, bulk_update, cascade, revert)                                                                   | Operator comment modal + `change_set.override_reason` wiring + "Promote as new baseline" button + baseline dropdown  | Parity green; override writes reason        |
-| 6    | `batch_grouping.py` split (P1) + dead-code purge (`vulture`, `ruff`) → `services/batch_grouping/`                                                                                | `SchedulerView.tsx` split (P1) → diff-overlay, gantt-grid, task-row                                                  | Parity green; deletion-log.md started       |
-| 7    | Backend stabilization, docs for Track A modules                                                                                                                                  | `scheduler/page.tsx` split (P0) + `scheduleStore.ts` slices (P1) + KBI dry-run prep                                  | Parity green; KBI dry-run scheduled         |
-| 8    | Buffer + fix friction-log items from KBI dry-run                                                                                                                                 | Same; handoff packet finalization                                                                                    | `v1.0-pilot` tag; release notes             |
+| Item                          | Value                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| DB user / password / database | `kbi` / `kbi_poc_2026` / `kbi_scheduler`                                 |
+| Postgres compose service name | `db` (not `postgres` or `backend`)                                       |
+| Postgres default host port    | `5432` (parameterized per worktree: 5432 / 5433)                         |
+| Backend default port          | `8000`                                                                   |
+| Frontend default port         | `3000`                                                                   |
+| Health endpoint               | `/api/health` (not `/health`)                                            |
+| Next.js version               | **16.2.1** (per `frontend/AGENTS.md`)                                    |
+| React version                 | **19**                                                                   |
+| pytest config                 | `backend/pytest.ini` (created Week 0 — not currently present)            |
+| `conftest.py`                 | `backend/tests/conftest.py` (exists; sets `CPSAT_WORKERS=1`)             |
+| Backend/frontend runtime      | **Native** (docker only for Postgres) — Week 0 decision per DevEx review |
+| CI                            | GitHub Actions with `services.postgres` (new; Week 0 scaffold)           |
 
-### Non-negotiable per-week gates
+### 9-week schedule (Rev 2)
 
-1. Parity harness green
-2. 69+ unit tests green
+| Week  | Track A (backend/solver)                                                                                                                                                                                                                                                                     | Track B (frontend/admin/migrations)                                                                                                                                                                                               | Close gate                                   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **0** | Phase 0: `pg_dump` (native `psql -U kbi -d kbi_scheduler`); constraint_config JSON; tag "Phase 0 initial" in history; create `backend/pytest.ini`; add `typecheck`/`test` npm scripts; write `make bootstrap` + `make doctor` + `make verify`; scaffold `.github/workflows/`; worktree setup | —                                                                                                                                                                                                                                 | `make doctor` green in all worktrees         |
+| **1** | Parity harness: 10 fixtures with seed scripts, freeze, p99 performance baseline (n=20), `make parity-quick`, CI parity workflow; grep-list private symbols in tests                                                                                                                          | Write `docs/pilot-success-criteria.md` (best-guess D8); write `docs/troubleshooting.md` skeleton                                                                                                                                  | Parity green; success criteria committed     |
+| **2** | `services/solver/` split (P0): `input_builder`, `constraint_loader`, `model_builder`, `objective`, `solver_io`. Transaction-isolation wrapper for parity. Run-ID LoggerAdapter + middleware.                                                                                                 | **Track B merges FIRST (Week 2 exception)**: Alembic for `solver_run` + `solver_decision` (str FK, correct table name) + `change_set.override_reason` + `constraint_config_history` baseline cols. Round-trip reversibility test. | Parity green; new tables populating          |
+| **3** | `services/greedy/` split (P1) + **`services/batch_grouping/` split (P0 moved from Week 6 per D4)** + dead-code purge. `services/scheduling_shared/` created for circular-import resolution.                                                                                                  | Extend `/master/constraints` — add 베이스라인 tab scaffold (read-only list); version-diff component                                                                                                                               | Parity green; no circular imports            |
+| **4** | `plan_pipeline.py` split (P1) → `services/pipeline/`                                                                                                                                                                                                                                         | **Decision Card** component (replaces popover design) + LLM narrator binding + kiwipiepy filter + `TemplateProvider` fallback + UI run_id error toast                                                                             | Click-batch → Decision Card with LLM summary |
+| **5** | **Hardcoded→DB migration (D2)**: `_TARDINESS_WEIGHT`, `_CHAIN_WEIGHT`, `_IDLE_WEIGHT`, `_SLACK_WEIGHT_BASE`, `_PAST_SEVERITY_K` → `constraint_config.params_json["weight"]`. Model builder consumes from specs. Parity green after each constant migrated.                                   | Promote-baseline dialog + reset-to-any-baseline + non-blocking sticky toast for operator comment + `change_set.override_reason` wiring                                                                                            | Parity green; priority slider affects solver |
+| **6** | Integration pass; backend observability polish                                                                                                                                                                                                                                               | **KBI dry-run (moved from Week 7 per D5)** — operators walk through pilot scenarios; friction-log written                                                                                                                         | Friction-log documented                      |
+| **7** | `schedules.py` route split (P1) → `routes/schedules/` sub-package                                                                                                                                                                                                                            | `scheduler/page.tsx` split (P0) + `SchedulerView.tsx` decision-card-aware split + `scheduleStore.ts` slices                                                                                                                       | Parity green                                 |
+| **8** | Friction-log P0 fixes (backend side)                                                                                                                                                                                                                                                         | Friction-log P0 fixes (UI side)                                                                                                                                                                                                   | Dry-run P0 items closed                      |
+| **9** | Final integration + documentation                                                                                                                                                                                                                                                            | Handoff packet; `v1.0-pilot` tag                                                                                                                                                                                                  | Release notes committed                      |
+
+### Non-negotiable per-week gates (7 checks)
+
+1. Parity harness green (`pytest -m parity`)
+2. Unit tests green (69+)
 3. Playwright E2E smoke green
-4. Frontend lint + typecheck clean
-5. Backend ruff + mypy clean (if configured; flag Week 1 if not)
-6. `worktree_status.sh` shows zero uncommitted changes across all worktrees at end of week
-7. **Migration reversibility**: every Alembic migration touching existing tables must pass `upgrade → downgrade → upgrade` round-trip on a copy of production-shaped data. Automated via `scripts/test_migration_reversibility.sh` (new, Week 2)
+4. Frontend lint + typecheck clean (`npm run lint && npm run typecheck`)
+5. Backend ruff + mypy clean
+6. `worktree_status.sh` shows zero uncommitted changes
+7. **Migration reversibility** — `./scripts/test_migration_reversibility.sh` passes for any migration touching existing tables
 
-### Migration safety protocol (Week 2 — Track B)
-
-`solver_run` and `solver_decision` are **new tables** → additive migrations, low risk.
-
-**Migrations touching existing tables require extra discipline:**
-
-| Migration                                                                                                                                                                                                             | Risk                                | Mitigation                                                  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------- |
-| `ALTER TABLE change_set ADD COLUMN override_reason TEXT NULL`                                                                                                                                                         | Low (additive, nullable)            | Down-migration: `DROP COLUMN`; round-trip test required     |
-| `ALTER TABLE constraint_config_history ADD COLUMN is_baseline BOOL DEFAULT FALSE, ADD COLUMN baseline_tag_name VARCHAR(100), ADD COLUMN baseline_created_by VARCHAR(100), ADD COLUMN baseline_created_at TIMESTAMPTZ` | Low (additive, nullable + defaults) | Down-migration: `DROP COLUMN` × 4; round-trip test required |
-
-**Per-migration requirements**:
-
-1. `down_revision` is explicit, tested.
-2. `downgrade()` is written, not `pass`.
-3. Round-trip script: `alembic upgrade head && alembic downgrade -1 && alembic upgrade head` on a dev database loaded with the Phase 0 snapshot.
-4. If the migration touches data (not just schema), a data-loss warning is printed on downgrade with explicit confirmation.
-
-**Break-glass recovery**: `docs/archive/schema_asis_20260423.sql` + `constraint_config_sample_20260423.json` from Phase 0 are the **authoritative pre-refactor state**. If a migration corrupts prod during pilot, restoration path is: `pg_restore` schema from archive → reload ConstraintConfig rows from JSON → replay committed change_sets since Phase 0.
-
-### Git worktree 200% plan
-
-**Layout**:
+### 2-worktree layout (D3)
 
 ```
 ~/Desktop/Project/
-├── KBI_PoC/               # main — reference only, no commits
-├── KBI_PoC_track_a/       # refactoring/track-a-solver
-├── KBI_PoC_track_b/       # refactoring/track-b-admin
-└── KBI_PoC_parity/        # main — parity-runner; keeps dev free
+├── KBI_PoC/           # main checkout — reference + weekly merge target
+├── KBI_PoC_track_a/   # refactoring/track-a-solver
+└── KBI_PoC_track_b/   # refactoring/track-b-admin
 ```
 
-**Setup**:
+**Port & Postgres allocation**:
 
-```bash
-cd ~/Desktop/Project/KBI_PoC
-git worktree add ../KBI_PoC_track_a -b refactoring/track-a-solver
-git worktree add ../KBI_PoC_track_b -b refactoring/track-b-admin
-git worktree add ../KBI_PoC_parity main
-```
+| Worktree | `COMPOSE_PROJECT_NAME` | Postgres host port | Backend port | Frontend port |
+| -------- | ---------------------- | ------------------ | ------------ | ------------- |
+| main     | `kbi_main`             | 5432               | 8000         | 3000          |
+| track_a  | `kbi_track_a`          | 5433               | 8001         | 3001          |
+| track_b  | `kbi_track_b`          | 5434               | 8002         | 3002          |
 
-**Docker separation**:
-| Worktree | `COMPOSE_PROJECT_NAME` | Backend port | Frontend port |
-|---|---|---|---|
-| main | `kbi_main` | 8000 | 3000 |
-| track_a | `kbi_track_a` | 8001 | 3001 |
-| track_b | `kbi_track_b` | 8002 | 3002 |
-| parity | `kbi_parity` | 8010 | — |
+Parameterized in `docker-compose.yml`: `${POSTGRES_HOST_PORT:-5432}:5432`. Per-worktree `.env.worktree` sets `COMPOSE_PROJECT_NAME` + ports. Backend + frontend run **natively** on macOS (per DevEx review; matches README's existing instructions); only Postgres is containerized.
 
-Each worktree has `.env.worktree` setting the project name + ports; `docker-compose.yml` consumes via env.
+### `make bootstrap` + `make doctor` (DevEx 10-star)
 
-**Ownership map (conflict prevention)**:
-| Path | Owning worktree |
-|---|---|
-| `backend/app/services/solver/`, `greedy/`, `pipeline/`, `batch_grouping/` | Track A |
-| `backend/app/presentation/routes/schedules*` | Track A |
-| `backend/app/presentation/routes/constraints.py`, `decisions.py` | Track B |
-| `backend/alembic/versions/*` | Track B (ALL migrations) |
-| `backend/app/infrastructure/models/*` | Track B |
-| `backend/app/services/llm_explainer.py` | Track B |
-| `backend/tests/fixtures/parity/`, `test_parity_harness.py` | Track A |
-| `frontend/**` | Track B |
-| `docs/**` | feature-shipping worktree |
+`make bootstrap` (idempotent):
 
-**The shared interface**: `ConstraintSpec` (in `services/solver/constraint_loader.py`, Track A). Track B writes the SQLAlchemy model; Track A consumes via loader. Enforced by CI rule: Track A `services/solver/` may not import `app.infrastructure` outside `constraint_loader.py`.
+1. Creates `backend/venv` if missing; installs `backend/requirements.txt`
+2. Copies `.env.worktree.example` → `.env.worktree` if missing
+3. `docker compose up -d db` (Postgres only)
+4. `cd backend && alembic upgrade head`
+5. Seeds baseline data if empty
+6. Verifies `curl http://localhost:${BACKEND_PORT}/api/health`
 
-**Weekly merge protocol (Fridays)**:
+`make doctor` (10-second preflight):
 
-1. `KBI_PoC_parity` runs full parity against each branch independently.
-2. If both green: Track A merges to main first (solver is upstream dependency).
+- ✓ `.env.worktree` loaded with correct `COMPOSE_PROJECT_NAME`
+- ✓ Postgres container up on expected port
+- ✓ `alembic current` matches code head
+- ✓ pytest and vitest are discoverable
+- ✓ current branch matches worktree expectation (track_a → `refactoring/track-a-solver`, etc.)
+
+### Weekly merge protocol
+
+1. Friday: from `KBI_PoC` main, `make parity` against latest both branches.
+2. **Track B merges to main first** for Week 2 (exception — Track A 2A.3 depends on Track B migrations); subsequent weeks: Track A first.
 3. Track B rebases onto updated main, re-runs parity, merges.
-4. All worktrees `git pull` main.
+4. All worktrees `git pull` updated main; `make doctor` to re-verify.
 
-**Daily status**: `scripts/worktree_status.sh` — shows branch, last commit, git status for all worktrees in one command.
+### Ownership map (conflict prevention)
+
+Same as Rev 1 except:
+
+- `services/scheduling_shared/` — Track A owns
+- `frontend/src/app/(main)/master/constraints/*` — Track B owns (existing page extension)
+- No separate `frontend/src/app/(main)/admin/*` (D1 rejected)
+
+### Additional DX deliverables (Week 0 + ongoing)
+
+- `Makefile`: `bootstrap`, `doctor`, `verify`, `parity`, `parity-quick`, `parity-fixture FIXTURE=NN`, `test`, `test-backend`, `test-frontend`, `seed`, `reset-db`, `lint`, `typecheck`
+- `scripts/worktree_cd.sh` — shell function `kbi <main|a|b>` with env loading
+- `scripts/run_id_grep.sh <run_id>` — grep logs + DB for one run
+- `scripts/test_migration_reversibility.sh`
+- `docs/troubleshooting.md` — keyed by common errors
+- `.env.worktree.example` checked in; `.env.worktree` gitignored
 
 ---
 
@@ -509,105 +515,119 @@ Each worktree has `.env.worktree` setting the project name + ports; `docker-comp
 
 ```
 backend/app/infrastructure/logging/
-├── run_context.py       # contextvars.ContextVar for run_id
-└── adapters.py          # LoggerAdapter injecting "[run_id=...]" prefix
+├── run_context.py       # contextvars.ContextVar
+└── adapters.py          # LoggerAdapter "[run_id=...]" prefix
 ```
 
-- `run_id` is the UUID of `solver_run` row (or a request-scoped UUID for non-solver calls).
-- Set in `cp_sat_schedule()` entrypoint; propagates via contextvars to all downstream.
-- Log format: `[run_id=abc123] [component=solver.model_builder] message`
-- FastAPI middleware: every response gets `X-Run-Id` header.
-- Frontend: `apiFetch` wrapper captures header; error toast shows `run_id` with copy-to-clipboard button.
+- Set in `cp_sat_schedule()` entry; propagates via contextvars
+- FastAPI middleware sets `X-Run-Id` header on every response
+- Frontend `apiFetch` captures header; error toast shows run_id with copy button
 
-### 10b. Performance baseline (Week 1 capture)
+### 10b. Performance baseline (Rev 2: p99 of n≥20)
 
 Written to `tests/fixtures/parity/baseline_performance.json`:
 
 ```json
 {
   "frozen_at": "2026-04-30T14:00:00Z",
-  "git_sha": "<current main>",
-  "hardware": "docker compose / kbi_parity",
+  "git_sha": "<main HEAD>",
+  "hardware": "macOS / Postgres 15 docker",
   "fixtures": {
-    "01_nominal": { "p50_sec": 8.2, "p95_sec": 9.1 }
+    "01_nominal": { "p50_sec": 8.2, "p99_sec": 10.4, "samples": 20 }
   }
 }
 ```
 
-Each fixture run 5× for p50/p95. CI rule: `> 1.5× p95` warns in PR; `> 3× p95` blocks merge.
+CI rule: `> 2× p99` blocks merge; `> 1.5× p99` warns.
 
 ---
 
-## 11. Post-pilot backlog (out-of-scope for these 8 weeks)
+## 11. Post-pilot backlog (Rev 2 additions)
 
-| Item                                                                  | Deferred rationale                        |
-| --------------------------------------------------------------------- | ----------------------------------------- |
-| Backup / DR procedure                                                 | KBI IT owns their Postgres                |
-| On-call / incident playbook                                           | KBI organizational decision post-pilot    |
-| Secrets rotation (Vault / KMS)                                        | Env vars acceptable for single-user pilot |
-| PII / customer-name anonymization                                     | Needs legal review; not pilot-blocking    |
-| Metrics dashboard (Grafana / Datadog)                                 | Observability logs sufficient for pilot   |
-| RBAC (multi-user admin UI)                                            | Single editor during pilot                |
-| P2 god-files (plan-register, scheduling-review, ProductionBatchTable) | Stable; low regression risk               |
+| Item                                                                  | Rationale                                                                                    |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Backup / DR procedure                                                 | KBI IT owns their Postgres                                                                   |
+| On-call / incident playbook                                           | KBI organizational decision                                                                  |
+| Secrets rotation (Vault / KMS)                                        | Pilot uses env vars                                                                          |
+| PII anonymization                                                     | Legal review; not pilot-blocking                                                             |
+| Grafana / Datadog                                                     | Logs sufficient for pilot                                                                    |
+| RBAC                                                                  | Single-editor pilot                                                                          |
+| P2 god-files (plan-register, scheduling-review, ProductionBatchTable) | Stable; low regression risk                                                                  |
+| **LLM-proposes-constraint-changes (CEO 10-star)**                     | Override reasons are captured in pilot; analysis is post-pilot "PwC consulting point" per D7 |
+| **`alternative_slots` async endpoint**                                | Pilot doesn't require counterfactual; defensibility is intact without it                     |
+| **Backend/frontend containerization**                                 | Native dev works for solo; containerize when multi-dev arrives                               |
+| **`PwCGatewayProvider` for LLM**                                      | Gateway auth integration when available                                                      |
 
 ---
 
-## 12. Risks & mitigations
+## 12. Risks & mitigations (Rev 2 updates)
 
-| Risk                                                                                | Likelihood  | Mitigation                                                                                                                                                        |
-| ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Parity hash flips for reasons we can't explain                                      | Medium      | Week 1 `num_search_workers=1` + fixed seed pins determinism; any flip forces separate-commit rationale                                                            |
-| LLM provider rate-limit or outage during pilot                                      | Medium      | `TemplateProvider` fallback is always available; popover shows fallback badge                                                                                     |
-| Dead code in `batch_grouping.py` turns out to be called via reflection              | Low         | `vulture` + `ruff` flagging; every deletion committed separately; revert trivial                                                                                  |
-| Track A / Track B merge conflicts on `constraint_config.py`                         | Low         | Ownership map assigns model to Track B; Track A consumes via typed loader                                                                                         |
-| KBI dry-run (Week 7) reveals operator-UX blocker                                    | Medium-High | Week 8 buffer dedicated to friction-log items; P1 items slip to post-pilot if buffer full                                                                         |
-| Runtime regression post-refactor                                                    | Medium      | Performance baseline + CI gate catches at PR time                                                                                                                 |
-| `schedule_optimizer.py` greedy path has uncovered edge cases                        | Medium      | Parity fixtures #03 (urgent), #06 (stage2 handoff) specifically exercise greedy                                                                                   |
-| Alembic migration corrupts `change_set` or `constraint_config_history` during pilot | Low-Medium  | Every migration touching existing tables requires `upgrade→downgrade→upgrade` round-trip gate (Week 2). Phase 0 archive is break-glass recovery source.           |
-| Manual-override UI shows invalid weight breakdown, misleading operator              | Low         | Section 8c explicit branch: `is_manually_adjusted=true` hides weights, shows override reason + original solver decision on demand. Trace row preserved for audit. |
+| Risk                                                                         | Likelihood        | Mitigation                                                                                   |
+| ---------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------- |
+| Parity hash flips for reasons we can't explain                               | Medium            | `num_search_workers=1` + fixed seed + stable hash keys (not `production_batch.id`)           |
+| LLM provider outage                                                          | Medium            | `TemplateProvider` always-available fallback                                                 |
+| Dead code in `batch_grouping.py` called via reflection                       | Low               | `vulture` + `ruff`; all deletions separate commits; revert trivial                           |
+| Track A / B merge conflicts                                                  | Low               | Ownership map; `constraint_config.py` model owned by Track B, consumed via `ConstraintSpec`  |
+| KBI dry-run (Week 6) reveals UX blocker                                      | Medium-High       | 3-week buffer (Weeks 7-9); P1 items slip to post-pilot if needed                             |
+| Runtime regression                                                           | Medium            | p99 baseline + CI gate                                                                       |
+| `schedule_optimizer.py` greedy path edge cases                               | Medium            | Fixtures #03 (urgent), #06 (stage2 handoff)                                                  |
+| Migration corrupts existing tables                                           | Low-Medium        | Round-trip test gate; Phase 0 break-glass restore                                            |
+| Manual-override UI shows invalid weights                                     | Low               | §8c explicit yellow-card branch                                                              |
+| **`services/solver/` ↔ `services/greedy/` circular import** (Rev 2)          | Medium            | `services/scheduling_shared/` neutral package; Week 3 task inventory before any move         |
+| **Hardcoded-weight → DB migration breaks solver** (Rev 2)                    | Medium            | Week 5 migrates one constant at a time; parity green after each; bail on any flip            |
+| **Test files import private symbols not covered by re-export shell** (Rev 2) | High if unchecked | Week 3 Task 0: grep-list **every** private symbol in tests; shell covers all before any move |
+| **FK type mismatch `UUID` → `VARCHAR`** (Rev 2 caught pre-implementation)    | Resolved          | §5 uses `str(36)` FK; correct `schedule_change_sets` table name                              |
+| **4-worktree memory pressure** (Rev 2 mitigated)                             | Resolved          | D3: reduced to 2 worktrees + main                                                            |
 
 ---
 
 ## 13. Open questions for implementation phase
 
-1. Does the project have an existing CI (GitHub Actions, other)? If not, Week 1 includes CI setup in the harness deliverable.
-2. Is `mypy` / `ruff` already configured? If not, Week 1 or Week 2 adds baseline config.
-3. Does `constraint_checker.py` (706 lines) do only validation, or also build constraints? If the latter, split boundary adjusts in Week 2.
-4. `batch_grouping.py` split boundaries are a best-guess; confirm during Week 6 after reading the file end-to-end.
-5. Pilot hardware / production deployment target: where does Docker compose actually run? Determines the "hardware" field in performance baseline and informs Week 8 handoff runbook.
+1. ~~CI existence — plan adds Actions workflows in Week 0.~~ **Resolved**: no existing CI; Week 0 scaffolds.
+2. ~~`mypy` / `ruff` configuration.~~ **Resolved**: Week 0 adds baseline config.
+3. Does `constraint_checker.py` (706 lines) build constraints, or only validate? Confirm during Week 2.
+4. `batch_grouping.py` exact split boundaries — confirm during Week 3 after end-to-end read.
+5. Pilot deployment target: where does KBI's production run? (Affects `baseline_performance.json.hardware` field.)
+6. **Can the stakeholder meeting confirming `docs/pilot-success-criteria.md` (D8) happen in Week 1?** If not, Week 2 writes a best-guess placeholder and iterates.
 
 ---
 
-## 14. Deliverables (end of Week 8)
+## 14. Deliverables (end of Week 9)
 
 1. `docs/archive/schema_asis_20260423.sql` — pre-refactor DDL
-2. `docs/archive/constraint_config_sample_20260423.json` — baseline data
-3. `docs/architecture-as-is-to-be.md` — module diagram before/after
-4. `docs/api-spec.md` — regenerated OpenAPI
-5. `docs/operator-runbook.md` — edit constraint, read trace, reset baseline
-6. `docs/constraint-catalog.md` — every constraint's id/name/category/default/rationale
-7. `docs/llm-prompt-inventory.md` — all templates for audit
-8. `docs/parity-harness.md` — fixture inventory + intentional-update procedure
-9. `docs/deletion-log.md` — every file deleted with commit hash + reason
-10. `docs/worktree-playbook.md` — how the worktree layout works, for successor engineers
-11. `v1.0-pilot` git tag on main
-12. Pilot-ready image: `docker compose up` produces a working system on any KBI-local environment
+2. `docs/archive/constraint_config_sample_20260423.json`
+3. `docs/pilot-success-criteria.md` (Week 1 best-guess + Week-2 stakeholder confirmation)
+4. `docs/architecture-as-is-to-be.md`
+5. `docs/api-spec.md` (regenerated OpenAPI)
+6. `docs/operator-runbook.md`
+7. `docs/constraint-catalog.md`
+8. `docs/llm-prompt-inventory.md`
+9. `docs/parity-harness.md`
+10. `docs/deletion-log.md`
+11. `docs/worktree-playbook.md`
+12. `docs/troubleshooting.md` (Rev 2 addition)
+13. **`docs/decision-card-rationale.md`** — why inline, not popover (for successor engineers; Rev 2)
+14. `v1.0-pilot` git tag
+15. Pilot-ready native run: `make bootstrap && make doctor && cd backend && uvicorn app.main:app` + `cd frontend && npm run dev`
 
 ---
 
 ## 15. Explicit non-goals
 
 - Rewriting the CP-SAT algorithm or greedy algorithm. Both freeze under parity.
-- Adding constraint types during the 8 weeks. Only reorganizing what exists.
-- FE redesign beyond admin UI + XAI popover + operator modal. Visual language stays.
-- Multi-tenancy, auth, RBAC. Single-user pilot.
-- Rewriting LLM explainer semantics — only the input contract and provider layer.
+- Adding new constraint types during the 9 weeks.
+- FE redesign beyond Decision Card + /master/constraints extension.
+- Multi-tenancy, auth, RBAC.
+- **LLM-proposes-constraint-changes** (D7-C defers).
+- **Containerizing backend+frontend** (native dev + containerized CI for now).
+- **Semantic-parity tier** (D9-A: strict hash only).
 
 ---
 
 ## 16. Change log
 
-| Date       | Change                                                                                          | Author              |
-| ---------- | ----------------------------------------------------------------------------------------------- | ------------------- |
-| 2026-04-23 | Initial design approved through brainstorming session (6 design sections, 3 revisions)          | jaewoo kim / Claude |
-| 2026-04-23 | Rev 1: added manual-override UI branch (8c), migration reversibility gate (9), 2 new risks (12) | jaewoo kim / Claude |
+| Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Author              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 2026-04-23 | Initial design through brainstorming session (6 design sections, 3 revisions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | jaewoo kim / Claude |
+| 2026-04-23 | Rev 1: manual-override UI branch (§8c), migration reversibility gate (§9), 2 risks (§12)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | jaewoo kim / Claude |
+| 2026-04-23 | **Rev 2**: Integrated 4-agent plan review. 9 judgment calls decided (D1-D9). Major changes: extend `/master/constraints` (D1-A), add Week 5 hardcoded→DB migration (D2-B), reduce to 2 worktrees (D3-B), batch_grouping→Week 3 (D4-B), dry-run→Week 6 (D5-B), Decision Card replaces popover (D6-B), LLM-proposes deferred (D7-C), best-guess success criteria (D8-B), strict hash only (D9-A). 15 must-fix corrections: docker services, DB creds, `/api/health`, Next.js 16, `schedule_change_sets` FK type, 32+ private-symbol re-exports, circular-import via `scheduling_shared/`, stable parity hash keys, transaction isolation, positional args, Postgres port param, `pytest.ini` + npm scripts, real CSS tokens (not placeholders). | jaewoo kim / Claude |
