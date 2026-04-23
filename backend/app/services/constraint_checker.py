@@ -11,6 +11,31 @@ from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.operation_calendar import OperationCalendar
 
 
+def has_overlap(violations: list[dict]) -> bool:
+    """validate_all 결과에 겹침 위반이 하나라도 있는지.
+
+    DRY: 기존에는 호출자마다 `[v for v in violations if v.get("constraint_id") == "overlap"]`
+    를 인라인으로 반복했음. overlap 검출 로직을 단일 함수로 집약해 유지보수성을 높인다.
+    """
+    return any(v.get("constraint_id") == "overlap" for v in violations)
+
+
+def validate_overlap_only(run_label: str, db: Session) -> list[dict]:
+    """재시도 판단 전용 경량 검증 — 겹침만 체크.
+
+    왜 분리했는가:
+      auto_schedule 의 재시도 루프는 "겹침이 있으면 다시 돌린다" 만 필요.
+      전체 28개 체커를 돌리는 validate_all 은 재시도마다 공통 로드(tasks/batches/
+      equipment/constraints 4 쿼리) + 체커 loop 를 반복해 불필요한 비용이 크다.
+      이 함수는 ScheduleTask 만 로드하고 _check_overlap 만 실행해
+      재시도 판단 속도를 높인다.
+
+    최종 Stage2 응답에는 여전히 validate_all 을 사용해 모든 violation 을 반환.
+    """
+    tasks = db.query(ScheduleTask).filter(ScheduleTask.run_label == run_label).all()
+    return _check_overlap(tasks)
+
+
 def validate_all(run_label: str, db: Session) -> list[dict]:
     """모든 활성 제약조건으로 스케줄 검증. Returns list of violations."""
 
@@ -97,7 +122,7 @@ def _check_overlap(tasks: list) -> list[dict]:
 
 
 def _check_delivery(tasks, batches) -> list[dict]:
-    """납기 초과 확인"""
+    """납기 초과 확인 — 사용자 요구 '납기는 반드시 지켜져야함' → severity=error"""
     violations = []
     for t in tasks:
         batch = batches.get(t.batch_id)
@@ -107,7 +132,8 @@ def _check_delivery(tasks, batches) -> list[dict]:
                     "constraint_id": "1-1",
                     "task_id": t.task_id,
                     "batch_id": t.batch_id,
-                    "severity": "warning",
+                    # 납기는 하드 제약 — 위반 시 error 로 격상하여 재시도/알림 트리거
+                    "severity": "error",
                     "detail": f"납기 {batch.due_date} 초과 (완료 예정: {t.end_datetime.date()})",
                 }
             )
@@ -229,9 +255,18 @@ def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
                 gap_min = (
                     next_task.start_datetime - curr.end_datetime
                 ).total_seconds() / 60
-                required_setup = float(curr.setup_time_min or 0)
+                # Why:
+                # schedule_optimizer 는 setup 을 task.setup_time_min 내부에 저장하고
+                # eq_total_duration 에 포함(line 1309). single-equipment 경로는 next 에,
+                # multi-equipment 경로는 curr 에 setup 을 기록하는 차이가 있음.
+                # 따라서 "어느 쪽에든 setup 시간이 기록됐는가" 를 gap + curr + next 합으로
+                # 판정해야 false positive (gap만 보는 과거 로직) 가 발생하지 않는다.
+                curr_setup = float(curr.setup_time_min or 0)
+                next_setup = float(next_task.setup_time_min or 0)
+                required_setup = max(curr_setup, next_setup)
+                effective_setup = gap_min + curr_setup + next_setup
 
-                if gap_min < required_setup * 0.5:  # Less than half the required setup
+                if required_setup > 0 and effective_setup < required_setup * 0.5:
                     violations.append(
                         {
                             "constraint_id": "4-1",
@@ -239,7 +274,9 @@ def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
                             "severity": "warning",
                             "detail": (
                                 f"설비 {eq_code}: SQ {curr_batch.sq_mm2}→{next_batch.sq_mm2}"
-                                f" 교체, 간격 {gap_min:.0f}분 (필요: {required_setup:.0f}분)"
+                                f" 교체, 확보된 setup {effective_setup:.0f}분"
+                                f" (gap={gap_min:.0f} + curr.setup={curr_setup:.0f}"
+                                f" + next.setup={next_setup:.0f}, 필요: {required_setup:.0f}분)"
                             ),
                         }
                     )

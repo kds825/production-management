@@ -20,6 +20,11 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { enableMapSet } from "immer";
+
+// Set/Map 을 immer draft 내에서 mutate 하려면 플러그인 활성화가 필요.
+// inFlightBatchGroups (Set<string>) 이 Set 이므로 모듈 로드 시 1회 호출.
+enableMapSet();
 import type {
   Equipment,
   Order,
@@ -33,12 +38,19 @@ import type {
   LineSpeedEntry,
   ProductionBatch,
   CascadePreview,
+  InboxItem,
+  BatchGroupSnapshot,
+  UnassignReason,
 } from "../types";
+import type { RunCompareResponse } from "../types/diff";
 import {
   getLineSpeed,
   calculateTaskEnd,
   getDefaultRange,
 } from "../utils/ganttUtils";
+import { buildChain, type ArrowEdge } from "../utils/chainGraph";
+import { useToastStore } from "@/shared/ui/toastStore";
+import { refreshTasks } from "../hooks/useScheduleData";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -126,13 +138,70 @@ interface ViewFilter {
   filterValue: string[];
 }
 
+/**
+ * Gantt 버전 diff overlay(compareMode)의 상태.
+ *
+ * 진입: scheduler/page.tsx 의 [비교 모드] 토글이 `enableCompareMode(before, after)`
+ * 를 호출하면 async fetch 로 /runs/compare 응답을 받아 `diffResponse` 에 저장.
+ * SchedulerView 가 `buildDiffIndex(diffResponse)` 로 색인하여 GanttTaskBlock 의
+ * diffOverlay/ghostReason/dimmed prop 을 분기 렌더.
+ *
+ * Cascade preview 와는 상호배타: compareMode 활성화 시 cascade 상태를 즉시 리셋하여
+ * 두 overlay 가 동시에 그려지지 않도록 한다 (스펙 §설계결정 참조).
+ *
+ * 에러 상태에서도 `enabled` 는 true 를 유지해 상단 pill 에 빨간 toast 를 띄울 수
+ * 있게 하고, 사용자가 × 클릭 시 closeCompareMode 로 닫는다.
+ */
+interface CompareModeState {
+  enabled: boolean;
+  beforeRunLabel: string | null;
+  afterRunLabel: string | null;
+  diffResponse: RunCompareResponse | null;
+  loading: boolean;
+  error: string | null;
+  filters: { added: boolean; moved: boolean; removed: boolean };
+}
+
+const initialCompareMode: CompareModeState = {
+  enabled: false,
+  beforeRunLabel: null,
+  afterRunLabel: null,
+  diffResponse: null,
+  loading: false,
+  error: null,
+  // removed 는 기본 OFF — 노이즈 최소화 (스펙 §2 필터 초기값)
+  filters: { added: true, moved: true, removed: false },
+};
+
 interface ScheduleState {
   // 도메인 데이터
   equipment: Equipment[];
   tasks: ScheduleTask[];
   violations: ConstraintViolation[];
   selectedTaskId: string | null;
-  unscheduledOrders: Order[];
+  /**
+   * 선택된 블록이 속한 생산 체인 task id 집합.
+   * - `null`: 선택 없음 OR orphan (chain size ≤ 1) — R6 에 따라 dim 미적용.
+   * - `Set<string>`: 체인 外 블록을 dim 처리할 때 사용.
+   * selectTask() 가 chainGraph.buildChain() 결과를 캐싱해 overlay 와 공유한다.
+   */
+  selectedChainIds: Set<string> | null;
+  /**
+   * 선택된 체인의 화살표 엣지(src→dst) 목록. Overlay 가 SVG path 를 그릴 때 사용.
+   * store 가 저장함으로써 overlay 에서 buildChain 재호출(double BFS)을 회피.
+   */
+  selectedArrows: ArrowEdge[];
+  /**
+   * 미배정 항목 (Task 4.1 union).
+   * - kind "order": 기존 단일 수주 카드
+   * - kind "batch_group": unassign된 배치 그룹 (Task 5.4에서 렌더링 지원)
+   */
+  unscheduledItems: InboxItem[];
+  /**
+   * Task 4.3/4.4에서 사용할 race-condition 가드.
+   * 같은 batch_group이 unassign/restore 중복 호출되지 않도록 in-flight 상태를 추적.
+   */
+  inFlightBatchGroups: Set<string>;
 
   // 라인 속도 데이터 (API에서 로드)
   lineSpeedData: LineSpeedEntry[];
@@ -177,6 +246,12 @@ interface ScheduleState {
 
   // 현재 run_label — AI 재분석 트리거에 사용
   runLabel: string | null;
+
+  /**
+   * Gantt 버전 diff overlay 상태 (compareMode).
+   * cascade preview 와 시각/상태 모두 상호배타.
+   */
+  compareMode: CompareModeState;
 }
 
 interface ScheduleActions {
@@ -201,16 +276,16 @@ interface ScheduleActions {
   /**
    * 생산계획등록에서 확정된 배치를 간트 차트에 자동 배치한다.
    * 각 배치를 equipment_group에 맞는 설비에 순차적으로 배치한다.
-   * 배치 실패 항목은 unscheduledOrders에 추가한다.
+   * 배치 실패 항목은 unscheduledItems에 "order" kind로 추가한다.
    */
   syncFromPlanRegister: (batches: ProductionBatch[]) => void;
-  setUnscheduledOrders: (orders: Order[]) => void;
+  setUnscheduledItems: (items: InboxItem[]) => void;
   setLineSpeedData: (data: LineSpeedEntry[]) => void;
 
   /**
    * 수주를 스케줄러에 배정한다.
    * - 라인 속도를 조회하여 종료 시각을 자동 계산한다.
-   * - 해당 수주를 unscheduledOrders에서 제거하고 tasks에 추가한다.
+   * - 해당 수주를 unscheduledItems에서 제거하고 tasks에 추가한다.
    */
   assignOrder: (orderId: string, equipmentId: string, startTime: Date) => void;
 
@@ -253,6 +328,57 @@ interface ScheduleActions {
 
   // run_label 설정 — 스케줄러 페이지 초기화 시 호출
   setRunLabel: (runLabel: string | null) => void;
+
+  /**
+   * 배치 그룹을 unassign — tasks에서 제거하고 unscheduledItems에 BatchGroupSnapshot을 추가.
+   * - 낙관적 업데이트 후 API 실패 시 롤백.
+   * - inFlightBatchGroups 가드로 중복 호출 차단.
+   */
+  unassignBatchGroup: (
+    batchGroup: string,
+    reason?: UnassignReason,
+  ) => Promise<void>;
+
+  /**
+   * 배치 그룹을 원래 자리로 복원 (블로커 B4 — Task 4.4).
+   * - 200 성공: unscheduledItems에서 제거 + refreshTasks()로 Gantt 재렌더링.
+   * - 409 conflict: warning Toast ("원래 자리에 다른 작업이 있습니다") + 인박스 유지.
+   * - inFlightBatchGroups 가드로 중복 호출 차단.
+   */
+  restoreBatchGroup: (batchGroup: string) => Promise<void>;
+
+  /**
+   * 서버에서 unassign된 배치 그룹 스냅샷을 조회하여 unscheduledItems의
+   * batch_group 부분을 멱등(idempotent)하게 교체한다 (Task 4.5).
+   * - 페이지 새로고침 시 BatchGroupCard 목록을 복원하는 용도.
+   * - order kind는 보존되고, batch_group kind만 서버 응답으로 교체됨.
+   * - 실패 시 조용히 리턴 (warn 로그만 남김) — 초기 로드 방해 금지.
+   */
+  loadBatchGroupSnapshots: () => Promise<void>;
+
+  /**
+   * Gantt 버전 diff overlay 활성화 — /api/pipeline/runs/compare 를 fetch 해 저장.
+   *
+   * Flow:
+   *   1. loading=true, enabled=true, before/after 저장, error 리셋
+   *   2. cascade preview 상호배타 — cascadePreview=null, previewOffsets={},
+   *      cascadeOriginalTask=null, conflictModalOpen=false 로 강제 리셋
+   *   3. fetch 성공: diffResponse 저장 + loading=false
+   *   4. fetch 실패: error 설정 + loading=false (enabled=true 유지 → UI 에서 toast 표시)
+   */
+  enableCompareMode: (before: string, after: string) => Promise<void>;
+
+  /**
+   * 필터 pill 토글 — added/moved/removed 중 하나의 가시성을 반전한다.
+   * 간트 블록 리렌더만 트리거되며 diffResponse 는 건드리지 않는다.
+   */
+  toggleCompareFilter: (category: "added" | "moved" | "removed") => void;
+
+  /**
+   * compareMode OFF — initialCompareMode 로 리셋.
+   * 필터 기본값(added=ON, moved=ON, removed=OFF) 도 함께 복귀한다.
+   */
+  closeCompareMode: () => void;
 }
 
 type ScheduleStore = ScheduleState & ScheduleActions;
@@ -278,7 +404,10 @@ export const useScheduleStore = create<ScheduleStore>()(
     tasks: [],
     violations: [],
     selectedTaskId: null,
-    unscheduledOrders: [],
+    selectedChainIds: null,
+    selectedArrows: [],
+    unscheduledItems: [],
+    inFlightBatchGroups: new Set<string>(),
     lineSpeedData: [],
     viewFilter: { filterType: "all", filterValue: [] },
     zoomLevel: "day",
@@ -296,6 +425,7 @@ export const useScheduleStore = create<ScheduleStore>()(
     conflictModalOpen: false,
     cascadeOriginalTask: null,
     runLabel: null,
+    compareMode: initialCompareMode,
 
     // 설비 목록 설정
     setEquipment: (equipment) => {
@@ -424,9 +554,34 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
+    /**
+     * 블록 선택 시 chainGraph.buildChain() 을 **단일 호출**해 chainIds+arrows 를
+     * 동시에 저장한다 (overlay 쪽 double BFS 회피 — v3 Architecture).
+     *
+     * R6 규칙: 체인 크기 ≤ 1 (고아 task) 인 경우 selectedChainIds = null 로 저장해
+     * overlay/block dim 경로가 "선택 없음"과 동일하게 동작하도록 한다.
+     *
+     * 주의: buildChain 이 반환하는 Set<string> 을 **immer draft 내부에서 재구성하지
+     * 않고** 평면 set({...}) 으로 주입한다. immer 는 Set 을 deep-freeze 하지 않으므로
+     * 외부에서 build 된 Set 을 그대로 저장하는 것이 안전하고 불필요 복제를 피함.
+     */
     selectTask: (taskId) => {
-      set((state) => {
-        state.selectedTaskId = taskId;
+      if (taskId === null) {
+        set({
+          selectedTaskId: null,
+          selectedChainIds: null,
+          selectedArrows: [],
+        });
+        return;
+      }
+      const state = get();
+      const result = buildChain(taskId, state.tasks, state.equipment);
+      // R6: chain size ≤ 1 → dim 생략 신호 = selectedChainIds null
+      const chainIds = result.chainIds.size > 1 ? result.chainIds : null;
+      set({
+        selectedTaskId: taskId,
+        selectedChainIds: chainIds,
+        selectedArrows: result.arrows,
       });
     },
 
@@ -454,9 +609,9 @@ export const useScheduleStore = create<ScheduleStore>()(
       });
     },
 
-    setUnscheduledOrders: (orders) => {
+    setUnscheduledItems: (items) => {
       set((state) => {
-        state.unscheduledOrders = orders;
+        state.unscheduledItems = items;
       });
     },
 
@@ -468,9 +623,14 @@ export const useScheduleStore = create<ScheduleStore>()(
 
     // 수주 → 스케줄 작업 배정
     assignOrder: (orderId, equipmentId, startTime) => {
-      const { unscheduledOrders, lineSpeedData } = get();
-      const order = unscheduledOrders.find((o) => o.id === orderId);
-      if (!order) return;
+      const { unscheduledItems, lineSpeedData } = get();
+      // union narrowing: "order" kind만 대상으로 삼고 id 매칭
+      const orderItem = unscheduledItems.find(
+        (i): i is { kind: "order"; order: Order } =>
+          i.kind === "order" && i.order.id === orderId,
+      );
+      if (!orderItem) return;
+      const order = orderItem.order;
 
       // 라인 속도 조회
       const lineSpeed = getLineSpeed(
@@ -511,8 +671,9 @@ export const useScheduleStore = create<ScheduleStore>()(
 
       set((state) => {
         state.tasks.push(newTask);
-        state.unscheduledOrders = state.unscheduledOrders.filter(
-          (o) => o.id !== orderId,
+        // "order" kind 중 해당 id만 제거. batch_group kind는 그대로 유지.
+        state.unscheduledItems = state.unscheduledItems.filter(
+          (i) => !(i.kind === "order" && i.order.id === orderId),
         );
 
         // cascade push: 새 작업이 기존 작업과 겹치면 뒤로 밀기
@@ -848,7 +1009,10 @@ export const useScheduleStore = create<ScheduleStore>()(
 
       set((state) => {
         state.tasks.push(...newTasks);
-        state.unscheduledOrders.push(...failedOrders);
+        // 실패 수주는 "order" kind로 wrap하여 unscheduledItems에 추가.
+        state.unscheduledItems.push(
+          ...failedOrders.map((o) => ({ kind: "order" as const, order: o })),
+        );
         state.isEditMode = true;
 
         // 동기화 후 range를 tasks 시간 범위의 앞 2주로 자동 설정
@@ -878,6 +1042,249 @@ export const useScheduleStore = create<ScheduleStore>()(
     setRunLabel: (runLabel) => {
       set((state) => {
         state.runLabel = runLabel;
+      });
+    },
+
+    /**
+     * 배치 그룹 unassign — 낙관적 업데이트 + API 호출 + 실패 시 롤백.
+     *
+     * Flow:
+     *   1. 가드 체크(중복 in-flight / 빈 타겟 / non-planned 상태 포함 시 즉시 리턴)
+     *   2. BatchGroupSnapshot 합성 + tasks → unscheduledItems 이동 (낙관적)
+     *   3. POST /pipeline/batch-group/{bg}/unassign with { reason }
+     *   4. 성공: success Toast + fireReanalysis
+     *      실패: 롤백 + error Toast
+     *   5. finally: in-flight guard 해제
+     */
+    unassignBatchGroup: async (
+      batchGroup: string,
+      reason: UnassignReason = "기타",
+    ) => {
+      const state = get();
+      if (state.inFlightBatchGroups.has(batchGroup)) return;
+
+      const targets = state.tasks.filter((t) => t.batch_group === batchGroup);
+      if (targets.length === 0) return;
+      // 진행중/완료 배치는 unassign 불가. planned/scheduled 둘 다 허용
+      // (scheduled는 스케줄러 레거시 default — 의미상 "아직 시작 안 함" 동일).
+      if (
+        targets.some((t) => t.status !== "planned" && t.status !== "scheduled")
+      )
+        return;
+
+      // BatchGroupSnapshot 합성 — 프론트 측 즉시 반영용 (서버가 생성한 스냅샷은
+      // 다음 reanalysis/refresh 시 덮어써짐)
+      const snapshot: BatchGroupSnapshot = {
+        batch_group: batchGroup,
+        customer: targets[0].customer || "",
+        spec: targets[0].spec,
+        color: targets[0].color || "",
+        total_length_m: targets.reduce((s, t) => s + (t.volume_m || 0), 0),
+        delivery_date: targets[0].delivery_date
+          ? new Date(targets[0].delivery_date).toISOString()
+          : "",
+        processes: targets.map((t) => ({
+          process: t.product || "",
+          equipment_group: t.equipment_id,
+        })),
+        order_count: new Set(targets.map((t) => t.order_id)).size,
+        unassign_reason: reason,
+      };
+
+      // 롤백용 원본 스냅샷 (shallow clone 으로 족함 — 내부 Date/primitive 만 사용)
+      const rollbackTasks = targets.map((t) => ({ ...t }));
+
+      // 낙관적 업데이트
+      set((s) => {
+        s.inFlightBatchGroups.add(batchGroup);
+        s.tasks = s.tasks.filter((t) => t.batch_group !== batchGroup);
+        s.unscheduledItems.push({ kind: "batch_group", group: snapshot });
+      });
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/batch-group/${encodeURIComponent(batchGroup)}/unassign`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason }),
+          },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        useToastStore
+          .getState()
+          .show(`${batchGroup} 미배정으로 이동 (사유: ${reason})`, "success");
+
+        fireReanalysis(get().runLabel);
+      } catch (err) {
+        console.warn("[unassignBatchGroup] 롤백:", err);
+        set((s) => {
+          s.tasks.push(...rollbackTasks);
+          s.unscheduledItems = s.unscheduledItems.filter(
+            (i) =>
+              !(i.kind === "batch_group" && i.group.batch_group === batchGroup),
+          );
+        });
+        useToastStore
+          .getState()
+          .show("미배정 이동 실패. 다시 시도하세요", "error");
+      } finally {
+        set((s) => {
+          s.inFlightBatchGroups.delete(batchGroup);
+        });
+      }
+    },
+
+    /**
+     * 배치 그룹을 원래 자리로 복원 (블로커 B4 — Task 4.4).
+     *
+     * Flow:
+     *   1. in-flight 가드 체크
+     *   2. POST /pipeline/batch-group/{bg}/restore
+     *   3. 200 성공: unscheduledItems에서 해당 batch_group 제거 → refreshTasks()
+     *      호출로 서버의 새로 배치된 tasks를 스토어에 반영하여 Gantt 즉시 재렌더링
+     *   4. 409 conflict: warning Toast + 인박스 유지 (v2에서 재배치 지원 예정)
+     *   5. 기타 실패: error Toast
+     *   6. finally: in-flight 가드 해제
+     */
+    restoreBatchGroup: async (batchGroup: string) => {
+      const state = get();
+      if (state.inFlightBatchGroups.has(batchGroup)) return;
+
+      set((s) => {
+        s.inFlightBatchGroups.add(batchGroup);
+      });
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/pipeline/batch-group/${encodeURIComponent(batchGroup)}/restore`,
+          { method: "POST" },
+        );
+
+        if (res.status === 409) {
+          useToastStore
+            .getState()
+            .show(
+              "원래 자리에 다른 작업이 있습니다. 재배치는 v2에서 지원 예정입니다.",
+              "warning",
+              6000,
+            );
+          return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        // 성공: 인박스에서 제거 후 서버 tasks 재조회 (블로커 B4 — Gantt 즉시 반영)
+        set((s) => {
+          s.unscheduledItems = s.unscheduledItems.filter(
+            (i) =>
+              !(i.kind === "batch_group" && i.group.batch_group === batchGroup),
+          );
+        });
+        await refreshTasks();
+
+        useToastStore
+          .getState()
+          .show(`${batchGroup} 원래 자리로 복원 완료`, "success");
+        fireReanalysis(get().runLabel);
+      } catch (err) {
+        console.warn("[restoreBatchGroup] 실패:", err);
+        useToastStore.getState().show("복원 실패. 다시 시도하세요", "error");
+      } finally {
+        set((s) => {
+          s.inFlightBatchGroups.delete(batchGroup);
+        });
+      }
+    },
+
+    /**
+     * 서버의 batch-group-snapshots 를 조회하여 unscheduledItems의 batch_group
+     * 부분만 멱등 replace (Task 4.5).
+     *
+     * 멱등 전략: order kind는 그대로 유지, batch_group kind만 서버 응답으로 덮어씀.
+     * 초기 로드에서만 호출되므로 race-condition 가드는 불필요 (useEffect deps [])
+     * 실패 시 조용히 리턴 — 페이지 초기 로드를 block 하지 않도록 graceful fallback.
+     */
+    loadBatchGroupSnapshots: async () => {
+      try {
+        const res = await fetch(`${API_BASE}/pipeline/batch-group-snapshots`);
+        if (!res.ok) return;
+        const body = await res.json();
+        const groups = (body.groups ?? []) as BatchGroupSnapshot[];
+        set((s) => {
+          // order kind는 보존, batch_group kind만 서버 응답으로 교체
+          const orderItems = s.unscheduledItems.filter(
+            (i) => i.kind === "order",
+          );
+          const groupItems = groups.map((g) => ({
+            kind: "batch_group" as const,
+            group: g,
+          }));
+          s.unscheduledItems = [...orderItems, ...groupItems];
+        });
+      } catch (err) {
+        console.warn("[loadBatchGroupSnapshots] 실패:", err);
+      }
+    },
+
+    /**
+     * compareMode 활성화 — /runs/compare 를 fetch 해 diffResponse 저장.
+     *
+     * Cascade preview 와 상호배타: 두 overlay 가 동시 활성되면 시각적으로
+     * 혼동(yellow cascade vs blue diff)을 일으키므로 관련 상태를 즉시 리셋.
+     *
+     * 에러 시 enabled 를 true 로 유지하는 이유: 페이지 레벨에서 toast/배너로
+     * "비교 실패 — 재시도" 를 표시할 수 있어야 하기 때문. 닫힘은 사용자가
+     * 명시적으로 × 를 눌러야 함.
+     */
+    enableCompareMode: async (before: string, after: string) => {
+      set((state) => {
+        state.compareMode.enabled = true;
+        state.compareMode.loading = true;
+        state.compareMode.error = null;
+        state.compareMode.beforeRunLabel = before;
+        state.compareMode.afterRunLabel = after;
+        // 신규 fetch 시작 시 과거 diffResponse 는 비워 leaky render 방지
+        state.compareMode.diffResponse = null;
+        // cascade 상호배타 리셋
+        state.cascadePreview = null;
+        state.conflictModalOpen = false;
+        state.cascadeOriginalTask = null;
+        state.previewOffsets = {};
+      });
+
+      try {
+        const url = `${API_BASE}/pipeline/runs/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const body: RunCompareResponse = await res.json();
+        set((state) => {
+          state.compareMode.diffResponse = body;
+          state.compareMode.loading = false;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "비교 요청 실패";
+        console.warn("[enableCompareMode] 실패:", err);
+        set((state) => {
+          state.compareMode.error = message;
+          state.compareMode.loading = false;
+          // enabled 는 true 유지 — UI 에서 에러 표시 후 사용자가 닫게 한다
+        });
+      }
+    },
+
+    toggleCompareFilter: (category) => {
+      set((state) => {
+        state.compareMode.filters[category] =
+          !state.compareMode.filters[category];
+      });
+    },
+
+    closeCompareMode: () => {
+      set((state) => {
+        state.compareMode = { ...initialCompareMode };
       });
     },
   })),

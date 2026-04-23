@@ -66,6 +66,76 @@ export function isWeekend(date: Date): boolean {
   return d === 0 || d === 6;
 }
 
+// --- 주말 너비 조정 매핑 ---
+
+/**
+ * 주말(토·일) 컬럼을 weekendWidth 너비로 처리하는 시간→픽셀 변환.
+ * weekendWidth === dayWidth 이면 기존 timeToX와 동일 결과.
+ */
+export function timeToXAdj(
+  timestamp: number,
+  rangeStart: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth)
+    return timeToX(timestamp, rangeStart, dayWidth);
+  let x = 0;
+  const cursor = new Date(rangeStart);
+  cursor.setHours(0, 0, 0, 0);
+  const tsDay = new Date(timestamp);
+  tsDay.setHours(0, 0, 0, 0);
+  while (cursor.getTime() < tsDay.getTime()) {
+    x += isWeekend(cursor) ? weekendWidth : dayWidth;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const wThis = isWeekend(tsDay) ? weekendWidth : dayWidth;
+  x += ((timestamp - tsDay.getTime()) / MS_PER_DAY) * wThis;
+  return x;
+}
+
+/**
+ * 픽셀 X → 타임스탬프 역변환 (주말 너비 보정 적용).
+ */
+export function xToTimeAdj(
+  x: number,
+  rangeStart: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth) return xToTime(x, rangeStart, dayWidth);
+  let remaining = x;
+  const cursor = new Date(rangeStart);
+  cursor.setHours(0, 0, 0, 0);
+  while (remaining > 0) {
+    const w = isWeekend(cursor) ? weekendWidth : dayWidth;
+    if (remaining < w) {
+      return cursor.getTime() + (remaining / w) * MS_PER_DAY;
+    }
+    remaining -= w;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return cursor.getTime();
+}
+
+/**
+ * 주말 너비 보정을 적용한 타임라인 전체 너비 계산.
+ */
+export function timelineWidthAdj(
+  rangeStart: number,
+  rangeEnd: number,
+  dayWidth: number,
+  weekendWidth: number,
+): number {
+  if (weekendWidth === dayWidth)
+    return getTimelineWidth(rangeStart, rangeEnd, dayWidth);
+  const days = generateDays(rangeStart, rangeEnd);
+  return days.reduce(
+    (sum, d) => sum + (isWeekend(d.date) ? weekendWidth : dayWidth),
+    0,
+  );
+}
+
 /** 현재 달의 시작/끝 Date 반환 (하위 호환용 — 신규 코드에서는 getDefaultRange 사용) */
 export function getCurrentMonthRange(): { start: Date; end: Date } {
   const now = new Date();
@@ -173,77 +243,194 @@ export function calculateDurationMs(
 }
 
 /**
- * 작업 시간 구성 계산 — GanttTaskBlock 호버 팝오버 및 상세 패널 공용.
- * 가동시간: 월~목 08~익일06(22h), 금 08~22(14h), 토일 0h.
+ * 작업 시간 구성 계산 — backend calendar_engine.py 와 동일 규칙을 JS 로 재현.
+ *
+ * 공정 카테고리별 shift 창 + 휴식을 task 의 실제 점유 구간 [startTs, endTs) 에
+ * 교집합으로 적용하여 break / gap 을 정확히 산출한다. 공유 일(同 요일을 두
+ * task 가 나눠 점유) 에서 full-day bucket 을 양쪽에 더해 생기던 이중 표시는
+ * 이 구현에서 구조적으로 발생하지 않는다 (각 break 구간은 [startTs, endTs)
+ * 에 1 회만 교차).
  */
 export interface TimeBreakdown {
-  weekendHrs: number;   // 주말 + 월요일 00~08시
-  dailyIdleHrs: number; // 일일 부동시간
-  totalIdleHrs: number;
-  workingDays: number;
-  actualWork: number;   // 순수 작업 시간(h)
+  gapHrs: number; // shift 창 밖 시간 (주말·공휴·금 22시 이후·월 00~08 등)
+  breakHrs: number; // 평일 점심/저녁/간식 등 shift 내부 break
+  totalIdleHrs: number; // gap + break
+  workingDays: number; // task 가 실제로 점유한 "가동일" 수
+  actualWork: number; // 순수 작업시간(setup 제외, h)
   details: string[];
+  // ── 호환성: 기존 필드 보존 (page.tsx / GanttTaskBlock 에서 UI 라벨만 재매핑)
+  weekendHrs: number; // = gapHrs (alias)
+  dailyIdleHrs: number; // = breakHrs (alias)
+}
+
+// ── 공정 카테고리 매핑 (calendar_engine.py 와 동일) ───────────────────────────
+const _EQUIP_PREFIX_CATEGORY: [string, string][] = [
+  ["ST-", "연선연합"],
+  ["CA-", "연선연합"],
+  ["EX-B", "저압절연"],
+  ["EX-CV", "고압절연"],
+  ["SH-", "시스"],
+];
+
+// 요일: 0=Mon, 1=Tue, ..., 4=Fri, 5=Sat, 6=Sun (Python 기준)
+const _PROCESS_HOURS: Record<string, Record<number, number>> = {
+  연선연합: { 0: 22, 1: 22, 2: 22, 3: 22, 4: 14, 5: 0, 6: 0 },
+  저압절연: { 0: 24, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0 },
+  고압절연: { 0: 18, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0 },
+  시스: { 0: 24, 1: 24, 2: 24, 3: 24, 4: 12, 5: 0, 6: 0 },
+  default: { 0: 22, 1: 22, 2: 22, 3: 22, 4: 14, 5: 0, 6: 0 },
+};
+
+const _FRI_END_HOUR: Record<string, number> = {
+  연선연합: 22,
+  저압절연: 20,
+  고압절연: 20,
+  시스: 20,
+  default: 22,
+};
+
+// 월~목 shift 내부 break (연선연합·default 한정)
+const _DAILY_BREAKS: Record<string, [number, number, number, number][]> = {
+  연선연합: [
+    [12, 0, 13, 0],
+    [18, 0, 18, 30],
+    [22, 0, 22, 30],
+  ],
+  default: [
+    [12, 0, 13, 0],
+    [18, 0, 18, 30],
+    [22, 0, 22, 30],
+  ],
+  저압절연: [],
+  고압절연: [],
+  시스: [],
+};
+
+function _getCategory(equipmentCode?: string | null): string {
+  if (!equipmentCode) return "default";
+  for (const [prefix, cat] of _EQUIP_PREFIX_CATEGORY) {
+    if (equipmentCode.startsWith(prefix)) return cat;
+  }
+  return "default";
+}
+
+type Shift = {
+  start: number;
+  end: number;
+  breaks: { start: number; end: number }[];
+};
+
+/** 특정 날짜(d) 의 shift(가동 창) 생성. hours=0 이면 null. */
+function _getShift(d: Date, cat: string): Shift | null {
+  const jsDay = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const pyDay = (jsDay + 6) % 7; // 0=Mon, ..., 6=Sun
+  const hours = _PROCESS_HOURS[cat][pyDay];
+  if (hours <= 0) return null;
+
+  const MS_PER_HOUR_LOCAL = 60 * 60 * 1000;
+  const start = new Date(d);
+  start.setHours(8, 0, 0, 0);
+  let end: Date;
+
+  if (pyDay === 4) {
+    const friEndH = _FRI_END_HOUR[cat] ?? _FRI_END_HOUR.default;
+    end = new Date(d);
+    end.setHours(friEndH, 0, 0, 0);
+  } else if (cat === "연선연합" || cat === "default") {
+    // Mon~Thu 연선연합: 08:00 → 익일 08:00 (24h 창, 내부 break 로 22h 유효)
+    end = new Date(start.getTime() + 24 * MS_PER_HOUR_LOCAL);
+  } else if (hours === 24) {
+    end = new Date(start.getTime() + 24 * MS_PER_HOUR_LOCAL);
+  } else {
+    // 고압절연 월: 18h 창
+    end = new Date(start.getTime() + hours * MS_PER_HOUR_LOCAL);
+  }
+
+  const breaks: { start: number; end: number }[] = [];
+  if (pyDay < 4) {
+    for (const [sh, sm, eh, em] of _DAILY_BREAKS[cat] ?? []) {
+      const bs = new Date(d);
+      bs.setHours(sh, sm, 0, 0);
+      const be = new Date(d);
+      be.setHours(eh, em, 0, 0);
+      breaks.push({ start: bs.getTime(), end: be.getTime() });
+    }
+  }
+
+  return { start: start.getTime(), end: end.getTime(), breaks };
 }
 
 export function computeTimeBreakdown(
   startTs: number,
   endTs: number,
   changeoverTotalMin: number, // setupMin + colorChangeMin
+  equipmentCode?: string | null,
 ): TimeBreakdown {
-  const MS_PER_DAY_LOCAL = 24 * 60 * 60 * 1000;
-  const MS_PER_HOUR_LOCAL = 60 * 60 * 1000;
-  const totalDurationHrs = (endTs - startTs) / MS_PER_HOUR_LOCAL;
+  const MS_PER_MIN = 60 * 1000;
+  const totalMin = (endTs - startTs) / MS_PER_MIN;
+  const cat = _getCategory(equipmentCode);
 
-  let weekendHrs = 0;
-  let dailyIdleHrs = 0;
-  let overnightHrs = 0;
-  let workingDays = 0;
+  // [startTs, endTs) 와 겹칠 가능성 있는 shift 수집.
+  // shift 는 시작일이 기준 (pyDay=0~3 일 경우 익일까지 연장 → 경계 ±2일 여유).
+  const shifts: Shift[] = [];
+  const scan = new Date(startTs);
+  scan.setHours(0, 0, 0, 0);
+  scan.setDate(scan.getDate() - 2);
+  const stopTs = endTs + 2 * 24 * 60 * 60 * 1000;
+  while (scan.getTime() < stopTs) {
+    const s = _getShift(scan, cat);
+    if (s && s.start < endTs && s.end > startTs) shifts.push(s);
+    scan.setDate(scan.getDate() + 1);
+  }
+
+  // 교집합으로 work / break 시간 집계
+  let workMin = 0;
+  let breakMin = 0;
+  const workingDateSet = new Set<string>();
+  for (const s of shifts) {
+    const a = Math.max(s.start, startTs);
+    const b = Math.min(s.end, endTs);
+    if (b <= a) continue;
+    const shiftCoveredMin = (b - a) / MS_PER_MIN;
+    let brk = 0;
+    for (const br of s.breaks) {
+      const ba = Math.max(br.start, a);
+      const bb = Math.min(br.end, b);
+      if (bb > ba) brk += (bb - ba) / MS_PER_MIN;
+    }
+    workMin += shiftCoveredMin - brk;
+    breakMin += brk;
+    workingDateSet.add(new Date(s.start).toDateString());
+  }
+  const gapMin = Math.max(0, totalMin - workMin - breakMin);
+
+  // 상세 — 관측된 휴무일 (weekend/holiday) 나열
   const details: string[] = [];
   const cur = new Date(startTs);
   cur.setHours(0, 0, 0, 0);
-
   while (cur.getTime() < endTs) {
-    const day = cur.getDay();
-    if (day === 0 || day === 6) {
-      weekendHrs += 24;
-      details.push(
-        `${cur.getMonth() + 1}/${cur.getDate()}(${day === 6 ? "토" : "일"}) 휴무`,
-      );
-    } else {
-      workingDays++;
-      dailyIdleHrs += day === 5 ? 10 : 2;
+    const jsDay = cur.getDay();
+    const pyDay = (jsDay + 6) % 7;
+    const h = _PROCESS_HOURS[cat][pyDay] ?? 0;
+    if (h <= 0) {
+      const name = jsDay === 6 ? "토" : jsDay === 0 ? "일" : "휴";
+      details.push(`${cur.getMonth() + 1}/${cur.getDate()}(${name}) 휴무`);
     }
     cur.setDate(cur.getDate() + 1);
   }
 
-  // 주말 후 월요일 00~08시 추가
-  if (endTs - startTs > MS_PER_DAY_LOCAL) {
-    const c2 = new Date(startTs);
-    c2.setHours(0, 0, 0, 0);
-    while (c2.getTime() < endTs) {
-      if (c2.getDay() === 1 && c2.getTime() > startTs) {
-        overnightHrs += 8;
-        details.push(
-          `${c2.getMonth() + 1}/${c2.getDate()}(월) 08시 업무시작`,
-        );
-      }
-      c2.setDate(c2.getDate() + 1);
-    }
-  }
-
-  const totalIdleHrs = weekendHrs + dailyIdleHrs + overnightHrs;
-  const actualWork = Math.max(
-    0,
-    totalDurationHrs - totalIdleHrs - changeoverTotalMin / 60,
-  );
+  const actualWork = Math.max(0, workMin / 60 - changeoverTotalMin / 60);
 
   return {
-    weekendHrs: weekendHrs + overnightHrs,
-    dailyIdleHrs,
-    totalIdleHrs,
-    workingDays,
+    gapHrs: Math.round((gapMin / 60) * 10) / 10,
+    breakHrs: Math.round((breakMin / 60) * 10) / 10,
+    totalIdleHrs: Math.round(((gapMin + breakMin) / 60) * 10) / 10,
+    workingDays: workingDateSet.size,
     actualWork,
     details,
+    // alias (legacy field names)
+    weekendHrs: Math.round((gapMin / 60) * 10) / 10,
+    dailyIdleHrs: Math.round((breakMin / 60) * 10) / 10,
   };
 }
 

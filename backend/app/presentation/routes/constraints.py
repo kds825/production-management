@@ -1,10 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domain.constraints import validate_task
 from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
 from app.infrastructure.models.constraint_config import ConstraintConfig
+from app.infrastructure.models.constraint_config_history import ConstraintConfigHistory
+from app.infrastructure.models.production_batch import ProductionBatch
+from app.infrastructure.models.schedule_task import ScheduleTask
+from app.infrastructure.models.speed_master import SpeedMaster
 from app.presentation.schemas import (
     ConstraintValidateRequest,
     ConstraintValidateResponse,
@@ -109,6 +114,57 @@ def list_constraints(db: Session = Depends(get_db)):
     }
 
 
+# NOTE: /drift-status 는 /{constraint_id}/history 보다 먼저 선언해야 한다.
+# FastAPI 는 선언 순서대로 매칭하므로, 동적 경로(`{constraint_id}`) 보다
+# 리터럴 경로(`drift-status`) 가 앞에 있어야 리터럴이 우선 매칭된다.
+@router.get(
+    "/drift-status", summary="ConstraintConfig/SpeedMaster 편집 후 재실행 필요 여부"
+)
+def get_drift_status(db: Session = Depends(get_db)):
+    """Silent drift 방지 — UI 상단 배너 트리거.
+
+    Why: ConstraintConfig 또는 SpeedMaster 최신 updated_at 이 ScheduleTask
+    최신 created_at 보다 나중이면 'dirty'. ScheduleTask.created_at 을
+    '마지막 auto_schedule 실행 시각' 프록시로 사용.
+    """
+    # Why: ConstraintConfig.updated_at 은 tz-aware (UTC), ScheduleTask.created_at
+    # 은 naive (datetime.utcnow) — 직접 비교하면 TypeError. aware 쪽을 UTC 로
+    # 변환 후 tzinfo 를 제거해 양쪽 모두 naive-UTC 로 맞춘다.
+    from datetime import timezone as _tz
+
+    def _to_naive_utc(dt):
+        if dt is None or dt.tzinfo is None:
+            return dt
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+
+    latest_constraint = db.query(func.max(ConstraintConfig.updated_at)).scalar()
+    latest_speed = db.query(func.max(SpeedMaster.updated_at)).scalar()
+    latest_schedule = db.query(func.max(ScheduleTask.created_at)).scalar()
+
+    candidates = [x for x in (latest_constraint, latest_speed) if x is not None]
+    latest_edit = max(candidates) if candidates else None
+
+    if latest_edit is None:
+        dirty = False
+    elif latest_schedule is None:
+        dirty = True
+    else:
+        dirty = _to_naive_utc(latest_edit) > latest_schedule
+
+    return {
+        "dirty": dirty,
+        "latest_constraint_updated_at": (
+            latest_constraint.isoformat() if latest_constraint else None
+        ),
+        "latest_speed_master_updated_at": (
+            latest_speed.isoformat() if latest_speed else None
+        ),
+        "latest_schedule_run_at": (
+            latest_schedule.isoformat() if latest_schedule else None
+        ),
+    }
+
+
 @router.patch("/{constraint_id}", summary="제약조건 수정 (on/off, 파라미터)")
 def update_constraint(constraint_id: str, body: dict, db: Session = Depends(get_db)):
     row = (
@@ -118,11 +174,104 @@ def update_constraint(constraint_id: str, body: dict, db: Session = Depends(get_
     )
     if not row:
         raise HTTPException(status_code=404, detail=f"제약조건 '{constraint_id}' 없음")
+
+    # 변경 이력 기록 — params_json 이 실제로 바뀐 경우만.
+    # Why: 프론트(ParamEditor/SaveModal)는 "편집된 키만" patch 로 보낸다.
+    # 그대로 대입하면 편집되지 않은 다른 키가 DB 에서 사라져 silent corruption
+    # (예: stranding_min 만 바꿨는데 insulation_min/sheath_min/cv_min 이 날아가
+    # resolve_spec_setup_min 이 default=0.0 으로 0분 스케줄). 따라서 merge.
+    if "params_json" in body:
+        old_params = dict(row.params_json or {})
+        patch = dict(body["params_json"])
+        merged = {**old_params, **patch}
+        if old_params != merged:
+            history = ConstraintConfigHistory(
+                constraint_id=constraint_id,
+                old_params_json=old_params,
+                new_params_json=merged,
+            )
+            db.add(history)
+        row.params_json = merged
+
     if "is_enabled" in body:
         row.is_enabled = body["is_enabled"]
-    if "params_json" in body:
-        row.params_json = body["params_json"]
     if "priority" in body:
         row.priority = body["priority"]
     db.commit()
     return {"constraint_id": constraint_id, "updated": True}
+
+
+@router.get("/{constraint_id}/history", summary="제약조건 변경 이력")
+def get_constraint_history(constraint_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(ConstraintConfigHistory)
+        .filter(ConstraintConfigHistory.constraint_id == constraint_id)
+        .order_by(ConstraintConfigHistory.changed_at.desc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "constraint_id": constraint_id,
+        "history": [
+            {
+                "history_id": r.history_id,
+                "changed_at": r.changed_at.isoformat(),
+                "changed_by": r.changed_by,
+                "old_params_json": r.old_params_json,
+                "new_params_json": r.new_params_json,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post(
+    "/{constraint_id}/preview-impact",
+    summary="파라미터 변경 시 영향받는 planned 배치 개수/Δ",
+)
+def preview_impact(
+    constraint_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    """PoC: 4-1 stranding_min 변경만 정확히 계산. 다른 제약은 count 0 반환."""
+    new_params = (body or {}).get("new_params_json", {})
+
+    if constraint_id == "4-1" and "stranding_min" in new_params:
+        current_row = (
+            db.query(ConstraintConfig)
+            .filter(ConstraintConfig.constraint_id == "4-1")
+            .first()
+        )
+        current = (
+            float((current_row.params_json or {}).get("stranding_min", 210))
+            if current_row
+            else 210.0
+        )
+        new_val = float(new_params["stranding_min"])
+        delta = new_val - current
+
+        # planned 연선 배치 중 현재 setup_time_min 이 current 와 같은 건만 카운트
+        count = (
+            db.query(func.count(ProductionBatch.batch_id))
+            .filter(
+                ProductionBatch.status == "planned",
+                ProductionBatch.setup_time_min == current,
+            )
+            .scalar()
+            or 0
+        )
+        total_delta = delta * count
+
+        return {
+            "affected_batch_count": int(count),
+            "total_delta_min": float(total_delta),
+            "current_value": current,
+            "new_value": new_val,
+        }
+
+    return {
+        "affected_batch_count": 0,
+        "total_delta_min": 0.0,
+        "note": "preview-impact 는 PoC 범위에서 4-1 stranding_min 만 지원",
+    }

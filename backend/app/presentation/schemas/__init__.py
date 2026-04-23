@@ -1,6 +1,11 @@
 """
 Pydantic v2 스키마 — API 요청/응답 직렬화
-도메인 엔티티와 분리하여 표현 계층 책임만 담당
+도메인 엔티티와 분리하여 표현 계층 책임만 담당.
+
+패키지화(2026-04-18): 기존 단일 `schemas.py` 모듈을 디렉터리 패키지로 변환.
+- 기존 `from app.presentation.schemas import X` 호출 호환 유지를 위해 이 파일에
+  base 스키마들을 그대로 둠.
+- cascade 전용 스키마는 `schemas/cascade.py` 서브모듈로 분리 (Task 11).
 """
 
 from datetime import datetime
@@ -75,6 +80,12 @@ class ScheduleTaskResponse(BaseModel):
     status: TaskStatus
     delivery_date: Optional[datetime] = None
     process_step: Optional[int] = None
+    # 공정명 (batch.process_name) — 프론트 간트 diff overlay 의 stable key 생성용.
+    # "(order_id, sales_order_line, process_name, batch_seq)" 튜플로
+    # /api/pipeline/runs/compare 응답의 task_id 와 매칭된다. 누락 시 diff 매칭 실패.
+    process_name: Optional[str] = None
+    # 수주 라인 번호 (batch.sales_order_line) — 위 stable key 의 두번째 구성요소.
+    sales_order_line: Optional[int] = None
     predecessors: list[str]
     notes: str
     changeover_min: int
@@ -90,6 +101,13 @@ class ScheduleTaskResponse(BaseModel):
     created_at: Optional[datetime] = None  # schedule_task.created_at — 생성 시각
     sq_mm2: Optional[float] = None  # 도체 단면적 (mm²) — SQ별 색상 구분용
     lot_count: Optional[int] = None  # 헤더 배치 drum_count — 간트 틀 수 표시용
+    # 시스(SH-*) 배치 블록에서 같은 batch_group 에 묶인 수주들의 SQ 규격 목록.
+    # 예: ['50SQ', '100SQ']. 비시스 task 는 None — 프론트가 존재 여부로 분기.
+    spec_list: Optional[list[str]] = None
+    # production_batch.wip_matched_id (FK → wip_inventory.wip_id).
+    # 프론트 ContextMenu(Task 5.2) "미배정으로 이동" disabled 판정용 — WIP 매칭된
+    # 배치는 재고로 대체된 공정이라 해제 불가. None 이면 일반 생산 배치.
+    wip_matched_id: Optional[int] = None
 
 
 class ScheduleTaskCreate(BaseModel):

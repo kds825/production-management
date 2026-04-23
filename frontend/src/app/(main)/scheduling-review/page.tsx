@@ -21,6 +21,69 @@ interface PipelineRun {
   warning_count?: number;
   batch_count?: number;
   outsource_count?: number;
+  /** stage1/update 로 파생된 경우 이전 run_label — 두 버전 비교의 기본 before 값 */
+  parent_run_label?: string | null;
+}
+
+/** GET /api/pipeline/runs/compare 응답 (ScheduleDiffResponse 호환) */
+interface RunCompareResponse {
+  run_label_before: string;
+  run_label_after: string;
+  kind: string;
+  created_at: string;
+  summary: {
+    moved: number;
+    added: number;
+    removed: number;
+    unchanged: number;
+    total_before: number;
+    total_after: number;
+  };
+  moved_tasks: Array<{
+    task_id: string;
+    old_start: string | null;
+    old_end: string | null;
+    old_equipment: string | null;
+    new_start: string | null;
+    new_end: string | null;
+    new_equipment: string | null;
+    start_delta_hours: number | null;
+    end_delta_hours: number | null;
+    equipment_changed: boolean;
+    batch_group?: string | null;
+    process_name?: string | null;
+    sales_order_id?: string | null;
+    customer_name?: string | null;
+    sheath_color?: string | null;
+    cross_section?: number | null;
+  }>;
+  added_tasks: Array<{
+    task_id: string;
+    start: string | null;
+    end: string | null;
+    equipment: string | null;
+    batch_group?: string | null;
+    process_name?: string | null;
+    sales_order_id?: string | null;
+    customer_name?: string | null;
+    sheath_color?: string | null;
+    cross_section?: number | null;
+    due_date?: string | null;
+  }>;
+  removed_tasks: Array<{
+    task_id: string;
+    start: string | null;
+    end: string | null;
+    equipment: string | null;
+    batch_group?: string | null;
+    process_name?: string | null;
+    sales_order_id?: string | null;
+    customer_name?: string | null;
+    sheath_color?: string | null;
+    cross_section?: number | null;
+    due_date?: string | null;
+  }>;
+  unchanged_task_ids: string[];
 }
 
 const PROCESS_TABS = [
@@ -122,6 +185,14 @@ export default function SchedulingReviewPage() {
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<string>("");
   const [runsLoading, setRunsLoading] = useState(false);
+
+  // ── 버전 비교 모달 ── selected run 과 그 parent_run_label 을 비교
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareData, setCompareData] = useState<RunCompareResponse | null>(
+    null,
+  );
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
   const [activeProcessTab, setActiveProcessTab] =
     useState<ProcessTab>("저압연선");
   const [excelLoading, setExcelLoading] = useState(false);
@@ -198,6 +269,44 @@ export default function SchedulingReviewPage() {
       setExcelLoading(false);
     }
   }, [selectedRun]);
+
+  // 이전 버전과 비교 — 선택된 run 과 그 parent_run_label 을 /runs/compare 로 조회
+  const handleCompareWithParent = useCallback(async () => {
+    if (!selectedRun) return;
+    const current = runs.find((r) => r.run_label === selectedRun);
+    const parent = current?.parent_run_label;
+    if (!parent) {
+      setCompareError(
+        "비교 대상(parent)이 없습니다. 최초 계획 실행은 비교할 이전 버전이 없습니다.",
+      );
+      setCompareOpen(true);
+      setCompareData(null);
+      return;
+    }
+    setCompareLoading(true);
+    setCompareError(null);
+    setCompareData(null);
+    setCompareOpen(true);
+    try {
+      const url = `${API_BASE}/pipeline/runs/compare?before=${encodeURIComponent(
+        parent,
+      )}&after=${encodeURIComponent(selectedRun)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res
+          .json()
+          .catch(() => ({ detail: `HTTP ${res.status}` }));
+        setCompareError(body.detail ?? `비교 실패 (${res.status})`);
+        return;
+      }
+      const data: RunCompareResponse = await res.json();
+      setCompareData(data);
+    } catch (err) {
+      setCompareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCompareLoading(false);
+    }
+  }, [selectedRun, runs]);
 
   // 런 목록 초기 로드
   useEffect(() => {
@@ -276,10 +385,39 @@ export default function SchedulingReviewPage() {
               <option key={r.run_label} value={r.run_label}>
                 {r.run_label}
                 {r.created_at ? ` (${r.created_at.slice(0, 10)})` : ""}
+                {r.parent_run_label ? " ←" : ""}
               </option>
             ))}
           </select>
         </div>
+
+        {/* 이전 버전과 비교 — parent_run_label 이 있을 때만 활성 */}
+        <button
+          onClick={handleCompareWithParent}
+          disabled={
+            !selectedRun ||
+            !runs.find((r) => r.run_label === selectedRun)?.parent_run_label
+          }
+          className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
+          style={{
+            backgroundColor: "#EFF6FF",
+            color: "#1E40AF",
+            border: "1px solid #BFDBFE",
+          }}
+          title={
+            runs.find((r) => r.run_label === selectedRun)?.parent_run_label
+              ? `이전 버전(${
+                  runs.find((r) => r.run_label === selectedRun)
+                    ?.parent_run_label
+                })과 비교`
+              : "최초 실행 — 비교할 이전 버전 없음"
+          }
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 13V2a6 6 0 010 12z" />
+          </svg>
+          이전 버전과 비교
+        </button>
 
         {/* 계획 삭제 버튼 */}
         <button
@@ -508,31 +646,86 @@ export default function SchedulingReviewPage() {
                 ) as SchedulingBatch[]
               }
               wipItems={
+                // 가용 재고 = 예상 제외 (예상은 별도 탭으로 분리)
                 activeProcessTab === "저압연선"
                   ? [
                       ...yeonaeoWip.filter(
-                        (w) => !w.voltage_class.includes("고압"),
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status !== "예상",
                       ),
                       ...insulationWip.filter(
-                        (w) => !w.voltage_class.includes("고압"),
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status !== "예상",
                       ),
                     ]
                   : activeProcessTab === "고압연선"
                     ? [
-                        ...yeonaeoWip.filter((w) =>
-                          w.voltage_class.includes("고압"),
+                        ...yeonaeoWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         ),
-                        ...insulationWip.filter((w) =>
-                          w.voltage_class.includes("고압"),
+                        ...insulationWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         ),
                       ]
                     : activeProcessTab === "저압절연(B100)"
                       ? insulationWip.filter(
-                          (w) => !w.voltage_class.includes("고압"),
+                          (w) =>
+                            !w.voltage_class.includes("고압") &&
+                            w.status !== "예상",
                         )
                       : activeProcessTab === "고압절연(CV)"
-                        ? insulationWip.filter((w) =>
-                            w.voltage_class.includes("고압"),
+                        ? insulationWip.filter(
+                            (w) =>
+                              w.voltage_class.includes("고압") &&
+                              w.status !== "예상",
+                          )
+                        : undefined
+              }
+              expectedWipItems={
+                // 예상 재고 = 현재 run 의 헤더 배치에서 listener 가 만든 예정 출고분
+                activeProcessTab === "저압연선"
+                  ? [
+                      ...yeonaeoWip.filter(
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status === "예상",
+                      ),
+                      ...insulationWip.filter(
+                        (w) =>
+                          !w.voltage_class.includes("고압") &&
+                          w.status === "예상",
+                      ),
+                    ]
+                  : activeProcessTab === "고압연선"
+                    ? [
+                        ...yeonaeoWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        ),
+                        ...insulationWip.filter(
+                          (w) =>
+                            w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        ),
+                      ]
+                    : activeProcessTab === "저압절연(B100)"
+                      ? insulationWip.filter(
+                          (w) =>
+                            !w.voltage_class.includes("고압") &&
+                            w.status === "예상",
+                        )
+                      : activeProcessTab === "고압절연(CV)"
+                        ? insulationWip.filter(
+                            (w) =>
+                              w.voltage_class.includes("고압") &&
+                              w.status === "예상",
                           )
                         : undefined
               }
@@ -587,6 +780,234 @@ export default function SchedulingReviewPage() {
         )}
         {/* 외주 탭이 아닌 경우에도 하단에 외주 참조 가능 */}
       </div>
+
+      {/* ── 버전 비교 모달 ───────────────────────────────────────────────── */}
+      {compareOpen && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40"
+          onClick={() => setCompareOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2
+                  className="text-sm font-semibold"
+                  style={{ color: "#111827" }}
+                >
+                  버전 비교
+                </h2>
+                {compareData && (
+                  <div className="text-[10px] text-gray-500 mt-0.5">
+                    {compareData.run_label_before} →{" "}
+                    {compareData.run_label_after}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setCompareOpen(false)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 overflow-y-auto flex-1">
+              {compareLoading && (
+                <div className="text-[12px] text-gray-500">
+                  비교 데이터 로드 중...
+                </div>
+              )}
+              {compareError && (
+                <div
+                  className="text-[12px] p-3 rounded"
+                  style={{
+                    backgroundColor: "#FEE2E2",
+                    color: "#991B1B",
+                    border: "1px solid #FECACA",
+                  }}
+                >
+                  {compareError}
+                </div>
+              )}
+              {compareData && (
+                <>
+                  {/* 4개 요약 카드 */}
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    <div
+                      className="rounded p-3 text-center"
+                      style={{ backgroundColor: "#ECFDF5", color: "#065F46" }}
+                    >
+                      <div className="text-[10px] font-medium">추가됨</div>
+                      <div className="text-2xl font-bold">
+                        {compareData.summary.added}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded p-3 text-center"
+                      style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+                    >
+                      <div className="text-[10px] font-medium">이동됨</div>
+                      <div className="text-2xl font-bold">
+                        {compareData.summary.moved}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded p-3 text-center"
+                      style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                    >
+                      <div className="text-[10px] font-medium">삭제됨</div>
+                      <div className="text-2xl font-bold">
+                        {compareData.summary.removed}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded p-3 text-center"
+                      style={{ backgroundColor: "#F3F4F6", color: "#374151" }}
+                    >
+                      <div className="text-[10px] font-medium">변경 없음</div>
+                      <div className="text-2xl font-bold">
+                        {compareData.summary.unchanged}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 추가된 수주 */}
+                  {compareData.added_tasks.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                        추가된 배치 ({compareData.added_tasks.length})
+                      </h3>
+                      <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
+                        {compareData.added_tasks.slice(0, 50).map((t) => (
+                          <div
+                            key={t.task_id}
+                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                          >
+                            <span
+                              className="inline-block w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: "#059669" }}
+                            />
+                            <span className="font-medium">
+                              {t.sales_order_id || "-"}
+                            </span>
+                            <span className="text-gray-500">
+                              {t.process_name}
+                            </span>
+                            {t.customer_name && (
+                              <span className="text-gray-400">
+                                · {t.customer_name}
+                              </span>
+                            )}
+                            {t.cross_section != null && (
+                              <span className="text-gray-400">
+                                · {t.cross_section}SQ
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 삭제된 수주 */}
+                  {compareData.removed_tasks.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                        삭제된 배치 ({compareData.removed_tasks.length})
+                      </h3>
+                      <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
+                        {compareData.removed_tasks.slice(0, 50).map((t) => (
+                          <div
+                            key={t.task_id}
+                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                          >
+                            <span
+                              className="inline-block w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: "#DC2626" }}
+                            />
+                            <span className="font-medium">
+                              {t.sales_order_id || "-"}
+                            </span>
+                            <span className="text-gray-500">
+                              {t.process_name}
+                            </span>
+                            {t.customer_name && (
+                              <span className="text-gray-400">
+                                · {t.customer_name}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 이동된 배치 (상위 5건) */}
+                  {compareData.moved_tasks.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                        이동된 배치 (상위{" "}
+                        {Math.min(5, compareData.moved_tasks.length)}/
+                        {compareData.moved_tasks.length})
+                      </h3>
+                      <div className="max-h-56 overflow-y-auto border border-gray-200 rounded">
+                        {[...compareData.moved_tasks]
+                          .sort(
+                            (a, b) =>
+                              Math.abs(b.start_delta_hours ?? 0) -
+                              Math.abs(a.start_delta_hours ?? 0),
+                          )
+                          .slice(0, 5)
+                          .map((t) => (
+                            <div
+                              key={t.task_id}
+                              className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                            >
+                              <span
+                                className="inline-block w-1.5 h-1.5 rounded-full"
+                                style={{ backgroundColor: "#D97706" }}
+                              />
+                              <span className="font-medium">
+                                {t.sales_order_id || "-"}
+                              </span>
+                              <span className="text-gray-500">
+                                {t.process_name}
+                              </span>
+                              {t.start_delta_hours != null && (
+                                <span
+                                  className="font-mono"
+                                  style={{
+                                    color:
+                                      t.start_delta_hours > 0
+                                        ? "#DC2626"
+                                        : "#059669",
+                                  }}
+                                >
+                                  {t.start_delta_hours > 0 ? "+" : ""}
+                                  {t.start_delta_hours.toFixed(1)}h
+                                </span>
+                              )}
+                              {t.equipment_changed && (
+                                <span className="text-gray-400">
+                                  · 설비변경
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

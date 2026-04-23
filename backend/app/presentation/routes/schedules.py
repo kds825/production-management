@@ -4,14 +4,22 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.feature_flags import is_cascade_v2_enabled
 from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
 from app.infrastructure.database import get_db
 from app.infrastructure.memory_store import store
+from app.observability.cascade_logging import log_cascade_request
+from app.observability.metrics import (
+    cascade_feature_flag_state,
+    cascade_preview_duration_seconds,
+    cascade_revert_total,
+    cascade_unresolved_total,
+)
 from app.infrastructure.models.equipment_master import (
     EquipmentMaster as EquipmentMasterModel,
 )
@@ -26,8 +34,23 @@ from app.presentation.schemas import (
     ScheduleTaskResponse,
     ScheduleTaskUpdate,
 )
+from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
+from app.presentation.schemas.cascade import (
+    BulkUpdateErrorCode,
+    BulkUpdateRequestV2,
+    BulkUpdateSuccess,
+    CascadePreviewRequest as CascadePreviewRequestV2,
+    CascadePreviewResponse as CascadePreviewResponseV2,
+)
 from app.services.batch_grouping import format_spec_display, extract_sq
+from app.services.cascade import plan_cascade_preview, UnresolvedReason
+from app.services.cascade.snap import build_snapshot
 from app.services.schedule_optimizer import PREDECESSOR_PROCESS
+from app.services.schedule_validators import (
+    find_due_date_violation,
+    find_predecessor_violation,
+    find_same_eq_overlap,
+)
 
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
 
@@ -99,11 +122,14 @@ def _db_task_to_response(
     group_order_count: int = 1,
     color_change_min: int = 0,
     lot_count: int | None = None,
+    spec_list: list[str] | None = None,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
     group_volume_m: batch_group 전체 합산 길이 (None이면 단일 배치 길이 사용)
     group_order_count: 그룹 내 개별 행 수
+    spec_list: 시스(SH-*) 블록에서 같은 batch_group 에 묶인 SQ 목록
+               (예: ['50SQ','100SQ']). 비시스 task 는 None.
     """
     # customer_priority(int) → TaskPriority
     cp = batch.customer_priority or 99
@@ -155,6 +181,8 @@ def _db_task_to_response(
         if batch.due_date
         else None,
         process_step=batch.batch_seq,
+        process_name=batch.process_name,
+        sales_order_line=batch.sales_order_line,
         predecessors=[f"TASK-{task.predecessor_task_id}"]
         if task.predecessor_task_id
         else [],
@@ -170,6 +198,10 @@ def _db_task_to_response(
         created_at=task.created_at,
         sq_mm2=sq_mm2 if sq_mm2 else None,
         lot_count=lot_count,
+        spec_list=spec_list,
+        # WIP 매칭 FK를 그대로 노출 — 프론트 ContextMenu "미배정으로 이동"
+        # disabled 판정에 사용 (Task 5.2). None 이면 일반 생산 배치.
+        wip_matched_id=batch.wip_matched_id,
     )
 
 
@@ -187,20 +219,47 @@ def list_tasks(
     ),
     equipment_id: str | None = Query(None, description="설비 필터"),
     voltage: str | None = Query(None, description="전압 필터 (저압/고압)"),
+    run_label: str | None = Query(
+        None,
+        description=(
+            "run_label 필터. 미지정 시 최신 run_label (schedule_task.created_at"
+            " 최대) 자동 선택 — 여러 버전의 task 가 이중 렌더되는 것을 방지."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> list[ScheduleTaskResponse]:
     """스케줄 작업 목록 조회 (시작 시간 오름차순).
 
     Stage 2 auto-scheduling 결과를 PostgreSQL에서 읽어 반환한다.
-    date_from/date_to/process_type/equipment_id/voltage 쿼리 파라미터로
-    Gantt 뷰에 필요한 구간만 필터링하여 전송량을 줄인다.
+    date_from/date_to/process_type/equipment_id/voltage/run_label 쿼리
+    파라미터로 Gantt 뷰에 필요한 구간만 필터링하여 전송량을 줄인다.
     DB에 schedule_task 레코드가 없을 경우 인메모리 store로 폴백하여
     개발 초기 샘플 데이터도 계속 볼 수 있다.
+
+    run_label 동작:
+    - 명시적 값: 해당 run 의 task 만 반환
+    - 미지정: 가장 최근에 생성된 run 을 자동 선택 (이중 표시 방지)
     """
+    # run_label 자동 해결: 미지정 시 최신 run (MAX(created_at) 기준) 선택
+    effective_run_label = run_label
+    if not effective_run_label:
+        latest_row = (
+            db.query(ScheduleTaskModel.run_label)
+            .filter(ScheduleTaskModel.run_label.isnot(None))
+            .order_by(ScheduleTaskModel.created_at.desc())
+            .first()
+        )
+        if latest_row:
+            effective_run_label = latest_row[0]
+
     q = db.query(ScheduleTaskModel, ProductionBatchModel).join(
         ProductionBatchModel,
         ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
     )
+
+    # run_label 스코프 (이중 렌더 방지)
+    if effective_run_label:
+        q = q.filter(ScheduleTaskModel.run_label == effective_run_label)
 
     # WIP 완료 배치는 간트에 미표시 — 재고로 대체된 공정이므로 스케줄 불필요
     q = q.filter(ProductionBatchModel.status != "wip_complete")
@@ -290,6 +349,45 @@ def list_tasks(
                 )
         prev_colors[eq] = curr_color
 
+    # spec_list 계산 — 시스 batch_group 에 묶인 SQ 규격 목록 (오름차순, 중복 제거)
+    # 왜 bulk 1-query: task 별 N+1 쿼리 방지. 시스 batch_group 만 대상이므로
+    # 응답에 포함된 시스 태스크의 batch_group 집합만 스캔한다.
+    sheath_groups: set[str] = {
+        t.batch_group
+        for t, _ in db_tasks
+        if t.batch_group and (t.equipment_code or "").startswith("SH-")
+    }
+    group_spec_list: dict[str, list[str]] = {}
+    if sheath_groups:
+        sq_rows = (
+            db.query(
+                ProductionBatchModel.batch_group,
+                ProductionBatchModel.sq_mm2,
+            )
+            .filter(
+                ProductionBatchModel.batch_group.in_(sheath_groups),
+                ProductionBatchModel.sq_mm2.isnot(None),
+                # batch_seq >= 0: 헤더(-1) 제외 — 헤더는 대표 SQ 만 갖고 있어
+                # 실제 묶인 수주 규격 목록을 왜곡한다.
+                ProductionBatchModel.batch_seq >= 0,
+            )
+            .all()
+        )
+        tmp: dict[str, set[int]] = {}
+        for bg, sq in sq_rows:
+            if sq is None:
+                continue
+            tmp.setdefault(bg, set()).add(int(sq))
+        group_spec_list = {
+            bg: [f"{sq}SQ" for sq in sorted(sqs)] for bg, sqs in tmp.items()
+        }
+
+    def _spec_list_for(task: ScheduleTaskModel) -> list[str] | None:
+        """시스 task 에만 spec_list 부여, 비시스는 None."""
+        if not (task.equipment_code or "").startswith("SH-"):
+            return None
+        return group_spec_list.get(task.batch_group) or []
+
     return [
         _db_task_to_response(
             task,
@@ -298,6 +396,7 @@ def list_tasks(
             group_order_count=group_counts.get(task.batch_group, 1),
             color_change_min=color_change_map.get(task.task_id, 0),
             lot_count=header_drum_counts.get(task.batch_group),
+            spec_list=_spec_list_for(task),
         )
         for task, batch in db_tasks
     ]
@@ -323,7 +422,10 @@ def create_task(body: ScheduleTaskCreate) -> ScheduleTaskResponse:
         )
 
     task = ScheduleTask(
-        id=f"TASK-{uuid.uuid4().hex[:8].upper()}",
+        # Why 'M' 접두: update_task 라우팅은 "TASK-" 뒤가 전부 숫자면 DB 경로로
+        # 보냄. uuid.hex 는 ~6% 확률로 all-digit 이 되어 in-memory task 가 DB 조회
+        # 경로를 타고 404. 'M'(manual) 고정 prefix 로 충돌 제거.
+        id=f"TASK-M{uuid.uuid4().hex[:7].upper()}",
         order_id=body.order_id,
         equipment_id=body.equipment_id,
         product=body.product,
@@ -686,7 +788,12 @@ class BulkUpdateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoint: POST /api/schedules/cascade-preview
+# Endpoint: POST /api/schedules/cascade-preview-legacy (v1, legacy)
+#
+# v2 전환(2026-04-18 Task 11): 본 엔드포인트는 `AffectedTask/CascadeConflict` 기반 v1
+# 계약을 유지하는 레거시 경로. 신규 v2 (`/cascade-preview`) 는 Pydantic 스키마
+# (`schemas.cascade`) + 헤더 가드 + FEATURE_FLAG 게이팅 을 적용. 프론트 마이그레이션이
+# 완료되면 제거 대상.
 # ---------------------------------------------------------------------------
 
 
@@ -702,12 +809,12 @@ def _parse_task_id(raw_id: str) -> int:
     return int(suffix)
 
 
-@router.post("/cascade-preview", response_model=CascadePreviewResponse)
-def cascade_preview(
+@router.post("/cascade-preview-legacy", response_model=CascadePreviewResponse)
+def cascade_preview_legacy(
     body: CascadePreviewRequest,
     db: Session = Depends(get_db),
 ) -> CascadePreviewResponse:
-    """이동된 태스크의 후행 공정에 대한 연쇄(cascade) 변경 미리보기.
+    """(legacy v1) 이동된 태스크의 후행 공정에 대한 연쇄(cascade) 변경 미리보기.
 
     같은 수주(sales_order_id)에 속하는 모든 전이적 후행 공정 태스크를 찾고,
     이동 delta 만큼 시간을 밀어낸 뒤 같은 설비의 다른 태스크와 겹침(충돌)을 감지한다.
@@ -832,18 +939,163 @@ def cascade_preview(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint: PATCH /api/schedules/tasks/bulk-update
+# Endpoint: POST /api/schedules/cascade-preview (v2)
+#
+# Task 11: v2 계약 — 헤더 게이트 + FEATURE_FLAG off 경로 + 새 Pydantic 스키마.
+# - `X-Cascade-API-Version: 2` 헤더 필수 (400 otherwise).
+# - `FEATURE_FLAG_CASCADE_V2` off 시 단일 `invalid_equipment` unresolved 로 응답
+#   (프론트가 legacy 로 fallback 하거나 사용자에게 비활성화 메시지를 노출).
+# - DB 통합 wrapper (Task 10 `plan_cascade_preview`) 를 그대로 호출.
 # ---------------------------------------------------------------------------
 
 
-@router.patch("/tasks/bulk-update")
-def bulk_update_tasks(
+def _reason_to_str(value) -> str:
+    """Enum / str 혼재 reason 을 일관된 문자열로 직렬화 (프론트 파싱 단순화)."""
+    # service 레이어는 PushReason/UnresolvedReason enum 을 사용하지만, 테스트/확장을
+    # 위해 plain str 도 허용. 둘 다 .value 로 정규화.
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _push_to_schema(d: dict) -> dict:
+    """service 의 push/pull dict → PushEntry 호환 dict 로 reason 정규화."""
+    out = {**d}
+    out["reason"] = _reason_to_str(d["reason"])
+    return out
+
+
+def _unres_to_schema(d: dict) -> dict:
+    """service 의 unresolved dict → UnresolvedEntry 호환 dict 로 reason 정규화."""
+    out = {**d}
+    out["reason"] = _reason_to_str(d["reason"])
+    return out
+
+
+@router.post("/cascade-preview", response_model=CascadePreviewResponseV2)
+def cascade_preview_v2(
+    body: CascadePreviewRequestV2,
+    x_cascade_api_version: str | None = Header(None, alias="X-Cascade-API-Version"),
+    db: Session = Depends(get_db),
+) -> CascadePreviewResponseV2:
+    """v2 cascade preview — 블록 duration 변경의 파급 영향을 계산.
+
+    실행 계약:
+      - 헤더 `X-Cascade-API-Version: 2` 미일치 → 400.
+      - request body 의 `new_start/new_end` 는 naive KST datetime (Pydantic validator
+        가 tz-aware 를 422 로 reject).
+      - `FEATURE_FLAG_CASCADE_V2` off → 단일 invalid_equipment unresolved 로 응답해
+        프론트가 비활성화 상태를 인지하고 legacy fallback 또는 UX 메시지를 표시.
+      - on → `plan_cascade_preview` (Task 10 DB wrapper) 호출 → 결과를 Pydantic
+        스키마로 직렬화.
+    """
+    # 헤더 게이트: 계약 버전 불일치는 즉시 400 — Pydantic validation 이전 단계.
+    # 관측성 전: 잘못된 헤더는 422/400 레이턴시 측정 대상이 아니므로 metric/log 전 단계에서 차단.
+    if x_cascade_api_version != "2":
+        raise HTTPException(
+            status_code=400,
+            detail="X-Cascade-API-Version: 2 header required",
+        )
+
+    # Task 23: feature flag snapshot + 구조화 로그 + Histogram 측정.
+    # feature_flag gauge 는 요청마다 갱신 → 런타임 ON/OFF 를 대시보드가 즉시 반영.
+    request_id = str(uuid.uuid4())
+    flag_on = is_cascade_v2_enabled()
+    cascade_feature_flag_state.set(1 if flag_on else 0)
+
+    with (
+        cascade_preview_duration_seconds.time(),
+        log_cascade_request(
+            request_id,
+            "/cascade-preview",
+            task_id=body.task_id,
+            new_start=body.new_start.isoformat(),
+            new_end=body.new_end.isoformat(),
+            new_equipment_code=body.new_equipment_code,
+        ) as extra,
+    ):
+        # Feature flag off: 계약은 유지하되 실제 cascade 계산은 skip.
+        # invalid_equipment reason 을 선택한 이유 — "기능 자체가 꺼져 있어 해소 불가" 를
+        # 프론트가 동일한 unresolved UI 로 처리할 수 있게 하기 위함.
+        if not flag_on:
+            extra["feature_disabled"] = True
+            cascade_unresolved_total.labels(
+                reason=UnresolvedReason.invalid_equipment.value
+            ).inc()
+            return CascadePreviewResponseV2(
+                request_id=request_id,
+                summary="cascade v2 disabled",
+                pushes=[],
+                pulls=[],
+                unresolved=[
+                    {
+                        "task_id": body.task_id,
+                        "equipment_code": "",
+                        "batch_label": "",
+                        "reason": UnresolvedReason.invalid_equipment.value,
+                        "detail": "cascade v2 disabled",
+                    }
+                ],
+                can_auto_resolve=False,
+                iter_count=0,
+                truncated=False,
+            )
+
+        # DB 통합 wrapper 호출 — 내부에서 snapshot 구성 + BFS + validators 수행.
+        result = plan_cascade_preview(
+            body.task_id,
+            body.new_start,
+            body.new_end,
+            body.new_equipment_code,
+            db,
+        )
+
+        # 로그 관측 필드 — reason histogram 으로 어떤 push 가 주도적인지 파악.
+        extra["pushes_n"] = len(result.pushes)
+        extra["pulls_n"] = len(result.pulls)
+        extra["unresolved_n"] = len(result.unresolved)
+        extra["wave_used"] = result.iter_count
+        extra["truncated"] = result.truncated
+        reason_hist: dict[str, int] = {}
+        for p in result.pushes:
+            r = _reason_to_str(p["reason"])
+            reason_hist[r] = reason_hist.get(r, 0) + 1
+        extra["reason_histogram"] = reason_hist
+
+        # unresolved counter 증가 — reason 라벨별 집계.
+        for u in result.unresolved:
+            cascade_unresolved_total.labels(reason=_reason_to_str(u["reason"])).inc()
+
+        # service 가 반환한 request_id 대신 logged request_id 로 일관성 유지.
+        # (프론트는 이 값을 bulk-update 의 expected_cascade_request_id 로 echo back.)
+        return CascadePreviewResponseV2(
+            request_id=request_id,
+            summary=result.summary,
+            pushes=[_push_to_schema(p) for p in result.pushes],
+            pulls=[_push_to_schema(p) for p in result.pulls],
+            unresolved=[_unres_to_schema(u) for u in result.unresolved],
+            can_auto_resolve=result.can_auto_resolve,
+            iter_count=result.iter_count,
+            truncated=result.truncated,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: PATCH /api/schedules/tasks/bulk-update-legacy (v1, legacy)
+#
+# v2 전환(2026-04-18 Task 13): 본 PATCH 는 legacy 프론트(scheduleStore.ts) 가
+# `{ updates: [...] }` body 로 호출하는 기존 경로. 프론트 마이그레이션이 끝나면 제거.
+# 새 `POST /tasks/bulk-update` 는 아래 v2 엔드포인트로 구현되어 있다.
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/tasks/bulk-update-legacy")
+def bulk_update_tasks_legacy(
     body: BulkUpdateRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, int]:
-    """여러 태스크의 시작/종료 시간을 단일 트랜잭션으로 일괄 갱신한다.
+    """(legacy v1) 여러 태스크의 시작/종료 시간을 단일 트랜잭션으로 일괄 갱신.
 
-    cascade-preview 결과를 프론트엔드에서 확정한 뒤 한 번에 반영할 때 사용한다.
+    v2 와 달리 validator / change_set 저장이 없고 단순 적용만 한다.
+    cascade-preview 결과를 프론트엔드에서 확정한 뒤 한 번에 반영할 때 사용.
     """
     if not body.updates:
         return {"updated": 0}
@@ -865,3 +1117,586 @@ def bulk_update_tasks(
 
     db.commit()
     return {"updated": len(body.updates)}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/schedules/tasks/bulk-update (v2)
+#
+# Task 13: v2 계약.
+#   - `FEATURE_FLAG_CASCADE_V2` off 시 single-task 변경만 허용 (legacy 호환),
+#     multi-change 는 `FEATURE_DISABLED` 로 422.
+#   - Snap 기반 재검증 3 종 (same-eq overlap → predecessor → due-date) 순서대로,
+#     먼저 발견된 한 건만 error_code 로 422 반환.
+#   - 성공 시 `schedule_change_sets` 에 snapshot_before/after INSERT → change_set_id 반환
+#     (Task 14 revert 의 Undo 앵커).
+# ---------------------------------------------------------------------------
+
+
+def _task_serializable(snap_task) -> dict:
+    """SnapTask 를 JSON-safe dict 로 변환 — snapshot_before/after 저장 포맷."""
+    return {
+        # naive datetime → ISO 문자열. revert 시 fromisoformat 으로 복원.
+        "start": snap_task.start.isoformat(),
+        "end": snap_task.end.isoformat(),
+        "equipment_code": snap_task.equipment_code,
+    }
+
+
+def _coerce_task_id(raw: str):
+    """문자열 task_id 를 DB PK 타입에 맞춰 변환.
+
+    ScheduleTask.task_id 는 Integer 지만 snap 은 str 로 비교한다. 프론트가
+    'TASK-123' 또는 '123' 을 보낼 수 있어 prefix 제거 후 int 캐스팅.
+    """
+    prefix = "TASK-"
+    core = raw[len(prefix) :] if raw.startswith(prefix) else raw
+    if core.isdigit():
+        return int(core)
+    return core
+
+
+def _feature_disabled_error(first_task_id: str) -> HTTPException:
+    """FEATURE_FLAG off + multi-change 조합에 쓰는 422 생성기 — 테스트도 이 경로 공유."""
+    return HTTPException(
+        status_code=422,
+        detail={
+            "error_code": BulkUpdateErrorCode.FEATURE_DISABLED.value,
+            "offending_task_id": first_task_id,
+            "detail": "cascade v2 disabled (only single-task updates allowed)",
+            "can_retry": False,
+        },
+    )
+
+
+@router.post("/tasks/bulk-update", response_model=BulkUpdateSuccess)
+def bulk_update_v2(
+    body: BulkUpdateRequestV2,
+    db: Session = Depends(get_db),
+) -> BulkUpdateSuccess:
+    """v2 — cascade 적용 트랜잭션.
+
+    실행 순서:
+      1. FEATURE_FLAG off + multi-change 인 경우 422(`FEATURE_DISABLED`).
+      2. DB 에서 ScheduleTask + ProductionBatch 를 읽어 Snap 구성.
+      3. no-op change 필터링 (Snap.apply 가 no-op 을 reject 하므로).
+      4. 각 change 를 snap 에 apply.
+      5. 재검증 순서: same_eq overlap → predecessor → due_date.
+         먼저 걸리는 위반을 422 로 반환 (error_code + offending_task_id + can_retry).
+      6. ScheduleTask 갱신 + ScheduleChangeSet INSERT 를 단일 commit 으로 마감.
+
+    실패 시 rollback (db 세션 레벨) — 위반은 422 이전에 DB 를 건드리지 않으므로 자연스러운
+    no-commit 경로가 된다.
+    """
+    # Task 23: 구조화 로그 래핑 — 요청별 request_id 로 correlate. with-block 내부 raise
+    # 는 log_cascade_request 가 status=error 로 마감하며 그대로 전파한다.
+    request_id = str(uuid.uuid4())
+    with log_cascade_request(
+        request_id,
+        "/tasks/bulk-update",
+        n_changes=len(body.changes),
+        expected_cascade_request_id=body.expected_cascade_request_id,
+    ) as extra:
+        # ---- 1) Feature flag 가드 ----------------------------------------------
+        if not body.changes:
+            # 빈 요청은 no-op 성공 — change_set 생성은 skip (INSERT 빈 snapshot 낭비 방지).
+            extra["result"] = "noop_empty"
+            return BulkUpdateSuccess(change_set_id="", updated_task_ids=[])
+        if not is_cascade_v2_enabled() and len(body.changes) > 1:
+            extra["feature_disabled"] = True
+            raise _feature_disabled_error(body.changes[0].task_id)
+
+        # ---- 2) Snap 구성 --------------------------------------------------------
+        # plan_cascade_preview 와 동일한 duck-typed 결합 뷰를 사용 — build_snapshot 이
+        # batch relationship 을 기대하기 때문. N+1 방지 위해 batch 를 사전 조회.
+        tasks = db.query(ScheduleTaskModel).all()
+        batch_ids = {t.batch_id for t in tasks if t.batch_id is not None}
+        batches_by_id = (
+            {
+                b.batch_id: b
+                for b in db.query(ProductionBatchModel)
+                .filter(ProductionBatchModel.batch_id.in_(batch_ids))
+                .all()
+            }
+            if batch_ids
+            else {}
+        )
+
+        class _TaskView:
+            __slots__ = (
+                "task_id",
+                "equipment_code",
+                "start_datetime",
+                "end_datetime",
+                "batch_id",
+                "batch",
+            )
+
+            def __init__(self, t, batch):
+                # task_id 를 str 화 — Snap 이 dict key 로 str 비교를 가정.
+                self.task_id = str(t.task_id)
+                self.equipment_code = t.equipment_code
+                self.start_datetime = t.start_datetime
+                self.end_datetime = t.end_datetime
+                self.batch_id = t.batch_id
+                self.batch = batch
+
+        views = [_TaskView(t, batches_by_id.get(t.batch_id)) for t in tasks]
+        snap = build_snapshot(views)
+
+        # ---- 3) 변경 대상 존재 확인 + no-op 필터 -------------------------------
+        # 왜 no-op 필터: Snap.apply 가 no-op 호출을 ValueError 로 거부 (원본 보존 규칙).
+        # 프론트가 cascade-preview 결과를 그대로 재전송했을 때 변경 없는 항목이 섞여 있을 수
+        # 있으므로, 서버 측에서 관대하게 걸러낸다.
+        real_changes = []
+        missing = [c.task_id for c in body.changes if c.task_id not in snap.by_id]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"task not found: {missing[0]}",
+            )
+        for c in body.changes:
+            cur = snap.by_id[c.task_id]
+            same_time = cur.start == c.new_start and cur.end == c.new_end
+            same_eq = c.new_equipment_code is None or (
+                c.new_equipment_code == cur.equipment_code
+            )
+            if same_time and same_eq:
+                continue  # no-op
+            real_changes.append(c)
+
+        # snapshot_before 는 "실제 변경 대상" 만 캡처 — revert 시 되돌릴 대상과 일치시킴.
+        snapshot_before = {
+            c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
+        }
+
+        # ---- 4) Apply --------------------------------------------------------------
+        for c in real_changes:
+            snap.apply(c.task_id, c.new_start, c.new_end, c.new_equipment_code)
+
+        # ---- 5) 재검증 ------------------------------------------------------------
+        # 순서 중요: same-eq overlap 이 가장 치명적 (설비 이중 점유). predecessor > due_date
+        # 순으로 얕은 위반부터 탐지하는 구조.
+        for check_fn, code in [
+            (
+                find_same_eq_overlap,
+                BulkUpdateErrorCode.VALIDATION_OVERLAP_SAME_EQUIPMENT,
+            ),
+            (
+                find_predecessor_violation,
+                BulkUpdateErrorCode.VALIDATION_PREDECESSOR_VIOLATION,
+            ),
+            (
+                find_due_date_violation,
+                BulkUpdateErrorCode.VALIDATION_DUE_DATE_VIOLATION,
+            ),
+        ]:
+            offending = check_fn(snap)
+            if offending is not None:
+                extra["validation_error"] = code.value
+                extra["offending_task_id"] = str(offending.task_id)
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error_code": code.value,
+                        "offending_task_id": str(offending.task_id),
+                        "detail": (
+                            f"{code.value}: end={offending.end.isoformat()} "
+                            f"equipment={offending.equipment_code}"
+                        ),
+                        # can_retry=True — preview 를 다시 돌리면 해소 가능할 수 있음.
+                        "can_retry": True,
+                    },
+                )
+
+        # ---- 6) Commit -----------------------------------------------------------
+        snapshot_after = {
+            c.task_id: _task_serializable(snap.by_id[c.task_id]) for c in real_changes
+        }
+        change_set_id = str(uuid.uuid4())
+        updated_ids: list[str] = []
+
+        for c in real_changes:
+            task_pk = _coerce_task_id(c.task_id)
+            t = db.get(ScheduleTaskModel, task_pk)
+            if t is None:
+                # snap 에 있었지만 DB 조회에서 빠진 경우 — 극히 드물지만 race 가드.
+                continue
+            t.start_datetime = c.new_start
+            t.end_datetime = c.new_end
+            if c.new_equipment_code:
+                t.equipment_code = c.new_equipment_code
+            updated_ids.append(c.task_id)
+
+        if real_changes:
+            cs = ScheduleChangeSet(
+                change_set_id=change_set_id,
+                preview_request_id=body.expected_cascade_request_id,
+                snapshot_before=snapshot_before,
+                snapshot_after=snapshot_after,
+            )
+            db.add(cs)
+        db.commit()
+
+        # 관측 필드: 실제 반영된 변경 수 + change_set_id (undo 상관관계).
+        extra["real_changes_n"] = len(real_changes)
+        extra["updated_task_ids_n"] = len(updated_ids)
+        extra["change_set_id"] = change_set_id if real_changes else ""
+
+        # real_changes 가 없으면 change_set_id 는 빈 문자열 (클라이언트는 undo 대상 없음으로 해석).
+        return BulkUpdateSuccess(
+            change_set_id=change_set_id if real_changes else "",
+            updated_task_ids=updated_ids,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/schedules/revert/{change_set_id}
+#
+# Task 14: Undo — 가장 최근 change_set 1건만 되돌림.
+#
+# 계약:
+#   - 404: 알 수 없는 change_set_id.
+#   - 409: 이 change_set 이후 더 최근 change_set 이 존재 (freshness 실패).
+#          PoC 단계에서는 최근 1건만 undo 스코프 — 중간 revert 는 일관성을 깰 수 있어 거부.
+#   - 200: snapshot_before 로 task.start/end/equipment_code 복구 → change_set 삭제 후 커밋.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/revert/{change_set_id}")
+def revert(change_set_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """change_set 한 건을 undo — snapshot_before 값을 schedule_task 에 재적용.
+
+    왜 "최신 1건만": 여러 change_set 을 역순으로 뒤로 감는 full history 는 스냅샷
+    간 교차 의존성(예: 두 change_set 이 같은 task 를 덮어쓴 경우) 을 해소해야 해서
+    비용이 크다. PoC 는 직전 1건만 안전하게 되돌리는 계약으로 단순화.
+    """
+    # Task 23: 구조화 로그 + revert counter by status.
+    # 404/409/200 경로 각각 status label 로 집계 — 대시보드에서 바로 retry 비율 측정.
+    request_id = str(uuid.uuid4())
+    with log_cascade_request(
+        request_id, f"/revert/{change_set_id}", change_set_id=change_set_id
+    ) as extra:
+        cs = db.get(ScheduleChangeSet, change_set_id)
+        if cs is None:
+            cascade_revert_total.labels(status="not_found").inc()
+            extra["revert_status"] = "not_found"
+            raise HTTPException(status_code=404, detail="change_set_id not found")
+
+        # Freshness 검증 — 이 change_set 이후 새 change_set 이 있으면 undo 거부.
+        newer = (
+            db.query(ScheduleChangeSet)
+            .filter(ScheduleChangeSet.created_at > cs.created_at)
+            .order_by(ScheduleChangeSet.created_at.asc())
+            .first()
+        )
+        if newer is not None:
+            cascade_revert_total.labels(status="conflict").inc()
+            extra["revert_status"] = "conflict"
+            extra["newer_change_set_id"] = newer.change_set_id
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"newer change_set exists: {newer.change_set_id} "
+                    f"(created_at={newer.created_at.isoformat()})"
+                ),
+            )
+
+        # snapshot_before 로 복구 — task_id 키는 bulk_update_v2 가 str 로 저장.
+        # ScheduleTask.task_id 는 Integer PK 이므로 isdigit 이면 int 캐스팅.
+        restored_n = 0
+        for task_id_str, snap in (cs.snapshot_before or {}).items():
+            task_pk: Any = int(task_id_str) if task_id_str.isdigit() else task_id_str
+            t = db.get(ScheduleTaskModel, task_pk)
+            if t is None:
+                # 극단적 race — task 가 삭제된 경우 skip (409 보다 관대하게).
+                continue
+            t.start_datetime = datetime.fromisoformat(snap["start"])
+            t.end_datetime = datetime.fromisoformat(snap["end"])
+            if snap.get("equipment_code"):
+                t.equipment_code = snap["equipment_code"]
+            restored_n += 1
+
+        # change_set 삭제 — 같은 id 로 재revert 방지 (멱등성 대신 1회 소비 선택).
+        db.delete(cs)
+        db.commit()
+
+        cascade_revert_total.labels(status="success").inc()
+        extra["revert_status"] = "success"
+        extra["restored_n"] = restored_n
+        return {"reverted": True, "change_set_id": change_set_id}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint: GET /api/schedules/change-sets/{change_set_id}/diff
+#
+# 긴급수주 등 change_set 1건의 snapshot_before/after 를 비교해 "어떤 task 가 어떻게
+# 바뀌었는지" 를 분류 반환. 프론트의 diff panel / side-by-side Gantt 데이터 소스.
+#
+# 분류 규칙:
+#   - moved   : before/after 양쪽 존재 + start|end|equipment_code 중 하나라도 상이
+#   - added   : after 에만 존재 (before 에 없음)
+#   - removed : before 에만 존재 (after 에 없음, 정상 흐름에선 드뭄)
+#   - unchanged: 완전 동일 (task_id 리스트만 반환 — payload 부피 축소)
+#
+# 시간 포맷: snapshot 의 start/end 는 ISO8601 문자열 그대로 유지. delta_hours 는
+# float 로 별도 계산해 제공 (프론트가 raw parse 부담 없이 정렬/필터링 가능).
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso_or_none(value: Any) -> datetime | None:
+    """snapshot 내 ISO8601 문자열을 datetime 으로 변환. 잘못된 값이면 None.
+
+    snapshot 은 JSONB 이므로 스키마가 강제되지 않는다 — 과거 레코드나 손상된
+    데이터가 섞여 있을 수 있어 방어적으로 파싱한다 (fail-fast 대신 partial).
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _delta_hours(old_iso: Any, new_iso: Any) -> float | None:
+    """두 ISO8601 문자열의 시간 차이를 시간 단위 float 로 반환.
+
+    둘 중 하나라도 파싱 실패 시 None — 프론트가 '계산 불가' 상태를 표시할 수 있게.
+    round(2) 로 소수점 2자리까지 (1분 해상도).
+    """
+    old_dt = _parse_iso_or_none(old_iso)
+    new_dt = _parse_iso_or_none(new_iso)
+    if old_dt is None or new_dt is None:
+        return None
+    return round((new_dt - old_dt).total_seconds() / 3600, 2)
+
+
+def _build_task_meta_map(db: Session, task_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """task_id 문자열 집합 → 메타 dict 매핑 구축.
+
+    ScheduleTask + ProductionBatch 를 batch_id 로 join 해 batch_group /
+    process_name / sheath_color / cross_section / customer_priority / is_urgent
+    필드를 추출.
+
+    P6: 숫자 문자열 task_id 만 DB 조회 — "T1" 같은 synthetic id (테스트/스냅샷
+    손상) 는 건너뛴다. 조회되지 않는 task_id 는 결과 dict 에 없음 →
+    호출부에서 null 로 보강.
+
+    is_urgent 규칙: customer_priority <= 7 이면 긴급 (NORMAL/CRITICAL/URGENT 의
+    URGENT 이상). ProductionBatch 의 customer_priority 는 nullable 이지만 기본값 99.
+    """
+    if not task_ids:
+        return {}
+
+    numeric_ids: list[int] = []
+    for tid in task_ids:
+        if tid.isdigit():
+            numeric_ids.append(int(tid))
+
+    if not numeric_ids:
+        return {}
+
+    rows = (
+        db.query(ScheduleTaskModel, ProductionBatchModel)
+        .outerjoin(
+            ProductionBatchModel,
+            ScheduleTaskModel.batch_id == ProductionBatchModel.batch_id,
+        )
+        .filter(ScheduleTaskModel.task_id.in_(numeric_ids))
+        .all()
+    )
+
+    meta_map: dict[str, dict[str, Any]] = {}
+    for task, batch in rows:
+        cp = (
+            int(batch.customer_priority)
+            if batch is not None and batch.customer_priority is not None
+            else None
+        )
+        sq = (
+            int(batch.sq_mm2)
+            if batch is not None and batch.sq_mm2 is not None
+            else None
+        )
+        meta_map[str(task.task_id)] = {
+            "batch_group": (batch.batch_group if batch is not None else None)
+            or task.batch_group,
+            "process_name": batch.process_name if batch is not None else None,
+            # sheath_color 는 시스 블록에서만 유의미 — 그 외 공정은 NULL 이 정상.
+            "sheath_color": batch.sheath_color if batch is not None else None,
+            "cross_section": sq,
+            # PoC 규약: customer_priority <= 7 → 긴급(URGENT+). 99/기본값은 NORMAL.
+            "is_urgent": cp is not None and cp <= 7,
+            "customer_priority": cp,
+        }
+    return meta_map
+
+
+def _merge_meta(entry: dict[str, Any], meta: dict[str, Any] | None) -> dict[str, Any]:
+    """diff 엔트리에 batch 메타 필드 병합 — 메타 없을 때 null 로 채움.
+
+    프론트가 필드 존재 여부가 아닌 값 null 체크로 처리하도록 스키마 일관성 유지.
+
+    방어적 처리: meta 의 None 값은 default 를 덮어쓰지 않는다.
+    현재 build_batch_meta_map 은 is_urgent (항상 bool) 를 제외하면 null 가능한
+    필드만 반환하므로 defaults 와 덮어쓰기 결과가 같지만, 호출자가 부분 메타
+    (예: {"batch_group": "A"}) 를 넘길 때 is_urgent=False default 가 보존되도록
+    한다. key 가 defaults 에 없는 경우는 신규 메타로 간주하여 그대로 채택.
+    """
+    defaults = {
+        "batch_group": None,
+        "process_name": None,
+        "sheath_color": None,
+        "cross_section": None,
+        "is_urgent": False,
+        "customer_priority": None,
+    }
+    if meta:
+        for key, value in meta.items():
+            if value is not None or key not in defaults:
+                defaults[key] = value
+    return {**entry, **defaults}
+
+
+@router.get("/change-sets/{change_set_id}/diff")
+def get_change_set_diff(
+    change_set_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """change_set 1건의 snapshot_before/after 를 비교해 변경 내역을 분류 반환.
+
+    긴급수주 반영 후 "기존 계획 대비 어떤 배치가 어떻게 바뀌었는지" 를 UI 에
+    노출하기 위한 읽기 전용 API. revert 와 달리 DB 를 수정하지 않는다.
+
+    P6: moved/added/removed 각 항목에 batch_group / process_name / sheath_color
+    / cross_section / is_urgent / customer_priority 메타 포함 (Stage 2 블록
+    시각화 목적). removed_tasks 는 DB 에서 이미 삭제된 경우 meta null.
+    unchanged_task_ids 는 id list 유지 — 회색 표시용이라 메타 불필요.
+    """
+    cs = db.get(ScheduleChangeSet, change_set_id)
+    if cs is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"change_set_id '{change_set_id}' not found",
+        )
+
+    before = cs.snapshot_before or {}
+    after = cs.snapshot_after or {}
+
+    # JSONB 는 정상 경로에서 dict 로 역직렬화되지만, 과거 데이터/수동 INSERT 로 인해
+    # str (직렬화 누락) 이 들어올 가능성을 방어. 파싱 실패는 500 으로 올려 원인 가시화.
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="snapshot_before / snapshot_after must be JSON objects",
+        )
+
+    before_ids = set(before.keys())
+    after_ids = set(after.keys())
+
+    common_ids = before_ids & after_ids
+    added_ids = after_ids - before_ids
+    removed_ids = before_ids - after_ids
+
+    # 메타 조회 — moved+added+removed 전체를 한 번에 조회해 N+1 방지.
+    meta_map = _build_task_meta_map(db, before_ids | after_ids)
+
+    moved_tasks: list[dict[str, Any]] = []
+    unchanged_task_ids: list[str] = []
+
+    for task_id in sorted(common_ids):
+        b = before.get(task_id) or {}
+        a = after.get(task_id) or {}
+        if not isinstance(b, dict) or not isinstance(a, dict):
+            # 개별 task 엔트리 손상 시 moved 로 간주 (보수적) — 진단 로그 대체.
+            continue
+
+        old_start = b.get("start")
+        old_end = b.get("end")
+        old_eq = b.get("equipment_code")
+        new_start = a.get("start")
+        new_end = a.get("end")
+        new_eq = a.get("equipment_code")
+
+        start_changed = old_start != new_start
+        end_changed = old_end != new_end
+        eq_changed = old_eq != new_eq
+
+        if not (start_changed or end_changed or eq_changed):
+            unchanged_task_ids.append(task_id)
+            continue
+
+        moved_tasks.append(
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "old_start": old_start,
+                    "old_end": old_end,
+                    "old_equipment": old_eq,
+                    "new_start": new_start,
+                    "new_end": new_end,
+                    "new_equipment": new_eq,
+                    "start_delta_hours": _delta_hours(old_start, new_start),
+                    "end_delta_hours": _delta_hours(old_end, new_end),
+                    "equipment_changed": eq_changed,
+                },
+                meta_map.get(task_id),
+            )
+        )
+
+    added_tasks: list[dict[str, Any]] = []
+    for task_id in sorted(added_ids):
+        a = after.get(task_id) or {}
+        if not isinstance(a, dict):
+            continue
+        added_tasks.append(
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "start": a.get("start"),
+                    "end": a.get("end"),
+                    "equipment": a.get("equipment_code"),
+                },
+                meta_map.get(task_id),
+            )
+        )
+
+    removed_tasks: list[dict[str, Any]] = []
+    for task_id in sorted(removed_ids):
+        b = before.get(task_id) or {}
+        if not isinstance(b, dict):
+            continue
+        # removed task 는 DB 에서 이미 사라졌을 수 있음 — meta_map 에 없으면 null 필드.
+        removed_tasks.append(
+            _merge_meta(
+                {
+                    "task_id": task_id,
+                    "start": b.get("start"),
+                    "end": b.get("end"),
+                    "equipment": b.get("equipment_code"),
+                },
+                meta_map.get(task_id),
+            )
+        )
+
+    # kind 컬럼이 없는 구 스키마 환경(migration 미적용) 에서도 안전하게 동작하도록
+    # getattr 로 접근 — 없으면 기본값 "cascade" (model 의 default 와 동일).
+    kind_value = getattr(cs, "kind", None) or "cascade"
+
+    return {
+        "change_set_id": cs.change_set_id,
+        "kind": kind_value,
+        "created_at": cs.created_at.isoformat() if cs.created_at else None,
+        "preview_request_id": cs.preview_request_id,
+        "summary": {
+            "moved": len(moved_tasks),
+            "added": len(added_tasks),
+            "removed": len(removed_tasks),
+            "unchanged": len(unchanged_task_ids),
+            "total_before": len(before_ids),
+            "total_after": len(after_ids),
+        },
+        "moved_tasks": moved_tasks,
+        "added_tasks": added_tasks,
+        "removed_tasks": removed_tasks,
+        "unchanged_task_ids": unchanged_task_ids,
+    }

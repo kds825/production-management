@@ -53,6 +53,24 @@ function getFetchWindow(): { dateFrom: string; dateTo: string } {
 }
 
 /**
+ * 서버에서 tasks만 다시 조회하여 Zustand 스토어에 반영한다.
+ * (블로커 B4) restoreBatchGroup 성공 후 Gantt 즉시 재렌더링용으로 사용.
+ * 실패 시 조용히 리턴 — 호출부(store action)에서 별도 토스트/에러 처리 담당.
+ */
+export async function refreshTasks(): Promise<void> {
+  try {
+    const { dateFrom, dateTo } = getFetchWindow();
+    const rawTasks = await apiFetch<RawScheduleTask[]>(
+      `/schedules/tasks?date_from=${dateFrom}&date_to=${dateTo}`,
+    );
+    const tasks = rawTasks.map(parseTask);
+    useScheduleStore.getState().setTasks(tasks);
+  } catch (err) {
+    console.warn("[refreshTasks] 실패:", err);
+  }
+}
+
+/**
  * 백엔드 API에서 설비 목록, 스케줄 작업, 라인 속도 데이터를 불러와 Zustand 스토어에 저장한다.
  * GET /api/equipment, GET /api/schedules/tasks, GET /api/line-speeds 를 동시에 호출한다.
  * tasks는 3주 창(이번 주 월 ~ +3주 금) 으로 필터링하여 약 100~200건만 수신한다.
@@ -94,6 +112,10 @@ export function useScheduleData() {
         setEquipment(equipment);
         setTasks(tasks);
         setLineSpeedData(lineSpeeds);
+
+        // Task 4.5: unassign된 BatchGroupSnapshot을 로드하여 인박스 복원.
+        // fire-and-forget — 실패해도 초기 로드를 block 하지 않음.
+        void useScheduleStore.getState().loadBatchGroupSnapshots();
 
         // 계획 기준일자로 간트 뷰 자동 이동 — 가장 이른 task 시작 시각 기준
         if (tasks.length > 0) {

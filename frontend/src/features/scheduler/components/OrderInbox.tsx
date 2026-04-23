@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useDraggable } from "@dnd-kit/core";
+import { useState } from "react";
+import { useDraggable, useDroppable, useDndContext } from "@dnd-kit/core";
+import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 import { useScheduleStore } from "../store/scheduleStore";
-import type { Order } from "../types";
+import type { InboxItem, Order } from "../types";
+import { BatchGroupCard } from "./BatchGroupCard";
 
 /** 장비 그룹 목록 — 순서 고정 */
 const EQUIPMENT_GROUPS = ["연선", "B100", "A100", "A120"] as const;
@@ -193,13 +195,43 @@ interface OrderInboxProps {
  * 장비 그룹별 탭으로 분류하여 렌더링 — CollapsiblePanel 내부에 배치됩니다.
  */
 export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
-  const unscheduledOrders = useScheduleStore((s) => s.unscheduledOrders);
-  const setUnscheduledOrders = useScheduleStore((s) => s.setUnscheduledOrders);
+  const unscheduledItems = useScheduleStore((s) => s.unscheduledItems);
   const [activeTab, setActiveTab] = useState<EquipmentGroup | "전체">("전체");
+
+  // Task 3.1: inbox dropzone — 드래그된 task/batch_group_task를 미배정으로 되돌리는 drop target.
+  // 실제 drop 처리 로직은 Task 4.3에서 scheduler page에서 연결한다.
+  const { setNodeRef: setDropzoneRef, isOver } = useDroppable({
+    id: "inbox-dropzone",
+    data: { type: "inbox-dropzone" },
+  });
+
+  // active drag의 type을 감지하여 배너 노출 여부를 결정한다.
+  const dndContext = useDndContext();
+  const activeType = dndContext.active?.data.current?.type as
+    | string
+    | undefined;
+  const isTaskDrag = activeType === "task" || activeType === "batch_group_task";
 
   // mock 데이터 제거 — 미배정 작업은 DB 기반 (Stage 2 미실행 시 표시 없음)
 
-  if (unscheduledOrders.length === 0) {
+  // Task 5.4: 렌더링/필터/카운트를 InboxItem union-aware로 전환.
+  // Task 4.2가 도입한 orderItems 어댑터는 이 파일 내부에서는 더 이상 쓰이지 않아 제거.
+  // TaskFormModal / scheduleStore 는 각자 자체적으로 unscheduledItems에서 order kind를 추출한다.
+  // union-aware 그룹 분류: order는 deriveEquipmentGroup, batch_group은 첫 공정의 equipment_group.
+  // batch_group의 equipment_group이 EQUIPMENT_GROUPS에 없으면 어느 탭에도 집계되지 않음 (전체 탭에만 표시).
+  function itemEquipmentGroup(item: InboxItem): EquipmentGroup | null {
+    if (item.kind === "order") {
+      return deriveEquipmentGroup(item.order);
+    }
+    const firstProcess = item.group.processes[0];
+    const g = firstProcess?.equipment_group;
+    if (g && (EQUIPMENT_GROUPS as readonly string[]).includes(g)) {
+      return g as EquipmentGroup;
+    }
+    return null;
+  }
+
+  if (unscheduledItems.length === 0) {
     return (
       <div className="flex items-center justify-center px-4 py-3">
         <span className="text-[11px] text-gray-400">
@@ -209,22 +241,22 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
     );
   }
 
-  // 그룹별 카운트 집계
+  // 그룹별 카운트 집계 (union-aware)
   const groupCounts = EQUIPMENT_GROUPS.reduce(
     (acc, g) => {
-      acc[g] = unscheduledOrders.filter(
-        (o) => deriveEquipmentGroup(o) === g,
+      acc[g] = unscheduledItems.filter(
+        (i) => itemEquipmentGroup(i) === g,
       ).length;
       return acc;
     },
     {} as Record<EquipmentGroup, number>,
   );
 
-  // 현재 탭에 맞는 주문 필터
-  const visibleOrders =
+  // 현재 탭에 맞는 항목 필터 (union-aware)
+  const visibleItems: InboxItem[] =
     activeTab === "전체"
-      ? unscheduledOrders
-      : unscheduledOrders.filter((o) => deriveEquipmentGroup(o) === activeTab);
+      ? unscheduledItems
+      : unscheduledItems.filter((i) => itemEquipmentGroup(i) === activeTab);
 
   const tabColorMap: Record<EquipmentGroup, string> = {
     연선: "#6366F1",
@@ -235,6 +267,27 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
 
   return (
     <div style={{ minHeight: 0 }}>
+      {/* Task 3.1: 드래그 중 노출되는 미배정 drop zone 배너.
+          isTaskDrag가 true일 때만 DOM에 마운트하여 불필요한 droppable 등록을 방지한다. */}
+      {isTaskDrag && (
+        <div
+          ref={setDropzoneRef}
+          role="status"
+          aria-live="polite"
+          className={
+            "mb-2 flex items-center gap-2 px-3 py-2 rounded-md text-xs " +
+            "border-2 border-dashed " +
+            "text-[color:var(--color-brand-primary)] " +
+            "bg-[color:var(--color-bg-muted)] " +
+            (isOver
+              ? "border-[color:var(--color-brand-primary)] opacity-100"
+              : "border-[color:var(--color-border-default)] opacity-80")
+          }
+        >
+          <ArrowDownTrayIcon width={14} height={14} aria-hidden />
+          <span>여기에 놓으면 미배정 작업으로 이동합니다</span>
+        </div>
+      )}
       {/* 탭 바 */}
       <div className="flex items-center gap-1 px-3 pt-2 pb-1 border-b border-gray-100">
         <button
@@ -245,7 +298,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
             color: activeTab === "전체" ? "#FFFFFF" : "#6B7280",
           }}
         >
-          전체 {unscheduledOrders.length}
+          전체 {unscheduledItems.length}
         </button>
         {EQUIPMENT_GROUPS.filter((g) => groupCounts[g] > 0).map((g) => (
           <button
@@ -267,10 +320,21 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
         className="flex flex-row gap-2 px-3 py-2 overflow-x-auto"
         style={{ minHeight: 0 }}
       >
-        {visibleOrders.map((order) => (
-          <OrderCard key={order.id} order={order} disableDrag={isAnimating} />
-        ))}
-        {visibleOrders.length === 0 && (
+        {visibleItems.map((item) =>
+          item.kind === "order" ? (
+            <OrderCard
+              key={`order-${item.order.id}`}
+              order={item.order}
+              disableDrag={isAnimating}
+            />
+          ) : (
+            <BatchGroupCard
+              key={`bg-${item.group.batch_group}`}
+              group={item.group}
+            />
+          ),
+        )}
+        {visibleItems.length === 0 && (
           <span className="text-[11px] text-gray-400 self-center">
             해당 그룹의 미배정 작업이 없습니다
           </span>

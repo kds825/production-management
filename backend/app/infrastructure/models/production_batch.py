@@ -18,6 +18,9 @@ class ProductionBatch(Base):
 
     batch_id = Column(Integer, primary_key=True, autoincrement=True)
     run_label = Column(String(50), nullable=False, index=True)
+    # stage1/update 가 신규 run_label 을 발급할 때 어느 run 에서 파생됐는지 기록.
+    # 버전 계보 추적과 two-run diff 비교 대상 도출에 쓰인다.
+    parent_run_label = Column(String(50), nullable=True, index=True)
     sales_order_id = Column(String(30))
     sales_order_line = Column(Integer, default=1)
     item_code = Column(String(20), ForeignKey("item_master.item_code"), nullable=True)
@@ -44,9 +47,13 @@ class ProductionBatch(Base):
     line_speed_mpm = Column(Numeric)
     setup_time_min = Column(Numeric, default=0)
     estimated_duration_min = Column(Numeric)
-    status = Column(
-        String(20), default="planned"
-    )  # planned, scheduled, in_progress, completed
+    # 유효 값: 'planned' | 'scheduled' (legacy) | 'in_progress' | 'completed' | 'unassigned'
+    # 'scheduled'는 스케줄러가 배치 할당 완료 시 쓰는 레거시 리터럴
+    # (schedule_optimizer / cp_sat_optimizer 참조) — 신규 spec과 혼재
+    status = Column(String(20), default="planned")
+    # 미배치 사유 — status='unassigned'일 때만 의미 있음
+    # 유효 값: '자재지연' | '설비고장' | '납기재협상' | '기타' | NULL (legacy)
+    unassign_reason = Column(String(32), nullable=True)
     remarks = Column(Text)
     product_group = Column(String(50))
     voltage = Column(String(20))

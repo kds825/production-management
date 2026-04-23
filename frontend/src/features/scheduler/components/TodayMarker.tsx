@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { timeToX } from "../utils/ganttUtils";
+import { timeToXAdj } from "../utils/ganttUtils";
 
 interface TodayMarkerProps {
   rangeStart: number;
   rangeEnd: number;
   dayWidth: number;
   totalHeight: number;
+  weekendWidth?: number;
 }
 
 /**
@@ -21,14 +22,16 @@ export function TodayMarker({
   rangeEnd,
   dayWidth,
   totalHeight,
+  weekendWidth,
 }: TodayMarkerProps) {
+  const ww = weekendWidth ?? dayWidth;
   const todayX = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const ts = now.getTime();
     if (ts < rangeStart || ts > rangeEnd) return null;
-    return timeToX(ts, rangeStart, dayWidth);
-  }, [rangeStart, rangeEnd, dayWidth]);
+    return timeToXAdj(ts, rangeStart, dayWidth, ww);
+  }, [rangeStart, rangeEnd, dayWidth, ww]);
 
   if (todayX === null) return null;
 
