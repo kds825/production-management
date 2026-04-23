@@ -23,6 +23,25 @@ os.environ["CPSAT_WORKERS"] = "1"
 from app.infrastructure.database import SessionLocal  # noqa: E402
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """--parity-quick: run parity harness on 3-scenario subset (~3 min).
+
+    Selection (01/05/08) per design spec §Task 1.4 — one nominal, one
+    complex (sheath color chain), one edge (capacity overflow). Gives
+    coverage of the three archetypes that have historically caught the
+    most regressions while keeping pre-push turnaround under 3 minutes.
+    """
+    parser.addoption(
+        "--parity-quick",
+        action="store_true",
+        default=False,
+        help=(
+            "Run parity harness on 3-scenario subset "
+            "(01_nominal, 05_sheath_color_chain, 08_capacity_overflow)."
+        ),
+    )
+
+
 @pytest.fixture
 def db() -> Generator[Session, None, None]:
     """테스트용 DB 세션. 종료 시 전체 rollback 으로 격리 보장."""
