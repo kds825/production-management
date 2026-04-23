@@ -27,13 +27,13 @@ This is a **renovation, not a reconstruction**. Clean architecture layers alread
 
 ### What the original "Project RE-BORN" prompt got wrong, and what we dropped
 
-| Prompt claim | Reality | Decision |
-|---|---|---|
-| "Clean architecture layers must be built from scratch" | `domain/`, `application/`, `infrastructure/`, `presentation/` already exist | Keep existing layers; split god-files *within* them |
-| "Three-Tier Constraint Architecture (Global / Process / Temporal)" | Actual `ConstraintConfig.category` values are free-text ("due_date", "color_group", "calendar", "setup_time") and don't map to 3 tiers | Keep `category` as free-text; derive taxonomy from data, not impose one. UI offers category filter, not hierarchy |
-| "Delete legacy Greedy algorithms" | `schedule_optimizer.py` is NOT legacy — imported by `routes/schedules.py`, `plan_pipeline.py` (stage2), `urgent_scheduler.py`, and even `cp_sat_optimizer.py` itself. Two solvers coexist by design | Don't delete; split into `services/greedy/` with responsibility-based modules |
-| "Dynamic Priority Engine as new coordinator module" | `constraint_config` + `constraint_config_history` already carry priorities | No new subsystem — just a clean `constraint_loader` + `trace_writer` |
-| "Sub-Agent A Full Frontend refactor" | Unclear what specifically breaks on FE | Scope FE work to surfaces consuming new endpoints (admin UI, XAI popover) |
+| Prompt claim                                                       | Reality                                                                                                                                                                                             | Decision                                                                                                          |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| "Clean architecture layers must be built from scratch"             | `domain/`, `application/`, `infrastructure/`, `presentation/` already exist                                                                                                                         | Keep existing layers; split god-files _within_ them                                                               |
+| "Three-Tier Constraint Architecture (Global / Process / Temporal)" | Actual `ConstraintConfig.category` values are free-text ("due_date", "color_group", "calendar", "setup_time") and don't map to 3 tiers                                                              | Keep `category` as free-text; derive taxonomy from data, not impose one. UI offers category filter, not hierarchy |
+| "Delete legacy Greedy algorithms"                                  | `schedule_optimizer.py` is NOT legacy — imported by `routes/schedules.py`, `plan_pipeline.py` (stage2), `urgent_scheduler.py`, and even `cp_sat_optimizer.py` itself. Two solvers coexist by design | Don't delete; split into `services/greedy/` with responsibility-based modules                                     |
+| "Dynamic Priority Engine as new coordinator module"                | `constraint_config` + `constraint_config_history` already carry priorities                                                                                                                          | No new subsystem — just a clean `constraint_loader` + `trace_writer`                                              |
+| "Sub-Agent A Full Frontend refactor"                               | Unclear what specifically breaks on FE                                                                                                                                                              | Scope FE work to surfaces consuming new endpoints (admin UI, XAI popover)                                         |
 
 ### What was missing from the prompt and we added
 
@@ -47,17 +47,17 @@ This is a **renovation, not a reconstruction**. Clean architecture layers alread
 
 ### In-scope god-files
 
-| File | Lines | Priority | Target split |
-|---|---|---|---|
-| `services/cp_sat_optimizer.py` | 2,654 | P0 | `services/solver/` (5 modules) |
-| `app/(main)/scheduler/page.tsx` | 2,719 | P0 | hooks + sub-components |
-| `features/scheduler/components/GanttTaskBlock.tsx` | 1,056 | P0 | extract XAI popover component |
-| `services/schedule_optimizer.py` | 2,870 | P1 | `services/greedy/` (3 modules) |
-| `presentation/routes/plan_pipeline.py` | 2,660 | P1 | `services/pipeline/` (4 modules) |
-| `presentation/routes/schedules.py` | 1,702 | P1 | `routes/schedules/` sub-package |
-| `services/batch_grouping.py` | 1,971 | P1 | `services/batch_grouping/` (5 modules) + dead-code purge |
-| `features/scheduler/components/SchedulerView.tsx` | 1,468 | P1 | diff-overlay + gantt-grid + task-row components |
-| `features/scheduler/store/scheduleStore.ts` | 1,291 | P1 | slice-per-concern (orders, batches, diff, filters) |
+| File                                               | Lines | Priority | Target split                                             |
+| -------------------------------------------------- | ----- | -------- | -------------------------------------------------------- |
+| `services/cp_sat_optimizer.py`                     | 2,654 | P0       | `services/solver/` (5 modules)                           |
+| `app/(main)/scheduler/page.tsx`                    | 2,719 | P0       | hooks + sub-components                                   |
+| `features/scheduler/components/GanttTaskBlock.tsx` | 1,056 | P0       | extract XAI popover component                            |
+| `services/schedule_optimizer.py`                   | 2,870 | P1       | `services/greedy/` (3 modules)                           |
+| `presentation/routes/plan_pipeline.py`             | 2,660 | P1       | `services/pipeline/` (4 modules)                         |
+| `presentation/routes/schedules.py`                 | 1,702 | P1       | `routes/schedules/` sub-package                          |
+| `services/batch_grouping.py`                       | 1,971 | P1       | `services/batch_grouping/` (5 modules) + dead-code purge |
+| `features/scheduler/components/SchedulerView.tsx`  | 1,468 | P1       | diff-overlay + gantt-grid + task-row components          |
+| `features/scheduler/store/scheduleStore.ts`        | 1,291 | P1       | slice-per-concern (orders, batches, diff, filters)       |
 
 ### Explicitly deferred to post-pilot backlog (P2)
 
@@ -90,33 +90,33 @@ Rationale: parallel tracks prevent UX-work stalling while solver refactor churns
 
 **`solver_run`** — one row per `cp_sat_schedule()` invocation.
 
-| Column | Type | Purpose |
-|---|---|---|
-| `run_id` | UUID PK | also the correlation id in logs |
-| `run_label` | str | joins to existing `production_batch.run_label` |
-| `started_at`, `finished_at` | ts | pilot latency observability |
-| `solver_status` | str | OPTIMAL / FEASIBLE / INFEASIBLE / UNKNOWN |
-| `objective_value` | bigint | |
+| Column                      | Type                                  | Purpose                                           |
+| --------------------------- | ------------------------------------- | ------------------------------------------------- |
+| `run_id`                    | UUID PK                               | also the correlation id in logs                   |
+| `run_label`                 | str                                   | joins to existing `production_batch.run_label`    |
+| `started_at`, `finished_at` | ts                                    | pilot latency observability                       |
+| `solver_status`             | str                                   | OPTIMAL / FEASIBLE / INFEASIBLE / UNKNOWN         |
+| `objective_value`           | bigint                                |                                                   |
 | `constraint_config_version` | UUID FK → `constraint_config_history` | the audit-critical field: which config was active |
-| `input_hash` | str (sha256) | parity harness compares |
-| `output_hash` | str (sha256) | parity harness compares |
-| `solver_params_json` | JSONB | CP-SAT flags (max_time, workers, seeds) |
+| `input_hash`                | str (sha256)                          | parity harness compares                           |
+| `output_hash`               | str (sha256)                          | parity harness compares                           |
+| `solver_params_json`        | JSONB                                 | CP-SAT flags (max_time, workers, seeds)           |
 
 **`solver_decision`** — one row per scheduled batch per run.
 
-| Column | Type | Purpose |
-|---|---|---|
-| `decision_id` | UUID PK | |
-| `run_id` | FK → solver_run | |
-| `production_batch_id` | FK → production_batch | |
-| `assigned_equipment_id` | FK → equipment_master | |
-| `assigned_start`, `assigned_end` | ts | |
-| `contributions_json` | JSONB | trace body: `[{constraint_id, weight_applied, bound, delta_if_removed}]` |
-| `binding_hard_constraints_json` | JSONB | hard constraints that forced this placement |
-| `alternative_slots_json` | JSONB, nullable | **on-demand only** — populated when operator clicks "왜 여기가 아닌가?" |
-| `is_manually_adjusted` | bool, default false | true when operator edits via UI |
-| `manual_override_change_set_id` | UUID FK → change_set, nullable | links to existing audit row (no duplicate snapshot data) |
-| `llm_summary_text` | text, nullable | cached narrator output |
+| Column                           | Type                           | Purpose                                                                  |
+| -------------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
+| `decision_id`                    | UUID PK                        |                                                                          |
+| `run_id`                         | FK → solver_run                |                                                                          |
+| `production_batch_id`            | FK → production_batch          |                                                                          |
+| `assigned_equipment_id`          | FK → equipment_master          |                                                                          |
+| `assigned_start`, `assigned_end` | ts                             |                                                                          |
+| `contributions_json`             | JSONB                          | trace body: `[{constraint_id, weight_applied, bound, delta_if_removed}]` |
+| `binding_hard_constraints_json`  | JSONB                          | hard constraints that forced this placement                              |
+| `alternative_slots_json`         | JSONB, nullable                | **on-demand only** — populated when operator clicks "왜 여기가 아닌가?"  |
+| `is_manually_adjusted`           | bool, default false            | true when operator edits via UI                                          |
+| `manual_override_change_set_id`  | UUID FK → change_set, nullable | links to existing audit row (no duplicate snapshot data)                 |
+| `llm_summary_text`               | text, nullable                 | cached narrator output                                                   |
 
 ### Contract with LLM narrator
 
@@ -146,24 +146,24 @@ cp_sat_schedule(inputs) inside services/solver/__init__.py:
 
 ### Golden input set — 10 fixtures at `backend/tests/fixtures/parity/`
 
-| # | Scenario | Purpose |
-|---|---|---|
-| 01 | Nominal monthly plan | base case |
-| 02 | Past-due skew (mixed past-due + on-time) | EDD / severity regressions |
-| 03 | Urgent reschedule trigger | `urgent_scheduler` path |
-| 04 | WIP match-and-skip | `wip_matching` path |
-| 05 | Sheath color chain | adjacency optimization |
-| 06 | Stage1 → Stage2 handoff | two-stage pipeline |
-| 07 | Calendar edge (Fri/Mon/holiday) | `calendar_engine` |
-| 08 | Capacity overflow (FEASIBLE ≠ OPTIMAL) | non-optimal status still parity |
-| 09 | Single-batch degenerate | tiny-input bug catcher |
-| 10 | All-constraints-on vs all-off | "config not read" detector |
+| #   | Scenario                                 | Purpose                         |
+| --- | ---------------------------------------- | ------------------------------- |
+| 01  | Nominal monthly plan                     | base case                       |
+| 02  | Past-due skew (mixed past-due + on-time) | EDD / severity regressions      |
+| 03  | Urgent reschedule trigger                | `urgent_scheduler` path         |
+| 04  | WIP match-and-skip                       | `wip_matching` path             |
+| 05  | Sheath color chain                       | adjacency optimization          |
+| 06  | Stage1 → Stage2 handoff                  | two-stage pipeline              |
+| 07  | Calendar edge (Fri/Mon/holiday)          | `calendar_engine`               |
+| 08  | Capacity overflow (FEASIBLE ≠ OPTIMAL)   | non-optimal status still parity |
+| 09  | Single-batch degenerate                  | tiny-input bug catcher          |
+| 10  | All-constraints-on vs all-off            | "config not read" detector      |
 
 ### Contract
 
 - **Primary gate**: `output_hash = sha256(sorted([(batch_id, equipment_id, start_iso, end_iso)]))` — exact equality required.
 - **Determinism pins**: `num_search_workers=1`, fixed seed. Parity runs slower than production, accepted trade.
-- **No tolerance mode**: if hash flips, the developer updates fixture in a *separate commit* with rationale. CPA "explain every move" discipline.
+- **No tolerance mode**: if hash flips, the developer updates fixture in a _separate commit_ with rationale. CPA "explain every move" discipline.
 
 ### Auditor's Trail diff log
 
@@ -248,6 +248,7 @@ class ConstraintSpec:
 ```
 
 **`implementation_type` rationale**:
+
 - `pre_filter` — reduces CP-SAT variable count before solve (performance lever)
 - `solver_term` — real optimization penalty
 - `post_filter` — post-solve business-rule validation
@@ -283,6 +284,7 @@ CI rule: in `services/solver/`, grep for `from app.infrastructure` returns 0 hit
 - Footer actions: "Reset all to baseline", "Promote current as new baseline", "View version diff", "Export as JSON"
 
 **Backend validation**:
+
 - `impact_level=hard` constraints cannot be disabled
 - `priority` ∈ [0, 100]
 - Every save writes a new `constraint_config_history` row
@@ -291,12 +293,12 @@ CI rule: in `services/solver/`, grep for `from app.infrastructure` returns 0 hit
 
 `constraint_config_history` schema additions (Week 2 migration):
 
-| Column | Type |
-|---|---|
-| `is_baseline` | bool, default false |
-| `baseline_tag_name` | str, nullable |
-| `baseline_created_by` | str, nullable |
-| `baseline_created_at` | ts, nullable |
+| Column                | Type                |
+| --------------------- | ------------------- |
+| `is_baseline`         | bool, default false |
+| `baseline_tag_name`   | str, nullable       |
+| `baseline_created_by` | str, nullable       |
+| `baseline_created_at` | ts, nullable        |
 
 "Promote current as new baseline" → snapshots current `constraint_config` rows into history with `is_baseline=true` + operator-supplied tag name. Reset dropdown lists all baselines chronologically.
 
@@ -318,7 +320,24 @@ Click a batch → popover:
 └───────────────────────────────────────────────────────┘
 ```
 
-**If `is_manually_adjusted=true`**: title becomes "이 배치는 수동으로 조정되었습니다"; adds "원래 솔버 결정 보기" link → reads `change_set.snapshot_before`; shows `override_reason`.
+**If `is_manually_adjusted=true`** — explicit UI branch (the trace is no longer valid for this batch):
+
+```
+┌─ 이 배치는 수동으로 조정되었습니다 ──────────────────────┐
+│  수동 조정되어 솔버 가중치 분석은 제공되지 않습니다.    │
+│                                                         │
+│  조정자:    오퍼레이터 @ 2026-05-20 14:32               │
+│  조정 사유: 현장 긴급 · "2호기 고장으로 이동"           │
+│                                                         │
+│  ─── 원래 솔버의 결정 (참조용) ───                      │
+│  eq_02 @ 2026-05-20 08:00 ~ 12:00                       │
+│  (이 결정에 대한 가중치 분석 보기 ▸)                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Rationale**: Once a human overrides, the `contributions_json` describes why the solver _wanted_ something other than what's now on the gantt. Showing the solver's weights on a manually-moved batch is misleading at best, hallucinatory at worst. The explicit branch tells the truth: "this is a human decision; here's what the solver would have done, if you want to compare." Solver's original weights are **one click away**, not hidden — for audit — but **not the default view**.
+
+Trace data for the manually-moved batch is **preserved unchanged** in `solver_decision` — only the UI rendering differs. Audit reports can still query both views.
 
 ### 8d. Operator comment modal (new; at manual-override time)
 
@@ -349,32 +368,35 @@ class LLMExplainerInput(BaseModel):
 ```
 
 **Template (locked)**:
+
 > 당신은 공장 스케줄러 결과 설명자입니다. 다음 '기여 목록'에 명시된 제약조건만 언급하세요. 기여 목록에 없는 제약조건은 절대 언급하지 마세요. 한국어로 한 문장, 40자 이내.
 
 **Post-response validation**: extract Korean nouns from output → every noun must be in `constraint_catalog` + generic-word allow-list → else reject, fall back to template.
 
 **Provider abstraction**:
+
 ```python
 class LLMProvider(Protocol):
     def explain(self, input: LLMExplainerInput) -> str: ...
 ```
+
 Implementations: `AnthropicProvider`, `OpenAIProvider`, `TemplateProvider` (always-available). Selected via `LLM_PROVIDER` env. Future `PwCGatewayProvider` drops in without caller changes.
 
 **Cost control**: LLM called once per decision at insert-time; result cached in `solver_decision.llm_summary_text`. Re-render only on explicit refresh.
 
 ### 8f. New / modified API endpoints
 
-| Method | Path | Status |
-|---|---|---|
-| GET `/api/constraints` | List active | Exists |
-| PATCH `/api/constraints/{id}` | Edit one | **New** |
-| POST `/api/constraints/reset-to-baseline` | Reset all to a baseline | **New** |
-| POST `/api/constraints/{id}/reset-to-baseline` | Reset one | **New** |
-| POST `/api/constraints/promote-baseline` | Promote current as new baseline | **New** |
-| GET `/api/constraints/versions` | List baselines + history | **New** |
-| GET `/api/constraints/versions/{a}/diff/{b}` | Version diff | **New** |
-| GET `/api/decisions/{batch_id}/latest` | Trace for XAI popover | **New** |
-| POST `/api/decisions/{decision_id}/alternatives` | Async side-solve | **New** |
+| Method                                           | Path                            | Status  |
+| ------------------------------------------------ | ------------------------------- | ------- |
+| GET `/api/constraints`                           | List active                     | Exists  |
+| PATCH `/api/constraints/{id}`                    | Edit one                        | **New** |
+| POST `/api/constraints/reset-to-baseline`        | Reset all to a baseline         | **New** |
+| POST `/api/constraints/{id}/reset-to-baseline`   | Reset one                       | **New** |
+| POST `/api/constraints/promote-baseline`         | Promote current as new baseline | **New** |
+| GET `/api/constraints/versions`                  | List baselines + history        | **New** |
+| GET `/api/constraints/versions/{a}/diff/{b}`     | Version diff                    | **New** |
+| GET `/api/decisions/{batch_id}/latest`           | Trace for XAI popover           | **New** |
+| POST `/api/decisions/{decision_id}/alternatives` | Async side-solve                | **New** |
 
 ---
 
@@ -382,17 +404,17 @@ Implementations: `AnthropicProvider`, `OpenAIProvider`, `TemplateProvider` (alwa
 
 ### 8-week schedule
 
-| Week | Track A (backend/solver) | Track B (frontend + migrations) | Close gate |
-|---|---|---|---|
-| 0 | Phase 0: `pg_dump --schema-only → docs/archive/schema_asis_20260423.sql`; `ConstraintConfig` rows → JSON; tag `baseline=Phase 0 initial`. `git worktree` setup. | — | Baseline rows + artifacts committed |
-| 1 | Parity harness: 10 fixtures, freeze script, pytest, CI, `make parity-quick`, performance baseline | — | Parity green; hashes + perf committed |
-| 2 | `services/solver/` split (P0): constraint_loader, model_builder, objective, solver_io, trace_writer. Run-ID LoggerAdapter + middleware. `cp_sat_optimizer.py` → re-export shell. | Alembic: `solver_run`, `solver_decision`, `change_set.override_reason`, `constraint_config_history` baseline columns | Parity green; new tables populating |
-| 3 | `services/greedy/` split (P1): auto_schedule, reschedule_affected, slot_finder. Shared → `domain/constants.py` | Admin UI shell (samildevkit): route, table, side drawer, version-diff component (read-only first) | Parity green; admin UI staging read-only |
-| 4 | `plan_pipeline.py` split (P1) → `services/pipeline/` (orchestrator, stage1, stage2, run_labeler) | XAI popover on `GanttTaskBlock` (P0) + LLM narrator binding + `LLMProvider` abstraction + UI run_id error display | Parity green; click-batch → trace + summary |
-| 5 | `schedules.py` route split (P1) → `routes/schedules/` sub-package (list, detail, bulk_update, cascade, revert) | Operator comment modal + `change_set.override_reason` wiring + "Promote as new baseline" button + baseline dropdown | Parity green; override writes reason |
-| 6 | `batch_grouping.py` split (P1) + dead-code purge (`vulture`, `ruff`) → `services/batch_grouping/` | `SchedulerView.tsx` split (P1) → diff-overlay, gantt-grid, task-row | Parity green; deletion-log.md started |
-| 7 | Backend stabilization, docs for Track A modules | `scheduler/page.tsx` split (P0) + `scheduleStore.ts` slices (P1) + KBI dry-run prep | Parity green; KBI dry-run scheduled |
-| 8 | Buffer + fix friction-log items from KBI dry-run | Same; handoff packet finalization | `v1.0-pilot` tag; release notes |
+| Week | Track A (backend/solver)                                                                                                                                                         | Track B (frontend + migrations)                                                                                      | Close gate                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 0    | Phase 0: `pg_dump --schema-only → docs/archive/schema_asis_20260423.sql`; `ConstraintConfig` rows → JSON; tag `baseline=Phase 0 initial`. `git worktree` setup.                  | —                                                                                                                    | Baseline rows + artifacts committed         |
+| 1    | Parity harness: 10 fixtures, freeze script, pytest, CI, `make parity-quick`, performance baseline                                                                                | —                                                                                                                    | Parity green; hashes + perf committed       |
+| 2    | `services/solver/` split (P0): constraint_loader, model_builder, objective, solver_io, trace_writer. Run-ID LoggerAdapter + middleware. `cp_sat_optimizer.py` → re-export shell. | Alembic: `solver_run`, `solver_decision`, `change_set.override_reason`, `constraint_config_history` baseline columns | Parity green; new tables populating         |
+| 3    | `services/greedy/` split (P1): auto_schedule, reschedule_affected, slot_finder. Shared → `domain/constants.py`                                                                   | Admin UI shell (samildevkit): route, table, side drawer, version-diff component (read-only first)                    | Parity green; admin UI staging read-only    |
+| 4    | `plan_pipeline.py` split (P1) → `services/pipeline/` (orchestrator, stage1, stage2, run_labeler)                                                                                 | XAI popover on `GanttTaskBlock` (P0) + LLM narrator binding + `LLMProvider` abstraction + UI run_id error display    | Parity green; click-batch → trace + summary |
+| 5    | `schedules.py` route split (P1) → `routes/schedules/` sub-package (list, detail, bulk_update, cascade, revert)                                                                   | Operator comment modal + `change_set.override_reason` wiring + "Promote as new baseline" button + baseline dropdown  | Parity green; override writes reason        |
+| 6    | `batch_grouping.py` split (P1) + dead-code purge (`vulture`, `ruff`) → `services/batch_grouping/`                                                                                | `SchedulerView.tsx` split (P1) → diff-overlay, gantt-grid, task-row                                                  | Parity green; deletion-log.md started       |
+| 7    | Backend stabilization, docs for Track A modules                                                                                                                                  | `scheduler/page.tsx` split (P0) + `scheduleStore.ts` slices (P1) + KBI dry-run prep                                  | Parity green; KBI dry-run scheduled         |
+| 8    | Buffer + fix friction-log items from KBI dry-run                                                                                                                                 | Same; handoff packet finalization                                                                                    | `v1.0-pilot` tag; release notes             |
 
 ### Non-negotiable per-week gates
 
@@ -402,10 +424,32 @@ Implementations: `AnthropicProvider`, `OpenAIProvider`, `TemplateProvider` (alwa
 4. Frontend lint + typecheck clean
 5. Backend ruff + mypy clean (if configured; flag Week 1 if not)
 6. `worktree_status.sh` shows zero uncommitted changes across all worktrees at end of week
+7. **Migration reversibility**: every Alembic migration touching existing tables must pass `upgrade → downgrade → upgrade` round-trip on a copy of production-shaped data. Automated via `scripts/test_migration_reversibility.sh` (new, Week 2)
+
+### Migration safety protocol (Week 2 — Track B)
+
+`solver_run` and `solver_decision` are **new tables** → additive migrations, low risk.
+
+**Migrations touching existing tables require extra discipline:**
+
+| Migration                                                                                                                                                                                                             | Risk                                | Mitigation                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------- |
+| `ALTER TABLE change_set ADD COLUMN override_reason TEXT NULL`                                                                                                                                                         | Low (additive, nullable)            | Down-migration: `DROP COLUMN`; round-trip test required     |
+| `ALTER TABLE constraint_config_history ADD COLUMN is_baseline BOOL DEFAULT FALSE, ADD COLUMN baseline_tag_name VARCHAR(100), ADD COLUMN baseline_created_by VARCHAR(100), ADD COLUMN baseline_created_at TIMESTAMPTZ` | Low (additive, nullable + defaults) | Down-migration: `DROP COLUMN` × 4; round-trip test required |
+
+**Per-migration requirements**:
+
+1. `down_revision` is explicit, tested.
+2. `downgrade()` is written, not `pass`.
+3. Round-trip script: `alembic upgrade head && alembic downgrade -1 && alembic upgrade head` on a dev database loaded with the Phase 0 snapshot.
+4. If the migration touches data (not just schema), a data-loss warning is printed on downgrade with explicit confirmation.
+
+**Break-glass recovery**: `docs/archive/schema_asis_20260423.sql` + `constraint_config_sample_20260423.json` from Phase 0 are the **authoritative pre-refactor state**. If a migration corrupts prod during pilot, restoration path is: `pg_restore` schema from archive → reload ConstraintConfig rows from JSON → replay committed change_sets since Phase 0.
 
 ### Git worktree 200% plan
 
 **Layout**:
+
 ```
 ~/Desktop/Project/
 ├── KBI_PoC/               # main — reference only, no commits
@@ -415,6 +459,7 @@ Implementations: `AnthropicProvider`, `OpenAIProvider`, `TemplateProvider` (alwa
 ```
 
 **Setup**:
+
 ```bash
 cd ~/Desktop/Project/KBI_PoC
 git worktree add ../KBI_PoC_track_a -b refactoring/track-a-solver
@@ -448,6 +493,7 @@ Each worktree has `.env.worktree` setting the project name + ports; `docker-comp
 **The shared interface**: `ConstraintSpec` (in `services/solver/constraint_loader.py`, Track A). Track B writes the SQLAlchemy model; Track A consumes via loader. Enforced by CI rule: Track A `services/solver/` may not import `app.infrastructure` outside `constraint_loader.py`.
 
 **Weekly merge protocol (Fridays)**:
+
 1. `KBI_PoC_parity` runs full parity against each branch independently.
 2. If both green: Track A merges to main first (solver is upstream dependency).
 3. Track B rebases onto updated main, re-runs parity, merges.
@@ -494,29 +540,31 @@ Each fixture run 5× for p50/p95. CI rule: `> 1.5× p95` warns in PR; `> 3× p95
 
 ## 11. Post-pilot backlog (out-of-scope for these 8 weeks)
 
-| Item | Deferred rationale |
-|---|---|
-| Backup / DR procedure | KBI IT owns their Postgres |
-| On-call / incident playbook | KBI organizational decision post-pilot |
-| Secrets rotation (Vault / KMS) | Env vars acceptable for single-user pilot |
-| PII / customer-name anonymization | Needs legal review; not pilot-blocking |
-| Metrics dashboard (Grafana / Datadog) | Observability logs sufficient for pilot |
-| RBAC (multi-user admin UI) | Single editor during pilot |
-| P2 god-files (plan-register, scheduling-review, ProductionBatchTable) | Stable; low regression risk |
+| Item                                                                  | Deferred rationale                        |
+| --------------------------------------------------------------------- | ----------------------------------------- |
+| Backup / DR procedure                                                 | KBI IT owns their Postgres                |
+| On-call / incident playbook                                           | KBI organizational decision post-pilot    |
+| Secrets rotation (Vault / KMS)                                        | Env vars acceptable for single-user pilot |
+| PII / customer-name anonymization                                     | Needs legal review; not pilot-blocking    |
+| Metrics dashboard (Grafana / Datadog)                                 | Observability logs sufficient for pilot   |
+| RBAC (multi-user admin UI)                                            | Single editor during pilot                |
+| P2 god-files (plan-register, scheduling-review, ProductionBatchTable) | Stable; low regression risk               |
 
 ---
 
 ## 12. Risks & mitigations
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| Parity hash flips for reasons we can't explain | Medium | Week 1 `num_search_workers=1` + fixed seed pins determinism; any flip forces separate-commit rationale |
-| LLM provider rate-limit or outage during pilot | Medium | `TemplateProvider` fallback is always available; popover shows fallback badge |
-| Dead code in `batch_grouping.py` turns out to be called via reflection | Low | `vulture` + `ruff` flagging; every deletion committed separately; revert trivial |
-| Track A / Track B merge conflicts on `constraint_config.py` | Low | Ownership map assigns model to Track B; Track A consumes via typed loader |
-| KBI dry-run (Week 7) reveals operator-UX blocker | Medium-High | Week 8 buffer dedicated to friction-log items; P1 items slip to post-pilot if buffer full |
-| Runtime regression post-refactor | Medium | Performance baseline + CI gate catches at PR time |
-| `schedule_optimizer.py` greedy path has uncovered edge cases | Medium | Parity fixtures #03 (urgent), #06 (stage2 handoff) specifically exercise greedy |
+| Risk                                                                                | Likelihood  | Mitigation                                                                                                                                                        |
+| ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parity hash flips for reasons we can't explain                                      | Medium      | Week 1 `num_search_workers=1` + fixed seed pins determinism; any flip forces separate-commit rationale                                                            |
+| LLM provider rate-limit or outage during pilot                                      | Medium      | `TemplateProvider` fallback is always available; popover shows fallback badge                                                                                     |
+| Dead code in `batch_grouping.py` turns out to be called via reflection              | Low         | `vulture` + `ruff` flagging; every deletion committed separately; revert trivial                                                                                  |
+| Track A / Track B merge conflicts on `constraint_config.py`                         | Low         | Ownership map assigns model to Track B; Track A consumes via typed loader                                                                                         |
+| KBI dry-run (Week 7) reveals operator-UX blocker                                    | Medium-High | Week 8 buffer dedicated to friction-log items; P1 items slip to post-pilot if buffer full                                                                         |
+| Runtime regression post-refactor                                                    | Medium      | Performance baseline + CI gate catches at PR time                                                                                                                 |
+| `schedule_optimizer.py` greedy path has uncovered edge cases                        | Medium      | Parity fixtures #03 (urgent), #06 (stage2 handoff) specifically exercise greedy                                                                                   |
+| Alembic migration corrupts `change_set` or `constraint_config_history` during pilot | Low-Medium  | Every migration touching existing tables requires `upgrade→downgrade→upgrade` round-trip gate (Week 2). Phase 0 archive is break-glass recovery source.           |
+| Manual-override UI shows invalid weight breakdown, misleading operator              | Low         | Section 8c explicit branch: `is_manually_adjusted=true` hides weights, shows override reason + original solver decision on demand. Trace row preserved for audit. |
 
 ---
 
@@ -559,6 +607,7 @@ Each fixture run 5× for p50/p95. CI rule: `> 1.5× p95` warns in PR; `> 3× p95
 
 ## 16. Change log
 
-| Date | Change | Author |
-|---|---|---|
-| 2026-04-23 | Initial design approved through brainstorming session (6 design sections, 3 revisions) | jaewoo kim / Claude |
+| Date       | Change                                                                                          | Author              |
+| ---------- | ----------------------------------------------------------------------------------------------- | ------------------- |
+| 2026-04-23 | Initial design approved through brainstorming session (6 design sections, 3 revisions)          | jaewoo kim / Claude |
+| 2026-04-23 | Rev 1: added manual-override UI branch (8c), migration reversibility gate (9), 2 new risks (12) | jaewoo kim / Claude |
