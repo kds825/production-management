@@ -1,0 +1,3170 @@
+{
+  "expected_objective_value": null,
+  "expected_output_hash": "",
+  "expected_solver_status": "",
+  "run_label": "20260421_parity_10_all_vs_none_constraints",
+  "scenario_id": "10a_all_constraints",
+  "solver_input": {
+    "base_date": "2026-04-21T08:00:00",
+    "batches": [
+      {
+        "batch_group": "",
+        "batch_id": 0,
+        "batch_seq": 1,
+        "conductor_material": "CU",
+        "core_colors": null,
+        "core_count": 1,
+        "customer_name": "parity-avn",
+        "customer_priority": 10,
+        "drum_count": 1,
+        "drum_length_m": 2000.0,
+        "due_date": "2026-05-08",
+        "equipment_code": null,
+        "estimated_duration_min": null,
+        "extra_length_m": 0.0,
+        "item_code": null,
+        "line_speed_mpm": null,
+        "parent_run_label": null,
+        "process_name": "연선",
+        "product_group": "CV",
+        "remarks": null,
+        "routing_code": null,
+        "run_label": "20260421_parity_10_all_vs_none_constraints",
+        "sales_order_id": "SO-AVN-01",
+        "sales_order_line": 1,
+        "setup_time_min": 0.0,
+        "sheath_color": null,
+        "spec_raw": null,
+        "sq_mm2": 120.0,
+        "status": "planned",
+        "stranding_type": null,
+        "total_length_m": 2000.0,
+        "unassign_reason": null,
+        "voltage": "저압",
+        "wip_matched_id": null,
+        "wip_output_actual_m": null,
+        "wip_output_expected_m": 0.0
+      },
+      {
+        "batch_group": "",
+        "batch_id": 1,
+        "batch_seq": 1,
+        "conductor_material": "CU",
+        "core_colors": null,
+        "core_count": 1,
+        "customer_name": "parity-avn",
+        "customer_priority": 10,
+        "drum_count": 1,
+        "drum_length_m": 1500.0,
+        "due_date": "2026-05-11",
+        "equipment_code": null,
+        "estimated_duration_min": null,
+        "extra_length_m": 0.0,
+        "item_code": null,
+        "line_speed_mpm": null,
+        "parent_run_label": null,
+        "process_name": "저압절연",
+        "product_group": "CV",
+        "remarks": null,
+        "routing_code": null,
+        "run_label": "20260421_parity_10_all_vs_none_constraints",
+        "sales_order_id": "SO-AVN-02",
+        "sales_order_line": 1,
+        "setup_time_min": 0.0,
+        "sheath_color": "흑",
+        "spec_raw": null,
+        "sq_mm2": 95.0,
+        "status": "planned",
+        "stranding_type": null,
+        "total_length_m": 1500.0,
+        "unassign_reason": null,
+        "voltage": "저압",
+        "wip_matched_id": null,
+        "wip_output_actual_m": null,
+        "wip_output_expected_m": 0.0
+      },
+      {
+        "batch_group": "",
+        "batch_id": 2,
+        "batch_seq": 1,
+        "conductor_material": "CU",
+        "core_colors": null,
+        "core_count": 1,
+        "customer_name": "parity-avn",
+        "customer_priority": 10,
+        "drum_count": 1,
+        "drum_length_m": 1000.0,
+        "due_date": "2026-05-14",
+        "equipment_code": null,
+        "estimated_duration_min": null,
+        "extra_length_m": 0.0,
+        "item_code": null,
+        "line_speed_mpm": null,
+        "parent_run_label": null,
+        "process_name": "저압시스",
+        "product_group": "CV",
+        "remarks": null,
+        "routing_code": null,
+        "run_label": "20260421_parity_10_all_vs_none_constraints",
+        "sales_order_id": "SO-AVN-03",
+        "sales_order_line": 1,
+        "setup_time_min": 0.0,
+        "sheath_color": "청",
+        "spec_raw": null,
+        "sq_mm2": 70.0,
+        "status": "planned",
+        "stranding_type": null,
+        "total_length_m": 1000.0,
+        "unassign_reason": null,
+        "voltage": "저압",
+        "wip_matched_id": null,
+        "wip_output_actual_m": null,
+        "wip_output_expected_m": 0.0
+      }
+    ],
+    "color_setup_map": {
+      "CA-12BO": 0.0,
+      "CA-4BO": 0.0,
+      "CA-LU": 0.0,
+      "EX-B100": 0.0,
+      "EX-CV1": 0.0,
+      "EX-CV2": 0.0,
+      "SH-A100": 120.0,
+      "SH-A120": 120.0,
+      "SH-A150": 0.0,
+      "SH-B100": 0.0,
+      "ST-1150BC": 0.0,
+      "ST-30BO": 0.0,
+      "ST-44BO": 0.0,
+      "ST-54BO1": 0.0,
+      "ST-54BO2": 0.0,
+      "ST-54BO3": 0.0,
+      "ST-AL6BO": 0.0,
+      "ST-T6B0": 0.0,
+      "TP-1": 0.0,
+      "TP-2": 0.0,
+      "TP-GD": 0.0
+    },
+    "constraint_params": {
+      "1-1": {},
+      "1-2": {
+        "transport_days": 1
+      },
+      "1-3": {},
+      "10-1": {},
+      "10-2": {},
+      "10-3": {},
+      "10-4": {},
+      "10-5": {},
+      "2-1": {
+        "loss_limit_pct": 8,
+        "min_remainder_m": 50,
+        "shortage_tolerance_pct": 5
+      },
+      "2-2": {},
+      "2-3": {},
+      "2-4": {},
+      "3-1": {
+        "extra_length_m": 7,
+        "sample_extra_m": 10
+      },
+      "3-2": {},
+      "3-3": {},
+      "3-4": {
+        "remnant_threshold_m": 200
+      },
+      "4-1": {
+        "cv_min": 300,
+        "insulation_min": 60,
+        "sheath_min": 30,
+        "stranding_min": 30
+      },
+      "4-2": {
+        "sheath_color_min": 120
+      },
+      "4-3": {},
+      "4-4": {
+        "welding_min": 30
+      },
+      "4-5": {},
+      "5-1": {},
+      "5-2": {},
+      "5-3": {},
+      "5-4": {},
+      "5-5": {},
+      "6-1": {
+        "deduction_hours": 2
+      },
+      "6-2": {
+        "friday_hours": 14
+      },
+      "6-3": {},
+      "6-4": {},
+      "7-1": {
+        "defect_buffer_pct": 0.0
+      },
+      "7-2": {},
+      "8-1": {},
+      "8-2": {
+        "lead_time_days": 7
+      },
+      "8-3": {},
+      "9-1": {},
+      "9-2": {},
+      "9-3": {},
+      "PAR10-4-2": {
+        "sheath_color_min": 120
+      },
+      "PAR10-4-4": {
+        "welding_min": 30
+      },
+      "PAR10-5-1": {},
+      "PAR10-6-1": {}
+    },
+    "equipment_by_process": {
+      "T/P": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "TP-1",
+          "equipment_name": "T/P 1호",
+          "material_limit": null,
+          "process_name": "T/P",
+          "range_max": 300.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "TP-2",
+          "equipment_name": "T/P 2호",
+          "material_limit": null,
+          "process_name": "T/P",
+          "range_max": 300.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "TP-GD",
+          "equipment_name": "강대 T/P",
+          "material_limit": null,
+          "process_name": "T/P",
+          "range_max": 300.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "고압시스": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "SH-A150",
+          "equipment_name": "A150EXT",
+          "material_limit": null,
+          "process_name": "고압시스",
+          "range_max": 800.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "SH-B100",
+          "equipment_name": "B150EXT",
+          "material_limit": null,
+          "process_name": "고압시스",
+          "range_max": 800.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "고압절연": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "EX-CV1",
+          "equipment_name": "CV 1호",
+          "material_limit": null,
+          "process_name": "고압절연",
+          "range_max": 800.0,
+          "range_min": 25.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "EX-CV2",
+          "equipment_name": "CV 2호",
+          "material_limit": null,
+          "process_name": "고압절연",
+          "range_max": 800.0,
+          "range_min": 25.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "신선": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "DS-17D",
+          "equipment_name": "17D",
+          "material_limit": "CU",
+          "process_name": "신선",
+          "range_max": 1.2,
+          "range_min": 0.32,
+          "range_unit": "mm",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "DS-A11D",
+          "equipment_name": "A11D",
+          "material_limit": "CU",
+          "process_name": "신선",
+          "range_max": 4.85,
+          "range_min": 1.8,
+          "range_unit": "mm",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "DS-A11D2",
+          "equipment_name": "A11D 2호기",
+          "material_limit": "AL",
+          "process_name": "신선",
+          "range_max": null,
+          "range_min": null,
+          "range_unit": "mm",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "DS-C11D",
+          "equipment_name": "C11D",
+          "material_limit": "CU",
+          "process_name": "신선",
+          "range_max": 3.8,
+          "range_min": 1.6,
+          "range_unit": "mm",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "DS-N11D",
+          "equipment_name": "N11D",
+          "material_limit": "CU",
+          "process_name": "신선",
+          "range_max": 4.0,
+          "range_min": 1.6,
+          "range_unit": "mm",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "연선": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-1150BC",
+          "equipment_name": "1150 B/C",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 16.0,
+          "range_min": 4.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-30BO",
+          "equipment_name": "30BO",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 120.0,
+          "range_min": 70.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "19연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-44BO",
+          "equipment_name": "44BO",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 240.0,
+          "range_min": 70.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "19연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-54BO1",
+          "equipment_name": "54BO 1호",
+          "material_limit": "CU",
+          "process_name": "연선",
+          "range_max": 800.0,
+          "range_min": 70.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "61연선/19연선/37연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-54BO2",
+          "equipment_name": "54BO 2호",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 800.0,
+          "range_min": 70.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "61연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-54BO3",
+          "equipment_name": "54BO 3호",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 800.0,
+          "range_min": 70.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "61연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-AL6BO",
+          "equipment_name": "AL6BO",
+          "material_limit": "AL",
+          "process_name": "연선",
+          "range_max": 50.0,
+          "range_min": 25.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "7연선"
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "ST-T6B0",
+          "equipment_name": "T6B0",
+          "material_limit": "CU",
+          "process_name": "연선",
+          "range_max": 50.0,
+          "range_min": 16.0,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": "7연선"
+        }
+      ],
+      "연합": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "CA-12BO",
+          "equipment_name": "小4BO(12BO)",
+          "material_limit": null,
+          "process_name": "연합",
+          "range_max": 25.0,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "CA-4BO",
+          "equipment_name": "4BO",
+          "material_limit": null,
+          "process_name": "연합",
+          "range_max": 110.0,
+          "range_min": 35.0,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "CA-LU",
+          "equipment_name": "Laying Up",
+          "material_limit": null,
+          "process_name": "연합",
+          "range_max": 120.0,
+          "range_min": 20.0,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "저압시스": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": "전색상",
+          "equipment_code": "SH-A100",
+          "equipment_name": "A100EXT",
+          "material_limit": "CU",
+          "process_name": "저압시스",
+          "range_max": null,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        },
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": "흑/청",
+          "equipment_code": "SH-A120",
+          "equipment_name": "A120EXT",
+          "material_limit": "CU",
+          "process_name": "저압시스",
+          "range_max": null,
+          "range_min": null,
+          "range_unit": "Ø",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ],
+      "저압절연": [
+        {
+          "base_working_hours": 24.0,
+          "calendar_rule_code": "CAL-STD",
+          "color_group": null,
+          "equipment_code": "EX-B100",
+          "equipment_name": "B100EXT",
+          "material_limit": "CU",
+          "process_name": "저압절연",
+          "range_max": null,
+          "range_min": null,
+          "range_unit": "SQ",
+          "shift_type": "2교대",
+          "stranding_method": null
+        }
+      ]
+    },
+    "equipment_list": [
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "CA-12BO",
+        "equipment_name": "小4BO(12BO)",
+        "material_limit": null,
+        "process_name": "연합",
+        "range_max": 25.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "CA-4BO",
+        "equipment_name": "4BO",
+        "material_limit": null,
+        "process_name": "연합",
+        "range_max": 110.0,
+        "range_min": 35.0,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "CA-LU",
+        "equipment_name": "Laying Up",
+        "material_limit": null,
+        "process_name": "연합",
+        "range_max": 120.0,
+        "range_min": 20.0,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "DS-17D",
+        "equipment_name": "17D",
+        "material_limit": "CU",
+        "process_name": "신선",
+        "range_max": 1.2,
+        "range_min": 0.32,
+        "range_unit": "mm",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "DS-A11D",
+        "equipment_name": "A11D",
+        "material_limit": "CU",
+        "process_name": "신선",
+        "range_max": 4.85,
+        "range_min": 1.8,
+        "range_unit": "mm",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "DS-A11D2",
+        "equipment_name": "A11D 2호기",
+        "material_limit": "AL",
+        "process_name": "신선",
+        "range_max": null,
+        "range_min": null,
+        "range_unit": "mm",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "DS-C11D",
+        "equipment_name": "C11D",
+        "material_limit": "CU",
+        "process_name": "신선",
+        "range_max": 3.8,
+        "range_min": 1.6,
+        "range_unit": "mm",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "DS-N11D",
+        "equipment_name": "N11D",
+        "material_limit": "CU",
+        "process_name": "신선",
+        "range_max": 4.0,
+        "range_min": 1.6,
+        "range_unit": "mm",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "EX-B100",
+        "equipment_name": "B100EXT",
+        "material_limit": "CU",
+        "process_name": "저압절연",
+        "range_max": null,
+        "range_min": null,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "EX-CV1",
+        "equipment_name": "CV 1호",
+        "material_limit": null,
+        "process_name": "고압절연",
+        "range_max": 800.0,
+        "range_min": 25.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "EX-CV2",
+        "equipment_name": "CV 2호",
+        "material_limit": null,
+        "process_name": "고압절연",
+        "range_max": 800.0,
+        "range_min": 25.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": "전색상",
+        "equipment_code": "SH-A100",
+        "equipment_name": "A100EXT",
+        "material_limit": "CU",
+        "process_name": "저압시스",
+        "range_max": null,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": "흑/청",
+        "equipment_code": "SH-A120",
+        "equipment_name": "A120EXT",
+        "material_limit": "CU",
+        "process_name": "저압시스",
+        "range_max": null,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "SH-A150",
+        "equipment_name": "A150EXT",
+        "material_limit": null,
+        "process_name": "고압시스",
+        "range_max": 800.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "SH-B100",
+        "equipment_name": "B150EXT",
+        "material_limit": null,
+        "process_name": "고압시스",
+        "range_max": 800.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-1150BC",
+        "equipment_name": "1150 B/C",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 16.0,
+        "range_min": 4.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-30BO",
+        "equipment_name": "30BO",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 120.0,
+        "range_min": 70.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "19연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-44BO",
+        "equipment_name": "44BO",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 240.0,
+        "range_min": 70.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "19연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-54BO1",
+        "equipment_name": "54BO 1호",
+        "material_limit": "CU",
+        "process_name": "연선",
+        "range_max": 800.0,
+        "range_min": 70.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "61연선/19연선/37연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-54BO2",
+        "equipment_name": "54BO 2호",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 800.0,
+        "range_min": 70.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "61연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-54BO3",
+        "equipment_name": "54BO 3호",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 800.0,
+        "range_min": 70.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "61연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-AL6BO",
+        "equipment_name": "AL6BO",
+        "material_limit": "AL",
+        "process_name": "연선",
+        "range_max": 50.0,
+        "range_min": 25.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "7연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "ST-T6B0",
+        "equipment_name": "T6B0",
+        "material_limit": "CU",
+        "process_name": "연선",
+        "range_max": 50.0,
+        "range_min": 16.0,
+        "range_unit": "SQ",
+        "shift_type": "2교대",
+        "stranding_method": "7연선"
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "TP-1",
+        "equipment_name": "T/P 1호",
+        "material_limit": null,
+        "process_name": "T/P",
+        "range_max": 300.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "TP-2",
+        "equipment_name": "T/P 2호",
+        "material_limit": null,
+        "process_name": "T/P",
+        "range_max": 300.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      },
+      {
+        "base_working_hours": 24.0,
+        "calendar_rule_code": "CAL-STD",
+        "color_group": null,
+        "equipment_code": "TP-GD",
+        "equipment_name": "강대 T/P",
+        "material_limit": null,
+        "process_name": "T/P",
+        "range_max": 300.0,
+        "range_min": null,
+        "range_unit": "Ø",
+        "shift_type": "2교대",
+        "stranding_method": null
+      }
+    ],
+    "speed_map": [
+      [
+        "CA-12BO",
+        1.5,
+        {
+          "cross_section": 1.5,
+          "equipment_code": "CA-12BO",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 0
+        }
+      ],
+      [
+        "CA-12BO",
+        2.5,
+        {
+          "cross_section": 2.5,
+          "equipment_code": "CA-12BO",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 1
+        }
+      ],
+      [
+        "CA-12BO",
+        4.0,
+        {
+          "cross_section": 4.0,
+          "equipment_code": "CA-12BO",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 2
+        }
+      ],
+      [
+        "CA-12BO",
+        6.0,
+        {
+          "cross_section": 6.0,
+          "equipment_code": "CA-12BO",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 3
+        }
+      ],
+      [
+        "CA-4BO",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "CA-4BO",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 4
+        }
+      ],
+      [
+        "CA-4BO",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "CA-4BO",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 5
+        }
+      ],
+      [
+        "CA-4BO",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "CA-4BO",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 6
+        }
+      ],
+      [
+        "CA-4BO",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "CA-4BO",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 7
+        }
+      ],
+      [
+        "CA-LU",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 8
+        }
+      ],
+      [
+        "CA-LU",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 9
+        }
+      ],
+      [
+        "CA-LU",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 10
+        }
+      ],
+      [
+        "CA-LU",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 11
+        }
+      ],
+      [
+        "CA-LU",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 12
+        }
+      ],
+      [
+        "CA-LU",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "CA-LU",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "연합",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 120.0,
+          "setup_start_min": 0.0,
+          "speed_id": 13
+        }
+      ],
+      [
+        "EX-B100",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 3300.0,
+          "line_speed_mpm": 55.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 14
+        }
+      ],
+      [
+        "EX-B100",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 3300.0,
+          "line_speed_mpm": 55.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 15
+        }
+      ],
+      [
+        "EX-B100",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 3300.0,
+          "line_speed_mpm": 55.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 16
+        }
+      ],
+      [
+        "EX-B100",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 3300.0,
+          "line_speed_mpm": 55.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 17
+        }
+      ],
+      [
+        "EX-B100",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 2520.0,
+          "line_speed_mpm": 42.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 18
+        }
+      ],
+      [
+        "EX-B100",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1800.0,
+          "line_speed_mpm": 30.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 19
+        }
+      ],
+      [
+        "EX-B100",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1680.0,
+          "line_speed_mpm": 28.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 20
+        }
+      ],
+      [
+        "EX-B100",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 21
+        }
+      ],
+      [
+        "EX-B100",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1380.0,
+          "line_speed_mpm": 23.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 22
+        }
+      ],
+      [
+        "EX-B100",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 23
+        }
+      ],
+      [
+        "EX-B100",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 1020.0,
+          "line_speed_mpm": 17.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 24
+        }
+      ],
+      [
+        "EX-B100",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "EX-B100",
+          "line_speed_hr": 840.0,
+          "line_speed_mpm": 14.0,
+          "product_type": "저압절연",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 60.0,
+          "setup_start_min": 0.0,
+          "speed_id": 25
+        }
+      ],
+      [
+        "EX-CV1",
+        107.0,
+        {
+          "cross_section": 107.0,
+          "equipment_code": "EX-CV1",
+          "line_speed_hr": 378.0,
+          "line_speed_mpm": 6.3,
+          "product_type": "고압CV 4/0AWG",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 26
+        }
+      ],
+      [
+        "EX-CV1",
+        253.0,
+        {
+          "cross_section": 253.0,
+          "equipment_code": "EX-CV1",
+          "line_speed_hr": 258.0,
+          "line_speed_mpm": 4.3,
+          "product_type": "고압CV 500",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 27
+        }
+      ],
+      [
+        "EX-CV1",
+        380.0,
+        {
+          "cross_section": 380.0,
+          "equipment_code": "EX-CV1",
+          "line_speed_hr": 228.0,
+          "line_speed_mpm": 3.8,
+          "product_type": "고압CV 750",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 28
+        }
+      ],
+      [
+        "EX-CV1",
+        507.0,
+        {
+          "cross_section": 507.0,
+          "equipment_code": "EX-CV1",
+          "line_speed_hr": 222.0,
+          "line_speed_mpm": 3.7,
+          "product_type": "고압CV 1000",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 29
+        }
+      ],
+      [
+        "EX-CV1",
+        633.0,
+        {
+          "cross_section": 633.0,
+          "equipment_code": "EX-CV1",
+          "line_speed_hr": 195.0,
+          "line_speed_mpm": 3.25,
+          "product_type": "고압CV 1250",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 30
+        }
+      ],
+      [
+        "EX-CV2",
+        253.0,
+        {
+          "cross_section": 253.0,
+          "equipment_code": "EX-CV2",
+          "line_speed_hr": 246.0,
+          "line_speed_mpm": 4.1,
+          "product_type": "고압CV 500",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 31
+        }
+      ],
+      [
+        "EX-CV2",
+        380.0,
+        {
+          "cross_section": 380.0,
+          "equipment_code": "EX-CV2",
+          "line_speed_hr": 222.0,
+          "line_speed_mpm": 3.7,
+          "product_type": "고압CV 750",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 32
+        }
+      ],
+      [
+        "EX-CV2",
+        507.0,
+        {
+          "cross_section": 507.0,
+          "equipment_code": "EX-CV2",
+          "line_speed_hr": 204.0,
+          "line_speed_mpm": 3.4,
+          "product_type": "고압CV 1000",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 33
+        }
+      ],
+      [
+        "EX-CV2",
+        633.0,
+        {
+          "cross_section": 633.0,
+          "equipment_code": "EX-CV2",
+          "line_speed_hr": 186.0,
+          "line_speed_mpm": 3.1,
+          "product_type": "고압CV 1250",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 300.0,
+          "setup_start_min": 0.0,
+          "speed_id": 34
+        }
+      ],
+      [
+        "SH-A100",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 35
+        }
+      ],
+      [
+        "SH-A100",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 1260.0,
+          "line_speed_mpm": 21.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 36
+        }
+      ],
+      [
+        "SH-A100",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 1140.0,
+          "line_speed_mpm": 19.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 37
+        }
+      ],
+      [
+        "SH-A100",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 1020.0,
+          "line_speed_mpm": 17.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 38
+        }
+      ],
+      [
+        "SH-A100",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 39
+        }
+      ],
+      [
+        "SH-A100",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 40
+        }
+      ],
+      [
+        "SH-A100",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 41
+        }
+      ],
+      [
+        "SH-A100",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "HFCO",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 42
+        }
+      ],
+      [
+        "SH-A100",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "HFCO",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 43
+        }
+      ],
+      [
+        "SH-A100",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "HFCO",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 44
+        }
+      ],
+      [
+        "SH-A100",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 480.0,
+          "line_speed_mpm": 8.0,
+          "product_type": "HFCO",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 45
+        }
+      ],
+      [
+        "SH-A100",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "SH-A100",
+          "line_speed_hr": 420.0,
+          "line_speed_mpm": 7.0,
+          "product_type": "HFCO",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 46
+        }
+      ],
+      [
+        "SH-A120",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 47
+        }
+      ],
+      [
+        "SH-A120",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 1260.0,
+          "line_speed_mpm": 21.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 48
+        }
+      ],
+      [
+        "SH-A120",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 1140.0,
+          "line_speed_mpm": 19.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 49
+        }
+      ],
+      [
+        "SH-A120",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 1020.0,
+          "line_speed_mpm": 17.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 50
+        }
+      ],
+      [
+        "SH-A120",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 51
+        }
+      ],
+      [
+        "SH-A120",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 52
+        }
+      ],
+      [
+        "SH-A120",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "TFR-GV",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 53
+        }
+      ],
+      [
+        "SH-A120",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "TFR-CV 1C",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 54
+        }
+      ],
+      [
+        "SH-A120",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 960.0,
+          "line_speed_mpm": 16.0,
+          "product_type": "TFR-CV 1C",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 55
+        }
+      ],
+      [
+        "SH-A120",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "TFR-CV 1C",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 56
+        }
+      ],
+      [
+        "SH-A120",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "TFR-CV 1C",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 57
+        }
+      ],
+      [
+        "SH-A120",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "SH-A120",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "TFR-CV 1C",
+          "setup_color_min": 120.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 58
+        }
+      ],
+      [
+        "SH-A150",
+        253.0,
+        {
+          "cross_section": 253.0,
+          "equipment_code": "SH-A150",
+          "line_speed_hr": 420.0,
+          "line_speed_mpm": 7.0,
+          "product_type": "고압시스 500",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 59
+        }
+      ],
+      [
+        "SH-A150",
+        380.0,
+        {
+          "cross_section": 380.0,
+          "equipment_code": "SH-A150",
+          "line_speed_hr": 390.0,
+          "line_speed_mpm": 6.5,
+          "product_type": "고압시스 750",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 60
+        }
+      ],
+      [
+        "SH-A150",
+        507.0,
+        {
+          "cross_section": 507.0,
+          "equipment_code": "SH-A150",
+          "line_speed_hr": 360.0,
+          "line_speed_mpm": 6.0,
+          "product_type": "고압시스 1000",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 61
+        }
+      ],
+      [
+        "SH-A150",
+        633.0,
+        {
+          "cross_section": 633.0,
+          "equipment_code": "SH-A150",
+          "line_speed_hr": 330.0,
+          "line_speed_mpm": 5.5,
+          "product_type": "고압시스 1250",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 62
+        }
+      ],
+      [
+        "SH-B100",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "SH-B100",
+          "line_speed_hr": 360.0,
+          "line_speed_mpm": 6.0,
+          "product_type": "고압시스 저용량",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 63
+        }
+      ],
+      [
+        "SH-B100",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "SH-B100",
+          "line_speed_hr": 330.0,
+          "line_speed_mpm": 5.5,
+          "product_type": "고압시스 저용량",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 64
+        }
+      ],
+      [
+        "SH-B100",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "SH-B100",
+          "line_speed_hr": 300.0,
+          "line_speed_mpm": 5.0,
+          "product_type": "고압시스 저용량",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 30.0,
+          "setup_start_min": 0.0,
+          "speed_id": 65
+        }
+      ],
+      [
+        "SH-B100",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "SH-B100",
+          "line_speed_hr": 270.0,
+          "line_speed_mpm": 4.5,
+          "product_type": "고압시스 저용량",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 66
+        }
+      ],
+      [
+        "ST-1150BC",
+        4.0,
+        {
+          "cross_section": 4.0,
+          "equipment_code": "ST-1150BC",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "B/C AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 67
+        }
+      ],
+      [
+        "ST-1150BC",
+        6.0,
+        {
+          "cross_section": 6.0,
+          "equipment_code": "ST-1150BC",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "B/C AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 68
+        }
+      ],
+      [
+        "ST-1150BC",
+        10.0,
+        {
+          "cross_section": 10.0,
+          "equipment_code": "ST-1150BC",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "B/C AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 69
+        }
+      ],
+      [
+        "ST-1150BC",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "ST-1150BC",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "B/C AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 70
+        }
+      ],
+      [
+        "ST-30BO",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "ST-30BO",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 71
+        }
+      ],
+      [
+        "ST-30BO",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "ST-30BO",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 72
+        }
+      ],
+      [
+        "ST-30BO",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "ST-30BO",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 73
+        }
+      ],
+      [
+        "ST-44BO",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 74
+        }
+      ],
+      [
+        "ST-44BO",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 660.0,
+          "line_speed_mpm": 11.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 75
+        }
+      ],
+      [
+        "ST-44BO",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 76
+        }
+      ],
+      [
+        "ST-44BO",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 77
+        }
+      ],
+      [
+        "ST-44BO",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 78
+        }
+      ],
+      [
+        "ST-44BO",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "ST-44BO",
+          "line_speed_hr": 480.0,
+          "line_speed_mpm": 8.0,
+          "product_type": "19연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 79
+        }
+      ],
+      [
+        "ST-54BO1",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 11.7,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 80
+        }
+      ],
+      [
+        "ST-54BO1",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 11.7,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 81
+        }
+      ],
+      [
+        "ST-54BO1",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 11.7,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 82
+        }
+      ],
+      [
+        "ST-54BO1",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.8,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 83
+        }
+      ],
+      [
+        "ST-54BO1",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.8,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 84
+        }
+      ],
+      [
+        "ST-54BO1",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 85
+        }
+      ],
+      [
+        "ST-54BO1",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 86
+        }
+      ],
+      [
+        "ST-54BO1",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "ST-54BO1",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 87
+        }
+      ],
+      [
+        "ST-54BO2",
+        380.0,
+        {
+          "cross_section": 380.0,
+          "equipment_code": "ST-54BO2",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 88
+        }
+      ],
+      [
+        "ST-54BO2",
+        507.0,
+        {
+          "cross_section": 507.0,
+          "equipment_code": "ST-54BO2",
+          "line_speed_hr": null,
+          "line_speed_mpm": 8.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 50.0,
+          "speed_id": 89
+        }
+      ],
+      [
+        "ST-54BO3",
+        107.0,
+        {
+          "cross_section": 107.0,
+          "equipment_code": "ST-54BO3",
+          "line_speed_hr": null,
+          "line_speed_mpm": 11.7,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 90
+        }
+      ],
+      [
+        "ST-54BO3",
+        380.0,
+        {
+          "cross_section": 380.0,
+          "equipment_code": "ST-54BO3",
+          "line_speed_hr": null,
+          "line_speed_mpm": 10.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 40.0,
+          "speed_id": 91
+        }
+      ],
+      [
+        "ST-54BO3",
+        633.0,
+        {
+          "cross_section": 633.0,
+          "equipment_code": "ST-54BO3",
+          "line_speed_hr": null,
+          "line_speed_mpm": 7.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 50.0,
+          "speed_id": 92
+        }
+      ],
+      [
+        "ST-AL6BO",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "ST-AL6BO",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "7연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 93
+        }
+      ],
+      [
+        "ST-AL6BO",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "ST-AL6BO",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "7연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 94
+        }
+      ],
+      [
+        "ST-AL6BO",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "ST-AL6BO",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "7연선 AL",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 0.0,
+          "speed_id": 95
+        }
+      ],
+      [
+        "ST-T6B0",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "ST-T6B0",
+          "line_speed_hr": null,
+          "line_speed_mpm": 25.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 30.0,
+          "speed_id": 96
+        }
+      ],
+      [
+        "ST-T6B0",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "ST-T6B0",
+          "line_speed_hr": null,
+          "line_speed_mpm": 25.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 30.0,
+          "speed_id": 97
+        }
+      ],
+      [
+        "ST-T6B0",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "ST-T6B0",
+          "line_speed_hr": null,
+          "line_speed_mpm": 25.0,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 30.0,
+          "speed_id": 98
+        }
+      ],
+      [
+        "ST-T6B0",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "ST-T6B0",
+          "line_speed_hr": null,
+          "line_speed_mpm": 13.3,
+          "product_type": "연선",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 210.0,
+          "setup_start_min": 30.0,
+          "speed_id": 99
+        }
+      ],
+      [
+        "TP-1",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 100
+        }
+      ],
+      [
+        "TP-1",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 1440.0,
+          "line_speed_mpm": 24.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 101
+        }
+      ],
+      [
+        "TP-1",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 1320.0,
+          "line_speed_mpm": 22.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 102
+        }
+      ],
+      [
+        "TP-1",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 103
+        }
+      ],
+      [
+        "TP-1",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 104
+        }
+      ],
+      [
+        "TP-1",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 960.0,
+          "line_speed_mpm": 16.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 105
+        }
+      ],
+      [
+        "TP-1",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 840.0,
+          "line_speed_mpm": 14.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 106
+        }
+      ],
+      [
+        "TP-1",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 107
+        }
+      ],
+      [
+        "TP-1",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 108
+        }
+      ],
+      [
+        "TP-1",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 109
+        }
+      ],
+      [
+        "TP-1",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 110
+        }
+      ],
+      [
+        "TP-1",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "TP-1",
+          "line_speed_hr": 480.0,
+          "line_speed_mpm": 8.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 111
+        }
+      ],
+      [
+        "TP-2",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 2400.0,
+          "line_speed_mpm": 40.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 112
+        }
+      ],
+      [
+        "TP-2",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 2280.0,
+          "line_speed_mpm": 38.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 113
+        }
+      ],
+      [
+        "TP-2",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 2100.0,
+          "line_speed_mpm": 35.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 114
+        }
+      ],
+      [
+        "TP-2",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1920.0,
+          "line_speed_mpm": 32.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 115
+        }
+      ],
+      [
+        "TP-2",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1680.0,
+          "line_speed_mpm": 28.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 116
+        }
+      ],
+      [
+        "TP-2",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 117
+        }
+      ],
+      [
+        "TP-2",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1320.0,
+          "line_speed_mpm": 22.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 118
+        }
+      ],
+      [
+        "TP-2",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 119
+        }
+      ],
+      [
+        "TP-2",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 120
+        }
+      ],
+      [
+        "TP-2",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 900.0,
+          "line_speed_mpm": 15.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 121
+        }
+      ],
+      [
+        "TP-2",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 122
+        }
+      ],
+      [
+        "TP-2",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "TP-2",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 123
+        }
+      ],
+      [
+        "TP-GD",
+        16.0,
+        {
+          "cross_section": 16.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 1500.0,
+          "line_speed_mpm": 25.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 124
+        }
+      ],
+      [
+        "TP-GD",
+        25.0,
+        {
+          "cross_section": 25.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 1440.0,
+          "line_speed_mpm": 24.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 125
+        }
+      ],
+      [
+        "TP-GD",
+        35.0,
+        {
+          "cross_section": 35.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 1320.0,
+          "line_speed_mpm": 22.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 126
+        }
+      ],
+      [
+        "TP-GD",
+        50.0,
+        {
+          "cross_section": 50.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 1200.0,
+          "line_speed_mpm": 20.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 127
+        }
+      ],
+      [
+        "TP-GD",
+        70.0,
+        {
+          "cross_section": 70.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 1080.0,
+          "line_speed_mpm": 18.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 128
+        }
+      ],
+      [
+        "TP-GD",
+        95.0,
+        {
+          "cross_section": 95.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 960.0,
+          "line_speed_mpm": 16.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 129
+        }
+      ],
+      [
+        "TP-GD",
+        120.0,
+        {
+          "cross_section": 120.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 840.0,
+          "line_speed_mpm": 14.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 130
+        }
+      ],
+      [
+        "TP-GD",
+        150.0,
+        {
+          "cross_section": 150.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 780.0,
+          "line_speed_mpm": 13.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 131
+        }
+      ],
+      [
+        "TP-GD",
+        185.0,
+        {
+          "cross_section": 185.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 720.0,
+          "line_speed_mpm": 12.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 132
+        }
+      ],
+      [
+        "TP-GD",
+        240.0,
+        {
+          "cross_section": 240.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 600.0,
+          "line_speed_mpm": 10.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 180.0,
+          "setup_start_min": 0.0,
+          "speed_id": 133
+        }
+      ],
+      [
+        "TP-GD",
+        300.0,
+        {
+          "cross_section": 300.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 540.0,
+          "line_speed_mpm": 9.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 134
+        }
+      ],
+      [
+        "TP-GD",
+        400.0,
+        {
+          "cross_section": 400.0,
+          "equipment_code": "TP-GD",
+          "line_speed_hr": 480.0,
+          "line_speed_mpm": 8.0,
+          "product_type": "T/P",
+          "setup_color_min": 0.0,
+          "setup_compound_min": 0.0,
+          "setup_spec_min": 999.0,
+          "setup_start_min": 0.0,
+          "speed_id": 135
+        }
+      ]
+    ],
+    "sq_to_wire_d": {
+      "120": 2.92,
+      "150": 2.46,
+      "16": 1.75,
+      "185": 2.64,
+      "200": 2.75,
+      "240": 3.02,
+      "25": 2.21,
+      "300": 2.64,
+      "35": 2.64,
+      "400": 2.92,
+      "50": 3.02,
+      "633": 1.2,
+      "70": 2.21,
+      "95": 2.64
+    },
+    "welding_min": 30.0,
+    "wip_skipped": 0
+  },
+  "variant": "all"
+}
