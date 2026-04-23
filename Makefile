@@ -38,12 +38,12 @@ doctor:
 	@BRANCH=$$(git branch --show-current); \
 	 WT=$$(basename $$(pwd)); \
 	 case "$$WT" in \
-	   KBI_PoC_track_a) [[ "$$BRANCH" == "refactoring/track-a-solver" ]] \
+	   KBI_PoC_track_a) [[ "$$BRANCH" == "refactoring-track-a-solver" ]] \
 	     && echo "  ✓ branch matches worktree" \
-	     || echo "  ✗ expected refactoring/track-a-solver, got $$BRANCH" ;; \
-	   KBI_PoC_track_b) [[ "$$BRANCH" == "refactoring/track-b-admin" ]] \
+	     || echo "  ✗ expected refactoring-track-a-solver, got $$BRANCH" ;; \
+	   KBI_PoC_track_b) [[ "$$BRANCH" == "refactoring-track-b-admin" ]] \
 	     && echo "  ✓ branch matches worktree" \
-	     || echo "  ✗ expected refactoring/track-b-admin, got $$BRANCH" ;; \
+	     || echo "  ✗ expected refactoring-track-b-admin, got $$BRANCH" ;; \
 	   *) echo "  ✓ main worktree ($$BRANCH)" ;; \
 	 esac
 
