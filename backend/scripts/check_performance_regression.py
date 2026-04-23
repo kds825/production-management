@@ -84,15 +84,31 @@ os.environ["CPSAT_WORKERS"] = "1"
 import statistics
 import sys
 import time
+import traceback  # noqa: F401  — used in `if __name__` exit-hygiene handler
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
 
 # Path setup — mirrors parity_freeze_current_behavior.py so `app.*` /
 # `tests.*` imports work regardless of cwd (make target vs manual run).
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
+
+# ── CWD-robust .env loading ─────────────────────────────────────────────
+# `app/config.py` sets `env_file = ".env"` (relative to CWD), so running
+# this script from repo root instead of `backend/` silently falls back
+# to the DATABASE_URL default (local Docker DB) — whose schema drifts
+# from Supabase and triggers UndefinedColumn on the first query. Loading
+# `backend/.env` explicitly here makes the script CWD-agnostic without
+# touching `app/config.py` (broader scope — separate task).
+#
+# `override=False` respects values already set by the caller (CI, devs
+# running `DATABASE_URL=... python scripts/...`), matching pydantic-
+# settings' own precedence (env > .env file).
+load_dotenv(_BACKEND_ROOT / ".env", override=False)
 
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -628,4 +644,19 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Per spec A1: exit 1 is RESERVED for perf FAIL. Any other unhandled
+    # exception (sqlalchemy.exc.ProgrammingError from a schema mismatch,
+    # psycopg2 OperationalError from a DB outage, FileNotFoundError from
+    # a bad --baseline path that slipped past our own validator, etc.)
+    # must map to _EXIT_INTERNAL so CI doesn't mis-file infra failures
+    # as perf regressions. The traceback still goes to stderr so CI logs
+    # remain debuggable.
+    try:
+        sys.exit(main())
+    except Exception as exc:  # noqa: BLE001 — intentional top-level catch-all
+        print(
+            f"[perf-check] INTERNAL ERROR: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(_EXIT_INTERNAL)
