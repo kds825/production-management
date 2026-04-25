@@ -194,7 +194,10 @@ def auto_schedule(
     #   4) add_hint 는 silent-fail 이라 batch_group 이 신규 모델에 없어도
     #      안전 (cp_sat_optimizer 주석 참조).
     if use_cpsat and "warm_start_hints" not in kwargs:
-        from app.services.cp_sat_optimizer import _datetime_to_wmin, resolve_base_date
+        from app.services.scheduling_shared.calendar_ops import (
+            _datetime_to_wmin,
+            resolve_base_date,
+        )
         from app.infrastructure.models.production_batch import ProductionBatch
 
         _hint_base = resolve_base_date(run_label, kwargs.get("base_date"))
@@ -2393,7 +2396,7 @@ def _reschedule_affected_groups_cpsat(
     #   → 힌트 재사용으로 feasibility warm-up 단계 생략 → 2.5~5× speedup 기대.
     #   frozen 그룹은 이미 hard-pin 되므로 힌트 redundant — 스킵.
     #   add_hint() 는 silent-fail 이라 batch_group 이 신규 모델에 없어도 안전.
-    from app.services.cp_sat_optimizer import _datetime_to_wmin
+    from app.services.scheduling_shared.calendar_ops import _datetime_to_wmin
 
     warm_start_hints: dict[str, dict] = {}
     for t in existing_tasks:
@@ -2796,7 +2799,7 @@ def reschedule(
                 tzinfo=None
             )
 
-    from app.services.cp_sat_optimizer import _datetime_to_wmin
+    from app.services.scheduling_shared.calendar_ops import _datetime_to_wmin
 
     warm_start_hints: dict[str, dict] = {}
     for t in existing_tasks:
