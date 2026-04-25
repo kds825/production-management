@@ -211,6 +211,18 @@ export default function SchedulingReviewPage() {
     }
   }, []);
 
+  // URL 쿼리스트링에서 run_label 우선 — 운영자가 외부에서 깊은-링크로 전달했을 때
+  // 페이지가 임의의 최신 run 으로 폴백하지 않도록 한다.
+  // Next 16 의 next/navigation `useSearchParams` 는 SSR Suspense boundary 를
+  // 요구해 build 가 실패한다. client-only 페이지이므로 mount 시 한 번 직접
+  // window.location 을 읽는 편이 단순하고 안전하다.
+  const [urlRunLabel, setUrlRunLabel] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setUrlRunLabel(params.get("run_label"));
+  }, []);
+
   // 런 목록 로드
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
@@ -220,10 +232,18 @@ export default function SchedulingReviewPage() {
         const data: PipelineRun[] = await res.json();
         setRuns(data);
         if (data.length > 0) {
-          // 현재 선택된 run_label이 목록에 없으면 최신(첫 번째) run_label로 교체
-          setSelectedRun((prev) =>
-            data.some((r) => r.run_label === prev) ? prev : data[0].run_label,
-          );
+          setSelectedRun((prev) => {
+            // 1순위: URL 쿼리에 run_label 이 있고 응답 목록에도 있으면 그걸로.
+            if (urlRunLabel && data.some((r) => r.run_label === urlRunLabel)) {
+              return urlRunLabel;
+            }
+            // 2순위: 이미 선택돼 있고 목록에 살아 있으면 유지.
+            if (prev && data.some((r) => r.run_label === prev)) {
+              return prev;
+            }
+            // 3순위: 최신 (응답 첫 번째).
+            return data[0].run_label;
+          });
         }
       }
     } catch {
@@ -231,7 +251,7 @@ export default function SchedulingReviewPage() {
     } finally {
       setRunsLoading(false);
     }
-  }, []);
+  }, [urlRunLabel]);
 
   // Excel 다운로드
   const handleExcelDownload = useCallback(async () => {

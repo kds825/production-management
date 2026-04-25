@@ -2030,6 +2030,10 @@ def list_runs(db: Session = Depends(get_db)) -> list[dict]:
             # NULL 과 non-NULL 이 섞일 경우 MAX 로 비-NULL 우선. 최초 run 은 NULL 유지.
             func.max(ProductionBatch.parent_run_label).label("parent_run_label"),
         )
+        # `test-` prefix 는 pytest fixture 가 SAVEPOINT 밖에서 commit 되어 leak
+        # 됐을 때만 등장. 운영 UI 가 test fixture 를 최신 run 으로 골라 0배치
+        # 화면을 띄우는 회귀를 막기 위해 응답에서 제외.
+        .filter(~ProductionBatch.run_label.like("test-%"))
         .group_by(ProductionBatch.run_label)
         .order_by(func.min(ProductionBatch.created_at).desc())
         .all()
