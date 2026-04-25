@@ -275,3 +275,139 @@ def preview_impact(
         "total_delta_min": 0.0,
         "note": "preview-impact 는 PoC 범위에서 4-1 stranding_min 만 지원",
     }
+
+
+# ── 베이스라인(스냅샷) 비교 ─────────────────────────────────────────────────
+#
+# Why: §8b 에 따라 "베이스라인" 은 별도 테이블이 아니라
+# constraint_config_history.changed_by 가 'BASELINE_<tag>_<iso>' 패턴인
+# 행 그룹으로 정의된다. 이 그룹의 new_params_json 묶음을 두 개 모아
+# constraint_id × params 키 단위로 set-compare 하여 diff 를 만든다.
+
+
+def _parse_baseline_tag(changed_by: str) -> str:
+    """'BASELINE_<tag>_<iso>' 에서 사람이 읽는 <tag> 부분만 추출.
+
+    Why: tag 는 사용자가 입력한 자유 문자열이고, 끝의 ISO timestamp 만 시스템이
+    덧붙인다. 단순 split('_') 는 tag 자체에 '_' 가 포함된 경우 깨지므로
+    rsplit 으로 마지막 segment(=ISO) 만 잘라낸다.
+    """
+    if not changed_by.startswith("BASELINE_"):
+        return changed_by
+    body = changed_by[len("BASELINE_") :]
+    # 마지막 '_' 기준으로 한 번만 분리 → tag 에 '_' 가 있어도 보존
+    if "_" in body:
+        tag, _iso = body.rsplit("_", 1)
+        return tag
+    return body
+
+
+@router.get("/baselines", summary="저장된 베이스라인 스냅샷 목록")
+def list_baselines(db: Session = Depends(get_db)):
+    """`changed_by LIKE 'BASELINE_%'` 인 history 그룹을 chronological 로 반환.
+
+    응답: {baselines: [{tag, changed_by, created_at, row_count}]} —
+    `created_at` 은 그룹 내 최신(=대표) changed_at.
+    """
+    rows = (
+        db.query(
+            ConstraintConfigHistory.changed_by,
+            func.max(ConstraintConfigHistory.changed_at).label("created_at"),
+            func.count(ConstraintConfigHistory.history_id).label("row_count"),
+        )
+        .filter(ConstraintConfigHistory.changed_by.like("BASELINE_%"))
+        .group_by(ConstraintConfigHistory.changed_by)
+        .order_by(func.max(ConstraintConfigHistory.changed_at).desc())
+        .all()
+    )
+    return {
+        "baselines": [
+            {
+                "tag": _parse_baseline_tag(r.changed_by),
+                "changed_by": r.changed_by,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "row_count": int(r.row_count),
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+def _latest_params_per_constraint(db: Session, changed_by: str) -> dict[str, dict]:
+    """베이스라인 그룹 내에서 constraint_id 별 최신 new_params_json 을 집계.
+
+    Why: 같은 베이스라인 태그 안에 동일 constraint_id 가 여러 번 들어있을 가능성은
+    낮지만, history 정의상 가능하다. 결정론을 위해 changed_at DESC, history_id DESC
+    로 첫 번째 행을 채택.
+    """
+    rows = (
+        db.query(ConstraintConfigHistory)
+        .filter(ConstraintConfigHistory.changed_by == changed_by)
+        .order_by(
+            ConstraintConfigHistory.changed_at.desc(),
+            ConstraintConfigHistory.history_id.desc(),
+        )
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r.constraint_id in out:
+            continue  # 더 최신 행이 이미 채택됨
+        out[r.constraint_id] = dict(r.new_params_json or {})
+    return out
+
+
+@router.get(
+    "/versions/{a}/diff/{b}",
+    summary="두 베이스라인 사이의 파라미터 차이",
+)
+def diff_versions(a: str, b: str, db: Session = Depends(get_db)):
+    """두 `changed_by` 베이스라인 태그 사이의 params_json 차이를 반환.
+
+    각 constraint_id 의 `new_params_json` 을 키 단위로 비교하여
+    {constraint_id, field, value_a, value_b} 행을 emit. 한쪽에만 존재하는 키는
+    상대 측 값을 None 으로 표기.
+
+    404: a 또는 b 의 changed_by 그룹이 비어 있는 경우.
+    """
+    params_a = _latest_params_per_constraint(db, a)
+    params_b = _latest_params_per_constraint(db, b)
+
+    # Why: 베이스라인이 존재하는지 확인 — 빈 dict 면 history 가 없음.
+    if not params_a:
+        raise HTTPException(
+            status_code=404,
+            detail=f"베이스라인 '{a}' 를 찾을 수 없습니다.",
+        )
+    if not params_b:
+        raise HTTPException(
+            status_code=404,
+            detail=f"베이스라인 '{b}' 를 찾을 수 없습니다.",
+        )
+
+    diff_rows: list[dict] = []
+    all_constraint_ids = set(params_a.keys()) | set(params_b.keys())
+    for cid in sorted(all_constraint_ids):
+        pa = params_a.get(cid, {})
+        pb = params_b.get(cid, {})
+        all_keys = set(pa.keys()) | set(pb.keys())
+        for k in sorted(all_keys):
+            va = pa.get(k)
+            vb = pb.get(k)
+            if va != vb:
+                diff_rows.append(
+                    {
+                        "constraint_id": cid,
+                        "field": k,
+                        "value_a": va,
+                        "value_b": vb,
+                    }
+                )
+
+    return {
+        "version_a": a,
+        "version_b": b,
+        "diff": diff_rows,
+        "total": len(diff_rows),
+    }
