@@ -22,8 +22,10 @@ os.environ["CPSAT_WORKERS"] = "1"
 
 # Why: parity tests must never hit a real LLM (cost + nondeterminism). New Decision
 # Card narrator (decision_narrator.py + llm_providers/) reads LLM_PROVIDER at call
-# time, so set early. Use setdefault so dev can override with `LLM_PROVIDER=anthropic`.
-os.environ.setdefault("LLM_PROVIDER", "template")
+# time, so set early. Force-overwrite (not setdefault) — 이전 setdefault 는 dev shell
+# 의 LLM_PROVIDER=anthropic 을 보존해 parity 가 무음으로 실 LLM 을 호출할 위험이
+# 있었다. 로컬에서 anthropic 호출이 필요하면 conftest 외부 e2e 스크립트로 분리.
+os.environ["LLM_PROVIDER"] = "template"
 
 from app.infrastructure.database import SessionLocal  # noqa: E402
 

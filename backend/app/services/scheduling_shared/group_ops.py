@@ -281,7 +281,6 @@ def _schedule_multi_equipment(
 
     rep = group_batches[0]
     sq = int(rep.sq_mm2 or 0)
-    sq_key = (rep.process_name, sq)
 
     # 그룹 전체 duration 계산
     # line_speed fallback: rep에 없으면 speed_map에서 설비별 기본값 조회

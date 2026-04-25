@@ -68,7 +68,7 @@ test-frontend:
 	cd frontend && npm run test
 
 lint:
-	cd backend && source venv/bin/activate && ruff check . || true
+	cd backend && source venv/bin/activate && ruff check .
 	cd frontend && npm run lint
 
 typecheck:

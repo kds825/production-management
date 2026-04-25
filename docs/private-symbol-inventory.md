@@ -34,22 +34,25 @@ Authoritative list of every `_private` symbol currently imported from `app.servi
 - `_compose_sheath_group_key`
 - `_find_speed`
 
-## Also imported by non-test code (7 symbols)
+## Also imported by non-test code (10 symbols)
 
-| Module               | Symbol                   | Importer                                           |
-| -------------------- | ------------------------ | -------------------------------------------------- |
-| `schedule_optimizer` | `_DEFAULT_WELDING_MIN`   | `backend/app/services/solver/input_builder.py`     |
-| `schedule_optimizer` | `_WIP_SKIP_PROCESSES`    | `backend/app/services/solver/input_builder.py`     |
-| `schedule_optimizer` | `_extract_core_main_sq`  | `backend/app/services/solver/model_builder.py`     |
-| `schedule_optimizer` | `_is_core_group`         | `backend/app/services/solver/model_builder.py`     |
-| `schedule_optimizer` | `_st_sq`                 | `backend/app/services/solver/model_builder.py`     |
-| `batch_grouping`     | `_SHEATH_COLOR_RANK`     | `backend/app/services/sheath_cluster.py`           |
-| `batch_grouping`     | `_WIP_COVERED_PROCESSES` | `backend/app/presentation/routes/plan_pipeline.py` |
+| Module | Symbol | Importer |
+| --- | --- | --- |
+| `schedule_optimizer` | `_DEFAULT_WELDING_MIN` | `backend/app/services/solver/input_builder.py` |
+| `schedule_optimizer` | `_SHEATH_ROUTING` | `backend/app/services/scheduling_shared/slot_filters.py` |
+| `schedule_optimizer` | `_WIP_SKIP_PROCESSES` | `backend/app/services/solver/input_builder.py` |
+| `schedule_optimizer` | `_extract_core_main_sq` | `backend/app/services/solver/model_builder.py` |
+| `schedule_optimizer` | `_find_available_slot` | `backend/app/services/scheduling_shared/group_ops.py` |
+| `schedule_optimizer` | `_get_sheath_type` | `backend/app/services/scheduling_shared/slot_filters.py` |
+| `schedule_optimizer` | `_is_core_group` | `backend/app/services/solver/model_builder.py` |
+| `schedule_optimizer` | `_st_sq` | `backend/app/services/solver/model_builder.py` |
+| `batch_grouping` | `_SHEATH_COLOR_RANK` | `backend/app/services/greedy/auto_schedule.py` |
+| `batch_grouping` | `_SHEATH_COLOR_RANK` | `backend/app/services/sheath_cluster.py` |
+| `batch_grouping` | `_WIP_COVERED_PROCESSES` | `backend/app/presentation/routes/plan_pipeline.py` |
 
 ---
 
-**Totals.** Test-side private imports: **17** across 3 modules. Non-test-side private imports: **7**. Distinct (module, symbol) pairs that must survive Weeks 2/3: **24**.
-
+**Totals.** Test-side private imports: **17** across 3 modules. Non-test-side private imports: **10**. Distinct (module, symbol) pairs that must survive Weeks 2/3: **27**.
 ---
 
 ## Week 3 assignment table (Task 3A.0)
