@@ -65,15 +65,41 @@ LLM_NONDETERMINISTIC = {
     "/api/audit/explain/{batch_id}",
 }
 
+# Shape-only — DB-state drift / binary metadata noise. 같은 Supabase 를
+# 양 서버가 공유하므로 list 길이가 GET 사이에 바뀔 수 있고, xlsx 파일은
+# 생성 시각 metadata 가 byte 단위로 들어감.
+STATEFUL_OR_BINARY = {
+    "/api/pipeline/runs",  # Supabase 동시 변경 시 length 변동
+    "/api/pipeline/stage1/{run_label}/export",  # xlsx 생성 timestamp metadata
+    "/api/pipeline/wip-template",  # xlsx 생성 timestamp metadata
+}
 
-def shape_only(value, depth: int = 0):
-    """LLM endpoint 비교용 — 값 대신 type + len/keys 만 추출."""
+
+def shape_only(value, depth: int = 0, *, hide_list_len: bool = False):
+    """LLM / stateful endpoint 비교용 — 값 대신 type + (선택적) keys 만 추출.
+
+    hide_list_len=True 면 list 길이도 무시 (DB drift 대비). False (기본) 면
+    list 의 element type 만 비교 (LLM 비결정론 — 길이는 같아야 함).
+    """
     if depth > 4:
         return type(value).__name__
     if isinstance(value, dict):
-        return {k: shape_only(v, depth + 1) for k, v in sorted(value.items())}
+        return {
+            k: shape_only(v, depth + 1, hide_list_len=hide_list_len)
+            for k, v in sorted(value.items())
+        }
     if isinstance(value, list):
+        if hide_list_len:
+            # length 차이도 무시 — element type 만 비교 (첫 element 만 sample).
+            return (
+                ["<list>", shape_only(value[0], depth + 1, hide_list_len=True)]
+                if value
+                else ["<empty>"]
+            )
         return [f"<list len={len(value)}>"]
+    if isinstance(value, (int, float)) and hide_list_len:
+        # byte_len 같은 metadata 숫자 무시 (xlsx timestamp)
+        return type(value).__name__
     return type(value).__name__
 
 
@@ -328,6 +354,12 @@ def run_diff(refac_base: str, main_base: str) -> Report:
             result.error = f"refac:{re_} main:{me}"
         elif rs != ms:
             result.diff = [f"status_code: refac={rs} main={ms}"]
+        elif tmpl in STATEFUL_OR_BINARY:
+            # DB drift / 바이너리 metadata — list 길이/숫자 무시한 shape.
+            result.diff = deep_diff(
+                shape_only(rb, hide_list_len=True),
+                shape_only(mb, hide_list_len=True),
+            )
         elif tmpl in LLM_NONDETERMINISTIC:
             # LLM 비결정론 — shape (top-level keys + 배열 길이) 만 비교.
             result.diff = deep_diff(shape_only(rb), shape_only(mb))
