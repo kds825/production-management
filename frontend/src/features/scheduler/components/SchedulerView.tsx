@@ -16,6 +16,7 @@ import { EquipmentSidebar } from "./EquipmentSidebar";
 import { GanttTaskBlock } from "./GanttTaskBlock";
 import { TodayMarker } from "./TodayMarker";
 import { ChainHighlightOverlay } from "./ChainHighlightOverlay";
+import { DecisionCard } from "./DecisionCard";
 import { useTimelineNavigation } from "../../../shared/hooks/useTimelineNavigation";
 import type { ScheduleTask, Equipment, ViewFilterType } from "../types";
 import type { CascadePreviewResponse, PushEntry } from "../api/cascade.types";
@@ -1101,6 +1102,23 @@ export function SchedulerView({
     [compareMode.diffResponse],
   );
 
+  // Week 4 Task 4B.3 — Decision Card 인라인 슬롯.
+  // 클릭으로 선택된 task 의 batch_id 를 찾아 해당 행 아래에만 카드 1개를 렌더한다.
+  // 왜 별도 store 슬라이스를 두지 않는가:
+  //   selectTask() 가 이미 chain 하이라이트 용도로 selectedTaskId 를 관리하므로
+  //   "선택된 배치" 의미를 1소스로 유지 — 동일 클릭이 양쪽 효과 동시 트리거.
+  const selectedTaskId = useScheduleStore((s) => s.selectedTaskId);
+  const selectedTask = useMemo(
+    () =>
+      selectedTaskId
+        ? (tasks.find((t) => t.id === selectedTaskId) ?? null)
+        : null,
+    [selectedTaskId, tasks],
+  );
+  // batch_id 가 없는 task (예: 미배정 임시 블록) 는 카드 미표시 — 백엔드 트레이스 매칭 불가.
+  const selectedBatchId =
+    selectedTask?.batch_id != null ? String(selectedTask.batch_id) : null;
+
   // 필터 적용
   const filteredEquipment = useFilteredEquipment(
     equipment,
@@ -1347,35 +1365,46 @@ export function SchedulerView({
               data-testid="timeline-bg"
               style={{ position: "relative", zIndex: 1 }}
             >
-              {visibleEquipment.map((eq) => (
-                <GanttRow
-                  key={eq.id}
-                  equipment={eq}
-                  tasks={tasks}
-                  rangeStart={rangeStart}
-                  rangeEnd={rangeEnd}
-                  dayWidth={dayWidth}
-                  weekendWidth={weekendWidth}
-                  timelineWidth={timelineWidth}
-                  sharedSelection={sharedSelection}
-                  onSelectionStart={handleSelectionStart}
-                  onSelectionMove={handleSelectionMove}
-                  onSelectionEnd={handleSelectionEnd}
-                  activeDragGroup={activeDragGroup}
-                  activeDragSq={activeDragSq}
-                  activeDragMaterial={activeDragMaterial}
-                  previewOverlay={previewOverlay}
-                  focusedTaskId={focusedTaskId}
-                  compareModeEnabled={compareMode.enabled}
-                  diffByKey={compareMode.enabled ? diffByKey : null}
-                  diffFilters={compareMode.filters}
-                  removedTasks={
-                    compareMode.enabled
-                      ? (compareMode.diffResponse?.removed_tasks ?? [])
-                      : []
-                  }
-                />
-              ))}
+              {visibleEquipment.map((eq) => {
+                // Week 4 Task 4B.3 — 선택된 task 가 이 행의 설비에 속하면 행 아래 슬롯에 카드.
+                // 다른 행으로 이동된 batch 는 selectedTask.equipment_id 가 바뀌므로 자동으로
+                // 카드도 따라간다 (행 1개 = 카드 0~1개 invariant).
+                const showCardHere =
+                  selectedTask !== null &&
+                  selectedBatchId !== null &&
+                  selectedTask.equipment_id === eq.id;
+                return (
+                  <Fragment key={eq.id}>
+                    <GanttRow
+                      equipment={eq}
+                      tasks={tasks}
+                      rangeStart={rangeStart}
+                      rangeEnd={rangeEnd}
+                      dayWidth={dayWidth}
+                      weekendWidth={weekendWidth}
+                      timelineWidth={timelineWidth}
+                      sharedSelection={sharedSelection}
+                      onSelectionStart={handleSelectionStart}
+                      onSelectionMove={handleSelectionMove}
+                      onSelectionEnd={handleSelectionEnd}
+                      activeDragGroup={activeDragGroup}
+                      activeDragSq={activeDragSq}
+                      activeDragMaterial={activeDragMaterial}
+                      previewOverlay={previewOverlay}
+                      focusedTaskId={focusedTaskId}
+                      compareModeEnabled={compareMode.enabled}
+                      diffByKey={compareMode.enabled ? diffByKey : null}
+                      diffFilters={compareMode.filters}
+                      removedTasks={
+                        compareMode.enabled
+                          ? (compareMode.diffResponse?.removed_tasks ?? [])
+                          : []
+                      }
+                    />
+                    {showCardHere && <DecisionCard batchId={selectedBatchId} />}
+                  </Fragment>
+                );
+              })}
 
               {visibleEquipment.length === 0 && (
                 <div className="flex items-center justify-center h-32 text-sm text-gray-400">
