@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -9,6 +11,7 @@ from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.constraint_config_history import ConstraintConfigHistory
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
+from app.infrastructure.models.solver_run import SolverRun
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.presentation.schemas import (
     ConstraintValidateRequest,
@@ -410,4 +413,155 @@ def diff_versions(a: str, b: str, db: Session = Depends(get_db)):
         "version_b": b,
         "diff": diff_rows,
         "total": len(diff_rows),
+    }
+
+
+# ── 베이스라인(스냅샷) WRITE — promote / reset ────────────────────────────
+#
+# Why: §8b 의 베이스라인 라이프사이클을 완성. promote 는 현재
+# constraint_config.params_json 묶음을 새 BASELINE_<tag>_<iso> 그룹으로 history
+# 에 적재하고, reset 은 임의 베이스라인 그룹의 new_params_json 묶음을 다시
+# constraint_config 으로 적용한다. 둘 다 솔버 실행 중에는 423 으로 차단해
+# mid-solve 에서 입력 파라미터가 흔들리지 않도록 한다.
+
+
+def _active_solver_run_exists(db: Session) -> bool:
+    """`finished_at IS NULL` 인 SolverRun 이 한 건이라도 있는가.
+
+    Why: trace_writer 는 cp_sat 종료 직후 finished_at 을 채운다. 따라서
+    NULL 인 행은 "현재 진행 중" 의 강한 신호. 423 (Locked) 으로 베이스라인
+    write 를 차단해 mid-solve 입력 변형을 막는다.
+    """
+    return (
+        db.query(SolverRun.run_id).filter(SolverRun.finished_at.is_(None)).first()
+        is not None
+    )
+
+
+@router.post("/promote-baseline", summary="현재 제약 상태를 새 베이스라인으로 승격")
+def promote_baseline(body: dict, db: Session = Depends(get_db)) -> dict:
+    """현재 `constraint_config.params_json` 스냅샷을 새 베이스라인으로 history 에 기록.
+
+    Body:
+      - tag: 사람이 읽는 자유 문자열 (예: "phase1-after-tuning")
+      - created_by: 승인자 이니셜
+      - approval_note: 승인 근거 (자유 텍스트)
+
+    동작:
+      1. 솔버 실행 중이면 423 으로 차단.
+      2. 모든 ConstraintConfig 행을 순회하며,
+         - 직전 베이스라인의 같은 constraint_id new_params_json 을 old 로,
+         - 현재 row.params_json 을 new 로 history insert.
+      3. changed_by 형식은 `BASELINE_<tag>_<UTC iso>` —
+         tag 자체에 '_' 가 있어도 _parse_baseline_tag 의 rsplit 으로 복원됨.
+    """
+    if _active_solver_run_exists(db):
+        raise HTTPException(
+            status_code=423,
+            detail="솔버 실행 중에는 베이스라인을 수정할 수 없습니다.",
+        )
+
+    tag = (body or {}).get("tag")
+    created_by = (body or {}).get("created_by")
+    approval_note = (body or {}).get("approval_note")
+    if not tag or not created_by or not approval_note:
+        raise HTTPException(
+            status_code=400,
+            detail="tag, created_by, approval_note 가 모두 필요합니다.",
+        )
+
+    now = datetime.now(timezone.utc)
+    iso = now.strftime("%Y%m%dT%H%M%SZ")
+    changed_by = f"BASELINE_{tag}_{iso}"
+
+    rows = db.query(ConstraintConfig).all()
+
+    # Why: 각 constraint_id 별로 직전 베이스라인의 new_params_json 을 한 번씩만
+    # 조회 — N 개 제약마다 1 쿼리 (총 N 쿼리). 베이스라인 N 은 작아 (수십개)
+    # 큰 비용 아님. 새로 생성하는 changed_by 는 아직 insert 전이라 자동 제외됨.
+    inserted = 0
+    for row in rows:
+        prev = (
+            db.query(ConstraintConfigHistory)
+            .filter(
+                ConstraintConfigHistory.changed_by.like("BASELINE_%"),
+                ConstraintConfigHistory.constraint_id == row.constraint_id,
+            )
+            .order_by(
+                ConstraintConfigHistory.changed_at.desc(),
+                ConstraintConfigHistory.history_id.desc(),
+            )
+            .first()
+        )
+        old_params = dict(prev.new_params_json) if prev else None
+
+        history = ConstraintConfigHistory(
+            constraint_id=row.constraint_id,
+            changed_by=changed_by,
+            changed_at=now,
+            old_params_json=old_params,
+            new_params_json=dict(row.params_json or {}),
+        )
+        db.add(history)
+        inserted += 1
+
+    db.commit()
+
+    return {
+        "changed_by": changed_by,
+        "row_count": inserted,
+        "tag": tag,
+    }
+
+
+@router.post("/reset-to-baseline", summary="임의 베이스라인으로 제약 상태 리셋")
+def reset_to_baseline(body: dict, db: Session = Depends(get_db)) -> dict:
+    """`changed_by` 베이스라인의 `new_params_json` 을 `constraint_config` 으로 재적용.
+
+    Body:
+      - changed_by: BASELINE_<tag>_<iso> 전체 문자열 (list_baselines 응답의 그 값)
+
+    동작:
+      1. 솔버 실행 중이면 423 으로 차단.
+      2. 베이스라인 그룹이 비어 있으면 404.
+      3. 그룹 내 constraint_id 별 최신 new_params_json 을 골라
+         (`_latest_params_per_constraint` 와 동일 결정성 규칙)
+         constraint_config.params_json 을 그 값으로 덮어쓴다.
+      4. 매칭되는 constraint_config row 가 없는 경우는 무시 (이전에 삭제된 제약).
+    """
+    if _active_solver_run_exists(db):
+        raise HTTPException(
+            status_code=423,
+            detail="솔버 실행 중에는 베이스라인을 수정할 수 없습니다.",
+        )
+
+    changed_by = (body or {}).get("changed_by")
+    if not changed_by:
+        raise HTTPException(status_code=400, detail="changed_by 가 필요합니다.")
+
+    params_by_cid = _latest_params_per_constraint(db, changed_by)
+    if not params_by_cid:
+        raise HTTPException(
+            status_code=404,
+            detail=f"베이스라인 '{changed_by}' 를 찾을 수 없습니다.",
+        )
+
+    reset_count = 0
+    for cid, new_params in params_by_cid.items():
+        row = (
+            db.query(ConstraintConfig)
+            .filter(ConstraintConfig.constraint_id == cid)
+            .first()
+        )
+        if row is None:
+            # 이전에 삭제된 constraint — silently skip.
+            continue
+        row.params_json = dict(new_params)
+        reset_count += 1
+
+    db.commit()
+
+    return {
+        "reset_count": reset_count,
+        "changed_by": changed_by,
     }
