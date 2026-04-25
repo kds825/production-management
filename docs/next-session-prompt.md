@@ -275,6 +275,17 @@ git worktree remove ../KBI_PoC_main_baseline
 
 ## 4. Phase 0 — Dead/Duplicate Code 정리 (소요: ~30 min)
 
+> **Phase 0 실행 결과 (commits e1949d8, 0ca217b)**
+>
+> Phase 0 의 본 의도는 _deletion-only cleanup_ 이 아니라 **1000+ LOC 거대 파일을 plan §5/§6
+> 따라 분리해 PoC→정식 단계 확장성 확보**. 즉 진짜 cleanup 은 Phase 1 (constraint 플러그인) +
+> Phase 2 (state-bag SRP) 본체에서 수행한다. Phase 0 는 그 작업의 sanity 전제 조건만 처리:
+>
+> - ✅ `urgent_scheduler.py` (409 LOC) + `tests/test_urgent_reoptimize.py` (1121 LOC) 삭제. 410'd 라우트의 미사용 핸들러. 1530 LOC 감축.
+> - ❌ `cp_sat_optimizer.py` (1657 LOC) 는 _셸이 아니라 실제 구현_ — Phase 1 (constraint 추출) + Phase 2 (state-bag) 에서 ≤200 LOC 의 thin orchestrator 로 축소.
+> - ⏸ `schedule_optimizer.py` (90 LOC 셸) 제거: ~35 importer + monkeypatch contract 전환. 거대 파일 분리 대비 가치 낮음 → 별도 Phase 로 분리.
+> - ⏸ `llm_explainer.py` (620 LOC) → `decision_narrator.py` 마이그레이션: drop-in 교체 불가, hallucination filter 의 신규 도입 feature work → 별도 Phase 로 분리.
+
 ### 4.1 직전 라운드 audit 결과 (Explore agent)
 
 - **DEAD-CONFIRMED**: `backend/app/services/urgent_scheduler.py` (410 LOC)
