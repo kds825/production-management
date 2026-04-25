@@ -1,59 +1,65 @@
 """ConstraintConfig 확장 API — history / drift-status / preview-impact 테스트."""
 
+from collections.abc import Generator
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
-from app.infrastructure.database import SessionLocal
-from app.infrastructure.models.constraint_config import ConstraintConfig
+from app.infrastructure.database import get_db
 from app.infrastructure.models.constraint_config_history import (
     ConstraintConfigHistory,
 )
 from app.main import app
 
-client = TestClient(app)
 
+# Why: TestClient 라우트는 `Depends(get_db)` 로 자체 세션을 만들고 그 안에서
+# commit 한다. `db` 픽스처의 rollback 만으로는 라우트 commit 을 되돌릴 수 없어
+# Supabase 공유 DB 에 사용자 데이터가 영구 변형된다.
+#
+# 해결: `get_db` 를 테스트 세션으로 override + outer transaction + savepoint
+# 자동 재시작 이벤트. 라우트 내부 `db.commit()` 은 savepoint release 만 일으키고,
+# 픽스처 종료 시 outer transaction.rollback() 으로 모두 폐기된다.
+@pytest.fixture
+def client(db: Session) -> Generator[TestClient, None, None]:
+    """`get_db` 를 테스트 트랜잭션 세션으로 묶은 TestClient.
 
-# Why: TestClient 라우트는 자체 세션으로 commit 하므로 `db` 픽스처의 rollback 으로
-# 정리되지 않는다. 실 DB(Supabase)를 공유하는 개발 환경에서 이 파일의 테스트가
-# 사용자가 UI 로 편집한 값을 덮어쓰지 않도록, 각 테스트 시작 시점의 params_json
-# 을 스냅샷해두고 테스트 종료 시 그대로 복원한다. (하드코딩 210 복원 금지)
-@pytest.fixture(autouse=True)
-def _preserve_constraint_params():
-    session = SessionLocal()
+    SQLAlchemy "join a session into an external transaction" 패턴:
+    초기 SAVEPOINT 를 열어두고 라우트 commit 으로 종료될 때마다
+    `after_transaction_end` 이벤트로 즉시 새 SAVEPOINT 를 재오픈한다.
+    `db` 픽스처의 마지막 `session.rollback()` 이 outer 트랜잭션 전체를
+    되돌리므로 Supabase 에 어떤 변경도 영구화되지 않는다.
+    """
+    db.begin_nested()
+
+    @event.listens_for(db, "after_transaction_end")
+    def _restart_savepoint(session: Session, transaction) -> None:
+        if transaction.nested and not transaction._parent.nested:
+            session.begin_nested()
+
+    def _override_get_db() -> Generator[Session, None, None]:
+        # FastAPI Depends 는 generator 의 첫 yield 값을 주입한다.
+        # commit/close 는 라우트가 호출하지만, 여기서는 단일 테스트 세션을
+        # 그대로 공유해야 하므로 finally 에서 닫지 않는다.
+        yield db
+
+    app.dependency_overrides[get_db] = _override_get_db
+
     try:
-        snapshot = {
-            r.constraint_id: dict(r.params_json or {})
-            for r in session.query(ConstraintConfig).all()
-        }
+        yield TestClient(app)
     finally:
-        session.close()
-
-    yield
-
-    session = SessionLocal()
-    try:
-        for cid, params in snapshot.items():
-            row = (
-                session.query(ConstraintConfig)
-                .filter(ConstraintConfig.constraint_id == cid)
-                .first()
-            )
-            if row is not None and row.params_json != params:
-                row.params_json = params
-        session.commit()
-    finally:
-        session.close()
+        app.dependency_overrides.pop(get_db, None)
+        event.remove(db, "after_transaction_end", _restart_savepoint)
 
 
-def test_patch_records_history(db) -> None:
+def test_patch_records_history(db: Session, client: TestClient) -> None:
     """PATCH 시 old/new params_json 을 constraint_config_history 에 기록."""
-    # 시작 시점의 stranding_min 캡처 — 하드코딩 210 에 의존하지 않는다.
     pre = client.get("/api/constraints").json()
     pre_4_1 = next(c for c in pre["constraints"] if c["constraint_id"] == "4-1")[
         "params_json"
     ]
     pre_stranding = pre_4_1.get("stranding_min")
-    # pre 와 동일하면 history 가 생성되지 않으므로 반드시 다른 값 사용
     new_stranding = 200 if pre_stranding != 200 else 201
 
     before = db.query(ConstraintConfigHistory).count()
@@ -64,7 +70,6 @@ def test_patch_records_history(db) -> None:
     )
     assert resp.status_code == 200
 
-    db.commit()  # route가 commit한 걸 세션 refresh 용 — rollback 전에 확인
     after = db.query(ConstraintConfigHistory).count()
     assert after == before + 1
 
@@ -78,13 +83,12 @@ def test_patch_records_history(db) -> None:
     assert latest.old_params_json.get("stranding_min") == pre_stranding
 
 
-def test_patch_merges_partial_params(db) -> None:
+def test_patch_merges_partial_params(db: Session, client: TestClient) -> None:
     """부분 patch 는 기존 키를 보존하고 해당 키만 덮어써야 한다.
 
     Regression: 이전엔 row.params_json = new_params 로 전체 교체라서
     {stranding_min: 30} patch 시 insulation_min/sheath_min/cv_min 이 사라졌다.
     """
-    # 병합 검증용 pre-스냅샷 — 편집 안 한 키는 이 값 그대로 유지되어야 한다.
     pre = client.get("/api/constraints").json()
     pre_4_1 = next(c for c in pre["constraints"] if c["constraint_id"] == "4-1")[
         "params_json"
@@ -104,7 +108,7 @@ def test_patch_merges_partial_params(db) -> None:
         assert row["params_json"][k] == pre_4_1[k]
 
 
-def test_get_history(db) -> None:
+def test_get_history(db: Session, client: TestClient) -> None:
     resp = client.get("/api/constraints/4-1/history")
     assert resp.status_code == 200
     body = resp.json()
@@ -112,7 +116,7 @@ def test_get_history(db) -> None:
     assert isinstance(body["history"], list)
 
 
-def test_drift_status_returns_dirty_flag(db) -> None:
+def test_drift_status_returns_dirty_flag(db: Session, client: TestClient) -> None:
     resp = client.get("/api/constraints/drift-status")
     assert resp.status_code == 200
     body = resp.json()
@@ -120,7 +124,7 @@ def test_drift_status_returns_dirty_flag(db) -> None:
     assert isinstance(body["dirty"], bool)
 
 
-def test_preview_impact_counts_planned_batches(db) -> None:
+def test_preview_impact_counts_planned_batches(db: Session, client: TestClient) -> None:
     """4-1 stranding_min 변경 시 영향 배치 수 + Δ 총 리드타임."""
     resp = client.post(
         "/api/constraints/4-1/preview-impact",
