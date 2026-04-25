@@ -1,208 +1,108 @@
-import copy
-import uuid
-from collections import deque
-from datetime import datetime, timedelta
-from typing import Any
+"""schedules — 스케줄 라우트 sub-package.
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+Week 7 Task 7A.1 — 1,702 LOC 단일 파일 routes/schedules.py 를
+{list, detail, bulk_update, cascade, revert} 5개 submodule + _shared 헬퍼로 분리.
 
-from app.core.feature_flags import is_cascade_v2_enabled
-from app.domain.entities import ScheduleTask, TaskPriority, TaskStatus
-from app.infrastructure.database import get_db
-from app.infrastructure.memory_store import store
-from app.observability.cascade_logging import log_cascade_request
-from app.observability.metrics import (
+D7-C 호환: 분리 이전에 `from app.presentation.routes.schedules import X` 로
+가져오던 모든 이름은 이 `__init__.py` 의 re-export 로 계속 import 가능하다.
+특히 `plan_cascade_preview` 는 `tests/test_cascade_preview_v2.py` /
+`tests/test_observability_metrics.py` 가 `unittest.mock.patch(
+"app.presentation.routes.schedules.plan_cascade_preview", ...)` 로 패치하므로
+같은 경로에서 살아있어야 한다. cascade submodule 은 호출 시점에
+`schedules_pkg.plan_cascade_preview` 를 참조해 patch 가 정상 적용되도록 한다.
+"""
+
+# 주의: `from __future__ import annotations` 를 쓰지 않는다 — FastAPI 는 함수
+# annotation 을 runtime 에 평가해 응답 모델 / 상태코드 조합을 검증하기 때문에
+# (예: status_code=204 + 반환형 None) lazy annotation 으로 돌리면 라우트
+# 등록 자체가 AssertionError 로 실패한다. 대신 submodule 자동 attribute 등록을
+# 명시적으로 정리하는 방식으로 builtin `list` shadowing 을 회피한다 (파일 하단).
+
+import copy  # noqa: F401  — sub-commit B/C 이후 handler 본문이 사용
+import uuid  # noqa: F401
+from collections import deque  # noqa: F401
+from datetime import datetime, timedelta  # noqa: F401
+from typing import Any  # noqa: F401
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query  # noqa: F401
+from pydantic import BaseModel  # noqa: F401
+from sqlalchemy import func  # noqa: F401
+from sqlalchemy.orm import Session  # noqa: F401
+
+from app.core.feature_flags import is_cascade_v2_enabled  # noqa: F401
+from app.domain.entities import (  # noqa: F401
+    ScheduleTask,
+    TaskPriority,
+    TaskStatus,
+)
+from app.infrastructure.database import get_db  # noqa: F401
+from app.infrastructure.memory_store import store  # noqa: F401
+from app.observability.cascade_logging import log_cascade_request  # noqa: F401
+from app.observability.metrics import (  # noqa: F401
     cascade_feature_flag_state,
     cascade_preview_duration_seconds,
     cascade_revert_total,
     cascade_unresolved_total,
 )
-from app.infrastructure.models.equipment_master import (
+from app.infrastructure.models.equipment_master import (  # noqa: F401
     EquipmentMaster as EquipmentMasterModel,
 )
-from app.infrastructure.models.production_batch import (
+from app.infrastructure.models.production_batch import (  # noqa: F401
     ProductionBatch as ProductionBatchModel,
 )
-from app.infrastructure.models.schedule_task import (
+from app.infrastructure.models.schedule_task import (  # noqa: F401
     ScheduleTask as ScheduleTaskModel,
 )
-from app.presentation.schemas import (
+from app.presentation.schemas import (  # noqa: F401
     ScheduleTaskCreate,
     ScheduleTaskResponse,
     ScheduleTaskUpdate,
 )
-from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
-from app.presentation.schemas.cascade import (
+from app.infrastructure.models.schedule_change_set import (  # noqa: F401
+    ScheduleChangeSet,
+)
+from app.presentation.schemas.cascade import (  # noqa: F401
     BulkUpdateErrorCode,
     BulkUpdateRequestV2,
     BulkUpdateSuccess,
     CascadePreviewRequest as CascadePreviewRequestV2,
     CascadePreviewResponse as CascadePreviewResponseV2,
 )
-from app.services.batch_grouping import format_spec_display, extract_sq
-from app.services.cascade import plan_cascade_preview, UnresolvedReason
-from app.services.cascade.snap import build_snapshot
-from app.services.schedule_optimizer import PREDECESSOR_PROCESS
-from app.services.schedule_validators import (
+from app.services.batch_grouping import (  # noqa: F401
+    format_spec_display,
+    extract_sq,
+)
+from app.services.cascade import (  # noqa: F401
+    plan_cascade_preview,
+    UnresolvedReason,
+)
+from app.services.cascade.snap import build_snapshot  # noqa: F401
+from app.services.schedule_optimizer import PREDECESSOR_PROCESS  # noqa: F401
+from app.services.schedule_validators import (  # noqa: F401
     find_due_date_violation,
     find_predecessor_violation,
     find_same_eq_overlap,
 )
 
+# _shared 헬퍼/스키마 re-export (D7-C 호환).
+# 분리 이전 `from app.presentation.routes.schedules import _versions` 등으로
+# 접근하던 코드가 깨지지 않도록 동일 이름을 노출.
+from app.presentation.routes.schedules._shared import (  # noqa: F401
+    VersionDetailResponse,
+    VersionSaveRequest,
+    VersionSummaryResponse,
+    _db_task_to_response,
+    _parse_task_id,
+    _to_response,
+    _versions,
+)
+
 router = APIRouter(prefix="/schedules", tags=["스케줄"])
 
-# ---------------------------------------------------------------------------
-# 인메모리 버전 스토어 — PoC 단계용 단순 리스트
-# ---------------------------------------------------------------------------
-_versions: list[dict[str, Any]] = []
-
-
-# ---------------------------------------------------------------------------
-# Pydantic 스키마 (버전 관련)
-# ---------------------------------------------------------------------------
-
-
-class VersionSaveRequest(BaseModel):
-    label: str = ""
-    tasks: list[dict[str, Any]]
-    created_at: datetime | None = None
-
-
-class VersionSummaryResponse(BaseModel):
-    id: str
-    label: str
-    created_at: datetime
-    task_count: int
-
-
-class VersionDetailResponse(BaseModel):
-    id: str
-    label: str
-    created_at: datetime
-    tasks: list[dict[str, Any]]
-
-
-# ---------------------------------------------------------------------------
-# 내부 헬퍼
-# ---------------------------------------------------------------------------
-
-
-def _to_response(task: ScheduleTask) -> ScheduleTaskResponse:
-    return ScheduleTaskResponse(
-        id=task.id,
-        order_id=task.order_id,
-        equipment_id=task.equipment_id,
-        product=task.product,
-        spec=task.spec,
-        core_count=task.core_count,
-        color=task.color,
-        start=task.start,
-        end=task.end,
-        volume_m=task.volume_m,
-        line_speed_m_per_min=task.line_speed_m_per_min,
-        priority=task.priority,
-        status=task.status,
-        delivery_date=task.delivery_date,
-        process_step=task.process_step,
-        predecessors=task.predecessors,
-        notes=task.notes,
-        changeover_min=task.changeover_min,
-        duration_hours=task.duration_hours,
-        customer=getattr(task, "customer", None),
-    )
-
-
-def _db_task_to_response(
-    task: ScheduleTaskModel,
-    batch: ProductionBatchModel,
-    group_volume_m: float | None = None,
-    group_order_count: int = 1,
-    color_change_min: int = 0,
-    lot_count: int | None = None,
-    spec_list: list[str] | None = None,
-) -> ScheduleTaskResponse:
-    """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
-
-    group_volume_m: batch_group 전체 합산 길이 (None이면 단일 배치 길이 사용)
-    group_order_count: 그룹 내 개별 행 수
-    spec_list: 시스(SH-*) 블록에서 같은 batch_group 에 묶인 SQ 목록
-               (예: ['50SQ','100SQ']). 비시스 task 는 None.
-    """
-    # customer_priority(int) → TaskPriority
-    cp = batch.customer_priority or 99
-    if cp <= 3:
-        priority = TaskPriority.CRITICAL
-    elif cp <= 7:
-        priority = TaskPriority.URGENT
-    else:
-        priority = TaskPriority.NORMAL
-
-    # spec: 고압이면 "1C x 4/0AWG" / "1C x 500KCMIL", 일반이면 "1C x 633SQ"
-    core_count = batch.core_count or 1
-    sq_mm2 = float(batch.sq_mm2 or 0)
-    spec = format_spec_display(getattr(batch, "spec_raw", None), core_count, sq_mm2)
-
-    # color: sheath_color 우선, 없으면 core_colors
-    color = batch.sheath_color or batch.core_colors or ""
-
-    # status: DB 값을 TaskStatus enum으로 안전하게 파싱 (알 수 없는 값은 PLANNED)
-    try:
-        status = TaskStatus(task.status)
-    except (ValueError, KeyError):
-        status = TaskStatus.PLANNED
-
-    # duration_hours: start~end 차이 (ScheduleTask 도메인 프로퍼티와 동일 계산)
-    duration_hours = (task.end_datetime - task.start_datetime).total_seconds() / 3600
-
-    return ScheduleTaskResponse(
-        id=f"TASK-{task.task_id}",
-        order_id=batch.sales_order_id or "",
-        equipment_id=task.equipment_code,
-        product=batch.product_group or "",
-        spec=spec,
-        core_count=core_count,
-        color=color,
-        start=task.start_datetime,
-        end=task.end_datetime,
-        volume_m=group_volume_m
-        if group_volume_m is not None
-        else float(batch.total_length_m or 0),
-        line_speed_m_per_min=float(batch.line_speed_mpm or 0),
-        priority=priority,
-        status=status,
-        delivery_date=datetime(
-            batch.due_date.year,
-            batch.due_date.month,
-            batch.due_date.day,
-        )
-        if batch.due_date
-        else None,
-        process_step=batch.batch_seq,
-        process_name=batch.process_name,
-        sales_order_line=batch.sales_order_line,
-        predecessors=[f"TASK-{task.predecessor_task_id}"]
-        if task.predecessor_task_id
-        else [],
-        notes=batch.remarks or "",
-        changeover_min=int(task.setup_time_min or 0),
-        setup_time_min=int(task.setup_time_min or 0),
-        color_change_min=color_change_min,
-        duration_hours=duration_hours,
-        customer=batch.customer_name or "",
-        batch_group=task.batch_group or "",
-        material=batch.conductor_material or None,
-        batch_id=batch.batch_id,
-        created_at=task.created_at,
-        sq_mm2=sq_mm2 if sq_mm2 else None,
-        lot_count=lot_count,
-        spec_list=spec_list,
-        # WIP 매칭 FK를 그대로 노출 — 프론트 ContextMenu "미배정으로 이동"
-        # disabled 판정에 사용 (Task 5.2). None 이면 일반 생산 배치.
-        wip_matched_id=batch.wip_matched_id,
-    )
+# 서브 라우터 import + 마운트는 본 파일 마지막에서 수행 — 본 모듈이 정의하는
+# `@router.get("/tasks", response_model=list[...])` 가 builtin `list` 를 참조해야
+# 하므로, submodule 이름 `list` 를 import 하면서 발생하는 builtin shadowing 을
+# 모든 handler 정의가 끝난 뒤로 미룬다.
 
 
 # ---------------------------------------------------------------------------
@@ -1700,3 +1600,51 @@ def get_change_set_diff(
         "removed_tasks": removed_tasks,
         "unchanged_task_ids": unchanged_task_ids,
     }
+
+
+# ---------------------------------------------------------------------------
+# 서브 라우터 마운트 — handler 정의가 끝난 뒤에 import 한다.
+# 왜 마지막에 + importlib 사용: 두 가지 충돌을 동시에 회피해야 한다.
+#   1) submodule 이름 `list` 가 builtin `list` 를 그림자처리해 위쪽
+#      `response_model=list[...]` 가 TypeError 가 된다.
+#   2) `revert`/`cascade` 등은 이 파일 안에 같은 이름의 함수가 정의되어 있어
+#      `from . import revert as _revert_mod` 가 함수를 가져온다.
+# importlib.import_module 은 sys.modules 에서 직접 모듈을 꺼내 위 두 충돌 모두
+# 회피한다. sub-commit B~F 가 진행되며 위쪽 handler 가 모두 비면 이 블록은
+# 파일 상단의 평범한 import 로 정리할 예정.
+# ---------------------------------------------------------------------------
+import importlib as _importlib  # noqa: E402
+import sys as _sys  # noqa: E402
+
+# D7-C: 함수 `revert` 와 `list_tasks` 등 기존 import 가능 이름을 보존한다.
+# Python import 시스템은 submodule load 시 자동으로 패키지 attribute 를
+# 설정한다 (예: schedules.revert = <module>). 같은 이름의 함수가 이미 정의되어
+# 있으면 덮어쓴다. import 전에 백업하고 import 후 attribute 를 정리·복원한다.
+_revert_handler_fn = revert  # noqa: F821  (route handler defined above)
+
+_list_mod = _importlib.import_module("app.presentation.routes.schedules.list")
+_detail_mod = _importlib.import_module("app.presentation.routes.schedules.detail")
+_bulk_update_mod = _importlib.import_module(
+    "app.presentation.routes.schedules.bulk_update"
+)
+_cascade_mod = _importlib.import_module("app.presentation.routes.schedules.cascade")
+_revert_mod = _importlib.import_module("app.presentation.routes.schedules.revert")
+
+router.include_router(_list_mod.router)
+router.include_router(_detail_mod.router)
+router.include_router(_bulk_update_mod.router)
+router.include_router(_cascade_mod.router)
+router.include_router(_revert_mod.router)
+
+# 패키지 attribute 정리 — submodule 이름이 builtin `list` 와 충돌하면
+# 핸들러 안의 `list[...]` annotation 이 module-level attribute 를 먼저 찾아
+# TypeError. 자동으로 등록된 submodule attribute 를 모두 삭제하고, 핸들러
+# 함수 `revert` 만 명시적으로 복원한다. submodule 자체는 sys.modules 에 그대로
+# 남으므로 외부에서 `from .list import router` 같은 import 는 여전히 가능.
+_pkg = _sys.modules[__name__]
+for _name in ("list", "detail", "bulk_update", "cascade", "revert"):
+    if hasattr(_pkg, _name):
+        delattr(_pkg, _name)
+
+# 핸들러 함수 `revert` 복원 (D7-C).
+revert = _revert_handler_fn  # noqa: F811
