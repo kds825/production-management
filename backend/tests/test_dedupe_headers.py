@@ -13,7 +13,7 @@ Why: create_batches / stage1 incremental / auto-split 복합 경로에서 같은
 from datetime import date
 
 from app.infrastructure.models.production_batch import ProductionBatch
-from app.services.batch_grouping import deduplicate_group_headers
+from app.application.ingest import deduplicate_group_headers
 
 RUN = "test-dedupe"
 

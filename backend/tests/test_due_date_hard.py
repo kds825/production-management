@@ -117,7 +117,7 @@ def test_delivery_violation_reported_as_error(db):
     사용자 요구: "납기는 반드시 맞춰야하는거야" — warning 이 아닌 error 로 격상.
     """
     from app.services.schedule_optimizer import auto_schedule
-    from app.services.constraint_checker import validate_all
+    from app.application.validation.constraint_checker import validate_all
 
     # 이미 지난 납기 → 강제 위반. 스케줄러가 어떻게든 배치하고 검증기가 error 반환해야.
     db.add(

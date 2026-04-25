@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.wip_upload_log import WipUploadLog
-from app.services.wip_matching import _extract_sq
+from app.application.ingest.wip_matching import _extract_sq
 
 # 실사 Excel 행 길이 ±10% 이내면 후보로 인정
 _LENGTH_TOLERANCE = 0.10

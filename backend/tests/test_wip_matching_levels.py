@@ -7,7 +7,7 @@ import pytest
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.decision_criteria import DecisionCriteria
-from app.services.wip_matching import match_wip
+from app.application.ingest.wip_matching import match_wip
 
 
 _RUN_LABEL = "TEST_WIP_MATCHING_T8"

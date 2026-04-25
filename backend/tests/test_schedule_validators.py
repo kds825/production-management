@@ -6,8 +6,8 @@ DB 없이 Snap/SnapTask 만으로 세 validator 의 탐지 규칙을 검증. 서
 
 from datetime import datetime
 
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.schedule_validators import (
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.validation.schedule_validators import (
     find_due_date_violation,
     find_predecessor_violation,
     find_same_eq_overlap,

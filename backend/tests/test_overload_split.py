@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
-from app.services.batch_grouping import (
+from app.application.ingest import (
     detect_split_candidates,
     execute_auto_splits,
 )

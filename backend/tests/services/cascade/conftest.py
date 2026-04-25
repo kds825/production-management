@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pytest
 
-from app.services.cascade.snap import Snap, SnapTask
+from app.application.cascade.snap import Snap, SnapTask
 
 
 @pytest.fixture

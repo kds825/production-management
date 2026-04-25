@@ -11,7 +11,7 @@ include 한다.
 attribute 로 우회 참조하는 이유: 기존 테스트 (`tests/test_cascade_preview_v2.py`,
 `tests/test_observability_metrics.py`) 가 `unittest.mock.patch(
 "app.presentation.routes.schedules.plan_cascade_preview", ...)` 로 패치하기
-때문에, 이 submodule 안에서 직접 `from app.services.cascade import
+때문에, 이 submodule 안에서 직접 `from app.application.cascade import
 plan_cascade_preview` 후 호출하면 patch 가 적용되지 않는다. 호출 시점에
 패키지 attribute 를 lookup 하면 monkey-patched 함수가 사용된다.
 """
@@ -43,7 +43,7 @@ from app.presentation.schemas.cascade import (
     CascadePreviewRequest as CascadePreviewRequestV2,
     CascadePreviewResponse as CascadePreviewResponseV2,
 )
-from app.services.cascade import UnresolvedReason
+from app.application.cascade import UnresolvedReason
 from app.services.schedule_optimizer import PREDECESSOR_PROCESS
 
 

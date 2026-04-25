@@ -1,7 +1,7 @@
 from datetime import datetime
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.pull import propose_for_successors
-from app.services.cascade.reasons import PullReason
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.pull import propose_for_successors
+from app.application.cascade.reasons import PullReason
 
 
 def _mk(task_id, eq, sh, eh, so="SO-1", sol=1, old_sh=None, old_eh=None):

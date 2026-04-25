@@ -69,17 +69,17 @@ from app.presentation.schemas.cascade import (  # noqa: F401
     CascadePreviewRequest as CascadePreviewRequestV2,
     CascadePreviewResponse as CascadePreviewResponseV2,
 )
-from app.services.batch_grouping import (  # noqa: F401
+from app.application.ingest import (  # noqa: F401
     extract_sq,
     format_spec_display,
 )
-from app.services.cascade import (  # noqa: F401
+from app.application.cascade import (  # noqa: F401
     UnresolvedReason,
     plan_cascade_preview,
 )
-from app.services.cascade.snap import build_snapshot  # noqa: F401
+from app.application.cascade.snap import build_snapshot  # noqa: F401
 from app.services.schedule_optimizer import PREDECESSOR_PROCESS  # noqa: F401
-from app.services.schedule_validators import (  # noqa: F401
+from app.application.validation.schedule_validators import (  # noqa: F401
     find_due_date_violation,
     find_predecessor_violation,
     find_same_eq_overlap,

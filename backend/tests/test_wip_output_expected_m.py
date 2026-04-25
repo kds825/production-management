@@ -15,7 +15,7 @@ from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.batch_grouping import create_batches, execute_auto_splits
+from app.application.ingest import create_batches, execute_auto_splits
 
 _RUN_LABEL_SPLIT = "TEST_WIP_SPLIT_T5"
 _LOT_SIZE = 1000.0  # drum_length_m for 162SQ fixture

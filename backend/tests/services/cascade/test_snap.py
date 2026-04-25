@@ -1,4 +1,4 @@
-"""Unit tests for `app.services.cascade.snap`.
+"""Unit tests for `app.application.cascade.snap`.
 
 Snap 은 스케줄 스냅샷(in-memory)을 비즈니스 로직에서 변경/조회하기 위한 pure helper.
 Phase 1 의 cascade 제안 파이프라인 (BFS/Pull/Validators) 이 공유하는 자료구조이므로,
@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from app.services.cascade.snap import Snap, SnapTask
+from app.application.cascade.snap import Snap, SnapTask
 
 
 def _mk(task_id, eq, start_h, end_h, sol=1):
@@ -131,7 +131,7 @@ class _FakeTask:
 
 
 def test_build_snapshot_from_duck_typed_rows():
-    from app.services.cascade.snap import build_snapshot
+    from app.application.cascade.snap import build_snapshot
 
     b = _FakeBatch(
         sales_order_id="SO-1",
@@ -156,7 +156,7 @@ def test_build_snapshot_from_duck_typed_rows():
 
 def test_build_snapshot_handles_none_batch():
     """batch 가 None 이면 SO/due_date 필드는 모두 None — caller 가 batch 를 조회하지 못한 경우."""
-    from app.services.cascade.snap import build_snapshot
+    from app.application.cascade.snap import build_snapshot
 
     row = _FakeTask(
         "T1",

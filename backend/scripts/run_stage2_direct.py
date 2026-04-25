@@ -29,7 +29,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
-from app.services.constraint_checker import validate_all
+from app.application.validation.constraint_checker import validate_all
 from app.services.schedule_optimizer import (  # noqa: F401
     _run_optimization_once,
     _purge_run_tasks,

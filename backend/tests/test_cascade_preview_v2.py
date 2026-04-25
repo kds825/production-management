@@ -11,7 +11,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.cascade import CascadePreviewResult
+from app.application.cascade import CascadePreviewResult
 
 client = TestClient(app)
 

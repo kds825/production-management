@@ -26,7 +26,7 @@ def test_sheath_color_chain_across_weeks(db):
     흑 W15, 흑 W16, 갈 W15 → 정렬 후 흑 (W15 → W16) → 갈 (W15) 순.
     Stage 2 내부 정렬 규칙만 직접 호출해서 검증 (auto_schedule 미호출).
     """
-    from app.services.batch_grouping import _SHEATH_COLOR_RANK
+    from app.application.ingest import _SHEATH_COLOR_RANK
 
     # 시드 배치 — batch_id 를 obj 에 부여하기 위해 flush 필요
     batches = [
@@ -118,9 +118,9 @@ def test_sheath_chain_key_present_and_applied(db):
     src_path = (
         Path(__file__).resolve().parents[1]
         / "app"
-        / "services"
-        / "batch_grouping"
-        / "grouper.py"
+        / "application"
+        / "ingest"
+        / "batch_grouper.py"
     )
     src = src_path.read_text(encoding="utf-8")
 
@@ -138,7 +138,7 @@ def test_sheath_chain_key_present_and_applied(db):
 
 def test_non_sheath_preserves_relative_order(db):
     """비시스 배치는 _sheath_chain_key 에서 동일 키 → 원순서 보존."""
-    from app.services.batch_grouping import _SHEATH_COLOR_RANK  # noqa: F401
+    from app.application.ingest import _SHEATH_COLOR_RANK  # noqa: F401
 
     # 비시스 2건 + 시스 1건 혼합 — 비시스 상대 순서가 유지되는지
     b_stranding = ProductionBatch(

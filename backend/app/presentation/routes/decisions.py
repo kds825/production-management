@@ -39,7 +39,7 @@ from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.solver_decision import SolverDecision
 from app.infrastructure.models.solver_run import SolverRun
-from app.services.decision_narrator import explain_with_filter
+from app.application.decisions.narrator import explain_with_filter
 from app.infrastructure.llm import (
     ConstraintRef,
     Contribution,

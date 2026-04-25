@@ -11,7 +11,7 @@ Why two scenarios:
 
 from datetime import datetime
 
-from app.services.decision_narrator import explain_with_filter
+from app.application.decisions.narrator import explain_with_filter
 from app.infrastructure.llm import (
     Contribution,
     ExplainPayload,

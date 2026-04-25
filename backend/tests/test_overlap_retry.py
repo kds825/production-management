@@ -48,7 +48,7 @@ def test_overlap_persist_raises(db, monkeypatch):
     monkeypatch.setattr(schedule_optimizer, "_run_optimization_once", _always_overlap)
 
     # validate_all 이 overlap 을 보고하도록 mock
-    from app.services import constraint_checker
+    from app.application.validation import constraint_checker
 
     def _fake_validate(run_label, db):
         return [{"constraint_id": "overlap", "detail": "mock overlap"}]
@@ -68,7 +68,7 @@ def test_overlap_persist_raises(db, monkeypatch):
 def test_overlap_retry_succeeds_on_second_attempt(db, monkeypatch):
     """첫 시도 overlap, 두번째 성공 → 예외 없이 반환."""
     from app.services import schedule_optimizer
-    from app.services import constraint_checker
+    from app.application.validation import constraint_checker
 
     call_count = {"validate": 0, "run": 0}
 
@@ -100,7 +100,8 @@ def test_retry_real_run_resets_batch_status_and_audit(db, monkeypatch):
     기존 테스트는 _run_optimization_once 자체를 monkey-patch 해서
     실제 경로를 커버하지 못했음.
     """
-    from app.services import schedule_optimizer, constraint_checker
+    from app.services import schedule_optimizer
+    from app.application.validation import constraint_checker
     from app.infrastructure.models.schedule_task import ScheduleTask
     from app.infrastructure.models.audit_log import AuditLog
 
@@ -157,7 +158,8 @@ def test_cpsat_path_also_retries_on_overlap(db, monkeypatch):
     이후 CP-SAT 경로도 greedy 와 동일한 안전망(validate → overlap 감지 →
     random_seed 변동 재시도)을 공유하는지 확인한다.
     """
-    from app.services import schedule_optimizer, constraint_checker
+    from app.services import schedule_optimizer
+    from app.application.validation import constraint_checker
     from app.infrastructure.models.production_batch import ProductionBatch
 
     db.add(

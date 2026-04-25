@@ -1,6 +1,6 @@
 from datetime import datetime
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.bfs import successor_tasks
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.bfs import successor_tasks
 
 
 def _mk(task_id, eq, sh, eh, so="SO-1", sol=1):

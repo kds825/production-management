@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.batch_grouping import _find_speed
+from app.application.ingest import _find_speed
 
 
 @dataclass

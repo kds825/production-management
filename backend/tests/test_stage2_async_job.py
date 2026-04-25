@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.exceptions import SchedulerOverlapError
 from app.main import app
-from app.services import stage2_job_queue
+from app.application import stage2_job_queue
 
 
 @pytest.fixture(autouse=True)

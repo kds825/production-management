@@ -128,7 +128,7 @@ def auto_schedule(
     시나리오에서 실시간 lookup 이 필요하므로 함수 내부에서 import 하여
     패치된 바인딩을 그대로 사용한다.
     """
-    from app.services import constraint_checker
+    from app.application.validation import constraint_checker
 
     # monkeypatch 호환 lookup — 테스트가 schedule_optimizer 셸의 attribute 를
     # 패치해도 본 호출이 패치 결과를 따라가도록 동적 lookup 한다.

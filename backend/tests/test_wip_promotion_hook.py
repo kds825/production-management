@@ -52,7 +52,7 @@ def _seed_batch_with_wip(db) -> ProductionBatch:
 
 def test_promote_on_completed(db):
     _cleanup(db)
-    from app.services.wip_promotion import _promote_expected_to_estimated
+    from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
     batch = _seed_batch_with_wip(db)
     ok = _promote_expected_to_estimated(batch.batch_id, "completed", db)
@@ -67,7 +67,7 @@ def test_promote_on_completed(db):
 
 def test_promote_skip_non_completed(db):
     _cleanup(db)
-    from app.services.wip_promotion import _promote_expected_to_estimated
+    from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
     batch = _seed_batch_with_wip(db)
     for s in ("in_progress", "scheduled", "wip_complete", "planned"):
@@ -81,7 +81,7 @@ def test_promote_skip_non_completed(db):
 
 def test_promote_idempotent(db):
     _cleanup(db)
-    from app.services.wip_promotion import _promote_expected_to_estimated
+    from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
     batch = _seed_batch_with_wip(db)
     ok1 = _promote_expected_to_estimated(batch.batch_id, "completed", db)
@@ -98,7 +98,7 @@ def test_promote_idempotent(db):
 def test_promote_no_op_when_no_wip(db):
     """WIP 행 없는 배치 (surplus=0) 의 completed 전환은 조용히 False."""
     _cleanup(db)
-    from app.services.wip_promotion import _promote_expected_to_estimated
+    from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
     b = ProductionBatch(
         run_label=_RUN_LABEL,

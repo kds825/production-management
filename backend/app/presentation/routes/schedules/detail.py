@@ -42,7 +42,7 @@ from app.presentation.schemas import (
     ScheduleTaskResponse,
     ScheduleTaskUpdate,
 )
-from app.services.batch_grouping import extract_sq
+from app.application.ingest import extract_sq
 
 
 router = APIRouter()

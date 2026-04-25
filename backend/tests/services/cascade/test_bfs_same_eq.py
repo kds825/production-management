@@ -1,6 +1,6 @@
 from datetime import datetime
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.bfs import same_equipment_overlapping, same_eq_prev_end
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.bfs import same_equipment_overlapping, same_eq_prev_end
 
 
 def _mk(task_id, eq, sh, eh, sol=1):

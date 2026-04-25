@@ -13,8 +13,8 @@ Task 13: bulk-update v2 가 preview 와 동일한 BFS/validator 로직을 재실
 - 없으면 None.
 """
 
-from app.services.cascade.bfs import same_equipment_overlapping
-from app.services.cascade.snap import Snap, SnapTask
+from app.application.cascade.bfs import same_equipment_overlapping
+from app.application.cascade.snap import Snap, SnapTask
 
 
 def find_same_eq_overlap(snap: Snap) -> SnapTask | None:

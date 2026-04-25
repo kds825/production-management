@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.services.cascade.service import plan_cascade_preview_on_snap
-from app.services.cascade.snap import Snap, SnapTask
+from app.application.cascade.service import plan_cascade_preview_on_snap
+from app.application.cascade.snap import Snap, SnapTask
 
 
 def _build_large_snap(n_tasks: int = 500, n_equipments: int = 10) -> Snap:

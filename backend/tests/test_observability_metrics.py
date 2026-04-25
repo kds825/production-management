@@ -21,7 +21,7 @@ from app.observability.metrics import (
     cascade_revert_total,
     cascade_unresolved_total,
 )
-from app.services.cascade import CascadePreviewResult
+from app.application.cascade import CascadePreviewResult
 
 client = TestClient(app)
 

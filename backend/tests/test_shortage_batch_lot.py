@@ -10,7 +10,7 @@ from __future__ import annotations
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.sm_inventory import create_shortage_batches
+from app.application.sm_inventory import create_shortage_batches
 
 
 _RUN_LABEL = "TEST_SHORTAGE_T13"

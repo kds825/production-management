@@ -1,4 +1,4 @@
-"""Unit tests for `app.services.cascade.service.plan_cascade_preview_on_snap`.
+"""Unit tests for `app.application.cascade.service.plan_cascade_preview_on_snap`.
 
 service 는 wave 기반 BFS cascade orchestrator 로,
 Snap 을 주입받아 pushes/pulls/unresolved 를 산출한다. DB/calendar 의존은
@@ -9,9 +9,9 @@ advance_fn/reverse_advance_fn 으로 주입해서 순수 단위 테스트 가능
 
 from datetime import datetime
 
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.service import plan_cascade_preview_on_snap, MAX_WAVES
-from app.services.cascade.reasons import PushReason, UnresolvedReason
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.service import plan_cascade_preview_on_snap, MAX_WAVES
+from app.application.cascade.reasons import PushReason, UnresolvedReason
 
 
 def _mk(task_id, eq, sh, eh, sol=1, due_h=30):

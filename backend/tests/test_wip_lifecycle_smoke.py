@@ -27,10 +27,10 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.wip_upload_log import WipUploadLog
-from app.services.sm_inventory import create_shortage_batches
-from app.services.wip_matching import match_wip
+from app.application.sm_inventory import create_shortage_batches
+from app.application.ingest.wip_matching import match_wip
 from app.infrastructure.parsers.wip_parser import parse_wip_excel
-from app.services.wip_promotion import _promote_expected_to_estimated
+from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
 
 _RUN_A = "TEST_SMOKE_A"  # 1차 run — 수주 A

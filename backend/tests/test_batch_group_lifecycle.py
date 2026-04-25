@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.batch_group_lifecycle import (
+from app.application.validation.batch_group_lifecycle import (
     unassign_batch_group,
     restore_batch_group,
     BatchGroupReasonError,
@@ -330,7 +330,7 @@ def test_restore_not_found(db: Session):
 
 def test_compute_restore_at_plan_success(db: Session):
     """unassigned batch_group 복원 시 anchor 위치 기준 downstream 자동 배치."""
-    from app.services.batch_group_lifecycle import (
+    from app.application.validation.batch_group_lifecycle import (
         compute_restore_at_plan,
         RestoreAtPlanResult,
     )
@@ -361,7 +361,7 @@ def test_compute_restore_at_plan_success(db: Session):
 
 def test_compute_restore_at_plan_not_all_unassigned(db: Session):
     """일부가 planned 인 batch_group 에 restore_at 시도 → BatchGroupStatusError."""
-    from app.services.batch_group_lifecycle import compute_restore_at_plan
+    from app.application.validation.batch_group_lifecycle import compute_restore_at_plan
     from datetime import datetime
 
     _seed_planned_group(db, "rp-2")
@@ -376,7 +376,7 @@ def test_compute_restore_at_plan_not_all_unassigned(db: Session):
 
 
 def test_compute_restore_at_plan_not_found(db: Session):
-    from app.services.batch_group_lifecycle import compute_restore_at_plan
+    from app.application.validation.batch_group_lifecycle import compute_restore_at_plan
     from datetime import datetime
 
     with pytest.raises(BatchGroupNotFoundError):
@@ -394,7 +394,7 @@ def test_compute_restore_at_plan_single_task(db: Session):
     엣지 케이스: 단일 공정 batch_group (예: 시스만 있는 경우). anchor 계산 이후
     downstream 이 비어 last_end 업데이트 루프가 동작하지 않는 분기를 커버.
     """
-    from app.services.batch_group_lifecycle import compute_restore_at_plan
+    from app.application.validation.batch_group_lifecycle import compute_restore_at_plan
 
     # 단일 batch_seq 시드 — _seed_planned_group은 3공정이라 인라인 구성
     b = ProductionBatch(

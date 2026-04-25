@@ -85,7 +85,7 @@ def test_sheath_chain_key_preserves_color_adjacency_across_sq():
     납기 주차 그룹들이 연속으로 정렬된다 (stable sort).
     """
     from app.infrastructure.models.production_batch import ProductionBatch
-    from app.services.batch_grouping import _SHEATH_COLOR_RANK
+    from app.application.ingest import _SHEATH_COLOR_RANK
 
     # 흑 SQ 120, 흑 SQ 240, 갈 SQ 120 — 모두 같은 W15 납기
     batches = [

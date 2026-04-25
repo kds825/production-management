@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database import SessionLocal
-from app.services.constraint_checker import validate_all
+from app.application.validation.constraint_checker import validate_all
 
 
 # run_stage2_direct.py 로 생성된 고정 run. 이 테스트가 실행 시점에 스케줄이 변하면

@@ -32,19 +32,19 @@ PAIRS: List[Tuple[str, str, str]] = [
     # Phase 1 step 1 (domain/ leaf) 후 추가:
     # batch_grouping/__init__ 가 도메인 키들을 재export 하는지 (호환 표면)
     (
-        "app.services.batch_grouping",
+        "app.application.ingest",
         "_SHEATH_COLOR_RANK",
         "app.domain.batch_sheath_keys",
     ),
     (
-        "app.services.batch_grouping",
+        "app.application.ingest",
         "_WIP_COVERED_PROCESSES",
         "app.domain.batch_sheath_keys",
     ),
-    ("app.services.batch_grouping", "_A120_COLORS", "app.domain.batch_sheath_keys"),
-    ("app.services.batch_grouping", "_TFR8_PATTERN", "app.domain.batch_sheath_keys"),
+    ("app.application.ingest", "_A120_COLORS", "app.domain.batch_sheath_keys"),
+    ("app.application.ingest", "_TFR8_PATTERN", "app.domain.batch_sheath_keys"),
     (
-        "app.services.batch_grouping",
+        "app.application.ingest",
         "_compose_sheath_group_key",
         "app.domain.batch_sheath_keys",
     ),

@@ -1,13 +1,13 @@
 from datetime import datetime
 from collections import defaultdict
 
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.validators import (
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.validators import (
     validate_due_date,
     validate_horizon,
     validate_cycles,
 )
-from app.services.cascade.reasons import UnresolvedReason
+from app.application.cascade.reasons import UnresolvedReason
 
 
 def _mk(task_id, sh, eh, due, sol=1):

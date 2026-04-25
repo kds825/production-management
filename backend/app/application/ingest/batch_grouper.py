@@ -36,7 +36,7 @@ from app.domain.batch_sheath_keys import (
     _WIP_COVERED_PROCESSES,
     _compose_sheath_group_key,
 )
-from app.services.batch_grouping.helpers import (
+from app.application.ingest.batch_helpers import (
     _find_item,
     _find_speed,
     _get_processes,

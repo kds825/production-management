@@ -10,8 +10,8 @@ T8(설비 변경 cascade) / T9(주말 gap skip 앞당김) 의 핵심 계약을 �
 
 from datetime import datetime
 
-from app.services.cascade.snap import Snap, SnapTask
-from app.services.cascade.service import plan_cascade_preview_on_snap
+from app.application.cascade.snap import Snap, SnapTask
+from app.application.cascade.service import plan_cascade_preview_on_snap
 from app.infrastructure.calendar_engine import reverse_advance as real_reverse
 
 

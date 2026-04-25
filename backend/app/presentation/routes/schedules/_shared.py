@@ -26,7 +26,7 @@ from app.infrastructure.models.schedule_task import (
     ScheduleTask as ScheduleTaskModel,
 )
 from app.presentation.schemas import ScheduleTaskResponse
-from app.services.batch_grouping import format_spec_display
+from app.application.ingest import format_spec_display
 
 
 # ---------------------------------------------------------------------------

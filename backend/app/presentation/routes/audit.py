@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.database import get_db
 from app.application._shared.audit_logger import get_audit_trail
 from app.services.llm_explainer import explain_decision_sync  # noqa: F401
-from app.services.sm_inventory import (
+from app.application.sm_inventory import (
     create_shortage_batches,
     get_wip_summary,
     update_wip_actual,

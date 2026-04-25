@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.cascade.snap import TaskView
+from app.application.cascade.snap import TaskView
 
 # status 리터럴 — 신규 spec 기준. schedule_task 레거시 default('scheduled')와 병존하나
 # 본 모듈은 미배정 전이에만 관여하므로 unassigned 로의 단방향 세팅만 다룬다.
@@ -210,8 +210,8 @@ def compute_restore_at_plan(
     """
     import uuid
 
-    from app.services.cascade.snap import build_snapshot
-    from app.services.cascade.service import plan_cascade_preview_on_snap
+    from app.application.cascade.snap import build_snapshot
+    from app.application.cascade.service import plan_cascade_preview_on_snap
     from app.infrastructure.calendar_engine import (
         reverse_advance as _calendar_reverse_advance,
     )

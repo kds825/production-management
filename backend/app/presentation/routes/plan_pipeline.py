@@ -13,25 +13,25 @@ from app.exceptions import SchedulerOverlapError
 from app.infrastructure.database import SessionLocal, get_db
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.batch_grouping import (
+from app.application.ingest import (
     create_batches,
     detect_split_candidates,
     execute_auto_splits,
     format_spec_display,
 )
-from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
+from app.application.validation.constraint_checker import validate_all  # noqa: F401 — used in stage2
 from app.infrastructure.exporters.excel_exporter import export_plan
-from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for tests
+from app.application.ingest.run_labeler import (  # noqa: F401 — re-export for tests
     new_run_label as _alloc_run_label,
     parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
-from app.services.pipeline.orchestrator import (  # noqa: F401
+from app.application.ingest.pipeline_orchestrator import (  # noqa: F401
     execute_stage1_ingest,
     execute_stage2,
 )
-from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
-from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
+from app.application.ingest.stage1 import run_solver_stage  # noqa: F401
+from app.application.ingest.stage2 import run_greedy_stage  # noqa: F401
 
 # Public re-export under the helper's canonical name (kept importable from
 # the route module so callers / tests can reach it as plan_pipeline.new_run_label
@@ -39,8 +39,8 @@ from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
 # with the local variable named ``new_run_label`` inside run_stage1_update().
 new_run_label = _alloc_run_label  # noqa: F811 — intentional re-export alias
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
-from app.services.wip_matching import match_wip
-from app.services.wip_promotion import _promote_expected_to_estimated
+from app.application.ingest.wip_matching import match_wip
+from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 
 logger = logging.getLogger(__name__)
 
@@ -1050,7 +1050,7 @@ def run_stage2_async(body: dict) -> dict:
         { "job_id": str, "status": "running", "run_label": str }
     """
     from app.infrastructure.database import SessionLocal
-    from app.services.stage2_job_queue import Stage2JobRequest, submit_job
+    from app.application.stage2_job_queue import Stage2JobRequest, submit_job
 
     run_label, base_date_dt, optimizer = _parse_stage2_body(body)
 
@@ -1079,7 +1079,7 @@ def get_stage2_status(job_id: str) -> dict:
       - error: error 일 때만 채워짐
       - started_at / finished_at: ISO-8601 UTC
     """
-    from app.services.stage2_job_queue import get_job
+    from app.application.stage2_job_queue import get_job
 
     job = get_job(job_id)
     if job is None:
@@ -2290,7 +2290,7 @@ def unassign_batch_group_endpoint(
         404: batch_group 없음
     """
     from app.infrastructure.models.audit_log import AuditLog
-    from app.services.batch_group_lifecycle import (
+    from app.application.validation.batch_group_lifecycle import (
         BatchGroupNotFoundError,
         BatchGroupReasonError,
         BatchGroupStatusError,
@@ -2378,7 +2378,7 @@ def restore_batch_group_endpoint(
         409: 원래 자리 점유됨 — detail.conflicts 에 상세 반환
     """
     from app.infrastructure.models.audit_log import AuditLog
-    from app.services.batch_group_lifecycle import (
+    from app.application.validation.batch_group_lifecycle import (
         BatchGroupNotFoundError,
         BatchGroupStatusError,
         restore_batch_group,
@@ -2441,7 +2441,7 @@ def restore_batch_group_endpoint(
 
 
 from app.presentation.schemas.restore_at import RestoreAtRequest, RestoreAtResponse
-from app.services.batch_group_lifecycle import (
+from app.application.validation.batch_group_lifecycle import (
     BatchGroupNotFoundError,
     BatchGroupStatusError,
     compute_restore_at_plan,

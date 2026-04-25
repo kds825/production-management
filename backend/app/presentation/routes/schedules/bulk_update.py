@@ -34,8 +34,8 @@ from app.presentation.schemas.cascade import (
     BulkUpdateRequestV2,
     BulkUpdateSuccess,
 )
-from app.services.cascade.snap import build_snapshot
-from app.services.schedule_validators import (
+from app.application.cascade.snap import build_snapshot
+from app.application.validation.schedule_validators import (
     find_due_date_violation,
     find_predecessor_violation,
     find_same_eq_overlap,
