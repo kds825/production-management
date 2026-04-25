@@ -628,66 +628,36 @@ async def run_stage1_update(
 
 @router.post(
     "/stage1/urgent",
-    summary="[DEPRECATED] 긴급 수주 증분 반영 — 최소 파급 재스케줄",
+    summary="[REMOVED] 긴급 수주 — /stage1/update upload_mode=incremental 로 대체",
     deprecated=True,
+    status_code=410,
 )
 async def apply_urgent_order(
-    erp_file: UploadFile = File(..., description="긴급 수주 ERP 파일 (.xls/.xlsx)"),
-    run_label: str = Form(..., description="기존 계획 실행의 run_label"),
-    gap_days: int = Form(3, description="분할 후보 납기 간격 임계값 (일)"),
-    db: Session = Depends(get_db),
-) -> dict:
-    """[DEPRECATED] 프론트엔드는 더 이상 이 엔드포인트를 호출하지 않는다.
+    erp_file: UploadFile | None = File(None),  # noqa: ARG001 — schema parity
+    run_label: str | None = Form(None),  # noqa: ARG001
+    gap_days: int = Form(3),  # noqa: ARG001
+) -> None:
+    """410 Gone — 사용 중단 (frontend 미호출, urgent_scheduler 의 FK cycle 미패치).
 
-    현재 긴급수주 플로우는 `/stage1/update` (upload_mode='incremental' +
-    base_date) → `/stage2` (base_date) 조합을 사용한다. 이 엔드포인트는
-    과거 호환 목적으로 남겨 두며, `apply_urgent_incremental` 시그니처에
-    `base_date` kwarg 가 추가되지 않은 상태이므로 base_date 파라미터를
-    받지 않는다 (Track 2 의 urgent_scheduler 리팩터와 함께 확장 예정).
+    현재 긴급수주 플로우:
+      POST /api/pipeline/stage1/update
+        upload_mode=incremental
+        parent_run_label=<기존 run>
+        base_date=<YYYY-MM-DD>
 
-    기존 동작:
-      - 기존 배치는 삭제하지 않는다. 긴급 수주 배치만 생성 후:
-        * 동일 SQ·전압의 비동결 연선 그룹이 있으면 헤더 배치에 수량 합산
-        * 절연·시스는 기존 batch_group 에 배치 추가
-        * 수정/신규 batch_group 만 부분 재스케줄 (기존 그룹 순서 보존)
+    이 엔드포인트의 실제 핸들러였던 `urgent_scheduler.apply_urgent_incremental`
+    는 newly_created header batch 가 wip_inventory.source_batch_id 로 참조될 때
+    FK NO ACTION 위반을 일으킨다 (Week 9 통합 테스트에서 발견). 패치 대신 해당
+    플로우의 단일 진입점을 `/stage1/update` 로 일원화하여 표면을 줄였다.
     """
-    # run_label 존재 확인
-    existing_count = (
-        db.query(func.count(ProductionBatch.batch_id))
-        .filter(ProductionBatch.run_label == run_label)
-        .scalar()
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "이 엔드포인트는 사용 중단되었습니다. "
+            "긴급수주는 POST /api/pipeline/stage1/update 에 "
+            "upload_mode='incremental' + parent_run_label + base_date 를 함께 보내 주세요."
+        ),
     )
-    if not existing_count:
-        raise HTTPException(
-            status_code=404,
-            detail=f"run_label '{run_label}'에 해당하는 계획이 없습니다.",
-        )
-
-    erp_content = await erp_file.read()
-    if not erp_content:
-        raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
-
-    try:
-        from app.services.urgent_scheduler import apply_urgent_incremental
-
-        result = apply_urgent_incremental(
-            erp_content=erp_content,
-            run_label=run_label,
-            db=db,
-            gap_days=gap_days,
-        )
-        db.commit()
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        db.rollback()
-        logger.exception("[Urgent] 긴급 수주 반영 실패 — 롤백 완료")
-        raise HTTPException(
-            status_code=500,
-            detail=f"긴급 수주 반영 실패 (롤백 완료): {exc}",
-        ) from exc
 
 
 @router.get("/stage1/{run_label}/batches", summary="배치 목록 JSON")
