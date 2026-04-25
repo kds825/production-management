@@ -575,7 +575,7 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 1 step 4b — cp_sat_optimizer.py → orchestrator.py rename (P2 단순 rename, 15 importer 갱신, test_solver_boundary allow-list 에 orchestrator.py 등재, parity 27/27 = /tmp/parity_phase1_step4b.md)
 - [✓] Phase 1 step 5 — 잔여 services/ 이동 (decisions/narrator + validation/{constraint_checker,schedule_validators,batch_group_lifecycle} + ingest/{pipeline_orchestrator,stage1,stage2,run_labeler,batch_grouper,batch_splitter,batch_helpers,wip_matching,wip_promotion} + cascade/ + sm_inventory + stage2_job_queue. 41 importer + 4 잔존 stale (`from app.services import X`) 갱신, ingest aggregate **init**.py 신설(D7-C compat), parity 27/27 = /tmp/parity_phase1_step5.md)
 - [✓] Phase 1 step 6 — routes import flip (3 routes flip: plan_pipeline auto_schedule → application.scheduling.greedy.auto_schedule, schedules/cascade + schedules/**init** PREDECESSOR_PROCESS → app.domain.constants. llm_explainer route 는 Phase 2 까지 유지, schedule_optimizer 셸 Phase 5 §9.4 까지 유지. parity 27/27 = /tmp/parity_phase1_step6.md)
-- [ ] Phase 2 — llm_explainer 분해
+- [✓] Phase 2 — llm_explainer 분해 (services/llm_explainer.py 삭제, application/decisions/{risk_detector, \_llm_client, explain_batch, summarize_run}.py 신설, narrator.py 에 detect_hallucinations public helper 추가, hallucination filter 가 explain_batch + summarize_run 양쪽에 적용. 신규 5 unit test (3 noun class 거부 + 도메인 통과 + base allow). pytest 435 green, parity 27/27 = /tmp/parity_phase2.md)
 - [ ] Phase 3 step 1~6 — cp_sat_schedule 분해 + lex wiring
 - [ ] Phase 4 — SchedulerState SRP
 - [ ] Phase 5 §9.1~§9.5 — e2e + QA + shell delete + 최종 parity

@@ -65,6 +65,20 @@ def _korean_nouns(text: str) -> set[str]:
     return {t.form for t in _kiwi.tokenize(text) if t.tag.startswith("NN")}
 
 
+def detect_hallucinations(text: str, korean_name_catalog: set[str]) -> set[str]:
+    """text 안에 있는 한국어 명사 중 base allow + catalog 외 항목을 반환.
+
+    Why public helper (Phase 2): explain_batch / summarize_run 도 LLM 결과를
+    동일 정책으로 사후 검증해야 한다 (decision-card 와 동일 hallucination
+    catalog 공유). 양 use-case 가 narrator 의 `_korean_nouns` 와 `_BASE_ALLOW`
+    private 인터페이스에 의존하지 않도록 본 함수가 호환 표면이 된다.
+
+    Returns 빈 set → 환각 없음 (LLM 결과 사용 가능). 비어있지 않으면 호출부가
+    템플릿 폴백을 트리거해야 한다.
+    """
+    return _korean_nouns(text) - (_BASE_ALLOW | korean_name_catalog)
+
+
 def explain_with_filter(
     provider: Provider,
     payload: ExplainPayload,

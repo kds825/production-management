@@ -29,7 +29,7 @@
   },
   "groups": [
     {
-      "batch_group": "_single_308570",
+      "batch_group": "_single_310013",
       "process_name": "저압시스",
       "sq_mm2": 120.0,
       "voltage": null,
@@ -54,7 +54,7 @@
       "solver_tardiness_contribution": 2547300000
     },
     {
-      "batch_group": "_single_308572",
+      "batch_group": "_single_310015",
       "process_name": "저압시스",
       "sq_mm2": 120.0,
       "voltage": null,
@@ -79,7 +79,7 @@
       "solver_tardiness_contribution": 2547300000
     },
     {
-      "batch_group": "_single_308571",
+      "batch_group": "_single_310014",
       "process_name": "저압시스",
       "sq_mm2": 95.0,
       "voltage": null,
@@ -104,7 +104,7 @@
       "solver_tardiness_contribution": 875000000
     },
     {
-      "batch_group": "_single_308573",
+      "batch_group": "_single_310016",
       "process_name": "저압시스",
       "sq_mm2": 95.0,
       "voltage": null,

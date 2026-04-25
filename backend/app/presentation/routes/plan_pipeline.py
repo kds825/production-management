@@ -63,7 +63,7 @@ def _run_ai_background(run_label: str) -> None:
     """
     db = SessionLocal()
     try:
-        from app.services.llm_explainer import generate_batch_summary_sync
+        from app.application.decisions.summarize_run import generate_batch_summary_sync
 
         result = generate_batch_summary_sync(run_label, db)
         with _ai_cache_lock:
@@ -906,7 +906,7 @@ def get_ai_summary(run_label: str, db: Session = Depends(get_db)):
     Returns:
         totalBatches, totalProductionM, riskCount, highlights, insights
     """
-    from app.services.llm_explainer import generate_batch_summary_sync
+    from app.application.decisions.summarize_run import generate_batch_summary_sync
 
     return generate_batch_summary_sync(run_label, db)
 
