@@ -32,7 +32,13 @@ from typing import Any
 from ortools.sat.python import cp_model
 from sqlalchemy.orm import Session
 
-from app.domain.constants import PROCESS_ORDER
+from app.domain.constants import (
+    PROCESS_ORDER,
+    _CHAIN_WEIGHT,  # re-export until Week 9 (D7-C)
+    _DUE_HARD_WEIGHT,  # re-export until Week 9 (D7-C)
+    _TRANSITION_WEIGHT,  # re-export until Week 9 (D7-C)
+    _WORK_MIN_PER_DAY,  # re-export until Week 9 (D7-C)
+)
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -68,10 +74,8 @@ from app.services.solver.objective import compose_objective
 # solver correctness (see Task 2A.3 wiring note near `return result`).
 _logger = logging.getLogger(__name__)
 
-# 하루 근무 시간(분): 08:00~22:00 (CP-SAT 시간축 legacy 단위).
-# 실제 가용 분은 calendar_engine 기반 _working_minutes_between 이 계산하므로
-# 이 상수는 폴백(legacy path) 과 horizon 계산의 근사치로만 사용된다.
-_WORK_MIN_PER_DAY = 14 * 60  # 840분
+# _WORK_MIN_PER_DAY 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
+# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
 
 # 연선연합(default) 카테고리 기준 1 근무일 최대 working-min (P9-E 신규).
 # Mon-Thu 22h 가동 중 휴식 2h 제외 = 20h 실가동 + 8h idle (창 내부) 합쳐 24h 창.
@@ -102,22 +106,17 @@ def _resolve_num_workers() -> int:
     return max(1, n)
 
 
-# 납기 초과 가중치 — tardiness_hard=False 모드에서만 사용.
-# tardiness_hard=True (기본) 에서는 model.add(e <= due_wmin) 로 직접 강제.
-# _DUE_HARD_WEIGHT: 아이들(1)/체인(120)/선점 등 다른 목적함수 항들을 압도해
-# 실질적 hard 로 동작시킨다 (soft 폴백 경로용).
-_DUE_HARD_WEIGHT = 100000
+# _DUE_HARD_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
+# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
+# _TARDINESS_WEIGHT 는 _DUE_HARD_WEIGHT 의 파생값이므로 여기 유지.
 _TARDINESS_WEIGHT = {
     "critical": _DUE_HARD_WEIGHT * 100,
     "urgent": _DUE_HARD_WEIGHT * 10,
     "normal": _DUE_HARD_WEIGHT,
 }
 
-# 색상 교체 cost 가중치 (분 단위). resolve_color_change_min 의 기본값(120min)과
-# 일치시켜 chain_diff(boolean: 동색 0, 이색 1) 곱한 값이 실제 교체 시간과 동등
-# scale 로 경쟁하게 함. 1 분 tardiness ≒ 1 분 idle ≒ 색상 1회 교체(120min).
-# 기존 값(1)은 tardiness_weight(10만~1000만) 대비 사실상 무력했음 (P9-B 교정).
-_CHAIN_WEIGHT = 120
+# _CHAIN_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
+# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
 _IDLE_WEIGHT = 1
 
 # On-time 그룹 간 "납기 임박도" 에 가산점을 주는 slack 가중치 base.
@@ -190,14 +189,8 @@ _EDD_PAIR_WEIGHT = 10_000
 # _EDD_MIXED_PASTDUE_WEIGHT = 1e9 은 단일 violation 으로도 이 delta 를 압도.
 _EDD_MIXED_PASTDUE_WEIGHT = 1_000_000_000
 
-# Round 2 HIGH #6: 연선 setup 3-tier (동일SQ 0 / 동일소선경 30 / 이소선경 210) 의
-# 평균치. spec-level (다른 소선경) 전이만이 실제로 고비용이므로 avg(0, 30, 210) ≈ 80
-# 대신 "다른 SQ 인접 시 피해야 할 비용" 의 대표값으로 180 min 사용 (spec 이 압도적).
-# Solver 는 "같은 설비에서 인접 두 연선 그룹이 SQ 가 다르면 180 min penalty" 로
-# 인식 → 같은 SQ 연속 처리를 선호. 이는 sequence-dependent setup 의 정확 모델링이
-# 아닌 soft proxy 이지만, 현재 모델 구조 (group=single interval) 에서 실용적 절충안.
-# 완전한 circuit-constraint 기반 모델링은 별도 phase.
-_TRANSITION_WEIGHT = 180
+# _TRANSITION_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
+# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
 
 
 # ── 진단: solver 스냅샷 덤프 ──────────────────────────────────────────────

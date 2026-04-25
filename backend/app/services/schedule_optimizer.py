@@ -27,7 +27,12 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
-from app.domain.constants import PROCESS_ORDER
+from app.domain.constants import (
+    PROCESS_ORDER,
+    PREDECESSOR_PROCESS,  # re-export until Week 9 (D7-C)
+    _DEFAULT_WELDING_MIN,  # re-export until Week 9 (D7-C)
+    _WIP_SKIP_PROCESSES,  # re-export until Week 9 (D7-C)
+)
 from app.services.calendar_engine import (
     calculate_end_datetime,
     calculate_start_datetime,
@@ -47,27 +52,8 @@ def _should_apply_jit() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
-# WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
-# batch_grouping._WIP_COVERED_PROCESSES와 동일한 기준 — Phase 2에서 대부분 걸러지지만
-# 증분 업데이트 등으로 잔존 배치가 있을 경우의 안전망으로 유지한다.
-_WIP_SKIP_PROCESSES: dict[str, set[str]] = {
-    "연선재고": {"신선", "연선"},
-    "절연재고": {"신선", "연선", "저압절연", "고압절연"},
-    "연합재고": {"신선", "연선", "저압절연", "고압절연", "연합", "T/P"},
-    "완제품": {
-        "신선",
-        "연선",
-        "저압절연",
-        "고압절연",
-        "연합",
-        "T/P",
-        "저압시스",
-        "고압시스",
-    },
-}
-
-# 용접 시간 기본값 (4-4): constraint_config params_json에서 읽을 때 없으면 사용
-_DEFAULT_WELDING_MIN = 30
+# _WIP_SKIP_PROCESSES, _DEFAULT_WELDING_MIN 은 app.domain.constants 로 이동
+# (Week 3 Task 3A.1). 위 import 블록에서 re-export 되어 기존 path 유지.
 
 # 시스 재질 → 설비 라우팅 규칙 (10-3)
 # 값은 equipment_code prefix 또는 특수 라우팅 키
@@ -77,23 +63,8 @@ _SHEATH_ROUTING = {
     "LLDPE": "A150",  # LLDPE → A150 설비 고정
 }
 
-# 공정 간 선행/후행 관계 — 공정 프로세스도 기준
-# schedules.py cascade_preview 와 공유하는 단일 진실 공급원(single source of truth)
-#
-# 저압(0.6/1kV):
-#   1Core:    연선 → 저압절연(B100) → 시스(A100/A120)
-#   2~4Core:  연선 → 저압절연(B100) → 연합(4BO) → 시스(A100/A120)
-# 고압(6/10kV, 22.9kV):
-#   1Core:    연선 → 고압절연(CV) → T/P → 시스
-#   2~4Core:  연선 → 고압절연(CV) → T/P → 연합(4BO) → 시스
-PREDECESSOR_PROCESS: dict[str, str] = {
-    "저압절연": "연선",
-    "고압절연": "연선",
-    "연합": "저압절연",  # 연합은 절연 완료 후 (다심 케이블 연합 공정)
-    "T/P": "저압절연",  # T/P(동테이프)는 절연 완료 후
-    "저압시스": "저압절연",  # 1Core는 절연→시스 직행, 다심은 연합 경유하지만 절연 기준
-    "고압시스": "고압절연",
-}
+# PREDECESSOR_PROCESS 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
+# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
 
 
 def _is_core_group(group_key: str) -> bool:
