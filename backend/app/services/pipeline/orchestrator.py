@@ -62,7 +62,14 @@ def _purge_run_data(db: Session) -> None:
     db.query(func.count(ST.task_id)).scalar()  # warm up
     db.execute(text("DELETE FROM audit_log"))
     db.execute(text("DELETE FROM schedule_task"))
-    db.execute(text("DELETE FROM production_batch"))
+    # Why: wip_inventory ↔ production_batch 가 양방향 FK 로 잡혀 있다.
+    #   - wip_inventory.source_batch_id → production_batch.batch_id
+    #   - production_batch.wip_matched_id → wip_inventory.wip_id
+    # NO ACTION 정책이라 한쪽만 먼저 지우면 양쪽 모두 FK 위반이 난다. 따라서
+    # production_batch.wip_matched_id 를 먼저 NULL 화하여 cycle 을 끊은 뒤
+    # wip_inventory → production_batch 순으로 삭제한다. main 의 잘못된 순서를
+    # 정정 (Week 9 통합 테스트에서 발견된 pre-existing 회귀).
+    db.execute(text("UPDATE production_batch SET wip_matched_id = NULL"))
     db.execute(
         text(
             "UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, "
@@ -70,6 +77,7 @@ def _purge_run_data(db: Session) -> None:
         )
     )
     db.execute(text("DELETE FROM wip_inventory"))
+    db.execute(text("DELETE FROM production_batch"))
     db.commit()
 
 
