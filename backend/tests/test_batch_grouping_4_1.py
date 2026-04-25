@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.constraint_config import ConstraintConfig
-from app.services.constraint_params import ConstraintParams
+from app.application._shared.constraint_params import ConstraintParams
 
 # Why xfail: Supabase row `4-1.stranding_min` drifts from seed (210) to
 # operational value (30) because api/test_constraints_params.py's PATCH

@@ -36,7 +36,7 @@ from app.exceptions import SchedulerOverlapError
 from app.infrastructure.models.equipment_master import EquipmentMaster  # noqa: F401
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.audit_logger import log_decision
+from app.application._shared.audit_logger import log_decision
 from app.services.jit_scheduling import apply_jit_delay
 
 
@@ -154,7 +154,7 @@ def auto_schedule(
     #   4) add_hint 는 silent-fail 이라 batch_group 이 신규 모델에 없어도
     #      안전 (cp_sat_optimizer 주석 참조).
     if use_cpsat and "warm_start_hints" not in kwargs:
-        from app.services.scheduling_shared.calendar_ops import (
+        from app.application._shared.calendar_ops import (
             _datetime_to_wmin,
             resolve_base_date,
         )

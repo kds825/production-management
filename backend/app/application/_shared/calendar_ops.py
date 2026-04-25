@@ -4,8 +4,8 @@ CP-SAT 솔버는 시간축으로 "근무 분(working minute)" 을 사용한다. 
 datetime 과 이 추상 축 사이를 오가는 변환 함수, 그리고 run_label 로부터
 기준 시각을 결정하는 헬퍼를 모은다.
 
-기존 위치: app.services.cp_sat_optimizer (Week 3 Task 3A.1 이전 분리됨).
-원래 dotted path 는 cp_sat_optimizer 모듈에서 re-export 로 유지된다.
+기존 위치: app.services.cp_sat_optimizer (Week 3 Task 3A.1 이전 분리됨,
+Phase 1 step 3 에서 application/_shared/ 로 이동).
 """
 
 from __future__ import annotations

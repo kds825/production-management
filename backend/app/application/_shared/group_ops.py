@@ -4,8 +4,9 @@
 설비별 duration map 계산, 그리고 멀티-설비 분배 스케줄링 로직을 묶는다.
 
 기존 위치: app.services.cp_sat_optimizer / app.services.schedule_optimizer
-(Week 3 Task 3A.1 이전 분리됨). 원래 dotted path 는 양쪽 모듈에서 re-export
-로 유지된다 (D7-C invariant through Week 9).
+(Week 3 Task 3A.1 이전 분리됨). Phase 1 step 3 에서 application/_shared/ 로
+이동, schedule_optimizer 셸은 본 모듈 함수들을 D7-C invariant 보호 목적으로
+계속 re-export (Phase 5 §9.4 에서 셸 + retarget 동시 정리).
 """
 
 from __future__ import annotations

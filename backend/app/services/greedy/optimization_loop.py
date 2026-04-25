@@ -42,9 +42,9 @@ from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
-from app.services.audit_logger import log_decision
+from app.application._shared.audit_logger import log_decision
 from app.infrastructure.calendar_engine import calculate_end_datetime
-from app.services.constraint_params import resolve_color_change_min
+from app.domain.constraint_rules import resolve_color_change_min
 from app.services.greedy.loaders.base_date import (  # noqa: F401  # used in setup
     resolve_base_date,
 )
@@ -58,7 +58,7 @@ from app.services.greedy.loaders.wip_filter import (  # noqa: F401  # used in se
     filter_wip_skippable,
 )
 from app.services.greedy.slot_finder import _find_available_slot
-from app.services.scheduling_shared.group_ops import (
+from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _get_drum_winding_min,
     _get_stranding_setup_min,
@@ -67,7 +67,7 @@ from app.services.scheduling_shared.group_ops import (
     _schedule_multi_equipment,
     _st_sq,
 )
-from app.services.scheduling_shared.slot_filters import (
+from app.application._shared.slot_filters import (
     _filter_by_sheath_routing,
     _find_eligible_equipment,
     _narrow_by_stranding,

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.decision_criteria import DecisionCriteria
-from app.services.audit_logger import log_decision
+from app.application._shared.audit_logger import log_decision
 
 _EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
 _DP_GRANULARITY_M = 1  # DP 이산화 단위 (1m — 정확한 매칭)

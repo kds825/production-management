@@ -4,8 +4,8 @@
 에서 다음 모듈로 분리했다:
 
     app.domain.constants                     : 데이터 상수
-    app.services.scheduling_shared.{calendar_ops,slot_filters,group_ops,db_ops}
-                                             : 공용 헬퍼
+    app.application._shared.{calendar_ops,slot_filters,group_ops,db_ops}
+                                             : 공용 헬퍼 (Phase 1 step 3 이동)
     app.services.greedy.slot_finder          : _find_available_slot
     app.services.greedy.auto_schedule        : auto_schedule + 그리디 핵심 + 재시도
     app.services.greedy.reschedule_affected  : reschedule_affected_groups + reschedule
@@ -47,8 +47,8 @@ from app.infrastructure.calendar_engine import (  # noqa: F401
 # Week 3 Task 3A.2 이동 후에도 monkeypatch 가 유효하도록 노출 유지.
 from app.services.jit_scheduling import apply_jit_delay  # noqa: F401
 
-# ── scheduling_shared 재노출 (Week 3 Task 3A.1) ────────────────────────────
-from app.services.scheduling_shared.group_ops import (  # noqa: F401
+# ── application/_shared 재노출 (Phase 1 step 3 신 위치) ──────────────────
+from app.application._shared.group_ops import (  # noqa: F401
     _extract_core_main_sq,  # re-export until Week 9 (D7-C)
     _get_drum_winding_min,  # re-export until Week 9 (D7-C)
     _get_stranding_setup_min,  # re-export until Week 9 (D7-C)
@@ -57,7 +57,7 @@ from app.services.scheduling_shared.group_ops import (  # noqa: F401
     _schedule_multi_equipment,  # re-export until Week 9 (D7-C)
     _st_sq,  # re-export until Week 9 (D7-C)
 )
-from app.services.scheduling_shared.slot_filters import (  # noqa: F401
+from app.application._shared.slot_filters import (  # noqa: F401
     _filter_by_sheath_routing,  # re-export until Week 9 (D7-C)
     _find_eligible_equipment,  # re-export until Week 9 (D7-C)
     _narrow_by_stranding,  # re-export until Week 9 (D7-C)

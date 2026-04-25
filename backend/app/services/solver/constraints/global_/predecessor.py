@@ -25,7 +25,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from app.domain.constants import PREDECESSOR_PROCESS
-from app.services.scheduling_shared.group_ops import (
+from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _is_core_group,
     _st_sq,

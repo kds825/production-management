@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.audit_logger import log_decision
+from app.application._shared.audit_logger import log_decision
 
 
 def update_wip_actual(wip_id: int, actual_length_m: float, db: Session) -> dict:

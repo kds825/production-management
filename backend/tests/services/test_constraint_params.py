@@ -3,7 +3,7 @@
 import pytest
 from sqlalchemy.orm import Session
 
-from app.services.constraint_params import ConstraintParams
+from app.application._shared.constraint_params import ConstraintParams
 
 # Why xfail: see tests/test_batch_grouping_4_1.py — same 4-1.stranding_min
 # DB drift (seed 210 → operational 30) caused by TestClient auto-commit

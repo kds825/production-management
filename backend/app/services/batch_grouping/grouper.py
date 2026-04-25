@@ -45,7 +45,8 @@ from app.services.batch_grouping.helpers import (
     _process_order,
     extract_sq,
 )
-from app.services.constraint_params import ConstraintParams, resolve_spec_setup_min
+from app.application._shared.constraint_params import ConstraintParams
+from app.domain.constraint_rules import resolve_spec_setup_min
 
 
 def create_batches(

@@ -1,55 +1,23 @@
-"""ConstraintConfig 파라미터 프리페치 캐시.
+"""제약(spec/color) 분기 결정 — pure dispatch 룰.
 
-Why: schedule_optimizer / batch_grouping 이 루프 내부에서 ConstraintConfig 를
-조회하면 N+1 쿼리가 발생한다. 한 요청(create_batches 또는 auto_schedule)
-진입 시 1회 프리페치하여 dict 스냅샷으로 전달한다.
+Why: schedule_optimizer / cp_sat_optimizer / batch_grouping 등 다수 use-case 가
+ConstraintConfig 4-1 (규격교체) / 4-2 (색상교체) 시간 결정에 동일 우선순위
+규칙을 사용한다. 각 호출부가 직접 분기하면 드리프트 위험이 있어 본 모듈로
+중앙집중화한다.
 
-전역 lru_cache 사용 금지 — PATCH 후 stale 위험.
+본 모듈은 pure function 만 포함한다 — DB / I/O / 외부 SDK 의존 0.
+ConstraintParams 자체의 적재(`load`) 와 dataclass 정의는 application layer
+(`application/_shared/constraint_params.py`) 에 위치한다. 본 모듈은
+`ConstraintParams` 를 TYPE_CHECKING 으로만 참조해 도메인 → 어플리케이션
+역방향 런타임 의존을 피한다.
 """
 
-from dataclasses import dataclass, field
-from typing import Any
+from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
-from app.infrastructure.models.constraint_config import ConstraintConfig
-
-
-@dataclass(frozen=True)
-class ConstraintParams:
-    """create_batches / auto_schedule 1회 실행 동안 재사용되는 스냅샷."""
-
-    by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    @classmethod
-    def load(cls, db: Session) -> "ConstraintParams":
-        rows = db.query(ConstraintConfig).all()
-        return cls(
-            by_id={r.constraint_id: dict(r.params_json or {}) for r in rows},
-        )
-
-    def get(
-        self,
-        constraint_id: str,
-        key: str,
-        default: float | None = None,
-    ) -> float:
-        """params_json 에서 숫자 파라미터 조회. Fail-fast 정책."""
-        row = self.by_id.get(constraint_id)
-        if row is None:
-            if default is not None:
-                return float(default)
-            raise RuntimeError(
-                f"ConstraintConfig '{constraint_id}' row not found. "
-                "Run seed_db.py to initialize constraint parameters."
-            )
-        if key not in row:
-            if default is not None:
-                return float(default)
-            raise RuntimeError(
-                f"ConstraintConfig '{constraint_id}' params_json key '{key}' missing."
-            )
-        return float(row[key])
+if TYPE_CHECKING:
+    from app.application._shared.constraint_params import ConstraintParams
 
 
 # 공정명 → ConstraintConfig 4-1 params_json 키 매핑.

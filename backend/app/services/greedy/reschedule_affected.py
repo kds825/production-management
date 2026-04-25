@@ -23,7 +23,7 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.services.greedy.auto_schedule import _run_optimization_once
-from app.services.scheduling_shared.group_ops import (
+from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _is_core_group,
 )
@@ -187,7 +187,7 @@ def _reschedule_affected_groups_cpsat(
     #   → 힌트 재사용으로 feasibility warm-up 단계 생략 → 2.5~5× speedup 기대.
     #   frozen 그룹은 이미 hard-pin 되므로 힌트 redundant — 스킵.
     #   add_hint() 는 silent-fail 이라 batch_group 이 신규 모델에 없어도 안전.
-    from app.services.scheduling_shared.calendar_ops import _datetime_to_wmin
+    from app.application._shared.calendar_ops import _datetime_to_wmin
 
     warm_start_hints: dict[str, dict] = {}
     for t in existing_tasks:
@@ -589,7 +589,7 @@ def reschedule(
                 tzinfo=None
             )
 
-    from app.services.scheduling_shared.calendar_ops import _datetime_to_wmin
+    from app.application._shared.calendar_ops import _datetime_to_wmin
 
     warm_start_hints: dict[str, dict] = {}
     for t in existing_tasks:
@@ -606,7 +606,7 @@ def reschedule(
         }
 
     cleared_count = 0
-    from app.services.scheduling_shared.db_ops import _delete_task_safely
+    from app.application._shared.db_ops import _delete_task_safely
 
     for task in existing_tasks:
         if task.batch_id not in frozen_batch_ids:

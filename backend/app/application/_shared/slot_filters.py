@@ -3,8 +3,9 @@
 배치 → eligible 설비 추출, 연선 케이스 좁히기, 시스 재질 라우팅,
 선행공정 종료 기준 정렬 등 슬롯 결정에 직접 영향을 주는 함수들을 묶는다.
 
-기존 위치: app.services.schedule_optimizer (Week 3 Task 3A.1 이전 분리됨).
-원래 dotted path 는 schedule_optimizer 모듈에서 re-export 로 유지된다.
+기존 위치: app.services.schedule_optimizer (Week 3 Task 3A.1 이전 분리됨,
+Phase 1 step 3 에서 application/_shared/ 로 이동). schedule_optimizer 셸은
+본 모듈 함수들을 D7-C invariant 보호 목적으로 계속 re-export.
 """
 
 from __future__ import annotations

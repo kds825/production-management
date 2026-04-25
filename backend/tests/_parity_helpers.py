@@ -78,7 +78,7 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.constraint_params import ConstraintParams
+from app.application._shared.constraint_params import ConstraintParams
 from app.services.schedule_optimizer import _DEFAULT_WELDING_MIN, _WIP_SKIP_PROCESSES
 from app.services.solver.input_builder import SolverInput
 

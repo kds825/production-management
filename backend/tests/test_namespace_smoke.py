@@ -66,9 +66,43 @@ PAIRS: List[Tuple[str, str, str]] = [
         "app.infrastructure.calendar_engine",
     ),
     # Phase 1 step 3 후 추가:
-    # ("app.services.audit_logger", "log_decision", "app.application._shared.audit_logger"),
-    # ("app.services.constraint_params", "ConstraintParams", "app.application._shared.constraint_params"),
-    # ...
+    # NOTE: Phase 1 step 2 와 동일한 패턴 — services/{audit_logger, constraint_params,
+    # scheduling_shared/}.py 자체를 git mv 로 application/_shared/ (또는 도메인) 에
+    # 옮겼다. 따라서 legacy `app.services.constraint_params` 등은 더는 resolve 되지
+    # 않는다 (PAIR 등록 불가). schedule_optimizer 셸은 application/_shared/ 의
+    # group_ops/slot_filters 를 새 path 에서 재export 하므로 그것만 호환 검증한다.
+    (
+        "app.services.schedule_optimizer",
+        "_is_core_group",
+        "app.application._shared.group_ops",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "_st_sq",
+        "app.application._shared.group_ops",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "_find_eligible_equipment",
+        "app.application._shared.slot_filters",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "align_start_to_predecessor_end",
+        "app.application._shared.slot_filters",
+    ),
+    # cp_sat_optimizer 모듈도 application/_shared/ 의 헬퍼들을 재export 하므로
+    # 같은 호환 표면을 가진다 (E402, F401 noqa 로 보호).
+    (
+        "app.services.cp_sat_optimizer",
+        "resolve_base_date",
+        "app.application._shared.calendar_ops",
+    ),
+    (
+        "app.services.cp_sat_optimizer",
+        "_delete_task_safely",
+        "app.application._shared.db_ops",
+    ),
 ]
 
 

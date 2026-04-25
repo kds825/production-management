@@ -46,18 +46,19 @@ from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
-from app.services.audit_logger import log_decision
+from app.application._shared.audit_logger import log_decision
 from app.infrastructure.calendar_engine import (
     calculate_end_datetime,
 )
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
+from app.application._shared.constraint_params import ConstraintParams
+from app.domain.constraint_rules import resolve_color_change_min
 
 # Week 3 Task 3A.2 wiring (sub-commit D):
 #   greedy / scheduling_shared 이 분리되면서 cp_sat → schedule_optimizer 의
 #   top-level import 가 모두 사라진다. domain.constants / scheduling_shared /
 #   greedy.slot_finder 직접 참조로 순환 의존성을 제거한다.
 from app.services.greedy.slot_finder import _find_available_slot
-from app.services.scheduling_shared.group_ops import (
+from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _get_drum_winding_min,
     _get_stranding_setup_min,
@@ -66,7 +67,7 @@ from app.services.scheduling_shared.group_ops import (
     _schedule_multi_equipment,
     _st_sq,
 )
-from app.services.scheduling_shared.slot_filters import (
+from app.application._shared.slot_filters import (
     _filter_by_sheath_routing,
     _find_eligible_equipment,
     _narrow_by_stranding,
@@ -244,11 +245,11 @@ def _priority_label(customer_priority: int | None) -> str:
 
 
 # _work_days_between, _working_minutes_between, _due_work_min 은
-# app.services.scheduling_shared.calendar_ops 로 이동 (Week 3 Task 3A.1).
+# app.application._shared.calendar_ops 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치).
 # 아래 import 가 모듈 namespace 에 re-export 하여 기존 path 가 유지된다 (D7-C).
 # F401 silences "unused" — 외부 (테스트/다른 모듈) 가 cp_sat_optimizer 경유로
 # 이 심볼들을 import 하므로 ruff 가 제거하면 안 됨.
-from app.services.scheduling_shared.calendar_ops import (  # noqa: E402, F401
+from app.application._shared.calendar_ops import (  # noqa: E402, F401
     _due_work_min,  # re-export until Week 9 (D7-C)
     _work_days_between,  # re-export until Week 9 (D7-C)
     _working_minutes_between,  # re-export until Week 9 (D7-C)
@@ -294,9 +295,9 @@ def _compute_group_duration(
 
 
 # _compute_group_duration_map, _is_multi_equip_group 은
-# app.services.scheduling_shared.group_ops 로 이동 (Week 3 Task 3A.1).
+# app.application._shared.group_ops 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치).
 # 아래 import 가 모듈 namespace 에 re-export 한다 (D7-C invariant).
-from app.services.scheduling_shared.group_ops import (  # noqa: E402, F401
+from app.application._shared.group_ops import (  # noqa: E402, F401
     _compute_group_duration_map,  # re-export until Week 9 (D7-C)
     _is_multi_equip_group,  # re-export until Week 9 (D7-C)
 )
@@ -305,7 +306,7 @@ from app.services.scheduling_shared.group_ops import (  # noqa: E402, F401
 # Week 9 SRP cleanup: 선점 스케줄링 로직은 `app.services.solver.preemption`.
 # `_delete_task_safely` re-export 는 D7-C 호환 path 유지용 (외부 import 가
 # 사라진 Week 9 막바지에 제거 예정).
-from app.services.scheduling_shared.db_ops import (  # noqa: E402, F401
+from app.application._shared.db_ops import (  # noqa: E402, F401
     _delete_task_safely,  # re-export until Week 9 (D7-C)
 )
 from app.services.solver.preemption import (  # noqa: E402
@@ -316,12 +317,12 @@ from app.services.solver.preemption import (  # noqa: E402
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
 
 
-# resolve_base_date, _datetime_to_wmin 은 app.services.scheduling_shared.calendar_ops
-# 로 이동 (Week 3 Task 3A.1). 아래 import 가 모듈 namespace 에 re-export 하여
-# 기존 path (app.services.cp_sat_optimizer.resolve_base_date 등) 가 유지된다 (D7-C).
+# resolve_base_date, _datetime_to_wmin 은 app.application._shared.calendar_ops
+# 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치). 아래 import 가 모듈 namespace 에
+# re-export 하여 기존 path (app.services.cp_sat_optimizer.resolve_base_date 등) 가 유지된다 (D7-C).
 # F401 silences "unused" — schedule_optimizer / 테스트가 cp_sat_optimizer 경유로
 # resolve_base_date 를 import 하므로 ruff 가 제거하면 안 됨.
-from app.services.scheduling_shared.calendar_ops import (  # noqa: E402, F401
+from app.application._shared.calendar_ops import (  # noqa: E402, F401
     _datetime_to_wmin,  # re-export until Week 9 (D7-C)
     resolve_base_date,  # re-export until Week 9 (D7-C)
 )

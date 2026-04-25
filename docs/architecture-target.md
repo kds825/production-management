@@ -570,7 +570,7 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 0.5b — 즉시 삭제 (commit 61aaee7, -125 LOC async)
 - [✓] Phase 1 step 1 — domain/ leaf (commit d61a21f, sheath_cluster + tardiness + batch_sheath_keys)
 - [✓] Phase 1 step 2 — infrastructure/ leaf (commit e156a0a, calendar_engine + parsers/ + exporters/ + llm/ + listener)
-- [ ] Phase 1 step 3 — domain/constraint_rules.py + application/\_shared/
+- [✓] Phase 1 step 3 — domain/constraint_rules.py + application/\_shared/ (audit_logger + constraint_params + scheduling_shared/\* 이동, 13 importer + 5 test 갱신, parity 27/27 = /tmp/parity_phase1_step3.md)
 - [ ] Phase 1 step 4a — solver/\* 이동
 - [ ] Phase 1 step 4b — cp_sat_optimizer.py → orchestrator.py rename
 - [ ] Phase 1 step 5 — 잔여 services/ 이동

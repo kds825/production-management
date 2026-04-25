@@ -1,6 +1,7 @@
 """4-2 색상교체 fallback — sm_color NULL vs 0 시맨틱 교정 + 동등성."""
 
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
+from app.application._shared.constraint_params import ConstraintParams
+from app.domain.constraint_rules import resolve_color_change_min
 
 
 def _make_params_with(sheath_color_min: float) -> ConstraintParams:
@@ -39,7 +40,7 @@ def test_color_change_accepts_int_as_sm_value() -> None:
 
 def test_welding_min_resolution_uses_seed() -> None:
     """4-4 welding — ConstraintParams.get 로 통일되었는지 (Task 4 회귀 guard)."""
-    from app.services.constraint_params import ConstraintParams
+    from app.application._shared.constraint_params import ConstraintParams
 
     params = ConstraintParams(by_id={"4-4": {"welding_min": 30}})
     assert params.get("4-4", "welding_min", default=30) == 30.0
@@ -47,7 +48,7 @@ def test_welding_min_resolution_uses_seed() -> None:
 
 def test_welding_min_uses_default_when_key_missing() -> None:
     """4-4 row 있지만 welding_min 누락 → default (_DEFAULT_WELDING_MIN) 반환."""
-    from app.services.constraint_params import ConstraintParams
+    from app.application._shared.constraint_params import ConstraintParams
 
     params = ConstraintParams(by_id={"4-4": {}})
     assert params.get("4-4", "welding_min", default=30) == 30.0
@@ -55,7 +56,7 @@ def test_welding_min_uses_default_when_key_missing() -> None:
 
 def test_welding_min_uses_default_when_row_missing() -> None:
     """4-4 row 아예 없음 → default 반환 (하위 호환 보장)."""
-    from app.services.constraint_params import ConstraintParams
+    from app.application._shared.constraint_params import ConstraintParams
 
     params = ConstraintParams(by_id={})
     assert params.get("4-4", "welding_min", default=30) == 30.0

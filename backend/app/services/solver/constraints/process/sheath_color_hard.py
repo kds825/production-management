@@ -21,7 +21,8 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
+from app.application._shared.constraint_params import ConstraintParams
+from app.domain.constraint_rules import resolve_color_change_min
 from app.domain.sheath_cluster import build_sheath_clusters
 
 

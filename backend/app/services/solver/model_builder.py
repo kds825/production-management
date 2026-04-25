@@ -38,7 +38,8 @@ Task 2A.2 (Production Handoff Refactor, Week 2): `cp_sat_schedule` 의 §6
   - `app.services.schedule_optimizer` 의 pure helper (`_is_core_group`,
     `_extract_core_main_sq`, `_st_sq`) — 이 helper 들은 schedule_optimizer
     가 infrastructure 를 import 하지만 symbol 자체는 pure function.
-  - `app.services.constraint_params`, `app.services.sheath_cluster`
+  - `app.application._shared.constraint_params`, `app.domain.sheath_cluster`,
+    `app.domain.constraint_rules`
   - stdlib
 
 ## Week 5 migration note
@@ -58,7 +59,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from app.services.constraint_params import ConstraintParams
+from app.application._shared.constraint_params import ConstraintParams
 from app.services.solver.constraints.global_.decision_vars import (  # noqa: F401  # used at §6-b
     DecisionVars,
     add_decision_vars,
