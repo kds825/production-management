@@ -18,3 +18,4 @@ from app.services.pipeline.run_labeler import (  # noqa: F401
     parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
+from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401

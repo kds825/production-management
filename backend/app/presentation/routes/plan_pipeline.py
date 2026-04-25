@@ -27,6 +27,7 @@ from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for 
     parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
+from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
 
 # Public re-export under the helper's canonical name (kept importable from
 # the route module so callers / tests can reach it as plan_pipeline.new_run_label
@@ -1074,13 +1075,11 @@ def _execute_stage2_core(
         # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
         # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
         # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
-        schedule_result = auto_schedule(
-            run_label, db, use_cpsat=True, base_date=base_date_dt
+        # auto_schedule 은 본 모듈 namespace 에서 lookup 되도록 (테스트
+        # monkeypatch 호환) DI 로 전달한다.
+        schedule_result = run_solver_stage(
+            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule
         )
-        if schedule_result.get("solver_status") in ("OPTIMAL", "FEASIBLE"):
-            schedule_result["engine"] = "cpsat"
-        else:
-            schedule_result["engine"] = "greedy_fallback"
 
     violations = validate_all(run_label, db)
     db.commit()
