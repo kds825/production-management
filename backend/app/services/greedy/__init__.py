@@ -14,3 +14,8 @@ re-export 셸로 유지된다.
 """
 
 from app.services.greedy.slot_finder import _find_available_slot  # noqa: F401
+from app.services.greedy.auto_schedule import auto_schedule  # noqa: F401
+from app.services.greedy.reschedule_affected import (  # noqa: F401
+    reschedule,
+    reschedule_affected_groups,
+)
