@@ -27,13 +27,142 @@ Contract:
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import date, datetime
 from typing import Any, Callable
 
+from fastapi import HTTPException
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.services.batch_grouping import create_batches, detect_split_candidates
+from app.services.erp_parser import parse_erp_file
+from app.services.pipeline.run_labeler import new_run_label
 from app.services.pipeline.stage1 import run_solver_stage
 from app.services.pipeline.stage2 import run_greedy_stage
+from app.services.wip_matching import match_wip
+
+logger = logging.getLogger(__name__)
+
+
+def _purge_run_data(db: Session) -> None:
+    """Stage 1 fresh-run 진입 시 기존 데이터 정리.
+
+    재실행 중복을 막기 위해 audit_log / schedule_task / production_batch 를
+    싹 비우고, sales_order 의 wip_id FK 참조를 null 화한 뒤 wip_inventory 도
+    정리한다. sales_order 자체는 parse_erp_file 가 전체 삭제 후 재적재하므로
+    여기서 건드리지 않는다.
+
+    Why warm-up query: SQLite + SQLAlchemy session 의 첫 query 가 늦게
+    바인딩되는 환경에서 이후 DELETE 가 dropped 되는 회귀를 방지하기 위한
+    보험 (legacy 컨벤션 유지).
+    """
+    from app.infrastructure.models.schedule_task import ScheduleTask as ST
+
+    db.query(func.count(ST.task_id)).scalar()  # warm up
+    db.execute(text("DELETE FROM audit_log"))
+    db.execute(text("DELETE FROM schedule_task"))
+    db.execute(text("DELETE FROM production_batch"))
+    db.execute(
+        text(
+            "UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, "
+            "wip_type = NULL, actual_length_m = NULL"
+        )
+    )
+    db.execute(text("DELETE FROM wip_inventory"))
+    db.commit()
+
+
+def execute_stage1_ingest(
+    *,
+    erp_content: bytes,
+    wip_content: bytes | None,
+    parsed_from: date | None,
+    parsed_to: date | None,
+    split_gap_days: int,
+    db: Session,
+) -> dict[str, Any]:
+    """Run the fresh ERP-ingest Stage 1 pipeline (HTTP /pipeline/stage1).
+
+    Sequence:
+      1. Purge prior run data (fresh-run 정책 — incremental 은 별도 경로).
+      2. Allocate run_label.
+      3. Parse ERP file into sales_order rows.
+      4. Optionally parse WIP file + run match_wip.
+      5. Build production_batch rows (date_from/date_to filtered).
+      6. Detect split-candidates (after commit so flushed batches are visible).
+
+    Why HTTP-typed exceptions here: the original route inlined every error
+    into HTTPException(4xx/5xx) with localised Korean messages used by the
+    front-end. Centralising preserves the wire contract verbatim.
+    """
+    _purge_run_data(db)
+    run_label = new_run_label()
+
+    # ── Step 1: ERP 파일 파싱 ────────────────────────────────────────────────
+    if not erp_content:
+        raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
+    try:
+        parse_result = parse_erp_file(erp_content, run_label, db)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422, detail=f"ERP 파일 파싱 실패: {exc}"
+        ) from exc
+
+    # ── Step 2: WIP 파일 파싱 + 매칭 ──────────────────────────────────────────
+    wip_warnings: list[str] = []
+    if wip_content:
+        try:
+            from app.services.wip_parser import parse_wip_file
+
+            wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
+            wip_warnings.extend(wip_parse.get("warnings", []))
+            if wip_parse["total"] > 0:
+                wip_warnings.append(f"재공실사 {wip_parse['total']}건 등록 완료.")
+        except Exception as exc:
+            wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
+
+    try:
+        wip_result = match_wip(run_label, db)
+    except Exception as exc:
+        wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
+        wip_result = {"matched": 0, "skipped": 0, "details": []}
+
+    # ── Step 3: production_batch 생성 ─────────────────────────────────────────
+    try:
+        batch_result = create_batches(
+            run_label, db, date_from=parsed_from, date_to=parsed_to
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"배치 생성 실패: {exc}") from exc
+
+    db.commit()
+
+    # ── Step 4: 연선 그룹 분할 후보 감지 ──────────────────────────────────────
+    # commit 이후에 실행해야 flush 된 배치가 쿼리에 반영된다.
+    try:
+        split_candidates = detect_split_candidates(
+            run_label, db, gap_days=split_gap_days
+        )
+    except Exception as exc:
+        logger.warning("[Stage1] 분할 후보 감지 실패 (계속 진행): %s", exc)
+        split_candidates = []
+
+    warnings = (
+        parse_result.get("warnings", [])
+        + wip_warnings
+        + batch_result.get("warnings", [])
+    )
+
+    return {
+        "run_label": run_label,
+        "parse": parse_result,
+        "wip": wip_result,
+        "batches": batch_result,
+        "warnings": warnings,
+        "outsource_count": batch_result.get("outsource_count", 0),
+        "split_candidates": split_candidates,
+    }
 
 
 def execute_stage2(

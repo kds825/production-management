@@ -20,4 +20,7 @@ from app.services.pipeline.run_labeler import (  # noqa: F401
 )
 from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
 from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
-from app.services.pipeline.orchestrator import execute_stage2  # noqa: F401
+from app.services.pipeline.orchestrator import (  # noqa: F401
+    execute_stage1_ingest,
+    execute_stage2,
+)

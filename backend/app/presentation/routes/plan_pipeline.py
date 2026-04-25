@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from datetime import date, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -20,14 +20,16 @@ from app.services.batch_grouping import (
     format_spec_display,
 )
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
-from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
 from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for tests
     new_run_label as _alloc_run_label,
     parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
-from app.services.pipeline.orchestrator import execute_stage2  # noqa: F401
+from app.services.pipeline.orchestrator import (  # noqa: F401
+    execute_stage1_ingest,
+    execute_stage2,
+)
 from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
 from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
 
@@ -86,109 +88,29 @@ async def run_stage1(
     ),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Stage 1 파이프라인 실행:
+    """Stage 1 파이프라인 실행 (HTTP 어댑터 — 파싱·UploadFile.read() 만 담당).
 
-    1. ERP .xls 파일을 파싱하여 sales_order 테이블에 적재
-    2. 재공(WIP) 매칭 — 기존 재고를 수주에 매칭하여 공정 생략
-    3. 수주 데이터를 공정별 production_batch로 변환 (납기 범위 필터 가능)
-    4. 연선 그룹 분할 후보 감지 (split_gap_days 이상 납기 간격)
+    Pipeline 본체는 ``services.pipeline.orchestrator.execute_stage1_ingest`` 에
+    이관되었다. 이 핸들러는 (a) UploadFile 을 await-read 하고 (b) 폼
+    파라미터를 파싱한 뒤 (c) 결과를 그대로 반환한다.
 
     Returns:
         run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록,
         split_candidates (분할 후보 연선 그룹 목록)
     """
-    # ── 기존 실행 데이터 정리 (재실행 시 중복 방지) ─────────────────────────
-    from app.infrastructure.models.schedule_task import ScheduleTask as ST
-
-    db.query(func.count(ST.task_id)).scalar()  # warm up
-    db.execute(text("DELETE FROM audit_log"))
-    db.execute(text("DELETE FROM schedule_task"))
-    db.execute(text("DELETE FROM production_batch"))
-    # sales_order.wip_id FK 참조 해제 후 wip_inventory 삭제
-    # (sales_order 자체는 parse_erp_file에서 전체 삭제 후 재적재)
-    db.execute(
-        text(
-            "UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, wip_type = NULL, actual_length_m = NULL"
-        )
-    )
-    db.execute(text("DELETE FROM wip_inventory"))
-    db.commit()
-
-    # run_label — 동일 계획 실행의 모든 레코드를 묶는 식별자
-    run_label = _alloc_run_label()
-
-    # ── Step 1: ERP 파일 파싱 ──────────────────────────────────────────────────
     erp_content = await erp_file.read()
-    if not erp_content:
-        raise HTTPException(status_code=400, detail="ERP 파일이 비어 있습니다.")
+    wip_content = await wip_file.read() if wip_file else None
+    parsed_from = parse_date_yyyymmdd(date_from, field_name="date_from")
+    parsed_to = parse_date_yyyymmdd(date_to, field_name="date_to")
 
-    try:
-        parse_result = parse_erp_file(erp_content, run_label, db)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=422, detail=f"ERP 파일 파싱 실패: {exc}"
-        ) from exc
-
-    # ── Step 2: WIP 파일 파싱 + 매칭 ──────────────────────────────────────────
-    wip_warnings: list[str] = []
-    if wip_file:
-        try:
-            from app.services.wip_parser import parse_wip_file
-
-            wip_content = await wip_file.read()
-            if wip_content:
-                wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
-                wip_warnings.extend(wip_parse.get("warnings", []))
-                if wip_parse["total"] > 0:
-                    wip_warnings.append(f"재공실사 {wip_parse['total']}건 등록 완료.")
-        except Exception as exc:
-            wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
-
-    try:
-        wip_result = match_wip(run_label, db)
-    except Exception as exc:
-        wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
-        wip_result = {"matched": 0, "skipped": 0, "details": []}
-
-    # ── Step 3: 납기 범위 파싱 ────────────────────────────────────────────────
-    parsed_from: date | None = parse_date_yyyymmdd(date_from, field_name="date_from")
-    parsed_to: date | None = parse_date_yyyymmdd(date_to, field_name="date_to")
-
-    # ── Step 4: production_batch 생성 ─────────────────────────────────────────
-    try:
-        batch_result = create_batches(
-            run_label, db, date_from=parsed_from, date_to=parsed_to
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"배치 생성 실패: {exc}") from exc
-
-    db.commit()
-
-    # ── Step 5: 연선 그룹 분할 후보 감지 ──────────────────────────────────────
-    # commit 이후에 실행해야 flush된 배치가 쿼리에 반영된다.
-    try:
-        split_candidates = detect_split_candidates(
-            run_label, db, gap_days=split_gap_days
-        )
-    except Exception as exc:
-        logger.warning("[Stage1] 분할 후보 감지 실패 (계속 진행): %s", exc)
-        split_candidates = []
-
-    warnings = (
-        parse_result.get("warnings", [])
-        + wip_warnings
-        + batch_result.get("warnings", [])
+    return execute_stage1_ingest(
+        erp_content=erp_content,
+        wip_content=wip_content,
+        parsed_from=parsed_from,
+        parsed_to=parsed_to,
+        split_gap_days=split_gap_days,
+        db=db,
     )
-
-    return {
-        "run_label": run_label,
-        "parse": parse_result,
-        "wip": wip_result,
-        "batches": batch_result,
-        "warnings": warnings,
-        "outsource_count": batch_result.get("outsource_count", 0),
-        "split_candidates": split_candidates,
-    }
 
 
 @router.post("/stage1/update", summary="Stage 1 증분/전체 업데이트 (Freeze & Rebuild)")
