@@ -74,6 +74,10 @@ from app.services.scheduling_shared.slot_filters import (
     align_start_to_predecessor_end,
 )
 from app.services.solver import SolverInput
+from app.services.solver.constraint_loader import (
+    ConstraintSpec,
+    load_active_constraints,
+)
 from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
 from app.services.solver.objective import compose_objective
 
@@ -1131,18 +1135,45 @@ def cp_sat_schedule(
             for _bg, _tk in frozen_task_by_gk.items()
         }
 
-    # Week 2 에서는 가중치/horizon 상수를 module global 에서 묶어 전달 (parity 보존).
-    # Week 5 에서 `ConstraintSpec.weight` 기반으로 교체된다 (plan §Task 2A.2).
+    # Week 5 Task 5A.3: 가중치 source 가 Python 상수 → DB-driven (`ConstraintSpec`
+    # `params_json["weight"]`) 으로 단계적 이전 중. 누락/disable 행은 fallback
+    # 으로 기존 상수 유지 → parity 보존. 하나씩 옮기며 sub-commit 단위로 검증.
+    _specs_by_id: dict[str, ConstraintSpec] = {
+        s.constraint_id: s for s in load_active_constraints(db)
+    }
+
+    def _spec_weight(cid: str, fallback: int) -> int:
+        """ConstraintSpec.params['weight'] 조회 — 없으면 fallback 반환.
+
+        Why fallback: 운영 DB 에 W-* 행이 아직 시드 안 된 환경(legacy / 테스트 DB)
+        에서도 solver 가 죽지 않도록. Task 5A.2 seed 가 멱등 보장하므로 정상 환경
+        에서는 항상 spec 값이 사용된다.
+        """
+        spec = _specs_by_id.get(cid)
+        if spec is None:
+            return fallback
+        w = spec.params.get("weight")
+        if not isinstance(w, (int, float)):
+            return fallback
+        return int(w)
+
+    # _TARDINESS_WEIGHT 는 dict — 각 urgency tier 를 별도 W-* row 로 매핑 후 재구성.
+    _tardiness_weight_db = {
+        "critical": _spec_weight("W-TCRIT", _TARDINESS_WEIGHT["critical"]),
+        "urgent": _spec_weight("W-TURG", _TARDINESS_WEIGHT["urgent"]),
+        "normal": _spec_weight("W-TNORM", _TARDINESS_WEIGHT["normal"]),
+    }
+
     _weights = ModelWeights(
-        DUE_HARD_WEIGHT=_DUE_HARD_WEIGHT,
-        TARDINESS_WEIGHT=_TARDINESS_WEIGHT,
-        CHAIN_WEIGHT=_CHAIN_WEIGHT,
-        IDLE_WEIGHT=_IDLE_WEIGHT,
-        SLACK_WEIGHT_BASE=_SLACK_WEIGHT_BASE,
-        PAST_SEVERITY_K=_PAST_SEVERITY_K,
-        EDD_PAIR_WEIGHT=_EDD_PAIR_WEIGHT,
-        EDD_MIXED_PASTDUE_WEIGHT=_EDD_MIXED_PASTDUE_WEIGHT,
-        TRANSITION_WEIGHT=_TRANSITION_WEIGHT,
+        DUE_HARD_WEIGHT=_spec_weight("W-DHARD", _DUE_HARD_WEIGHT),
+        TARDINESS_WEIGHT=_tardiness_weight_db,
+        CHAIN_WEIGHT=_spec_weight("W-CHAIN", _CHAIN_WEIGHT),
+        IDLE_WEIGHT=_spec_weight("W-IDLE", _IDLE_WEIGHT),
+        SLACK_WEIGHT_BASE=_spec_weight("W-SLACK", _SLACK_WEIGHT_BASE),
+        PAST_SEVERITY_K=_spec_weight("W-PSEV", _PAST_SEVERITY_K),
+        EDD_PAIR_WEIGHT=_spec_weight("W-EDDP", _EDD_PAIR_WEIGHT),
+        EDD_MIXED_PASTDUE_WEIGHT=_spec_weight("W-EDDM", _EDD_MIXED_PASTDUE_WEIGHT),
+        TRANSITION_WEIGHT=_spec_weight("W-TRANS", _TRANSITION_WEIGHT),
         MAX_HORIZON_MIN=_MAX_HORIZON_MIN,
         WORK_MIN_PER_DAY=_WORK_MIN_PER_DAY,
     )
