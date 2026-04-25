@@ -78,7 +78,7 @@ from app.application.cascade import (  # noqa: F401
     plan_cascade_preview,
 )
 from app.application.cascade.snap import build_snapshot  # noqa: F401
-from app.services.schedule_optimizer import PREDECESSOR_PROCESS  # noqa: F401
+from app.domain.constants import PREDECESSOR_PROCESS  # noqa: F401
 from app.application.validation.schedule_validators import (  # noqa: F401
     find_due_date_violation,
     find_predecessor_violation,

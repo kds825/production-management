@@ -38,7 +38,7 @@ from app.application.ingest.stage2 import run_greedy_stage  # noqa: F401
 # without going through services.pipeline). Aliased above to avoid colliding
 # with the local variable named ``new_run_label`` inside run_stage1_update().
 new_run_label = _alloc_run_label  # noqa: F811 — intentional re-export alias
-from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
+from app.application.scheduling.greedy.auto_schedule import auto_schedule  # noqa: F401 — used in stage2
 from app.application.ingest.wip_matching import match_wip
 from app.application.ingest.wip_promotion import _promote_expected_to_estimated
 

@@ -44,7 +44,7 @@ from app.presentation.schemas.cascade import (
     CascadePreviewResponse as CascadePreviewResponseV2,
 )
 from app.application.cascade import UnresolvedReason
-from app.services.schedule_optimizer import PREDECESSOR_PROCESS
+from app.domain.constants import PREDECESSOR_PROCESS
 
 
 router = APIRouter()
