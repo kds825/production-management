@@ -13,7 +13,7 @@ ix_solver_run_started_at DESC). Column(..., index=True) here would duplicate
 the run_label index; we rely on the migration alone.
 """
 
-from sqlalchemy import Column, DateTime, Float, String, text
+from sqlalchemy import Boolean, Column, DateTime, Float, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -51,6 +51,15 @@ class SolverRun(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+    # Task 4B.1: cached Decision Card narrator output. Lazily populated by
+    # GET /api/decisions/{batch_id}/latest the first time it renders this
+    # run; subsequent renders read the cache. Nullable for backfill safety.
+    llm_summary_text = Column(Text, nullable=True)
+    # True when the cached summary came from the TemplateProvider fallback
+    # because the kiwipiepy hallucination filter tripped on the live
+    # provider's output. UI surfaces this so operators can flag low-trust
+    # explanations without re-querying the provider.
+    llm_was_template = Column(Boolean, nullable=True)
 
     # One run → many per-constraint decisions. cascade mirrors migration
     # ondelete=CASCADE — deleting a run purges its decisions.
