@@ -57,7 +57,7 @@ from app.domain.constraint_rules import resolve_color_change_min
 #   greedy / scheduling_shared 이 분리되면서 cp_sat → schedule_optimizer 의
 #   top-level import 가 모두 사라진다. domain.constants / scheduling_shared /
 #   greedy.slot_finder 직접 참조로 순환 의존성을 제거한다.
-from app.services.greedy.slot_finder import _find_available_slot
+from app.application.scheduling.greedy.slot_finder import _find_available_slot
 from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _get_drum_winding_min,
@@ -73,14 +73,14 @@ from app.application._shared.slot_filters import (
     _narrow_by_stranding,
     align_start_to_predecessor_end,
 )
-from app.services.solver import SolverInput
-from app.services.solver.constraint_loader import (
+from app.application.scheduling.cp_sat import SolverInput
+from app.application.scheduling.cp_sat.constraint_loader import (
     ConstraintSpec,
     load_active_constraints,
 )
-from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
-from app.services.solver.objective import compose_objective
-from app.services.solver.snapshot import SnapshotWeights, write_snapshot
+from app.application.scheduling.cp_sat.model_builder import BuiltModel, ModelWeights, build_model
+from app.application.scheduling.cp_sat.objective import compose_objective
+from app.application.scheduling.cp_sat.snapshot import SnapshotWeights, write_snapshot
 
 # Logger for non-fatal trace-write failures: observability must not kill
 # solver correctness (see Task 2A.3 wiring note near `return result`).
@@ -303,13 +303,13 @@ from app.application._shared.group_ops import (  # noqa: E402, F401
 )
 
 
-# Week 9 SRP cleanup: 선점 스케줄링 로직은 `app.services.solver.preemption`.
+# Week 9 SRP cleanup: 선점 스케줄링 로직은 `app.application.scheduling.cp_sat.preemption`.
 # `_delete_task_safely` re-export 는 D7-C 호환 path 유지용 (외부 import 가
 # 사라진 Week 9 막바지에 제거 예정).
 from app.application._shared.db_ops import (  # noqa: E402, F401
     _delete_task_safely,  # re-export until Week 9 (D7-C)
 )
-from app.services.solver.preemption import (  # noqa: E402
+from app.application.scheduling.cp_sat.preemption import (  # noqa: E402
     try_preempt_for_urgent,  # called inside cp_sat_schedule (line ~1330)
 )
 
@@ -734,7 +734,7 @@ def cp_sat_schedule(
         return result
 
     # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────
-    # Task 2A.2 (Rev 3): §6 블록은 `app.services.solver.model_builder.build_model`
+    # Task 2A.2 (Rev 3): §6 블록은 `app.application.scheduling.cp_sat.model_builder.build_model`
     # 로 이전됐다. DB 접근이 필요한 `frozen_group_keys` 는 여기서 스냅샷 dict 로
     # 변환하여 pure 함수에 주입한다 (services/solver/ 경계 불변식).
     frozen_tasks_snapshot: dict[str, dict[str, Any]] | None = None
@@ -1545,8 +1545,8 @@ def cp_sat_schedule(
     # fails (e.g., schema drift, network blip), log a warning and let the
     # caller receive a valid `result`. The unit test suite asserts the
     # happy path; parity 11/11 catches SAVEPOINT rollback regressions.
-    from app.services.solver.decision_aggregator import build_decision_inputs
-    from app.services.solver.trace_writer import (
+    from app.application.scheduling.cp_sat.decision_aggregator import build_decision_inputs
+    from app.application.scheduling.cp_sat.trace_writer import (
         TraceMetadata,
         compute_input_hash,
         compute_output_hash,

@@ -1,0 +1,512 @@
+{
+  "run_label": "20260421_parity_08_capacity_overflow",
+  "base_date": "2026-04-21T08:00:00",
+  "solver_status": "OPTIMAL",
+  "objective_value": 544600,
+  "frozen_group_keys": [],
+  "constants": {
+    "TARDINESS_WEIGHT_normal": 100000,
+    "PAST_SEVERITY_K": 5,
+    "SLACK_WEIGHT_BASE": 100000,
+    "EDD_PAIR_WEIGHT": 10000,
+    "EDD_MIXED_PASTDUE_WEIGHT": 1000000000,
+    "TRANSITION_WEIGHT": 180,
+    "CHAIN_WEIGHT": 120,
+    "IDLE_WEIGHT": 1
+  },
+  "breakdown": {
+    "tardiness_contribution_total": 0,
+    "edd_pair_wrong_count": 1,
+    "edd_pair_contribution": 10000,
+    "edd_mixed_pastdue_wrong_count": 0,
+    "edd_mixed_pastdue_contribution": 0,
+    "slack_contribution_total": 534600,
+    "idle_sum_wmin": 0,
+    "idle_contribution": 0,
+    "transition_sum_pairs": 0,
+    "transition_contribution": 0,
+    "sheath_end_sum_wmin": 0
+  },
+  "groups": [
+    {
+      "batch_group": "_single_308364",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-23",
+      "due_wmin": 1680,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 54,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-00"
+      ],
+      "solver_start_wmin": 0,
+      "solver_end_wmin": 54,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308365",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-23",
+      "due_wmin": 1680,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 72,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-05"
+      ],
+      "solver_start_wmin": 54,
+      "solver_end_wmin": 126,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308366",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-23",
+      "due_wmin": 1680,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 90,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-10"
+      ],
+      "solver_start_wmin": 126,
+      "solver_end_wmin": 216,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308367",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-23",
+      "due_wmin": 1680,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 108,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-15"
+      ],
+      "solver_start_wmin": 274,
+      "solver_end_wmin": 382,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308368",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-24",
+      "due_wmin": 2520,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 58,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-01"
+      ],
+      "solver_start_wmin": 216,
+      "solver_end_wmin": 274,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308369",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-24",
+      "due_wmin": 2520,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 75,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-06"
+      ],
+      "solver_start_wmin": 382,
+      "solver_end_wmin": 457,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308370",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-24",
+      "due_wmin": 2520,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 93,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-11"
+      ],
+      "solver_start_wmin": 457,
+      "solver_end_wmin": 550,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308371",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-24",
+      "due_wmin": 2520,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 111,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-16"
+      ],
+      "solver_start_wmin": 550,
+      "solver_end_wmin": 661,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308372",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-25",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 61,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-02"
+      ],
+      "solver_start_wmin": 661,
+      "solver_end_wmin": 722,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308373",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-25",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 79,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-07"
+      ],
+      "solver_start_wmin": 855,
+      "solver_end_wmin": 934,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308374",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-25",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 97,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-12"
+      ],
+      "solver_start_wmin": 1103,
+      "solver_end_wmin": 1200,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308375",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-25",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 115,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-17"
+      ],
+      "solver_start_wmin": 1404,
+      "solver_end_wmin": 1519,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308376",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-26",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 65,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-03"
+      ],
+      "solver_start_wmin": 790,
+      "solver_end_wmin": 855,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308377",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-26",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 83,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-08"
+      ],
+      "solver_start_wmin": 934,
+      "solver_end_wmin": 1017,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308378",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-26",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 100,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-13"
+      ],
+      "solver_start_wmin": 1200,
+      "solver_end_wmin": 1300,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308379",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-26",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 118,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-18"
+      ],
+      "solver_start_wmin": 1519,
+      "solver_end_wmin": 1637,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308380",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 68,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-04"
+      ],
+      "solver_start_wmin": 722,
+      "solver_end_wmin": 790,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308381",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 86,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-09"
+      ],
+      "solver_start_wmin": 1017,
+      "solver_end_wmin": 1103,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308382",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 104,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-14"
+      ],
+      "solver_start_wmin": 1300,
+      "solver_end_wmin": 1404,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "_single_308383",
+      "process_name": "저압절연",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 1000000,
+      "cpsat_dur": 122,
+      "eligible_equipment": [
+        "EX-B100"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-CAP-19"
+      ],
+      "solver_start_wmin": 1637,
+      "solver_end_wmin": 1759,
+      "solver_equipment": "EX-B100",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    }
+  ]
+}

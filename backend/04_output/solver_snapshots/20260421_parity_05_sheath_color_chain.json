@@ -1,0 +1,128 @@
+{
+  "run_label": "20260421_parity_05_sheath_color_chain",
+  "base_date": "2026-04-21T08:00:00",
+  "solver_status": "OPTIMAL",
+  "objective_value": 25454,
+  "frozen_group_keys": [],
+  "constants": {
+    "TARDINESS_WEIGHT_normal": 100000,
+    "PAST_SEVERITY_K": 5,
+    "SLACK_WEIGHT_BASE": 100000,
+    "EDD_PAIR_WEIGHT": 10000,
+    "EDD_MIXED_PASTDUE_WEIGHT": 1000000000,
+    "TRANSITION_WEIGHT": 180,
+    "CHAIN_WEIGHT": 120,
+    "IDLE_WEIGHT": 1
+  },
+  "breakdown": {
+    "tardiness_contribution_total": 0,
+    "edd_pair_wrong_count": 0,
+    "edd_pair_contribution": 0,
+    "edd_mixed_pastdue_wrong_count": 0,
+    "edd_mixed_pastdue_contribution": 0,
+    "slack_contribution_total": 24085,
+    "idle_sum_wmin": 0,
+    "idle_contribution": 0,
+    "transition_sum_pairs": 0,
+    "transition_contribution": 0,
+    "sheath_end_sum_wmin": 1369
+  },
+  "groups": [
+    {
+      "batch_group": "A120_흑_2026W18",
+      "process_name": "저압시스",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 100000,
+      "cpsat_dur": 91,
+      "eligible_equipment": [
+        "SH-A120"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-SC-01"
+      ],
+      "solver_start_wmin": 211,
+      "solver_end_wmin": 302,
+      "solver_equipment": "SH-A120",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "A120_청_2026W18",
+      "process_name": "저압시스",
+      "sq_mm2": 120.0,
+      "voltage": "저압",
+      "due_date": "2026-04-27",
+      "due_wmin": 3360,
+      "past_days": 0.0,
+      "weight": 100000,
+      "cpsat_dur": 91,
+      "eligible_equipment": [
+        "SH-A120"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-SC-03"
+      ],
+      "solver_start_wmin": 0,
+      "solver_end_wmin": 91,
+      "solver_equipment": "SH-A120",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "A120_흑_2026W19",
+      "process_name": "저압시스",
+      "sq_mm2": 95.0,
+      "voltage": "저압",
+      "due_date": "2026-05-04",
+      "due_wmin": 7560,
+      "past_days": 0.0,
+      "weight": 100000,
+      "cpsat_dur": 84,
+      "eligible_equipment": [
+        "SH-A120"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-SC-02"
+      ],
+      "solver_start_wmin": 302,
+      "solver_end_wmin": 386,
+      "solver_equipment": "SH-A120",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    },
+    {
+      "batch_group": "A120_청_2026W19",
+      "process_name": "저압시스",
+      "sq_mm2": 95.0,
+      "voltage": "저압",
+      "due_date": "2026-05-04",
+      "due_wmin": 7560,
+      "past_days": 0.0,
+      "weight": 100000,
+      "cpsat_dur": 84,
+      "eligible_equipment": [
+        "SH-A120"
+      ],
+      "is_frozen": false,
+      "n_batches": 1,
+      "order_ids": [
+        "SO-SC-04"
+      ],
+      "solver_start_wmin": 506,
+      "solver_end_wmin": 590,
+      "solver_equipment": "SH-A120",
+      "solver_tardiness_wmin": null,
+      "solver_tardiness_contribution": 0
+    }
+  ]
+}

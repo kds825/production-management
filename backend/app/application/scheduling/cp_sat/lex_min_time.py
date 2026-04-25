@@ -30,8 +30,8 @@ Phase B — minimize makespan within T*:
 ## 사용
 
 ```python
-from app.services.solver.lex_min_time import solve_lex_min_time
-from app.services.solver.model_builder import build_model
+from app.application.scheduling.cp_sat.lex_min_time import solve_lex_min_time
+from app.application.scheduling.cp_sat.model_builder import build_model
 
 built = build_model(...)
 result = solve_lex_min_time(built)
@@ -63,7 +63,7 @@ from typing import Literal
 
 from ortools.sat.python import cp_model
 
-from app.services.solver.model_builder import BuiltModel
+from app.application.scheduling.cp_sat.model_builder import BuiltModel
 
 LexStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE_A", "INFEASIBLE_B", "UNKNOWN"]
 

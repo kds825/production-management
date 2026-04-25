@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ortools.sat.python import cp_model
     from sqlalchemy.orm import Session
 
-    from app.services.solver.model_builder import BuiltModel
+    from app.application.scheduling.cp_sat.model_builder import BuiltModel
 
 
 def _safe_value(solver: "cp_model.CpSolver", var) -> int | None:

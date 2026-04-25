@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.solver_decision import SolverDecision
 from app.infrastructure.models.solver_run import SolverRun
-from app.services.solver.constraint_loader import ConstraintSpec
+from app.application.scheduling.cp_sat.constraint_loader import ConstraintSpec
 
 
 # ────────────────────────────────────────────────────────────────────────

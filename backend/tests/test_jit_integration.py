@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from unittest.mock import patch
 
-from app.services.jit_scheduling import apply_jit_delay
+from app.application.scheduling.greedy.jit_scheduling import apply_jit_delay
 
 
 @dataclass

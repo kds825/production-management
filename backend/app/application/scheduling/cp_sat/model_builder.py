@@ -34,7 +34,7 @@ Task 2A.2 (Production Handoff Refactor, Week 2): `cp_sat_schedule` 의 §6
 사용 가능한 import:
   - `ortools.sat.python.cp_model`
   - `app.domain.constants` (읽기 전용)
-  - `app.services.solver.*`
+  - `app.application.scheduling.cp_sat.*`
   - `app.services.schedule_optimizer` 의 pure helper (`_is_core_group`,
     `_extract_core_main_sq`, `_st_sq`) — 이 helper 들은 schedule_optimizer
     가 infrastructure 를 import 하지만 symbol 자체는 pure function.
@@ -60,40 +60,40 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from app.application._shared.constraint_params import ConstraintParams
-from app.services.solver.constraints.global_.decision_vars import (  # noqa: F401  # used at §6-b
+from app.application.scheduling.cp_sat.constraints.global_.decision_vars import (  # noqa: F401  # used at §6-b
     DecisionVars,
     add_decision_vars,
 )
-from app.services.solver.constraints.global_.frozen_pins import (  # noqa: F401  # used at §6-b-2
+from app.application.scheduling.cp_sat.constraints.global_.frozen_pins import (  # noqa: F401  # used at §6-b-2
     apply_frozen_pins,
 )
-from app.services.solver.constraints.global_.idle_terms import (  # noqa: F401  # used at §6-f
+from app.application.scheduling.cp_sat.constraints.global_.idle_terms import (  # noqa: F401  # used at §6-f
     collect_idle_terms,
 )
-from app.services.solver.constraints.global_.no_overlap import (  # noqa: F401  # used at §6-c
+from app.application.scheduling.cp_sat.constraints.global_.no_overlap import (  # noqa: F401  # used at §6-c
     add_equipment_no_overlap,
 )
-from app.services.solver.constraints.global_.predecessor import (  # noqa: F401  # used at §6-d/§6-e
+from app.application.scheduling.cp_sat.constraints.global_.predecessor import (  # noqa: F401  # used at §6-d/§6-e
     add_core_st_precedence,
     add_predecessor_precedence,
     compute_proc_groups_by_sq,
 )
-from app.services.solver.constraints.global_.slack_terms import (  # noqa: F401  # used at §6-g-slack
+from app.application.scheduling.cp_sat.constraints.global_.slack_terms import (  # noqa: F401  # used at §6-g-slack
     collect_slack_terms,
 )
-from app.services.solver.constraints.process.edd_pair import (  # noqa: F401  # used at §6-h
+from app.application.scheduling.cp_sat.constraints.process.edd_pair import (  # noqa: F401  # used at §6-h
     collect_edd_pair_terms,
 )
-from app.services.solver.constraints.process.sheath_color_hard import (  # noqa: F401  # used at §6-f-hard
+from app.application.scheduling.cp_sat.constraints.process.sheath_color_hard import (  # noqa: F401  # used at §6-f-hard
     add_sheath_color_hard_chain,
 )
-from app.services.solver.constraints.process.sheath_color_sequence import (  # noqa: F401  # used at §6-g+§6-g-tiebreak
+from app.application.scheduling.cp_sat.constraints.process.sheath_color_sequence import (  # noqa: F401  # used at §6-g+§6-g-tiebreak
     add_sheath_color_sequence_and_tiebreak,
 )
-from app.services.solver.constraints.process.transition import (  # noqa: F401  # used at Round-2-transition
+from app.application.scheduling.cp_sat.constraints.process.transition import (  # noqa: F401  # used at Round-2-transition
     collect_transition_terms,
 )
-from app.services.solver.constraints.global_.warm_start import (  # noqa: F401  # used at §6-b2
+from app.application.scheduling.cp_sat.constraints.global_.warm_start import (  # noqa: F401  # used at §6-b2
     apply_warm_start_hints,
 )
 

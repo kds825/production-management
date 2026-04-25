@@ -98,7 +98,7 @@ if str(_BACKEND_ROOT) not in sys.path:
 
 from app.domain.constants import PROCESS_ORDER  # noqa: E402
 from app.infrastructure.database import SessionLocal  # noqa: E402
-from app.services.solver.input_builder import (  # noqa: E402
+from app.application.scheduling.cp_sat.input_builder import (  # noqa: E402
     SolverInput,
     build_solver_input,
 )

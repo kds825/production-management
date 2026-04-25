@@ -37,7 +37,7 @@ from app.infrastructure.models.equipment_master import EquipmentMaster  # noqa: 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.application._shared.audit_logger import log_decision
-from app.services.jit_scheduling import apply_jit_delay
+from app.application.scheduling.greedy.jit_scheduling import apply_jit_delay
 
 
 # ── 환경 분기 / 라우팅 상수 ─────────────────────────────────────────────────
@@ -580,12 +580,12 @@ def _purge_run_tasks(db: Session, run_label: str) -> None:
 
 # ── Greedy core (Week 9 SRP cleanup) ────────────────────────────────────────
 # `_run_optimization_once` 와 그 helpers (`_get_tp_line_speed`,
-# `_get_sheath_type`) 는 `app.services.greedy.optimization_loop` 으로 이동.
+# `_get_sheath_type`) 는 `app.application.scheduling.greedy.optimization_loop` 으로 이동.
 # 본 모듈은 retry harness (auto_schedule + _purge_run_tasks +
 # _tardiness_boost_retry) 만 담당한다.
 # 기존 dotted path (schedule_optimizer.* re-export 셸) 호환을 위해 여기서도
 # 노출 — 테스트가 schedule_optimizer 모듈에 패치할 수 있도록 한다.
-from app.services.greedy.optimization_loop import (  # noqa: F401  re-export
+from app.application.scheduling.greedy.optimization_loop import (  # noqa: F401  re-export
     _get_sheath_type,
     _get_tp_line_speed,
     _run_optimization_once,

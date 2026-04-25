@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from ortools.sat.python import cp_model
 
-from app.services.solver.lex_min_time import solve_lex_min_time
-from app.services.solver.model_builder import BuiltModel
+from app.application.scheduling.cp_sat.lex_min_time import solve_lex_min_time
+from app.application.scheduling.cp_sat.model_builder import BuiltModel
 
 
 def _make_built(group_durations: list[tuple[str, int]], dues: dict[str, int]):

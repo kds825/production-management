@@ -1,9 +1,12 @@
-"""Spec §7 invariant enforcement: services/solver/ imports SQLAlchemy
-only in the allow-listed boundary-crossing modules.
+"""Spec §7 invariant enforcement: application/scheduling/cp_sat/ imports
+SQLAlchemy only in the allow-listed boundary-crossing modules.
 
-Run in CI + locally. If a new file under services/solver/ imports
-from app.infrastructure, this test fails with a clear message
+Run in CI + locally. If a new file under application/scheduling/cp_sat/
+imports from app.infrastructure, this test fails with a clear message
 identifying the offender + the allow-list rationale.
+
+Why path moved: Phase 1 step 4a (architecture-target.md §4) — solver/*
+는 application/scheduling/cp_sat/ 으로 이동. invariant 자체는 동일.
 """
 
 from __future__ import annotations
@@ -11,7 +14,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_SOLVER_DIR = Path(__file__).resolve().parent.parent / "app" / "services" / "solver"
+_SOLVER_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "app"
+    / "application"
+    / "scheduling"
+    / "cp_sat"
+)
 
 # Allow-list rationale: each of these modules intentionally crosses
 # the boundary to do DB I/O. New files added here REQUIRE a spec
@@ -63,7 +72,7 @@ def _module_imports_infrastructure(py_path: Path) -> list[str]:
 
 
 def test_solver_boundary_allow_list_matches_reality() -> None:
-    """Every .py file under services/solver/ either:
+    """Every .py file under application/scheduling/cp_sat/ either:
       (a) is in _ALLOWED_BOUNDARY_CROSSERS, OR
       (b) has zero `app.infrastructure.*` imports.
 
@@ -109,8 +118,8 @@ def test_allow_list_files_exist() -> None:
 
 
 def test_solver_init_does_not_import_infrastructure() -> None:
-    """services/solver/__init__.py must not directly import ORM —
-    it only re-exports from the boundary-crossing modules.
+    """application/scheduling/cp_sat/__init__.py must not directly import
+    ORM — it only re-exports from the boundary-crossing modules.
     """
     init_file = _SOLVER_DIR / "__init__.py"
     hits = _module_imports_infrastructure(init_file)

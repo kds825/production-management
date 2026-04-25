@@ -6,9 +6,9 @@
     app.domain.constants                     : 데이터 상수
     app.application._shared.{calendar_ops,slot_filters,group_ops,db_ops}
                                              : 공용 헬퍼 (Phase 1 step 3 이동)
-    app.services.greedy.slot_finder          : _find_available_slot
-    app.services.greedy.auto_schedule        : auto_schedule + 그리디 핵심 + 재시도
-    app.services.greedy.reschedule_affected  : reschedule_affected_groups + reschedule
+    app.application.scheduling.greedy.slot_finder          : _find_available_slot
+    app.application.scheduling.greedy.auto_schedule        : auto_schedule + 그리디 핵심 + 재시도
+    app.application.scheduling.greedy.reschedule_affected  : reschedule_affected_groups + reschedule
 
 본 파일은 D7-C invariant (Week 9) 까지 모든 기존 dotted path 를 보존하기 위한
 re-export 셸이다. ruff 가 unused import 를 제거하지 않도록 모든 re-export 에
@@ -45,7 +45,7 @@ from app.infrastructure.calendar_engine import (  # noqa: F401
 # greedy.auto_schedule._run_optimization_once 가 사용하지만, 기존 테스트
 # (test_jit_integration) 가 schedule_optimizer 모듈에서 patch.object 한다.
 # Week 3 Task 3A.2 이동 후에도 monkeypatch 가 유효하도록 노출 유지.
-from app.services.jit_scheduling import apply_jit_delay  # noqa: F401
+from app.application.scheduling.greedy.jit_scheduling import apply_jit_delay  # noqa: F401
 
 # ── application/_shared 재노출 (Phase 1 step 3 신 위치) ──────────────────
 from app.application._shared.group_ops import (  # noqa: F401
@@ -65,10 +65,10 @@ from app.application._shared.slot_filters import (  # noqa: F401
 )
 
 # ── greedy 패키지 재노출 (Week 3 Task 3A.2) ────────────────────────────────
-from app.services.greedy.slot_finder import (  # noqa: F401
+from app.application.scheduling.greedy.slot_finder import (  # noqa: F401
     _find_available_slot,  # re-export shell (D7-C, Week 9)
 )
-from app.services.greedy.auto_schedule import (  # noqa: F401
+from app.application.scheduling.greedy.auto_schedule import (  # noqa: F401
     _SHEATH_ROUTING,  # re-export shell (D7-C, Week 9)
     _get_sheath_type,  # re-export shell (D7-C, Week 9)
     _get_tp_line_speed,  # re-export shell (D7-C, Week 9)
@@ -81,7 +81,7 @@ from app.services.greedy.auto_schedule import (  # noqa: F401
     _tardiness_boost_retry,  # re-export shell (D7-C, Week 9)
     auto_schedule,  # re-export shell (D7-C, Week 9)
 )
-from app.services.greedy.reschedule_affected import (  # noqa: F401
+from app.application.scheduling.greedy.reschedule_affected import (  # noqa: F401
     _ALWAYS_FROZEN_STATUSES,  # re-export shell (D7-C, Week 9)
     _reschedule_affected_groups_cpsat,  # re-export shell (D7-C, Week 9)
     _reset_non_frozen_for_retry,  # re-export shell (D7-C, Week 9)

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.solver.model_builder import BuiltModel, ModelWeights
+from app.application.scheduling.cp_sat.model_builder import BuiltModel, ModelWeights
 
 
 def compose_objective(

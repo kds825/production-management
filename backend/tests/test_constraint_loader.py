@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.constraint_config import ConstraintConfig
-from app.services.solver import ConstraintSpec, load_active_constraints
+from app.application.scheduling.cp_sat import ConstraintSpec, load_active_constraints
 
 
 # ---------- helpers ---------------------------------------------------------

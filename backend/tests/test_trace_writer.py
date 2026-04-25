@@ -1,4 +1,4 @@
-"""Tests for `app.services.solver.trace_writer` (Task 2A.3).
+"""Tests for `app.application.scheduling.cp_sat.trace_writer` (Task 2A.3).
 
 Scope (per plan spec §Task 2A.3):
   1. Drift guard: `compute_output_hash` == `_parity_helpers._stable_hash`.
@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.solver_decision import SolverDecision
 from app.infrastructure.models.solver_run import SolverRun
-from app.services.solver.trace_writer import (
+from app.application.scheduling.cp_sat.trace_writer import (
     TraceMetadata,
     compute_input_hash,
     compute_output_hash,

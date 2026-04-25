@@ -22,7 +22,7 @@ from app.domain.constants import PROCESS_ORDER
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.calendar_engine import calculate_end_datetime
-from app.services.greedy.auto_schedule import _run_optimization_once
+from app.application.scheduling.greedy.auto_schedule import _run_optimization_once
 from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _is_core_group,

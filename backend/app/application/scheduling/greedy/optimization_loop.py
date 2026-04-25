@@ -1,6 +1,6 @@
 """Greedy calendar-aware slot assignment loop — `_run_optimization_once`.
 
-Extracted from ``app.services.greedy.auto_schedule`` (Week 9 SRP cleanup).
+Extracted from ``app.application.scheduling.greedy.auto_schedule`` (Week 9 SRP cleanup).
 
 This module owns ONE responsibility: given a set of `planned`
 `ProductionBatch` rows for a run, walk them in priority order and
@@ -45,19 +45,19 @@ from app.infrastructure.models.speed_master import SpeedMaster
 from app.application._shared.audit_logger import log_decision
 from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.domain.constraint_rules import resolve_color_change_min
-from app.services.greedy.loaders.base_date import (  # noqa: F401  # used in setup
+from app.application.scheduling.greedy.loaders.base_date import (  # noqa: F401  # used in setup
     resolve_base_date,
 )
-from app.services.greedy.loaders.master_data import (  # noqa: F401  # used in setup
+from app.application.scheduling.greedy.loaders.master_data import (  # noqa: F401  # used in setup
     load_master_data,
 )
-from app.services.greedy.loaders.planned_batches import (  # noqa: F401  # used in setup
+from app.application.scheduling.greedy.loaders.planned_batches import (  # noqa: F401  # used in setup
     load_planned_batches,
 )
-from app.services.greedy.loaders.wip_filter import (  # noqa: F401  # used in setup
+from app.application.scheduling.greedy.loaders.wip_filter import (  # noqa: F401  # used in setup
     filter_wip_skippable,
 )
-from app.services.greedy.slot_finder import _find_available_slot
+from app.application.scheduling.greedy.slot_finder import _find_available_slot
 from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _get_drum_winding_min,

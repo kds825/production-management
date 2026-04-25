@@ -103,6 +103,35 @@ PAIRS: List[Tuple[str, str, str]] = [
         "_delete_task_safely",
         "app.application._shared.db_ops",
     ),
+    # Phase 1 step 4a (solver/* + greedy/* + jit_scheduling 이동) 후 추가:
+    # services/{solver,greedy,jit_scheduling} 자체는 git mv 로 사라졌고,
+    # schedule_optimizer 셸 + cp_sat_optimizer 가 새 path 의 함수들을 재export 하므로
+    # 그 호환 표면을 검증한다 (D7-C invariant).
+    (
+        "app.services.schedule_optimizer",
+        "apply_jit_delay",
+        "app.application.scheduling.greedy.jit_scheduling",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "auto_schedule",
+        "app.application.scheduling.greedy.auto_schedule",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "_run_optimization_once",
+        "app.application.scheduling.greedy.auto_schedule",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "_find_available_slot",
+        "app.application.scheduling.greedy.slot_finder",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "reschedule_affected_groups",
+        "app.application.scheduling.greedy.reschedule_affected",
+    ),
 ]
 
 
