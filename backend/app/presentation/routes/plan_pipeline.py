@@ -22,6 +22,17 @@ from app.services.batch_grouping import (
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
 from app.services.erp_parser import parse_erp_file
 from app.services.excel_exporter import export_plan
+from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for tests
+    new_run_label as _alloc_run_label,
+    parse_base_date_yyyymmdd,
+    parse_date_yyyymmdd,
+)
+
+# Public re-export under the helper's canonical name (kept importable from
+# the route module so callers / tests can reach it as plan_pipeline.new_run_label
+# without going through services.pipeline). Aliased above to avoid colliding
+# with the local variable named ``new_run_label`` inside run_stage1_update().
+new_run_label = _alloc_run_label  # noqa: F811 — intentional re-export alias
 from app.services.schedule_optimizer import auto_schedule  # noqa: F401 — used in stage2
 from app.services.wip_matching import match_wip
 from app.services.wip_promotion import _promote_expected_to_estimated
@@ -101,7 +112,7 @@ async def run_stage1(
     db.commit()
 
     # run_label — 동일 계획 실행의 모든 레코드를 묶는 식별자
-    run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_label = _alloc_run_label()
 
     # ── Step 1: ERP 파일 파싱 ──────────────────────────────────────────────────
     erp_content = await erp_file.read()
@@ -137,24 +148,8 @@ async def run_stage1(
         wip_result = {"matched": 0, "skipped": 0, "details": []}
 
     # ── Step 3: 납기 범위 파싱 ────────────────────────────────────────────────
-    parsed_from: date | None = None
-    parsed_to: date | None = None
-    if date_from:
-        try:
-            parsed_from = datetime.strptime(date_from, "%Y%m%d").date()
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"date_from 형식 오류: {date_from} (YYYYMMDD)",
-            )
-    if date_to:
-        try:
-            parsed_to = datetime.strptime(date_to, "%Y%m%d").date()
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"date_to 형식 오류: {date_to} (YYYYMMDD)",
-            )
+    parsed_from: date | None = parse_date_yyyymmdd(date_from, field_name="date_from")
+    parsed_to: date | None = parse_date_yyyymmdd(date_to, field_name="date_to")
 
     # ── Step 4: production_batch 생성 ─────────────────────────────────────────
     try:
@@ -264,7 +259,7 @@ async def run_stage1_update(
         )
 
     # 신규 run_label 발급 — 이전 run 은 건드리지 않고 새 버전으로 분기
-    new_run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_run_label = _alloc_run_label()
 
     try:
         from app.infrastructure.models.sales_order import SalesOrder
@@ -1054,19 +1049,7 @@ def _parse_stage2_body(body: dict) -> tuple[str, datetime | None, str]:
     if not run_label:
         raise HTTPException(status_code=400, detail="run_label 필수")
 
-    base_date_dt: datetime | None = None
-    base_date_str = body.get("base_date")
-    if base_date_str:
-        try:
-            base_date_dt = datetime.strptime(base_date_str, "%Y%m%d").replace(
-                hour=8, minute=0
-            )
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"base_date 형식 오류: {base_date_str} (YYYYMMDD)",
-            )
-
+    base_date_dt = parse_base_date_yyyymmdd(body.get("base_date"))
     optimizer = body.get("optimizer", "cpsat")  # "cpsat" | "greedy"
     return run_label, base_date_dt, optimizer
 
