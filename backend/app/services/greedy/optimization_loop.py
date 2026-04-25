@@ -37,17 +37,26 @@ from sqlalchemy.orm import Session
 from app.domain.constants import (
     PREDECESSOR_PROCESS,
     PROCESS_ORDER,
-    _DEFAULT_WELDING_MIN,
-    _WIP_SKIP_PROCESSES,
 )
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
-from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.services.audit_logger import log_decision
 from app.services.calendar_engine import calculate_end_datetime
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
+from app.services.constraint_params import resolve_color_change_min
+from app.services.greedy.loaders.base_date import (  # noqa: F401  # used in setup
+    resolve_base_date,
+)
+from app.services.greedy.loaders.master_data import (  # noqa: F401  # used in setup
+    load_master_data,
+)
+from app.services.greedy.loaders.planned_batches import (  # noqa: F401  # used in setup
+    load_planned_batches,
+)
+from app.services.greedy.loaders.wip_filter import (  # noqa: F401  # used in setup
+    filter_wip_skippable,
+)
 from app.services.greedy.slot_finder import _find_available_slot
 from app.services.scheduling_shared.group_ops import (
     _extract_core_main_sq,
@@ -90,106 +99,27 @@ def _run_optimization_once(
     """
     result = {"total_tasks": 0, "violations": [], "warnings": []}
 
-    # Load all batches for this run, excluding outsourced and already-scheduled
-    # 공정 순서를 포함하여 정렬 — 같은 수주의 연선이 절연보다 먼저 스케줄링되어야
-    # predecessor_map이 올바르게 동작함
-    # PROCESS_ORDER: 공정 순서 상수 (domain.constants에서 공유)
-    batches = (
-        db.query(ProductionBatch)
-        .filter(
-            ProductionBatch.run_label == run_label,
-            ProductionBatch.status == "planned",
-        )
-        .order_by(
-            ProductionBatch.due_date.asc(),
-            ProductionBatch.customer_priority.asc(),
-            ProductionBatch.batch_seq.asc(),
-        )
-        .all()
-    )
-    # Python 레벨 재정렬: batch_seq는 라우팅 내 공정 순서이지만,
-    # batch_group 스케줄링: 공정 순서 최우선 (연선→절연→시스 파이프라인)
-    # 같은 공정 내에서 납기→우선순위→SQ 순으로 정렬 (실제 공장 스케줄링 기준)
-    batches.sort(
-        key=lambda b: (
-            PROCESS_ORDER.get(b.process_name, 50),
-            b.batch_seq or 0,  # 61연선 코어(seq=0)가 메인(seq=1)보다 먼저
-            b.due_date or date.max,
-            b.customer_priority or 99,
-            -(float(b.sq_mm2 or 0)),
-        )
-    )
+    # Phase 2 추출: greedy/loaders/planned_batches.py
+    batches = load_planned_batches(run_label, db)
 
     if not batches:
         result["warnings"].append("배치 없음 — Stage 1을 먼저 실행하세요")
         return result
 
-    # ── WIP 공정 스킵: 재고로 대체 가능한 공정은 간트에 미배치 ───────────────
-    from app.infrastructure.models.wip_inventory import WipInventory
-
-    wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id is not None}
-    wip_stage_map: dict[int, str] = {}
-    if wip_ids:
-        wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
-        wip_stage_map = {w.wip_id: w.process_stage or "" for w in wips}
-
-    schedulable: list[ProductionBatch] = []
-    wip_skipped = 0
-    for batch in batches:
-        if batch.wip_matched_id and batch.wip_matched_id in wip_stage_map:
-            wip_stage = wip_stage_map[batch.wip_matched_id]
-            skip_set = _WIP_SKIP_PROCESSES.get(wip_stage, set())
-            if batch.process_name in skip_set:
-                batch.status = "wip_complete"
-                wip_skipped += 1
-                continue
-        schedulable.append(batch)
-
-    batches = schedulable
+    # Phase 2 추출: greedy/loaders/wip_filter.py
+    batches, wip_skipped = filter_wip_skippable(batches, db)
     if wip_skipped:
         result["wip_skipped"] = wip_skipped
 
-    # ── 기준일시 설정 — 계획 생성일(run_label) 08:00 ─────────────────────
-    # run_label 형식: "YYYYMMDD_HHMMSS" — 앞 8자리를 날짜로 파싱한다.
-    # 파싱 실패 시 KST 당일 08:00으로 폴백.
-    if base_date is None:
-        try:
-            date_part = run_label.split("_")[0]  # "20260406"
-            base_date = datetime(
-                int(date_part[:4]),
-                int(date_part[4:6]),
-                int(date_part[6:8]),
-                8,
-                0,
-                0,
-            )
-        except Exception:
-            from zoneinfo import ZoneInfo
+    # Phase 2 추출: greedy/loaders/base_date.py
+    base_date = resolve_base_date(run_label, base_date)
 
-            kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
-            base_date = kst_now.replace(
-                hour=8, minute=0, second=0, microsecond=0
-            ).replace(tzinfo=None)
-
-    # Load equipment into memory
-    equipment_list = db.query(EquipmentMaster).all()
-    equipment_by_process = {}
-    for eq in equipment_list:
-        equipment_by_process.setdefault(eq.process_name, []).append(eq)
-
-    # Load speed master into memory: (equipment_code, sq_mm2) → SpeedMaster row
-    speed_records = db.query(SpeedMaster).all()
-    speed_map: dict[tuple, SpeedMaster] = {}
-    for sr in speed_records:
-        speed_map[(sr.equipment_code, float(sr.cross_section or 0))] = sr
-
-    # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
-    constraint_params = ConstraintParams.load(db)
-
-    # 용접 시간 (4-4): ConstraintParams 통합 경로로 조회 (하위 호환 default 유지)
-    welding_min = constraint_params.get(
-        "4-4", "welding_min", default=_DEFAULT_WELDING_MIN
-    )
+    # Phase 2 추출: greedy/loaders/master_data.py
+    _md = load_master_data(db)
+    equipment_by_process = _md.equipment_by_process
+    speed_map = _md.speed_map
+    constraint_params = _md.constraint_params
+    welding_min = _md.welding_min
 
     # Load existing tasks (to check overlaps)
     existing_tasks = (
