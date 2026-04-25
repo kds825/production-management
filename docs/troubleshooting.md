@@ -71,3 +71,45 @@ Skeleton of known Week 0 symptoms hit so far. Append new sections as the pilot u
 - **Fix:**
   - Already fixed by `b9e2f4a6d018_add_batch_group_column.py` (commit `6126ee0`, Task 0.1b).
   - If the error reappears, check `alembic history` — `b9e2f4a6d018` must sit between `f2900467a547` and `c3d4e5f6a7b8`. If it's missing or out of order, restore the migration file and re-stamp.
+
+## `ConstraintConfig` rows leaked between tests (suite red, isolated green)
+
+- **Symptom:** A constraint test passes alone but fails when the full suite runs; the offending row in `constraint_config` has params from a sibling test (`_test_marker: 999`, `stranding_min: 12345`).
+- **Cause:** A test wrote to `constraint_config` outside a SAVEPOINT and the row survived the next test's setup. Most often `test_baseline_writes`-style flows.
+- **Fix:**
+  - Wrap every constraint-touching test in `db.begin_nested()` (SAVEPOINT) and roll back in teardown — see commit `1b7a679` for the pattern.
+  - Detect with: `python -c "from app.infrastructure.database import SessionLocal; from app.infrastructure.models.constraint_config import ConstraintConfig; print([r.constraint_id for r in SessionLocal().query(ConstraintConfig).all() if r.params_json and r.params_json.get('_test_marker')])"` — any non-empty list is a leak.
+
+## `ImportError: cannot import name 'list' from 'app.presentation.routes.schedules'`
+
+- **Symptom:** Backend boot or a test fails with the import error above (or the analogous one for `batch_grouping`).
+- **Cause:** A caller `from app.presentation.routes.schedules import list` ran while the file → package transition was in flight (Week 7 Task 7A.1 for schedules; Week 3 for batch_grouping). Python resolves `from <pkg> import list` to the submodule first, but `list` is also a Python builtin name and IDE auto-imports break on the collision.
+- **Fix:**
+  - Always import the submodule with an alias when the name shadows a builtin: `from app.presentation.routes.schedules import list as _list_mod`.
+  - The package `__init__.py` re-exports the submodule's `router` so route registration in `app/main.py` doesn't have to touch this name.
+  - Same workaround applies to `batch_grouping.helpers`-vs-`builtins.help` ambiguity if it ever resurfaces.
+
+## Flaky `test_스케줄_목록_200` (intermittent failure)
+
+- **Symptom:** `tests/api/test_schedules_list.py::test_스케줄_목록_200` fails ~1 in 20 full-suite runs; passes in isolation.
+- **Cause:** Pre-existing flakiness rooted in time-window assertions that crossed a midnight boundary on slow CI runs. Not introduced by the refactor.
+- **Fix:**
+  - Already relaxed in commit `1b7a679` — the assertion now matches a tolerance window instead of an exact list. If it fails again, re-run the test in isolation; if isolated runs are green, the suite-level flake is acceptable per the relaxed envelope.
+  - Do NOT tighten the assertion without first reproducing the original midnight-edge case.
+
+## `X-Run-Id` missing on a response (Run-ID propagation flake)
+
+- **Symptom:** A test that asserts `response.headers["X-Run-Id"]` fails intermittently in the full suite, passes in isolation.
+- **Cause:** `RunIdMiddleware` uses a `contextvars.ContextVar` and a previous test's contextvar can bleed across test boundaries when `pytest-asyncio` reuses the event loop.
+- **Fix:**
+  - Re-run the failing test isolated: `pytest tests/path::test_name -v`. If isolated is green, the failure is the contextvar-leak flake and not a real regression.
+  - To reproduce deterministically, run the suite with `--forked` (fresh subprocess per test). If the test still fails forked, it's a real bug — investigate the middleware order in `app/main.py:36-50`.
+
+## Lint baseline drift ("41 errors → 43 errors, did I break it?")
+
+- **Symptom:** `make lint` reports a different error count than yesterday; reviewer asks if your PR added them.
+- **Cause:** The lint baseline naturally drifts as files are touched — the absolute count is not the metric.
+- **Fix:**
+  - Rule of thumb: 41–43 errors total is the steady-state band. Don't chase it to zero.
+  - The actual gate is "no NEW errors from your changes." Compare with `git diff main -- '*.py' | ruff check --diff` (or the equivalent for the frontend) to see only what your branch added.
+  - If the count rose by exactly the number of new errors your diff introduced, fix those. If it rose more than that, an unrelated branch already pushed the baseline up — not your problem to fix on this PR.
