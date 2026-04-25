@@ -63,22 +63,23 @@ Then paste the output into the table below, replacing the previous block.
 
 ## Catalog (snapshot — generated on 2026-04-25 against dev DB)
 
-`✓` = `is_enabled=true`; `·` = disabled. `_test_marker` keys in
-`params_json` are leftover from in-process integration tests — they are
-ignored by the solver and will be cleaned by the Week 9 seed-data sweep.
+`✓` = `is_enabled=true`; `·` = disabled. Snapshot taken after Week 9
+seed-data sweep (the prior `_test_marker` rows from in-process integration
+tests have been restored from `BASELINE_phase0-initial_20260423T101449Z`
+history).
 
 | ID        | 한글명                             | 카테고리      | implementation_type | priority | enabled | params_json                                                    |
 | --------- | ---------------------------------- | ------------- | ------------------- | -------- | ------- | -------------------------------------------------------------- |
 | `1-1`     | 거래처 우선순위                    | 납기/우선순위 | `table_param`       | 1        | ✓       | `{}`                                                           |
-| `1-2`     | 납기 기준(도착/출하)               | 납기/우선순위 | `table_param`       | 2        | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
+| `1-2`     | 납기 기준(도착/출하)               | 납기/우선순위 | `table_param`       | 2        | ✓       | `{"transport_days": 1}`                                        |
 | `1-3`     | 긴급 변경 대응                     | 납기/우선순위 | `hybrid`            | 3        | ✓       | `{}`                                                           |
-| `2-1`     | 재공 활용(연선/절연 재고우선)      | SM수량/재고   | `hybrid`            | 4        | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
-| `2-2`     | 외주 조건(≤10SQ, 고내화16)         | SM수량/재고   | `table_param`       | 5        | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
-| `2-3`     | 틀단위 기준 생산                   | SM수량/재고   | `table_param`       | 6        | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
-| `2-4`     | 61연선 분리                        | SM수량/재고   | `code_logic`        | 7        | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
+| `2-1`     | 재공 활용(연선/절연 재고우선)      | SM수량/재고   | `hybrid`            | 4        | ✓       | `{"loss_limit_pct": 8, "min_remainder_m": 50, "shortage_t...`  |
+| `2-2`     | 외주 조건(≤10SQ, 고내화16)         | SM수량/재고   | `table_param`       | 5        | ✓       | `{}`                                                           |
+| `2-3`     | 틀단위 기준 생산                   | SM수량/재고   | `table_param`       | 6        | ✓       | `{}`                                                           |
+| `2-4`     | 61연선 분리                        | SM수량/재고   | `code_logic`        | 7        | ✓       | `{}`                                                           |
 | `3-1`     | 색상별 여척 추가                   | 색상관리      | `table_param`       | 10       | ✓       | `{"extra_length_m": 7, "sample_extra_m": 10}`                  |
-| `3-2`     | 색상 묶음 배치                     | 색상관리      | `code_logic`        | 11       | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
-| `3-3`     | 설비별 색상그룹 제한               | 색상관리      | `table_param`       | 12       | ✓       | `{"_test_marker": 999, "stranding_min": 12345}`                |
+| `3-2`     | 색상 묶음 배치                     | 색상관리      | `code_logic`        | 11       | ✓       | `{}`                                                           |
+| `3-3`     | 설비별 색상그룹 제한               | 색상관리      | `table_param`       | 12       | ✓       | `{}`                                                           |
 | `3-4`     | 잔량 흑색 소진                     | 색상관리      | `table_param`       | 13       | ·       | `{"remnant_threshold_m": 200}`                                 |
 | `4-1`     | 규격교체 시간                      | 셋업/교체     | `table_param`       | 20       | ✓       | `{"cv_min": 300, "sheath_min": 30, "stranding_min": 30, "i...` |
 | `4-2`     | 색상교체 시간                      | 셋업/교체     | `table_param`       | 21       | ✓       | `{"sheath_color_min": 120}`                                    |
