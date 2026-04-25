@@ -5,6 +5,7 @@ import { EDITABLE_CONSTRAINTS, ParamEditor } from "./components/ParamEditor";
 import { DriftBanner } from "./components/DriftBanner";
 import { SaveModal } from "./components/SaveModal";
 import { HistoryTab } from "./components/HistoryTab";
+import { BaselineTab } from "./components/BaselineTab";
 
 interface Constraint {
   constraint_id: string;
@@ -19,7 +20,7 @@ interface Constraint {
   notes: string | null;
 }
 
-type Tab = "params" | "toggle" | "history";
+type Tab = "params" | "toggle" | "baseline" | "history";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -139,9 +140,9 @@ export default function ConstraintsPage() {
 
       <DriftBanner refreshKey={driftRefresh} />
 
-      {/* Tabs */}
+      {/* Tabs — spec §3B 순서: 파라미터 / on-off / 베이스라인 / 이력 */}
       <div className="mb-4 flex gap-1 border-b">
-        {(["params", "toggle", "history"] as Tab[]).map((t) => (
+        {(["params", "toggle", "baseline", "history"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -155,7 +156,9 @@ export default function ConstraintsPage() {
               ? "파라미터"
               : t === "toggle"
                 ? "제약 on/off"
-                : "변경 이력"}
+                : t === "baseline"
+                  ? "베이스라인"
+                  : "변경 이력"}
           </button>
         ))}
       </div>
@@ -254,6 +257,8 @@ export default function ConstraintsPage() {
           ))}
         </div>
       )}
+
+      {tab === "baseline" && <BaselineTab />}
 
       {tab === "history" && <HistoryTab />}
 
