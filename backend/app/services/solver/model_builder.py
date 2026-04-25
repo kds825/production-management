@@ -52,7 +52,6 @@ Task 2A.2 (Production Handoff Refactor, Week 2): `cp_sat_schedule` 의 §6
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -62,11 +61,13 @@ from ortools.sat.python import cp_model
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
 from app.services.schedule_optimizer import (
     PREDECESSOR_PROCESS,
-    _extract_core_main_sq,
-    _is_core_group,
-    _st_sq,
 )
 from app.services.sheath_cluster import build_sheath_clusters
+from app.services.solver.constraints.global_.predecessor import (
+    add_core_st_precedence,
+    add_predecessor_precedence,
+    compute_proc_groups_by_sq,
+)
 
 
 @dataclass(frozen=True)
@@ -449,49 +450,22 @@ def build_model(
         if len(itvs) >= 2:
             model.add_no_overlap(itvs)
 
-    # 6-d. 공정 선후관계: 앞 공정 첫 드럼 완료 후 뒤 공정 시작
-    proc_groups_by_sq: dict[tuple[str, int], list[str]] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        proc_groups_by_sq.setdefault((meta["rep"].process_name, meta["sq"]), []).append(
-            gk
-        )
-
-    for gk in groups:
-        meta = group_meta[gk]
-        pred_proc = PREDECESSOR_PROCESS.get(meta["rep"].process_name)
-        if not pred_proc:
-            continue
-        for pred_gk in proc_groups_by_sq.get((pred_proc, meta["sq"]), []):
-            pred_meta = group_meta[pred_gk]
-            pred_header = next(
-                (b for b in pred_meta["batches"] if b.batch_seq == -1), None
-            )
-            if pred_header:
-                lot_count = max(int(pred_header.drum_count or 1), 1)
-            elif _is_core_group(pred_gk):
-                lot_count = max(
-                    sum(int(b.drum_count or 1) for b in pred_meta["batches"]), 1
-                )
-            else:
-                lot_count = max(len(pred_meta["batches"]), 1)
-            first_drum = max(1, math.ceil(pred_meta["cpsat_dur"] / lot_count))
-            model.add(start_vars[gk] >= start_vars[pred_gk] + first_drum)
-            # 파이프라인 유휴 최소 역산: 후공정 끝 ≥ 선행공정 끝
-            model.add(end_vars[gk] >= end_vars[pred_gk])
-
-    # 6-e. CORE → ST 선행 (AL6BO 첫 드럼 → 54BO 시작)
-    for core_gk in [gk for gk in groups if _is_core_group(gk)]:
-        main_sq = _extract_core_main_sq(core_gk)
-        if main_sq is None:
-            continue
-        core_meta = group_meta[core_gk]
-        lot_c = max(sum(int(b.drum_count or 1) for b in core_meta["batches"]), 1)
-        first_drum = max(1, math.ceil(core_meta["cpsat_dur"] / lot_c))
-        for st_gk in [
-            gk for gk in groups if gk.startswith("ST-") and _st_sq(gk) == main_sq
-        ]:
-            model.add(start_vars[st_gk] >= start_vars[core_gk] + first_drum)
+    # 6-d / 6-e. 공정 선후관계 + CORE→ST 선행.
+    # Phase 1 추출: solver/constraints/global_/predecessor.py 모듈로 이동.
+    # proc_groups_by_sq 는 §6-f 의 idle_terms 가 재사용하므로 caller 가 받아둠.
+    proc_groups_by_sq = compute_proc_groups_by_sq(group_meta)
+    add_predecessor_precedence(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+        end_vars=end_vars,
+        proc_groups_by_sq=proc_groups_by_sq,
+    )
+    add_core_st_precedence(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+    )
 
     # 6-f. 목적함수: 파이프라인 유휴 최소화 + 색상 체인 최소화 (+ soft 모드에선 tardiness)
     # 유휴 = succ_end - pred_end (≥ 0, 6-d 하드 제약으로 보장). 납기 가중치(수십~수백)
