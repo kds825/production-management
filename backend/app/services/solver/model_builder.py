@@ -58,8 +58,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.sheath_cluster import build_sheath_clusters
+from app.services.constraint_params import ConstraintParams
 from app.services.solver.constraints.global_.idle_terms import (  # noqa: F401  # used at §6-f
     collect_idle_terms,
 )
@@ -70,6 +69,21 @@ from app.services.solver.constraints.global_.predecessor import (  # noqa: F401 
     add_core_st_precedence,
     add_predecessor_precedence,
     compute_proc_groups_by_sq,
+)
+from app.services.solver.constraints.global_.slack_terms import (  # noqa: F401  # used at §6-g-slack
+    collect_slack_terms,
+)
+from app.services.solver.constraints.process.edd_pair import (  # noqa: F401  # used at §6-h
+    collect_edd_pair_terms,
+)
+from app.services.solver.constraints.process.sheath_color_hard import (  # noqa: F401  # used at §6-f-hard
+    add_sheath_color_hard_chain,
+)
+from app.services.solver.constraints.process.sheath_color_sequence import (  # noqa: F401  # used at §6-g+§6-g-tiebreak
+    add_sheath_color_sequence_and_tiebreak,
+)
+from app.services.solver.constraints.process.transition import (  # noqa: F401  # used at Round-2-transition
+    collect_transition_terms,
 )
 
 
@@ -461,131 +475,27 @@ def build_model(
     #   - 인접 쌍 중 하나라도 start_vars/equip_vars 에 없으면 skip
     #   - 클러스터 group_keys 가 1개 이하 → skip (인접 쌍 없음)
     if sheath_color_hard:
-        _clusters_hard = build_sheath_clusters(group_meta)
-        # ConstraintConfig 4-2 에서 색상 교체 시간 조회. SpeedMaster 값 없이
-        # fallback 경로만 써서 설비별 편차 무시 (클러스터 단위 gap 의미).
-        _color_gap_min = int(
-            round(
-                resolve_color_change_min(
-                    sm_color_min=None,
-                    params=constraint_params,
-                )
-            )
+        # Phase 1 추출: solver/constraints/process/sheath_color_hard.py
+        add_sheath_color_hard_chain(
+            model=model,
+            group_meta=group_meta,
+            start_vars=start_vars,
+            end_vars=end_vars,
+            equip_vars=equip_vars,
+            constraint_params=constraint_params,
+            frozen_group_keys=frozen_group_keys,
         )
-        _frozen_set = frozen_group_keys or set()
 
-        for _cluster in _clusters_hard:
-            _gks_ord = _cluster.group_keys
-            if len(_gks_ord) < 2:
-                continue
-            for _i in range(len(_gks_ord) - 1):
-                _gk_a = _gks_ord[_i]
-                _gk_b = _gks_ord[_i + 1]
-                # 둘 다 모델에 있는지 확인 (group_meta 에서 제외된 키 방어)
-                if _gk_a not in start_vars or _gk_b not in start_vars:
-                    continue
-                if _gk_a not in equip_vars or _gk_b not in equip_vars:
-                    continue
-                # 두 그룹 모두 frozen 이면 start 이미 고정 → 추가 제약은 중복/모순 위험
-                if _gk_a in _frozen_set and _gk_b in _frozen_set:
-                    continue
-                # Hard: gk_b 는 gk_a 종료 후 color_gap 이상 이후에 시작
-                model.add(start_vars[_gk_b] >= end_vars[_gk_a] + _color_gap_min)
-                # 같은 설비 강제: 두 그룹이 공통으로 eligible 한 설비 bool 을 동기화.
-                # 교집합 eq 가 없는 경우(서로 다른 설비 후보) → gap 제약만 적용.
-                _shared_eqs = equip_vars[_gk_a].keys() & equip_vars[_gk_b].keys()
-                for _eq in _shared_eqs:
-                    model.add(equip_vars[_gk_a][_eq] == equip_vars[_gk_b][_eq])
-
-    # 6-g. 시스 색상 Sequence-Dependent Setup (정식 모델링).
-    #
-    # Why: 기존 chain_terms (|start_a - start_b| soft) 은 proximity 만 minimize 하여
-    # 실제 "같은 설비에서 다른 색상 인접 시 +color_gap 분" 을 solver 가 인식 못 함.
-    # Post-solve 캘린더 엔진만 color_change_min 을 duration 에 더해 solver 목적
-    # 함수와 실제 스케줄이 괴리 (solver 는 갈→회→갈→회 와 갈갈→회회 를 동일 비용
-    # 으로 착각). 결과: objective 동점 해 중 색상 흩어진 해가 빈번히 선택됨.
-    #
-    # 수정: 시스 공정 그룹 쌍(gk_a, gk_b) 중 색상 다르고 공통 eligible 설비 있는
-    # 경우에 대해, "같은 설비 + 순서" booleans 로 conditional gap 제약을 부여한다.
-    #   same_eq = OR_{ec ∈ shared}(equip_a[ec] ∧ equip_b[ec])
-    #   a_before_b ∈ {0,1} (solver 자율 선택)
-    #   same_eq=1 ∧ a_before_b=1  ⇒  start_b ≥ end_a + color_gap
-    #   same_eq=1 ∧ a_before_b=0  ⇒  start_a ≥ end_b + color_gap
-    # 효과:
-    #   - Solver 가 실제 교체 시간(120 분) 을 duration 으로 반영 → tardiness
-    #     vs 색상 묶음 tradeoff 를 정확히 평가.
-    #   - 납기 여유 있으면 같은 색상 연속 배치를 자연 선호 (makespan/idle 감소).
-    #   - 여유 없으면 색상 포기 (tardiness 피하기 위해).
-    #   - AddCircuit / successor-var 기반 완전 TSP 모델 대비 단순. O(n²) 쌍에
-    #     per-pair bool 2-3 개 + conditional constraint 4 개 → n≈60 기준 ~3K 변수.
-    #
-    # Note: 같은 색상 pair 는 gap 0 이면 no_overlap 만으로 충분하므로 skip (모델
-    # 경량화). 다른 색상에만 제약 추가.
-    _sheath_color_gap_min = int(
-        round(
-            resolve_color_change_min(
-                sm_color_min=None,
-                params=constraint_params,
-            )
-        )
+    # 6-g + 6-g-tiebreak. 시스 색상 sequence-dependent gap + makespan bias.
+    # Phase 1 추출: solver/constraints/process/sheath_color_sequence.py
+    sheath_end_terms = add_sheath_color_sequence_and_tiebreak(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+        end_vars=end_vars,
+        equip_vars=equip_vars,
+        constraint_params=constraint_params,
     )
-    _sheath_gks_all = [
-        _g
-        for _g, _m in group_meta.items()
-        if _m["rep"].process_name in ("저압시스", "고압시스")
-    ]
-    for _i in range(len(_sheath_gks_all)):
-        for _j in range(_i + 1, len(_sheath_gks_all)):
-            _gk_a = _sheath_gks_all[_i]
-            _gk_b = _sheath_gks_all[_j]
-            _color_a = (group_meta[_gk_a]["rep"].sheath_color or "").strip()
-            _color_b = (group_meta[_gk_b]["rep"].sheath_color or "").strip()
-            # 색상 미지정/동일: 실물 교체 없음 → 제약 불필요 (no_overlap 으로 충분).
-            if not _color_a or not _color_b or _color_a == _color_b:
-                continue
-            # 공통 eligible 설비 없으면 same_eq 가 항상 0 → 제약 항상 비활성 → skip.
-            _shared_eqs_color = set(equip_vars[_gk_a].keys()) & set(
-                equip_vars[_gk_b].keys()
-            )
-            if not _shared_eqs_color:
-                continue
-            # same_eq bool: 공통 설비 중 하나에서 둘 다 활성화됐는지.
-            # exactly_one(equip_vars[g]) 이 각 그룹에 강제되어 있으므로 설비별
-            # both_on 의 합 ≤ 1 (둘이 같은 설비에 있거나 없거나).
-            _both_bools = []
-            for _ec in _shared_eqs_color:
-                _both = model.new_bool_var(f"sh_both_{_gk_a}_{_gk_b}_{_ec}")
-                model.add_bool_and(
-                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
-                ).only_enforce_if(_both)
-                model.add_bool_or(
-                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
-                ).only_enforce_if(_both.Not())
-                _both_bools.append(_both)
-            _same_eq = model.new_bool_var(f"sh_same_eq_{_gk_a}_{_gk_b}")
-            model.add(_same_eq == sum(_both_bools))
-            # a_before_b: no_overlap 이 둘 중 한 방향을 강제하지만, 어느 방향
-            # 인지를 솔버가 선택할 수 있도록 bool 로 bind. objective(+gap) 을
-            # 고려해 solver 가 자연스럽게 최적 순서 결정.
-            _a_before_b = model.new_bool_var(f"sh_order_{_gk_a}_{_gk_b}")
-            model.add(
-                start_vars[_gk_b] >= end_vars[_gk_a] + _sheath_color_gap_min
-            ).only_enforce_if([_same_eq, _a_before_b])
-            model.add(
-                start_vars[_gk_a] >= end_vars[_gk_b] + _sheath_color_gap_min
-            ).only_enforce_if([_same_eq, _a_before_b.Not()])
-
-    # 6-g-tiebreak. 시스 그룹 makespan bias (색상 묶음 tie-breaker).
-    #
-    # Why: 위 sequence-dependent gap 제약은 실제 wall-clock 을 반영하지만 objective
-    # 에 makespan 항이 없으면 "납기 여유 많고 설비 여유 많은" 경우 동일 objective
-    # 의 grouped/scattered 해가 공존 → solver 가 non-deterministic 으로 scattered
-    # 선택 가능 (예: 4 배치 {흑,흑,청,청} 모두 tardiness=0 feasible → 흑청흑청도 유효).
-    # 작은 가중치로 시스 그룹의 end_var 합을 목적함수에 더해 "빨리 끝내는 해" 를
-    # 선호시키면 자연스럽게 grouped 선택 (gap 적은 해 = makespan 작은 해).
-    # weight=1 → tardiness(1e5~1e7 per min) 대비 5 orders 작아 실제 tradeoff 훼손 X,
-    # objective tie 상황에서만 작동.
-    sheath_end_terms = [end_vars[_g] for _g in _sheath_gks_all]
 
     # 6-g-slack. On-time 그룹 slack-weighted completion — 납기 임박 우선 정렬.
     #
@@ -607,19 +517,13 @@ def build_model(
     # 가중치 스케일:
     #   `_IDLE_WEIGHT=1` < slack_w (수~수백/min) < `_TARDINESS_WEIGHT=1e5/min`.
     #   past-due penalty 를 이기지 못해 안전, idle_terms 와 경쟁 가능.
-    slack_terms: list = []
-    # 진단 스냅샷용 — (gk, weight, end_var) 로 기여도를 사후 분해할 수 있도록 보존.
-    slack_terms_meta: list = []
-    for _gk, _meta in group_meta.items():
-        _due = _meta["due_wmin"]
-        if _due == _MAX_HORIZON_MIN:
-            continue
-        if _due < 0:
-            continue
-        _slack_min = max(1, int(_due))
-        _w = max(1, weights.SLACK_WEIGHT_BASE // _slack_min)
-        slack_terms.append(_w * end_vars[_gk])
-        slack_terms_meta.append((_gk, _w, end_vars[_gk]))
+    # Phase 1 추출: solver/constraints/global_/slack_terms.py
+    slack_terms, slack_terms_meta = collect_slack_terms(
+        group_meta=group_meta,
+        end_vars=end_vars,
+        slack_weight_base=weights.SLACK_WEIGHT_BASE,
+        max_horizon_min=_MAX_HORIZON_MIN,
+    )
 
     # 6-h. EDD 전역 penalty — "같은 공정 + 공유 설비 후보" 인 그룹 쌍에서
     # 납기 빠른 쪽이 뒤에 시작하면 `_EDD_PAIR_WEIGHT` penalty.
@@ -634,49 +538,14 @@ def build_model(
     #   1) 같은 공정 — 다른 공정끼리는 precedence 가 이미 순서 결정
     #   2) 공통 eligible 설비 존재 — 같은 설비에 놓일 가능성 있어야 순서가 의미
     #   3) due_wmin 이 _MAX_HORIZON_MIN (no-due) 또는 동일한 쌍은 skip
-    edd_pair_terms: list = []
-    # Hybrid C: past-due ↔ on-time 혼합 쌍 별도 리스트 (heavy weight 적용).
-    edd_mixed_pastdue_terms: list = []
-    _process_gks: dict[str, list[str]] = {}
-    for _gk, _meta in group_meta.items():
-        _process_gks.setdefault(_meta["rep"].process_name, []).append(_gk)
-    for _proc, _gks_proc in _process_gks.items():
-        for _i in range(len(_gks_proc)):
-            for _j in range(_i + 1, len(_gks_proc)):
-                _gk_a = _gks_proc[_i]
-                _gk_b = _gks_proc[_j]
-                _due_a = group_meta[_gk_a]["due_wmin"]
-                _due_b = group_meta[_gk_b]["due_wmin"]
-                # no-due 또는 동일 due 는 EDD 의미 없음
-                if _due_a == _MAX_HORIZON_MIN or _due_b == _MAX_HORIZON_MIN:
-                    continue
-                if _due_a == _due_b:
-                    continue
-                # 공통 eligible 설비 없으면 경쟁 관계 아님 → skip
-                if not (set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())):
-                    continue
-                # 납기 빠른 쪽(earlier)이 뒤에 시작하면 wrong = 1
-                if _due_a < _due_b:
-                    _earlier, _later = _gk_a, _gk_b
-                else:
-                    _earlier, _later = _gk_b, _gk_a
-                _wrong = model.new_bool_var(f"edd_wrong_{_earlier}__{_later}")
-                model.add(start_vars[_earlier] > start_vars[_later]).only_enforce_if(
-                    _wrong
-                )
-                model.add(start_vars[_earlier] <= start_vars[_later]).only_enforce_if(
-                    _wrong.Not()
-                )
-                # 쌍 분류: "past-due ↔ on-time" 혼합이면 heavy weight.
-                # earlier 는 납기 빠른 쪽 (= due_wmin 작은 쪽). past-due 는 음수, on-time
-                # 은 양수. `earlier 가 past-due 이고 later 가 on-time` 이면 혼합 case.
-                _earlier_due = group_meta[_earlier]["due_wmin"]
-                _later_due = group_meta[_later]["due_wmin"]
-                _is_mixed_pastdue = _earlier_due < 0 <= _later_due
-                if _is_mixed_pastdue:
-                    edd_mixed_pastdue_terms.append(_wrong)
-                else:
-                    edd_pair_terms.append(_wrong)
+    # Phase 1 추출: solver/constraints/process/edd_pair.py
+    edd_pair_terms, edd_mixed_pastdue_terms = collect_edd_pair_terms(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+        equip_vars=equip_vars,
+        max_horizon_min=_MAX_HORIZON_MIN,
+    )
 
     # Round 2 HIGH #6: 연선 setup 3-tier soft penalty.
     # 같은 설비에 배치된 두 연선 그룹의 SQ 가 다르면 `_TRANSITION_WEIGHT` 분 비용
@@ -691,45 +560,12 @@ def build_model(
     #   transition_bool = AND(equip_a == equip_b, sq_a != sq_b)
     # 두 그룹이 같은 설비에 배치 AND SQ 다름 시 1, 아니면 0.
     # 경량화: SQ 같으면 penalty 0 이므로 쌍 skip. SQ 다를 때만 bool var 생성.
-    transition_terms: list = []
-    _stranding_gks = [
-        _g for _g, _m in group_meta.items() if _m["rep"].process_name == "연선"
-    ]
-    for _i in range(len(_stranding_gks)):
-        for _j in range(_i + 1, len(_stranding_gks)):
-            _gk_a = _stranding_gks[_i]
-            _gk_b = _stranding_gks[_j]
-            _meta_a = group_meta[_gk_a]
-            _meta_b = group_meta[_gk_b]
-            # 동일 SQ → setup 0 or 30 — penalty 의미 없음 (현재 모델에서는 동급)
-            if _meta_a["sq"] == _meta_b["sq"]:
-                continue
-            # 공통 eligible 설비 없으면 same_equip 불가 → skip
-            _shared = set(equip_vars[_gk_a].keys()) & set(equip_vars[_gk_b].keys())
-            if not _shared:
-                continue
-            # 납기 14일 초과 벌어지면 sequence 영향 미미 → skip
-            _due_a = _meta_a.get("due_date_ord")
-            _due_b = _meta_b.get("due_date_ord")
-            if _due_a is not None and _due_b is not None and abs(_due_b - _due_a) > 14:
-                continue
-            # same_equip bool: 공통 설비 _s 에 대해 eq_a[s] AND eq_b[s] 가 한 번이라도
-            # 참이면 1. 각 공통 설비별 AND 변수 만들고 OR 로 합산.
-            _same_eq_bools: list = []
-            for _ec in _shared:
-                _both = model.new_bool_var(f"both_{_gk_a}_{_gk_b}_{_ec}")
-                # _both = eq_a[ec] AND eq_b[ec]
-                model.add_bool_and(
-                    [equip_vars[_gk_a][_ec], equip_vars[_gk_b][_ec]]
-                ).only_enforce_if(_both)
-                model.add_bool_or(
-                    [equip_vars[_gk_a][_ec].Not(), equip_vars[_gk_b][_ec].Not()]
-                ).only_enforce_if(_both.Not())
-                _same_eq_bools.append(_both)
-            # 설비 exactly_one 이므로 _same_eq_bools 중 최대 1개만 참 → sum = OR
-            _trans = model.new_bool_var(f"trans_{_gk_a}_{_gk_b}")
-            model.add(_trans == sum(_same_eq_bools))
-            transition_terms.append(_trans)
+    # Phase 1 추출: solver/constraints/process/transition.py
+    transition_terms = collect_transition_terms(
+        model=model,
+        group_meta=group_meta,
+        equip_vars=equip_vars,
+    )
 
     # Task 2A.2: trace_writer 용 dict. 현재 ConstraintConfig row 에 대응되는
     # 실제 penalty IntVar 가 없는 constraint class 들은 `_internal.` prefix 로
