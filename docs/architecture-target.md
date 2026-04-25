@@ -565,11 +565,11 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 
 다음 세션 시작 시 본 §11 을 먼저 읽고 어디서 재개할지 결정:
 
-- [✓] Phase 0 (audit) 완료 — 4 audit + target 작성 + 사용자 승인
-- [ ] Phase 0.5a — characterization smoke test 작성
-- [ ] Phase 0.5b — 즉시 삭제 commit
-- [ ] Phase 1 step 1 — domain/ leaf
-- [ ] Phase 1 step 2 — infrastructure/ leaf
+- [✓] Phase 0 (audit) 완료 — 4 audit + target + reviewer 종합 (commit 02cbab7)
+- [✓] Phase 0.5a — characterization smoke test (commit 02cbab7)
+- [✓] Phase 0.5b — 즉시 삭제 (commit 61aaee7, -125 LOC async)
+- [✓] Phase 1 step 1 — domain/ leaf (commit d61a21f, sheath_cluster + tardiness + batch_sheath_keys)
+- [✓] Phase 1 step 2 — infrastructure/ leaf (commit e156a0a, calendar_engine + parsers/ + exporters/ + llm/ + listener)
 - [ ] Phase 1 step 3 — domain/constraint_rules.py + application/\_shared/
 - [ ] Phase 1 step 4a — solver/\* 이동
 - [ ] Phase 1 step 4b — cp_sat_optimizer.py → orchestrator.py rename
