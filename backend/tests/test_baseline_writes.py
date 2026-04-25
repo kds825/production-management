@@ -40,12 +40,22 @@ TEST_SOLVER_RUN_LABEL = "test-active-run-baseline-writes"
 
 @pytest.fixture
 def client(db: Session) -> Generator[TestClient, None, None]:
-    """savepoint 기반 격리 TestClient — 기존 패턴 그대로 복제 + 강제 cleanup.
+    """savepoint 격리 + ConstraintConfig snapshot/restore.
 
-    SAVEPOINT 만으로는 막을 수 없는 누수가 있어 finalize 단계에서 별도 세션으로
-    test prefix 매칭 행을 직접 DELETE — 운영 baselines 는 prefix 가 다르므로
-    영향 없음.
+    SQLAlchemy 2.0 의 Session.commit() 은 outer transaction 까지 commit 하므로
+    savepoint 만으로는 라우트 commit 누수를 막을 수 없다. 라우트(promote/reset)
+    가 ConstraintConfig.params_json 을 영구 변형하므로 fixture 시작 시점에
+    전체 ConstraintConfig.params_json 을 스냅샷, finalize 시 변경된 행만 복원.
+
+    또한 BASELINE_test-* / BASELINE_blocked-* prefix 매칭 history 행 + 테스트용
+    SolverRun 행을 finalize 단계에서 직접 DELETE — 운영 데이터는 prefix 가
+    달라 영향 없음.
     """
+    snapshot = {
+        c.constraint_id: dict(c.params_json or {})
+        for c in db.query(ConstraintConfig).all()
+    }
+
     db.begin_nested()
 
     @event.listens_for(db, "after_transaction_end")
@@ -62,14 +72,22 @@ def client(db: Session) -> Generator[TestClient, None, None]:
     finally:
         app.dependency_overrides.pop(get_db, None)
         event.remove(db, "after_transaction_end", _restart_savepoint)
-        # 강제 cleanup — 별도 세션에서 별도 트랜잭션으로 실행해 픽스처 상태와
-        # 분리. 운영 데이터(BASELINE_phase*) 와 충돌하지 않도록 prefix 화이트리스트.
         cleanup = SessionLocal()
         try:
+            # 1) 운영 ConstraintConfig.params_json 복원 (라우트 commit 으로
+            #    영구화된 값 → 스냅샷으로 되돌리기). 변경된 행만 update.
+            for row in cleanup.query(ConstraintConfig).all():
+                original = snapshot.get(row.constraint_id)
+                if original is None:
+                    continue
+                if dict(row.params_json or {}) != original:
+                    row.params_json = original
+            # 2) 테스트 prefix history 삭제
             for prefix in TEST_BASELINE_PREFIXES:
                 cleanup.query(ConstraintConfigHistory).filter(
                     ConstraintConfigHistory.changed_by.like(f"{prefix}%")
                 ).delete(synchronize_session=False)
+            # 3) 테스트 SolverRun 삭제
             cleanup.query(SolverRun).filter(
                 SolverRun.run_label == TEST_SOLVER_RUN_LABEL
             ).delete(synchronize_session=False)
