@@ -2205,7 +2205,7 @@ def reschedule(
         }
 
     cleared_count = 0
-    from app.services.cp_sat_optimizer import _delete_task_safely
+    from app.services.scheduling_shared.db_ops import _delete_task_safely
 
     for task in existing_tasks:
         if task.batch_id not in frozen_batch_ids:
