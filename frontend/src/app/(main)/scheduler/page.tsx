@@ -26,6 +26,7 @@ import { OverlapAlertBanner } from "@/features/scheduler/components/OverlapAlert
 import { ContextMenu } from "@/features/scheduler/components/ContextMenu";
 import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { ZoomControl } from "@/features/scheduler/components/ZoomControl";
+import { MissingReasonsBadge } from "@/features/scheduler/components/MissingReasonsBadge";
 import { SyncButton } from "@/features/scheduler/components/SyncButton";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
@@ -1231,6 +1232,10 @@ export default function SchedulerPage() {
       <div className="flex items-center bg-white border-b border-gray-200">
         <div className="flex-1">
           <ViewFilter />
+        </div>
+        {/* Week 5 Task 5B.2 — 사유 미기록 배지. count=0 이면 자체 hide. */}
+        <div className="px-3 py-2 shrink-0">
+          <MissingReasonsBadge />
         </div>
         <div className="px-4 py-2 shrink-0 border-l border-gray-200">
           <SyncButton />

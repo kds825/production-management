@@ -22,9 +22,18 @@ export interface ToastAction {
  *
  * 기존 호출처(action 만 사용) 와 호환되도록 toastStore 의 `show` 시그니처는
  * 4번째 인자(action) 위치를 보존하고, meta 는 5번째 옵셔널 인자로 추가한다.
+ *
+ * Week 5 Task 5B.2 — `kind: "reason-prompt"` 추가.
+ *   드래그-드롭 직후 운영자에게 사유를 묻는 sticky 토스트 (60s) 의 트리거.
+ *   `changeSetId` 는 칩 클릭 시 PATCH /api/change-sets/{id}/reason 의 path
+ *   파라미터로 사용된다. `onResolved` 는 토스트가 "스킵" 또는 "성공" 으로
+ *   닫힐 때마다 호출돼 헤더 배지를 즉시 갱신한다 (배지 폴링 대신 push).
  */
 export interface ToastMeta {
   runId?: string | null;
+  kind?: "reason-prompt";
+  changeSetId?: string;
+  onResolved?: () => void;
 }
 
 export interface ToastItem {
