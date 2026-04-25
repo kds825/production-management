@@ -20,6 +20,13 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     "constraint_loader.py",  # reads ConstraintConfig → ConstraintSpec
     "input_builder.py",  # reads masterdata → SolverInput
     "trace_writer.py",  # writes solver_run + solver_decision
+    # Week 9 SRP cleanup: extracted from cp_sat_optimizer.py.
+    # `preemption.py` mutates ScheduleTask + creates ProductionBatch
+    # rows for the urgent-batch drum-split / deferral logic.
+    "preemption.py",
+    # `decision_aggregator.py` reads ConstraintConfig to enumerate the
+    # set of user-facing constraints that get a solver_decision row.
+    "decision_aggregator.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM

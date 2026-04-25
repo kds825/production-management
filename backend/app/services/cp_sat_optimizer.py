@@ -19,7 +19,6 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
@@ -80,6 +79,7 @@ from app.services.solver.constraint_loader import (
 )
 from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
 from app.services.solver.objective import compose_objective
+from app.services.solver.snapshot import SnapshotWeights
 
 # Logger for non-fatal trace-write failures: observability must not kill
 # solver correctness (see Task 2A.3 wiring note near `return result`).
@@ -212,173 +212,23 @@ _EDD_MIXED_PASTDUE_WEIGHT = 1_000_000_000
 # 막지 않도록 조용히 삼킨다.
 
 
-def _snapshot_output_dir() -> str:
-    """프로젝트 루트의 04_output/solver_snapshots 경로.
+def _build_snapshot_weights() -> SnapshotWeights:
+    """Bundle the cp_sat_optimizer scaling weights for the snapshot writer.
 
-    파일 위치: backend/app/services/cp_sat_optimizer.py → 3단계 상위(.. .. ..)가 루트.
-    (services → app → backend → 루트). 환경변수 `SOLVER_SNAPSHOT_DIR` 로
-    테스트/배포별 경로 오버라이드 가능.
+    Reading these once at call-site keeps ``solver/snapshot.py`` free of
+    upstream module imports while preserving the "what weights ran"
+    record that diagnostic tooling relies on.
     """
-    override = os.environ.get("SOLVER_SNAPSHOT_DIR")
-    if override:
-        return override
-    here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(
-        os.path.join(here, "..", "..", "..", "04_output", "solver_snapshots")
+    return SnapshotWeights(
+        tardiness_normal=_TARDINESS_WEIGHT["normal"],
+        past_severity_k=_PAST_SEVERITY_K,
+        slack_base=_SLACK_WEIGHT_BASE,
+        edd_pair=_EDD_PAIR_WEIGHT,
+        edd_mixed_pastdue=_EDD_MIXED_PASTDUE_WEIGHT,
+        transition=_TRANSITION_WEIGHT,
+        chain=_CHAIN_WEIGHT,
+        idle=_IDLE_WEIGHT,
     )
-
-
-def _write_solver_snapshot(
-    *,
-    run_label: str,
-    base_date: datetime | None,
-    group_meta: dict,
-    frozen_group_keys: set[str] | None,
-    solver: Any,
-    solver_status_name: str,
-    start_vars: dict,
-    end_vars: dict,
-    equip_vars: dict,
-    tardiness_vars: dict,
-    edd_pair_vars: list,
-    slack_terms_meta: list,
-    idle_terms: list | None = None,
-    transition_terms: list | None = None,
-    sheath_end_terms: list | None = None,
-    edd_mixed_pastdue_vars: list | None = None,
-) -> None:
-    """Solver 입출력 + objective breakdown 을 `04_output/solver_snapshots/{run}.json` 에 저장."""
-    try:
-        out_dir = _snapshot_output_dir()
-        os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, f"{run_label}.json")
-
-        frozen_set = set(frozen_group_keys or [])
-
-        groups_section: list[dict] = []
-        tardiness_contrib_total = 0
-        for gk, meta in group_meta.items():
-            rep = meta["rep"]
-            s_val = solver.value(start_vars[gk]) if gk in start_vars else None
-            e_val = solver.value(end_vars[gk]) if gk in end_vars else None
-            eq_chosen: str | None = None
-            for ec, bool_var in equip_vars.get(gk, {}).items():
-                if solver.value(bool_var) == 1:
-                    eq_chosen = ec
-                    break
-            tard_val = (
-                solver.value(tardiness_vars[gk]) if gk in tardiness_vars else None
-            )
-            tard_contrib = (
-                int(meta["weight"]) * int(tard_val) if tard_val is not None else 0
-            )
-            tardiness_contrib_total += tard_contrib
-
-            _due_wmin_v = int(meta["due_wmin"])
-            if _due_wmin_v < 0 and _due_wmin_v != -_MAX_HORIZON_MIN * 2:
-                # _due_work_min legacy 경로와 동일 축(_WORK_MIN_PER_DAY=840) 사용.
-                _past_days = round(max(0, (-_due_wmin_v) / _WORK_MIN_PER_DAY), 2)
-            else:
-                _past_days = 0.0
-
-            groups_section.append(
-                {
-                    "batch_group": gk,
-                    "process_name": rep.process_name,
-                    "sq_mm2": float(rep.sq_mm2 or 0),
-                    "voltage": rep.voltage,
-                    "due_date": (
-                        meta["earliest_due"].isoformat()
-                        if meta.get("earliest_due")
-                        else None
-                    ),
-                    "due_wmin": _due_wmin_v,
-                    "past_days": _past_days,
-                    "weight": int(meta["weight"]),
-                    "cpsat_dur": int(meta["cpsat_dur"]),
-                    "eligible_equipment": [e.equipment_code for e in meta["eligible"]],
-                    "is_frozen": gk in frozen_set,
-                    "n_batches": len(meta["batches"]),
-                    "order_ids": sorted(
-                        {b.sales_order_id for b in meta["batches"] if b.sales_order_id}
-                    ),
-                    "solver_start_wmin": s_val,
-                    "solver_end_wmin": e_val,
-                    "solver_equipment": eq_chosen,
-                    "solver_tardiness_wmin": tard_val,
-                    "solver_tardiness_contribution": tard_contrib,
-                }
-            )
-
-        edd_wrong_count = (
-            sum(int(solver.value(v)) for v in edd_pair_vars) if edd_pair_vars else 0
-        )
-        edd_contribution = int(edd_wrong_count) * _EDD_PAIR_WEIGHT
-        edd_mixed_wrong_count = (
-            sum(int(solver.value(v)) for v in edd_mixed_pastdue_vars)
-            if edd_mixed_pastdue_vars
-            else 0
-        )
-        edd_mixed_contribution = int(edd_mixed_wrong_count) * _EDD_MIXED_PASTDUE_WEIGHT
-
-        slack_contribution_total = 0
-        for _gk_s, _w_s, _end_var_s in slack_terms_meta:
-            slack_contribution_total += int(_w_s) * int(solver.value(_end_var_s))
-
-        idle_sum = sum(int(solver.value(v)) for v in idle_terms) if idle_terms else 0
-        idle_contribution = idle_sum * _IDLE_WEIGHT
-        transition_sum = (
-            sum(int(solver.value(v)) for v in transition_terms)
-            if transition_terms
-            else 0
-        )
-        transition_contribution = transition_sum * _TRANSITION_WEIGHT
-        sheath_end_sum = (
-            sum(int(solver.value(v)) for v in sheath_end_terms)
-            if sheath_end_terms
-            else 0
-        )
-
-        snapshot = {
-            "run_label": run_label,
-            "base_date": base_date.isoformat() if base_date else None,
-            "solver_status": solver_status_name,
-            "objective_value": (
-                int(solver.objective_value)
-                if solver_status_name in ("OPTIMAL", "FEASIBLE")
-                else None
-            ),
-            "frozen_group_keys": sorted(frozen_set),
-            "constants": {
-                "TARDINESS_WEIGHT_normal": _TARDINESS_WEIGHT["normal"],
-                "PAST_SEVERITY_K": _PAST_SEVERITY_K,
-                "SLACK_WEIGHT_BASE": _SLACK_WEIGHT_BASE,
-                "EDD_PAIR_WEIGHT": _EDD_PAIR_WEIGHT,
-                "EDD_MIXED_PASTDUE_WEIGHT": _EDD_MIXED_PASTDUE_WEIGHT,
-                "TRANSITION_WEIGHT": _TRANSITION_WEIGHT,
-                "CHAIN_WEIGHT": _CHAIN_WEIGHT,
-                "IDLE_WEIGHT": _IDLE_WEIGHT,
-            },
-            "breakdown": {
-                "tardiness_contribution_total": tardiness_contrib_total,
-                "edd_pair_wrong_count": int(edd_wrong_count),
-                "edd_pair_contribution": edd_contribution,
-                "edd_mixed_pastdue_wrong_count": int(edd_mixed_wrong_count),
-                "edd_mixed_pastdue_contribution": edd_mixed_contribution,
-                "slack_contribution_total": slack_contribution_total,
-                "idle_sum_wmin": idle_sum,
-                "idle_contribution": idle_contribution,
-                "transition_sum_pairs": transition_sum,
-                "transition_contribution": transition_contribution,
-                "sheath_end_sum_wmin": sheath_end_sum,
-            },
-            "groups": groups_section,
-        }
-
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(snapshot, fh, ensure_ascii=False, indent=2, default=str)
-    except Exception:  # noqa: BLE001 — 진단 쓰기 실패가 solver 결과를 막지 않도록
-        pass
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────
@@ -452,233 +302,12 @@ from app.services.scheduling_shared.group_ops import (  # noqa: E402, F401
 )
 
 
-# ── 선점 스케줄링 헬퍼 ─────────────────────────────────────────────────────
-
-
-def _drums_completable(
-    task_start: datetime,
-    preempt_at: datetime,
-    setup_min: float,
-    work_dur_min: float,
-    total_drums: int,
-    eq_code: str | None,
-    db,
-) -> int:
-    """작업 시작부터 preempt_at 직전까지 완료 가능한 드럼 수 (이진탐색).
-
-    setup이 끝나기 전에 preempt_at이 오면 0 반환.
-    """
-    if total_drums <= 0 or preempt_at <= task_start:
-        return 0
-    drum_min = work_dur_min / max(total_drums, 1)
-    lo, hi = 0, total_drums
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        end_mid = calculate_end_datetime(
-            task_start, setup_min + mid * drum_min, db, eq_code
-        )
-        if end_mid <= preempt_at:
-            lo = mid
-        else:
-            hi = mid - 1
-    return lo
-
-
-# _delete_task_safely 는 app.services.scheduling_shared.db_ops 로 이동
-# (Week 3 Task 3A.1). 아래 import 가 모듈 namespace 에 re-export (D7-C).
+# Week 9 SRP cleanup: 선점 스케줄링 로직은 `app.services.solver.preemption`.
+# `_delete_task_safely` re-export 는 D7-C 호환 path 유지용 (외부 import 가
+# 사라진 Week 9 막바지에 제거 예정).
 from app.services.scheduling_shared.db_ops import (  # noqa: E402, F401
     _delete_task_safely,  # re-export until Week 9 (D7-C)
 )
-
-
-def _try_preempt_for_urgent(
-    earliest: datetime,
-    chosen_eq_code: str,
-    run_label: str,
-    timeline: dict[str, list],
-    db: Session,
-    urgent_priority: int = 7,
-    predecessor_map: dict[tuple, int] | None = None,
-) -> list[ProductionBatch]:
-    """긴급 배치를 위해 chosen_eq_code의 블로킹 태스크를 선점한다.
-
-    earliest 시점을 가로막는 슬롯을 처리하는 두 가지 전략:
-
-    A) 멀티드럼(drum_count >= 2): 드럼 경계에서 분할
-       - 기존 ScheduleTask 의 end_datetime 을 earliest 이전으로 단축
-       - 잔여 드럼 분량의 새 ProductionBatch (status='planned') 생성
-
-    B) 단드럼(drum_count < 2) + 비긴급 블로킹 배치: 밀어내기(deferral)
-       - 블로킹 ScheduleTask 삭제 + 해당 배치 status='planned' 리셋
-       - 원 배치를 반환 → 긴급 배치 완료 후 재스케줄링
-
-    두 전략 모두 timeline 인플레이스 갱신 후 remainder 배치 목록을 반환한다.
-
-    Args:
-        urgent_priority: 긴급 배치의 customer_priority (이 값 이하인 블로킹 배치는 밀지 않음)
-    """
-    slots = list(timeline.get(chosen_eq_code, []))
-    if not slots:
-        return []
-
-    remainder_batches: list[ProductionBatch] = []
-
-    for slot_start, slot_end in sorted(slots, key=lambda s: s[0]):
-        if slot_end <= earliest:
-            continue  # earliest 이전에 이미 끝난 슬롯 → 무시
-        if slot_start >= earliest:
-            break  # earliest 이후 시작 → 긴급 배치가 앞에 끼어들 여지가 있음
-
-        # slot_start < earliest < slot_end → 진행 중인 블록이 earliest를 가로막는 경우
-        task = (
-            db.query(ScheduleTask)
-            .filter(
-                ScheduleTask.run_label == run_label,
-                ScheduleTask.equipment_code == chosen_eq_code,
-                ScheduleTask.start_datetime == slot_start,
-                ScheduleTask.end_datetime == slot_end,
-            )
-            .first()
-        )
-        if task is None:
-            break
-
-        src_batch = (
-            db.query(ProductionBatch)
-            .filter(ProductionBatch.batch_id == task.batch_id)
-            .first()
-        )
-        if src_batch is None:
-            break
-
-        total_drums = int(src_batch.drum_count or 1)
-        setup_min = float(task.setup_time_min or 0)
-        work_dur_min = float(src_batch.estimated_duration_min or 0)
-
-        blocking_priority = int(src_batch.customer_priority or 99)
-
-        if total_drums < 2:
-            # ── 전략 B: 단드럼 밀어내기 ───────────────────────────────────────
-            # 블로킹 배치도 긴급/중요 수준이면 양보 불가
-            if blocking_priority <= urgent_priority:
-                break  # 동급 이상 긴급 배치 — 밀 수 없음
-
-            # 비긴급 단드럼 배치: ScheduleTask 삭제 후 재스케줄링 대상으로 반환
-            deleted_id = _delete_task_safely(db, task)
-            if predecessor_map is not None:
-                # 삭제된 task_id 를 가리키던 predecessor 엔트리 제거 —
-                # 이후 INSERT 가 없어진 task 를 참조해 FK 위반되는 것을 방지.
-                for _k in [k for k, v in predecessor_map.items() if v == deleted_id]:
-                    predecessor_map.pop(_k, None)
-            db.flush()
-
-            # timeline에서 슬롯 제거 (긴급 배치가 이 자리를 사용)
-            tl = timeline[chosen_eq_code]
-            tl.remove((slot_start, slot_end))
-
-            # 배치 상태 planned로 되돌리고 재스케줄링 대상에 추가
-            src_batch.status = "planned"
-            src_batch.equipment_code = chosen_eq_code  # 같은 설비에서 재스케줄링
-            db.flush()
-            remainder_batches.append(src_batch)
-            break
-
-        # ── 전략 A: 멀티드럼 분할 ─────────────────────────────────────────
-        k = _drums_completable(
-            slot_start,
-            earliest,
-            setup_min,
-            work_dur_min,
-            total_drums,
-            chosen_eq_code,
-            db,
-        )
-        if k == 0:
-            # 셋업조차 완료 불가 → 단드럼 밀어내기와 동일 처리 (비긴급인 경우)
-            if blocking_priority <= urgent_priority:
-                break  # 동급 이상 긴급 → 포기
-            deleted_id = _delete_task_safely(db, task)
-            if predecessor_map is not None:
-                for _k in [k2 for k2, v in predecessor_map.items() if v == deleted_id]:
-                    predecessor_map.pop(_k, None)
-            db.flush()
-            tl = timeline[chosen_eq_code]
-            tl.remove((slot_start, slot_end))
-            src_batch.status = "planned"
-            src_batch.equipment_code = chosen_eq_code
-            db.flush()
-            remainder_batches.append(src_batch)
-            break
-
-        # k > 0: earliest 전에 k 드럼 완료 → 분할 처리
-        drum_min = work_dur_min / total_drums
-        trim_dur = setup_min + k * drum_min
-        new_end = calculate_end_datetime(slot_start, trim_dur, db, chosen_eq_code)
-
-        # 기존 태스크 단축
-        task.end_datetime = new_end
-
-        # timeline 갱신
-        tl = timeline[chosen_eq_code]
-        tl.remove((slot_start, slot_end))
-        tl.append((slot_start, new_end))
-
-        # 잔여 배치 생성 (remain_drums 드럼, setup 없음)
-        remain_drums = total_drums - k
-        remain_dur = remain_drums * drum_min
-        remain_len = float(src_batch.total_length_m or 0) * remain_drums / total_drums
-        new_bg = (
-            f"{src_batch.batch_group}_REMAIN"
-            if src_batch.batch_group
-            else f"REMAIN_{src_batch.batch_id}"
-        )
-
-        rem_b = ProductionBatch(
-            run_label=run_label,
-            sales_order_id=src_batch.sales_order_id,
-            sales_order_line=src_batch.sales_order_line,
-            item_code=src_batch.item_code,
-            routing_code=src_batch.routing_code,
-            process_name=src_batch.process_name,
-            equipment_code=chosen_eq_code,
-            batch_seq=src_batch.batch_seq,
-            drum_length_m=src_batch.drum_length_m,
-            drum_count=remain_drums,
-            total_length_m=remain_len,
-            extra_length_m=src_batch.extra_length_m,
-            sq_mm2=src_batch.sq_mm2,
-            core_count=src_batch.core_count,
-            core_colors=src_batch.core_colors,
-            sheath_color=src_batch.sheath_color,
-            customer_name=src_batch.customer_name,
-            due_date=src_batch.due_date,
-            customer_priority=src_batch.customer_priority,
-            line_speed_mpm=src_batch.line_speed_mpm,
-            setup_time_min=0,
-            estimated_duration_min=remain_dur,
-            status="planned",
-            remarks=f"[선점분할 잔여] 원배치={src_batch.batch_id} ({k}/{total_drums}드럼 선점)",
-            product_group=src_batch.product_group,
-            voltage=src_batch.voltage,
-            conductor_material=src_batch.conductor_material,
-            stranding_type=src_batch.stranding_type,
-            batch_group=new_bg,
-            spec_raw=src_batch.spec_raw,
-        )
-        db.add(rem_b)
-        db.flush()
-        remainder_batches.append(rem_b)
-
-        # 원 배치 drum_count / length / duration 를 완료분(k)으로 갱신
-        orig_total_m = float(src_batch.total_length_m or 0)
-        src_batch.drum_count = k
-        src_batch.total_length_m = orig_total_m * k / total_drums
-        src_batch.estimated_duration_min = trim_dur - setup_min
-        db.flush()
-
-        break  # 보통 한 슬롯만 처리
-
-    return remainder_batches
 
 
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
@@ -1278,7 +907,7 @@ def cp_sat_schedule(
     # ── 진단 스냅샷: solver 입력(group_meta) + 출력(start/end/equip/tardiness) +
     # 주요 objective 항의 실제 기여값을 JSON 한 벌로 저장. 원인 분석 시
     # "어떤 그룹이 왜 그 위치에 갔는가" 를 사후에 재현할 수 있도록.
-    _write_solver_snapshot(
+    write_snapshot(
         run_label=run_label,
         base_date=base_date,
         group_meta=group_meta,
@@ -1291,6 +920,9 @@ def cp_sat_schedule(
         tardiness_vars=tardiness_vars,
         edd_pair_vars=_edd_pair_terms,
         slack_terms_meta=_slack_terms_meta,
+        weights=_build_snapshot_weights(),
+        work_min_per_day=_WORK_MIN_PER_DAY,
+        max_horizon_min=_MAX_HORIZON_MIN,
         idle_terms=idle_terms,
         transition_terms=transition_terms,
         sheath_end_terms=_sheath_end_terms,
@@ -1696,7 +1328,7 @@ def cp_sat_schedule(
             sim_end = calculate_end_datetime(sim_start, total_dur, db, chosen_eq_code)
             if sim_end.date() > meta["earliest_due"] and sim_start > earliest:
                 # 납기 초과 + earliest보다 늦게 시작 → 선점 가능 여부 시도
-                rem_list = _try_preempt_for_urgent(
+                rem_list = try_preempt_for_urgent(
                     earliest=earliest,
                     chosen_eq_code=chosen_eq_code,
                     run_label=run_label,
@@ -1980,14 +1612,21 @@ def cp_sat_schedule(
                 "tardiness_hard": bool(tardiness_hard),
             },
         )
+        # Pilot-prep harness (closes Week 4 Task 2A.4 gap): aggregate the
+        # per-constraint penalty/applied values from BuiltModel + solver
+        # so the Decision Card has real numbers to show. Status check
+        # gates the IntVar extraction (UNKNOWN/INFEASIBLE → undefined).
+        _trace_pv, _trace_hv = build_decision_inputs(
+            solver=solver,
+            built=_built,
+            solver_status_ok=status in (cp_model.OPTIMAL, cp_model.FEASIBLE),
+            db=db,
+        )
         write_trace(
             db,
             _trace_meta,
-            # Week 2: BuiltModel doesn't yet expose per-constraint
-            # penalty/hard-literal values — Week 4 Task 2A.4 wires them.
-            # The solver_run row still captures the run itself.
-            penalty_values={},
-            hard_literal_values={},
+            penalty_values=_trace_pv,
+            hard_literal_values=_trace_hv,
             specs=[],
             assignments=_trace_assignments,
         )
