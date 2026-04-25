@@ -79,7 +79,7 @@ from app.services.solver.constraint_loader import (
 )
 from app.services.solver.model_builder import BuiltModel, ModelWeights, build_model
 from app.services.solver.objective import compose_objective
-from app.services.solver.snapshot import SnapshotWeights
+from app.services.solver.snapshot import SnapshotWeights, write_snapshot
 
 # Logger for non-fatal trace-write failures: observability must not kill
 # solver correctness (see Task 2A.3 wiring note near `return result`).
