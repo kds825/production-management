@@ -432,110 +432,13 @@ def _compute_group_duration(
     return total
 
 
-def _compute_group_duration_map(
-    group_batches: list[ProductionBatch],
-    eligible: list[EquipmentMaster],
-    speed_map: dict,
-) -> dict[str, float]:
-    """배치 그룹의 설비별 duration map (Round 2 HIGH #5).
-
-    Returns:
-        {equipment_code: work_duration_min} — 각 eligible 설비로 배치했을 때
-        예상되는 순수 작업 시간(분, setup/drum_wind 제외).
-
-    Why: 기존 `_compute_group_duration` 은 단일 스칼라 반환. 같은 배치를 설비
-    A/B 에 할당해도 모델은 duration 이 동일하다고 가정 → solver 가 "빠른 설비
-    우선" 을 인지 못 함. SpeedMaster 의 `(eq, sq)` 별 line_speed_mpm 을 활용해
-    설비마다 실제 예상 duration 계산.
-
-    Fallback 규칙:
-      - 배치의 explicit estimated_duration_min (>0) 가 있으면 설비 무관 그 값
-        사용 (이미 확정된 것이므로 설비 선택에 무영향).
-      - SpeedMaster (eq, sq) 항목이 있으면 그 line_speed_mpm 사용.
-      - 없으면 eligible 의 평균 speed 사용 (배치의 line_speed_mpm 도 고려).
-      - 최종 fallback: _compute_group_duration 과 동일 평균치 (단일 스칼라).
-
-    Note: hard-coded line_speed=10 fallback 은 신규 코드에서 제거. eligible
-    설비 중 유효 speed 가 하나도 없으면 warning 용으로 모든 설비에 대해
-    scalar fallback 값을 동일하게 반환한다 (solver 가 설비 구분 불가한 상태).
-    """
-    if not eligible:
-        return {}
-
-    rep = group_batches[0]
-    sq = float(rep.sq_mm2 or 0)
-
-    # 1) 각 설비의 line_speed 수집
-    eq_speeds: dict[str, float] = {}
-    for eq in eligible:
-        sm = speed_map.get((eq.equipment_code, sq))
-        if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
-            eq_speeds[eq.equipment_code] = float(sm.line_speed_mpm)
-
-    # 배치 자체 line_speed_mpm (배치 rep 에서 fallback)
-    rep_line_speed = float(rep.line_speed_mpm or 0)
-
-    # Fallback speed: 설비 개별 speed 못 찾은 경우 사용할 값
-    fallback_speed = rep_line_speed if rep_line_speed > 0 else 0.0
-    if fallback_speed <= 0 and eq_speeds:
-        # eligible 중 일부만 speed 있고 나머지는 없을 때 — 평균으로 대체
-        fallback_speed = sum(eq_speeds.values()) / len(eq_speeds)
-
-    # 2) 설비별 duration 계산
-    result: dict[str, float] = {}
-    header = next((b for b in group_batches if b.batch_seq == -1), None)
-
-    for eq in eligible:
-        ls = eq_speeds.get(eq.equipment_code, fallback_speed)
-
-        if header is not None:
-            hd = float(header.estimated_duration_min or 0)
-            if hd <= 0:
-                _ls = float(header.line_speed_mpm or 0) or ls
-                hd = float(header.total_length_m or 0) / _ls if _ls > 0 else 0
-            result[eq.equipment_code] = hd
-            continue
-
-        total = 0.0
-        for b in group_batches:
-            d = float(b.estimated_duration_min or 0)
-            if d <= 0:
-                _ls = float(b.line_speed_mpm or 0) or ls
-                d = (
-                    (float(b.total_length_m or 0) + float(b.extra_length_m or 0)) / _ls
-                    if _ls > 0
-                    else 0
-                )
-            total += d
-        result[eq.equipment_code] = total
-
-    return result
-
-
-def _is_multi_equip_group(
-    gk: str,
-    gb: list[ProductionBatch],
-    eligible: list[EquipmentMaster],
-    sq_to_equip: dict,
-) -> tuple[bool, int]:
-    """멀티설비 분배 대상 여부와 총 드럼 수 반환."""
-    rep = gb[0]
-    is_stranding = rep.process_name == "연선"
-    sq_key = (rep.process_name, int(rep.sq_mm2 or 0))
-
-    header = next((b for b in gb if b.batch_seq == -1), None)
-    total_drums = (
-        int(header.drum_count or 0)
-        if header
-        else sum(int(b.drum_count or 0) for b in gb)
-    )
-
-    multi_eligible = (
-        (is_stranding and not _is_core_group(gk) and sq_key not in sq_to_equip)
-        or rep.process_name == "고압절연"
-        or rep.process_name == "고압시스"
-    )
-    return (multi_eligible and total_drums >= 2 and len(eligible) >= 2), total_drums
+# _compute_group_duration_map, _is_multi_equip_group 은
+# app.services.scheduling_shared.group_ops 로 이동 (Week 3 Task 3A.1).
+# 아래 import 가 모듈 namespace 에 re-export 한다 (D7-C invariant).
+from app.services.scheduling_shared.group_ops import (  # noqa: E402, F401
+    _compute_group_duration_map,  # re-export until Week 9 (D7-C)
+    _is_multi_equip_group,  # re-export until Week 9 (D7-C)
+)
 
 
 # ── 선점 스케줄링 헬퍼 ─────────────────────────────────────────────────────
