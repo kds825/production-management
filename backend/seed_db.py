@@ -1557,6 +1557,20 @@ def seed():
         print(f"  [8/8] constraint_config: {len(constraints)} rows")
 
         db.commit()
+
+        # 8b. constraint_config — Week 5 weight rows (W-* IDs).
+        # Why a separate sub-step: 8b uses an idempotent script so a re-seed
+        # against an existing DB still surfaces fresh weight rows, while the
+        # block above is gated by `customer_master` emptiness and runs only
+        # on truly-fresh DBs. For fresh-DB bootstrap we still want both.
+        from scripts.seed_weight_constraints import (  # noqa: E402
+            main as seed_weights_main,
+        )
+
+        weight_rc = seed_weights_main()
+        if weight_rc != 0:
+            raise RuntimeError(f"weight constraint seed failed (rc={weight_rc})")
+
         total = (
             len(customers)
             + len(routings)
@@ -1568,6 +1582,7 @@ def seed():
             + len(constraints)
         )
         print(f"\nSeed complete! Total {total} rows inserted across 8 tables.")
+        print("(weight rows seeded by scripts/seed_weight_constraints.py — see above)")
 
     except Exception as e:
         db.rollback()
