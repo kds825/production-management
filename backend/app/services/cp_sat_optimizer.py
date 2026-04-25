@@ -33,10 +33,13 @@ from ortools.sat.python import cp_model
 from sqlalchemy.orm import Session
 
 from app.domain.constants import (
+    PREDECESSOR_PROCESS,
     PROCESS_ORDER,
     _CHAIN_WEIGHT,  # re-export until Week 9 (D7-C)
+    _DEFAULT_WELDING_MIN,
     _DUE_HARD_WEIGHT,  # re-export until Week 9 (D7-C)
     _TRANSITION_WEIGHT,  # re-export until Week 9 (D7-C)
+    _WIP_SKIP_PROCESSES,
     _WORK_MIN_PER_DAY,  # re-export until Week 9 (D7-C)
 )
 from app.infrastructure.models.drum_lot_master import DrumLotMaster
@@ -49,21 +52,25 @@ from app.services.calendar_engine import (
     calculate_end_datetime,
 )
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.schedule_optimizer import (
-    PREDECESSOR_PROCESS,
-    _DEFAULT_WELDING_MIN,
-    _WIP_SKIP_PROCESSES,
+
+# Week 3 Task 3A.2 wiring (sub-commit D):
+#   greedy / scheduling_shared 이 분리되면서 cp_sat → schedule_optimizer 의
+#   top-level import 가 모두 사라진다. domain.constants / scheduling_shared /
+#   greedy.slot_finder 직접 참조로 순환 의존성을 제거한다.
+from app.services.greedy.slot_finder import _find_available_slot
+from app.services.scheduling_shared.group_ops import (
     _extract_core_main_sq,
-    _filter_by_sheath_routing,
-    _find_available_slot,
-    _find_eligible_equipment,
     _get_drum_winding_min,
     _get_stranding_setup_min,
     _is_core_group,
     _is_sheath_group,
-    _narrow_by_stranding,
     _schedule_multi_equipment,
     _st_sq,
+)
+from app.services.scheduling_shared.slot_filters import (
+    _filter_by_sheath_routing,
+    _find_eligible_equipment,
+    _narrow_by_stranding,
     align_start_to_predecessor_end,
 )
 from app.services.solver import SolverInput
