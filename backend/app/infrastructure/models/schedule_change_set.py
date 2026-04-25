@@ -14,7 +14,7 @@ PoC 단계에서는 최신 1건만 Undo 스코프로 삼고, older rows 의 GC �
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Column, DateTime, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.infrastructure.database import Base
@@ -43,3 +43,8 @@ class ScheduleChangeSet(Base):
     # default="cascade" 는 기존 데이터 호환 (alembic upgrade 시 NOT NULL DEFAULT 'cascade').
     # diff API 에서 종류별 필터링 빈도가 높아 index=True.
     kind = Column(String(20), nullable=False, default="cascade", index=True)
+    # Week 5 Task 5B.2: 운영자가 드래그-드롭 후 토스트 칩으로 부여하는 사유.
+    # 컬럼은 migration f6a0935366eb 에서 추가됨. NULL 은 "아직 미기록" 의미 — 운영자
+    # batch-review 대상. 값 도메인은 4종 (납기 변경 / 현장 긴급 / 설비 고장 / 자재 부족) 으로
+    # 라우트 레이어에서 enforce (DB 제약 대신: PoC 단계에서 enum 변경 부담 회피).
+    override_reason = Column(Text, nullable=True)

@@ -9,6 +9,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app.config import settings
 from app.infrastructure.logging import RunIdMiddleware
 from app.presentation.routes import audit  # noqa: F401
+from app.presentation.routes import change_sets  # noqa: F401
 from app.presentation.routes import constraints  # noqa: F401
 from app.presentation.routes import decisions  # noqa: F401
 from app.presentation.routes import equipment  # noqa: F401
@@ -58,6 +59,7 @@ app.include_router(plan_pipeline.router, prefix="/api")
 app.include_router(master_data.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(decisions.router, prefix="/api")
+app.include_router(change_sets.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["헬스체크"])
