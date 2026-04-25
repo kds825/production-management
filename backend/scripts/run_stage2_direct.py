@@ -34,7 +34,7 @@ from app.services.schedule_optimizer import (  # noqa: F401
     _run_optimization_once,
     _purge_run_tasks,
 )
-from app.services.cp_sat_optimizer import cp_sat_schedule  # noqa: F401
+from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule  # noqa: F401
 
 
 def main() -> int:

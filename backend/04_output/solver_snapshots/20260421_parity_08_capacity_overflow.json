@@ -29,7 +29,7 @@
   },
   "groups": [
     {
-      "batch_group": "_single_308364",
+      "batch_group": "_single_308657",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -53,7 +53,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308365",
+      "batch_group": "_single_308658",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -77,7 +77,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308366",
+      "batch_group": "_single_308659",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -101,7 +101,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308367",
+      "batch_group": "_single_308660",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -125,7 +125,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308368",
+      "batch_group": "_single_308661",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -149,7 +149,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308369",
+      "batch_group": "_single_308662",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -173,7 +173,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308370",
+      "batch_group": "_single_308663",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -197,7 +197,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308371",
+      "batch_group": "_single_308664",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -221,7 +221,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308372",
+      "batch_group": "_single_308665",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -245,7 +245,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308373",
+      "batch_group": "_single_308666",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -269,7 +269,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308374",
+      "batch_group": "_single_308667",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -293,7 +293,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308375",
+      "batch_group": "_single_308668",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -317,7 +317,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308376",
+      "batch_group": "_single_308669",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -341,7 +341,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308377",
+      "batch_group": "_single_308670",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -365,7 +365,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308378",
+      "batch_group": "_single_308671",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -389,7 +389,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308379",
+      "batch_group": "_single_308672",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -413,7 +413,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308380",
+      "batch_group": "_single_308673",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -437,7 +437,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308381",
+      "batch_group": "_single_308674",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -461,7 +461,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308382",
+      "batch_group": "_single_308675",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -485,7 +485,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308383",
+      "batch_group": "_single_308676",
       "process_name": "저압절연",
       "sq_mm2": 120.0,
       "voltage": "저압",

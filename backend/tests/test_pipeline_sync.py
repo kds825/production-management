@@ -63,7 +63,7 @@ def test_insulation_start_not_before_first_drum(db: Session):
 
 def test_cp_sat_pipeline_end_constraint(db):
     """CP-SAT solver: pred_end <= succ_end 하드 제약."""
-    from app.services.cp_sat_optimizer import cp_sat_schedule
+    from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
     _seed_stranding_then_insulation(
         db, run_label="test-cpsat-1", stranding_total_min=600, insulation_total_min=300

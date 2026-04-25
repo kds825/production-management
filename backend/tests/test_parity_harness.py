@@ -43,7 +43,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.cp_sat_optimizer import cp_sat_schedule
+from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 from tests._parity_helpers import (
     _collect_assignments,
     _fixture_to_solver_input,

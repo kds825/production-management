@@ -319,7 +319,7 @@ from app.application.scheduling.cp_sat.preemption import (  # noqa: E402
 
 # resolve_base_date, _datetime_to_wmin 은 app.application._shared.calendar_ops
 # 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치). 아래 import 가 모듈 namespace 에
-# re-export 하여 기존 path (app.services.cp_sat_optimizer.resolve_base_date 등) 가 유지된다 (D7-C).
+# re-export 하여 기존 path (app.application.scheduling.cp_sat.orchestrator.resolve_base_date 등) 가 유지된다 (D7-C).
 # F401 silences "unused" — schedule_optimizer / 테스트가 cp_sat_optimizer 경유로
 # resolve_base_date 를 import 하므로 ruff 가 제거하면 안 됨.
 from app.application._shared.calendar_ops import (  # noqa: E402, F401

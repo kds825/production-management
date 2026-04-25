@@ -503,7 +503,7 @@ def test_cp_sat_single_path_block_width_preserved(db):
     """
     from app.infrastructure.models.production_batch import ProductionBatch
     from app.infrastructure.models.schedule_task import ScheduleTask
-    from app.services.cp_sat_optimizer import cp_sat_schedule
+    from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
     run_label = "test-cpsat-width"
     db.add(

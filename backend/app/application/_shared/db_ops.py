@@ -4,7 +4,7 @@ solver / greedy 양쪽이 공통으로 호출하는 DB 정리 작업을 모은�
 ScheduleTask 안전 삭제 한 가지지만, 향후 batch 상태 reset 등 비슷한 헬퍼가
 추가되면 같은 모듈에 둔다.
 
-기존 위치: app.services.cp_sat_optimizer (Week 3 Task 3A.1 이전 분리됨,
+기존 위치: app.application.scheduling.cp_sat.orchestrator (Week 3 Task 3A.1 이전 분리됨,
 Phase 1 step 3 에서 application/_shared/ 로 이동).
 """
 

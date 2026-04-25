@@ -94,12 +94,12 @@ PAIRS: List[Tuple[str, str, str]] = [
     # cp_sat_optimizer 모듈도 application/_shared/ 의 헬퍼들을 재export 하므로
     # 같은 호환 표면을 가진다 (E402, F401 noqa 로 보호).
     (
-        "app.services.cp_sat_optimizer",
+        "app.application.scheduling.cp_sat.orchestrator",
         "resolve_base_date",
         "app.application._shared.calendar_ops",
     ),
     (
-        "app.services.cp_sat_optimizer",
+        "app.application.scheduling.cp_sat.orchestrator",
         "_delete_task_safely",
         "app.application._shared.db_ops",
     ),

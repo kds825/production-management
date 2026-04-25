@@ -96,7 +96,7 @@ def seeded_edd_mixed(db):
 
     # CP-SAT 경로 강제 — greedy fallback 은 이 버그 재현과 무관.
     # base_date 를 명시해 실행 시점 의존을 제거 (run_label parse 와 동일 값).
-    from app.services.cp_sat_optimizer import cp_sat_schedule
+    from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
     cp_sat_schedule(
         run_label=RUN,

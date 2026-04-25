@@ -572,7 +572,7 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 1 step 2 — infrastructure/ leaf (commit e156a0a, calendar_engine + parsers/ + exporters/ + llm/ + listener)
 - [✓] Phase 1 step 3 — domain/constraint_rules.py + application/\_shared/ (audit_logger + constraint_params + scheduling_shared/\* 이동, 13 importer + 5 test 갱신, parity 27/27 = /tmp/parity_phase1_step3.md)
 - [✓] Phase 1 step 4a — solver/\* + greedy/\* + jit_scheduling 이동 (디렉토리 통째 git mv 로 history 보존, 19 파일 importer 갱신, test_solver_boundary path retarget, parity 27/27 = /tmp/parity_phase1_step4a.md)
-- [ ] Phase 1 step 4b — cp_sat_optimizer.py → orchestrator.py rename
+- [✓] Phase 1 step 4b — cp_sat_optimizer.py → orchestrator.py rename (P2 단순 rename, 15 importer 갱신, test_solver_boundary allow-list 에 orchestrator.py 등재, parity 27/27 = /tmp/parity_phase1_step4b.md)
 - [ ] Phase 1 step 5 — 잔여 services/ 이동
 - [ ] Phase 1 step 6 — routes import flip
 - [ ] Phase 2 — llm_explainer 분해

@@ -3,7 +3,7 @@
 연선/절연/시스 등 공정 그룹의 식별 (CORE / ST / sheath), 키에서의 SQ 추출,
 설비별 duration map 계산, 그리고 멀티-설비 분배 스케줄링 로직을 묶는다.
 
-기존 위치: app.services.cp_sat_optimizer / app.services.schedule_optimizer
+기존 위치: app.application.scheduling.cp_sat.orchestrator / app.services.schedule_optimizer
 (Week 3 Task 3A.1 이전 분리됨). Phase 1 step 3 에서 application/_shared/ 로
 이동, schedule_optimizer 셸은 본 모듈 함수들을 D7-C invariant 보호 목적으로
 계속 re-export (Phase 5 §9.4 에서 셸 + retarget 동시 정리).

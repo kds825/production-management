@@ -36,6 +36,11 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # `decision_aggregator.py` reads ConstraintConfig to enumerate the
     # set of user-facing constraints that get a solver_decision row.
     "decision_aggregator.py",
+    # Phase 1 step 4b (architecture-target.md §4 P2): `orchestrator.py`
+    # 는 직전 `cp_sat_optimizer.py` 의 단순 rename. cp_sat_schedule()
+    # entry-point 는 본질적으로 use-case orchestrator 라 DB I/O 가
+    # 정당. 본 파일 ≤200 LOC 분해는 Phase 3 의 책임.
+    "orchestrator.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM

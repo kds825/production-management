@@ -203,7 +203,7 @@ def auto_schedule(
             # CP-SAT 우선 시도. random_seed 를 시도 번호로 변동 → 동일 해 반복 방지.
             # P9-B: 3-level fallback (tardiness_hard=True → sheath_color_hard 완화 →
             # tardiness_hard 완화) 을 greedy 폴백 전에 적용.
-            from app.services.cp_sat_optimizer import cp_sat_schedule
+            from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
             # P4-3: attempt==0 에만 warm_start_hints 유지, 1+ 에서는 drop.
             # 왜: 같은 힌트로 재시도하면 비슷한 해로 수렴 → overlap 이 재발할 위험

@@ -114,7 +114,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.infrastructure.database import SessionLocal  # noqa: E402
 from app.infrastructure.models.schedule_task import ScheduleTask  # noqa: E402
-from app.services.cp_sat_optimizer import cp_sat_schedule  # noqa: E402
+from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule  # noqa: E402
 from tests._parity_helpers import (  # noqa: E402
     _collect_assignments,
     _fixture_to_solver_input,

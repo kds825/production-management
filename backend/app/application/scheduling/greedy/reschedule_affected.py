@@ -125,7 +125,7 @@ def _reschedule_affected_groups_cpsat(
       부분 최적화 mode 가 아직 없음. 향후 '부분 최적화' 옵션이 추가되면
       affected 를 필터로 사용하도록 확장 가능. 현재는 시그니처 호환 목적.
     """
-    from app.services.cp_sat_optimizer import cp_sat_schedule
+    from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
     result: dict = {"total_tasks": 0, "violations": [], "warnings": []}
 

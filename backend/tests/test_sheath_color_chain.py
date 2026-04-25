@@ -434,7 +434,7 @@ def test_cp_sat_color_chain_bonus(db):
     (원래 fixture 의 due_date 2026-04-13, 2026-04-20 은 현재일 2026-04-20 기준
     일부 이미 경과/당일이라 hard 모드에선 infeasible.)
     """
-    from app.services.cp_sat_optimizer import cp_sat_schedule
+    from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
     rows = [
         ("흑", 120, date(2026, 4, 13), "SO-CP-1"),

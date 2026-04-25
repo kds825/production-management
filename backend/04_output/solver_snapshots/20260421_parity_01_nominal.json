@@ -29,7 +29,7 @@
   },
   "groups": [
     {
-      "batch_group": "_single_308355",
+      "batch_group": "_single_308648",
       "process_name": "연선",
       "sq_mm2": 120.0,
       "voltage": "저압",
@@ -53,7 +53,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308356",
+      "batch_group": "_single_308649",
       "process_name": "저압절연",
       "sq_mm2": 95.0,
       "voltage": "저압",
@@ -77,7 +77,7 @@
       "solver_tardiness_contribution": 0
     },
     {
-      "batch_group": "_single_308357",
+      "batch_group": "_single_308650",
       "process_name": "저압시스",
       "sq_mm2": 70.0,
       "voltage": "저압",
