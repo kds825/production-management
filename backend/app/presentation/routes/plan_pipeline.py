@@ -27,6 +27,7 @@ from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for 
     parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
+from app.services.pipeline.orchestrator import execute_stage2  # noqa: F401
 from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
 from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
 
@@ -1056,49 +1057,49 @@ def _parse_stage2_body(body: dict) -> tuple[str, datetime | None, str]:
     return run_label, base_date_dt, optimizer
 
 
+def _start_ai_background(run_label: str) -> None:
+    """AI 백그라운드 분석을 큐잉하는 어댑터.
+
+    Why an adapter: orchestrator.execute_stage2 는 in-memory _ai_cache /
+    _ai_cache_lock 를 직접 만지지 않도록 의도적으로 cache 소유권을 본 라우트
+    모듈에 남겼다 (GET /stage2/{run_label}/ai-status 가 같은 dict 를 읽기
+    때문). 이 어댑터가 cache mutation + thread.start 를 하나로 묶어
+    orchestrator 가 단일 콜만 하면 되도록 한다.
+    """
+    with _ai_cache_lock:
+        _ai_cache[run_label] = {"status": "pending"}
+    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
+    thread.start()
+
+
 def _execute_stage2_core(
     run_label: str,
     base_date_dt: datetime | None,
     optimizer: str,
     db: Session,
 ) -> dict:
-    """Stage2 핵심 로직: 자동배열 → 전체 검증 → commit → AI 백그라운드 기동.
+    """Stage2 핵심 로직 thin shim — orchestrator.execute_stage2 위임.
 
     sync `/pipeline/stage2` 와 async `/pipeline/stage2/async` 의 공유 구현.
     SchedulerOverlapError 는 여기서 잡지 않고 호출자가 매핑하도록 전파한다
     (sync 는 200 + overlap_alert 응답, async job 은 status=overlap_alert
     저장).
+
+    Why a shim and not a direct alias to execute_stage2: 본 함수 자체를
+    monkeypatch 하는 테스트 (test_stage2_async_job) 가 있어 함수 객체가
+    plan_pipeline 모듈 namespace 에 살아 있어야 한다. 또한 orchestrator 가
+    auto_schedule / validate_all 을 DI 로 받게 했기 때문에, 라우트 모듈에서
+    monkeypatch 가능한 두 심볼을 호출 시점에 전달할 수 있다.
     """
-    if optimizer == "greedy":
-        schedule_result = run_greedy_stage(
-            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule
-        )
-    else:
-        # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
-        # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
-        # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
-        # auto_schedule 은 본 모듈 namespace 에서 lookup 되도록 (테스트
-        # monkeypatch 호환) DI 로 전달한다.
-        schedule_result = run_solver_stage(
-            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule
-        )
-
-    violations = validate_all(run_label, db)
-    db.commit()
-
-    # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음
-    with _ai_cache_lock:
-        _ai_cache[run_label] = {"status": "pending"}
-    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
-    thread.start()
-
-    return {
-        "run_label": run_label,
-        "schedule": schedule_result,
-        "violations": violations,
-        "total_violations": len(violations),
-        "overlap_alert": False,
-    }
+    return execute_stage2(
+        run_label,
+        base_date_dt,
+        optimizer,
+        db,
+        auto_schedule_fn=auto_schedule,
+        validate_all_fn=validate_all,
+        ai_background_starter=_start_ai_background,
+    )
 
 
 @router.post("/stage2", summary="Stage 2: 자동 스케줄링 (동기)")
