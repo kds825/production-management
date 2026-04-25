@@ -20,6 +20,11 @@ from sqlalchemy.orm import Session
 # (테스트 의도: 결정론 > 사용자 편의).
 os.environ["CPSAT_WORKERS"] = "1"
 
+# Why: parity tests must never hit a real LLM (cost + nondeterminism). New Decision
+# Card narrator (decision_narrator.py + llm_providers/) reads LLM_PROVIDER at call
+# time, so set early. Use setdefault so dev can override with `LLM_PROVIDER=anthropic`.
+os.environ.setdefault("LLM_PROVIDER", "template")
+
 from app.infrastructure.database import SessionLocal  # noqa: E402
 
 

@@ -16,3 +16,4 @@ pytest-asyncio==0.23.8
 pytest-benchmark>=4.0
 ortools>=9.10
 prometheus-client>=0.20
+kiwipiepy>=0.20
