@@ -116,7 +116,11 @@ def test_sheath_chain_key_present_and_applied(db):
     from pathlib import Path
 
     src_path = (
-        Path(__file__).resolve().parents[1] / "app" / "services" / "batch_grouping.py"
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "services"
+        / "batch_grouping"
+        / "grouper.py"
     )
     src = src_path.read_text(encoding="utf-8")
 
