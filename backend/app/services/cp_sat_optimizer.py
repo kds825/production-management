@@ -308,6 +308,9 @@ from app.services.scheduling_shared.group_ops import (  # noqa: E402, F401
 from app.services.scheduling_shared.db_ops import (  # noqa: E402, F401
     _delete_task_safely,  # re-export until Week 9 (D7-C)
 )
+from app.services.solver.preemption import (  # noqa: E402
+    try_preempt_for_urgent,  # called inside cp_sat_schedule (line ~1330)
+)
 
 
 # ── 메인 함수 ─────────────────────────────────────────────────────────────
@@ -1541,6 +1544,7 @@ def cp_sat_schedule(
     # fails (e.g., schema drift, network blip), log a warning and let the
     # caller receive a valid `result`. The unit test suite asserts the
     # happy path; parity 11/11 catches SAVEPOINT rollback regressions.
+    from app.services.solver.decision_aggregator import build_decision_inputs
     from app.services.solver.trace_writer import (
         TraceMetadata,
         compute_input_hash,
