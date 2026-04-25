@@ -314,7 +314,7 @@ def _check_sq_range(tasks, batches, equipment, config) -> list[dict]:
 
 def _check_safety_education(tasks, batches, equipment, config) -> list[dict]:
     """안전교육 시간대에 작업 배정 확인"""
-    from app.services.calendar_engine import _is_last_two_mondays
+    from app.infrastructure.calendar_engine import _is_last_two_mondays
     from datetime import time
 
     violations = []

@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.calendar_engine import calculate_end_datetime
+from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.services.scheduling_shared.db_ops import _delete_task_safely
 
 if TYPE_CHECKING:

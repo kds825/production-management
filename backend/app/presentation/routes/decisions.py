@@ -40,7 +40,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.solver_decision import SolverDecision
 from app.infrastructure.models.solver_run import SolverRun
 from app.services.decision_narrator import explain_with_filter
-from app.services.llm_providers import (
+from app.infrastructure.llm import (
     ConstraintRef,
     Contribution,
     ExplainPayload,

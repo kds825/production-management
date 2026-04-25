@@ -47,7 +47,7 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.services.audit_logger import log_decision
-from app.services.calendar_engine import (
+from app.infrastructure.calendar_engine import (
     calculate_end_datetime,
 )
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min

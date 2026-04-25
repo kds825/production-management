@@ -58,7 +58,7 @@ def _working_minutes_between(
     "공휴일 있는 주에 작업이 하루 더 밀림" 같은 현실을 반영 못 했음. P9-E 로 교체.
     """
     # 지역 import — 최상단 import 가 formatter 에 의해 제거되는 환경 방어.
-    from app.services.calendar_engine import (
+    from app.infrastructure.calendar_engine import (
         _get_category,
         _get_day_breaks,
         get_available_hours,

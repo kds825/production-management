@@ -36,7 +36,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.batch_grouping import create_batches, detect_split_candidates
-from app.services.erp_parser import parse_erp_file
+from app.infrastructure.parsers.erp_parser import parse_erp_file
 from app.services.pipeline.run_labeler import new_run_label
 from app.services.pipeline.stage1 import run_solver_stage
 from app.services.pipeline.stage2 import run_greedy_stage
@@ -121,7 +121,7 @@ def execute_stage1_ingest(
     wip_warnings: list[str] = []
     if wip_content:
         try:
-            from app.services.wip_parser import parse_wip_file
+            from app.infrastructure.parsers.wip_parser import parse_wip_file
 
             wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
             wip_warnings.extend(wip_parse.get("warnings", []))

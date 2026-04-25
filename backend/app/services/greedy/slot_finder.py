@@ -24,7 +24,7 @@ def _find_available_slot(
     """
     # 지역 import — calendar_engine 은 schedule_optimizer 가 monkeypatch 가능한
     # 형태로 노출하지 않으므로 직접 import 한다. 모듈 로드 시점 순환 방지 목적도 있음.
-    from app.services.calendar_engine import calculate_end_datetime
+    from app.infrastructure.calendar_engine import calculate_end_datetime
 
     candidate = earliest
     sorted_slots = sorted(occupied_slots, key=lambda s: s[0])

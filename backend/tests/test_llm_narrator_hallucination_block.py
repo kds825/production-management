@@ -12,7 +12,7 @@ Why two scenarios:
 from datetime import datetime
 
 from app.services.decision_narrator import explain_with_filter
-from app.services.llm_providers import (
+from app.infrastructure.llm import (
     Contribution,
     ExplainPayload,
 )

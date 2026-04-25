@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from app.domain.constants import PROCESS_ORDER
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.calendar_engine import calculate_end_datetime
+from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.services.greedy.auto_schedule import _run_optimization_once
 from app.services.scheduling_shared.group_ops import (
     _extract_core_main_sq,

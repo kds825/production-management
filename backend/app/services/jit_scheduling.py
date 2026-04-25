@@ -20,7 +20,7 @@ from datetime import datetime, time
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models import ProductionBatch, ScheduleTask
-from app.services.calendar_engine import calculate_start_datetime
+from app.infrastructure.calendar_engine import calculate_start_datetime
 
 _MAX_JIT_ITERATIONS = 5
 

@@ -17,7 +17,7 @@ from app.domain.constants import PREDECESSOR_PROCESS
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.calendar_engine import calculate_end_datetime
+from app.infrastructure.calendar_engine import calculate_end_datetime
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

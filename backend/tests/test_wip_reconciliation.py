@@ -50,7 +50,7 @@ def _make_excel(rows: List[Dict]) -> bytes:
 
 def test_canonical_hash_stable_across_regeneration(db):
     """동일 row 내용으로 재생성된 Excel 은 동일 canonical hash."""
-    from app.services.wip_parser import _compute_canonical_hash
+    from app.infrastructure.parsers.wip_parser import _compute_canonical_hash
 
     rows = [{"공정": "연선재고", "규격": "180SQ", "길이": 300}]
     a = _compute_canonical_hash(_make_excel(rows))
@@ -59,7 +59,7 @@ def test_canonical_hash_stable_across_regeneration(db):
 
 
 def test_canonical_hash_differs_on_content_change(db):
-    from app.services.wip_parser import _compute_canonical_hash
+    from app.infrastructure.parsers.wip_parser import _compute_canonical_hash
 
     a = _compute_canonical_hash(
         _make_excel([{"공정": "연선재고", "규격": "180SQ", "길이": 300}])
@@ -72,7 +72,7 @@ def test_canonical_hash_differs_on_content_change(db):
 
 def test_reupload_same_content_detects_duplicate(db):
     """동일 canonical_hash 재업로드 → duplicate=True 반환, 신규 WIP 생성 없음."""
-    from app.services.wip_parser import parse_wip_excel
+    from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
     _cleanup(db)
     rows = [{"공정": "연선재고", "규격": "181SQ", "길이": 300}]
@@ -166,7 +166,7 @@ def test_reconciliation_single_match_auto_update(db):
     db.commit()
 
     rows = [{"공정": "연선재고", "규격": "185SQ", "전압": "저압", "길이": 275}]
-    from app.services.wip_parser import parse_wip_excel
+    from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
     result = parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
     db.flush()
@@ -191,7 +191,7 @@ def test_reconciliation_zero_match_inserts_orphan(db):
     """
     _cleanup_batches(db)
     rows = [{"공정": "연선재고", "규격": "241SQ", "전압": "저압", "길이": 500}]
-    from app.services.wip_parser import parse_wip_excel
+    from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
     parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
     db.flush()
@@ -219,7 +219,7 @@ def test_reconciliation_tiebreaker_narrowest_delta(db):
     db.commit()
 
     rows = [{"공정": "연선재고", "규격": "186SQ", "전압": "저압", "길이": 275}]
-    from app.services.wip_parser import parse_wip_excel
+    from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
     parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
     db.flush()
@@ -244,7 +244,7 @@ def test_reconciliation_unassigned_batch_skipped(db):
     db.commit()
 
     rows = [{"공정": "연선재고", "규격": "150SQ", "전압": "저압", "길이": 390}]
-    from app.services.wip_parser import parse_wip_excel
+    from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
     parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
     db.flush()

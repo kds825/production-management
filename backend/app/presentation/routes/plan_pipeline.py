@@ -20,7 +20,7 @@ from app.services.batch_grouping import (
     format_spec_display,
 )
 from app.services.constraint_checker import validate_all  # noqa: F401 — used in stage2
-from app.services.excel_exporter import export_plan
+from app.infrastructure.exporters.excel_exporter import export_plan
 from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for tests
     new_run_label as _alloc_run_label,
     parse_base_date_yyyymmdd,
@@ -189,7 +189,7 @@ async def run_stage1_update(
     try:
         from app.infrastructure.models.sales_order import SalesOrder
         from app.infrastructure.models.schedule_task import ScheduleTask
-        from app.services.erp_parser import parse_erp_file_incremental
+        from app.infrastructure.parsers.erp_parser import parse_erp_file_incremental
         from sqlalchemy import and_, or_
 
         # ── 1. Frozen 배치 식별 (parent_run_label 기준) ─────────────────────────
@@ -381,7 +381,7 @@ async def run_stage1_update(
         wip_warnings: list[str] = []
         if wip_file:
             try:
-                from app.services.wip_parser import parse_wip_file
+                from app.infrastructure.parsers.wip_parser import parse_wip_file
 
                 wip_content = await wip_file.read()
                 if wip_content:
@@ -1120,7 +1120,7 @@ def trigger_reanalysis(run_label: str):
 @router.get("/wip-template", summary="재공실사 Excel 템플릿 다운로드")
 def download_wip_template() -> StreamingResponse:
     """드롭다운 validation이 포함된 재공실사 데이터 입력 템플릿을 반환한다."""
-    from app.services.wip_template import generate_wip_template
+    from app.infrastructure.exporters.wip_template import generate_wip_template
 
     output = generate_wip_template()
     return StreamingResponse(

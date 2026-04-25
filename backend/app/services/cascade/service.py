@@ -265,7 +265,7 @@ def plan_cascade_preview(
     # 모델 import 는 호출 시점까지 지연).
     from app.infrastructure.models.schedule_task import ScheduleTask
     from app.infrastructure.models.production_batch import ProductionBatch
-    from app.services.calendar_engine import (
+    from app.infrastructure.calendar_engine import (
         reverse_advance as _calendar_reverse_advance,
     )
 

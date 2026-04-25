@@ -36,7 +36,7 @@ from app.domain.constants import (  # noqa: F401
 # slot_filters.align_start_to_predecessor_end 는 본 모듈 attribute 로
 # `calculate_start_datetime` / `calculate_end_datetime` 를 lookup 하므로
 # (테스트 monkeypatch 호환) 반드시 모듈 namespace 에 노출.
-from app.services.calendar_engine import (  # noqa: F401
+from app.infrastructure.calendar_engine import (  # noqa: F401
     calculate_end_datetime,
     calculate_start_datetime,
 )

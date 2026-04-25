@@ -88,7 +88,7 @@ def get_provider(name: str) -> Provider:
     boot the app.
     """
     if name == "anthropic":
-        from app.services.llm_providers.anthropic import AnthropicProvider
+        from app.infrastructure.llm.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider()
     return TemplateProvider()
@@ -97,4 +97,4 @@ def get_provider(name: str) -> Provider:
 # Eager import — TemplateProvider has no heavy deps and is the test default,
 # so paying the import cost up front avoids a per-call import inside
 # ``get_provider`` on the hot path.
-from app.services.llm_providers.template import TemplateProvider  # noqa: E402,F401
+from app.infrastructure.llm.template_provider import TemplateProvider  # noqa: E402,F401

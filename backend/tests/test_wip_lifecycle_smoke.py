@@ -29,7 +29,7 @@ from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.wip_upload_log import WipUploadLog
 from app.services.sm_inventory import create_shortage_batches
 from app.services.wip_matching import match_wip
-from app.services.wip_parser import parse_wip_excel
+from app.infrastructure.parsers.wip_parser import parse_wip_excel
 from app.services.wip_promotion import _promote_expected_to_estimated
 
 

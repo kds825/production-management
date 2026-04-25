@@ -206,7 +206,7 @@ def detect_split_candidates(
         is_overload = False
         overload_reason = ""
         if header.due_date and header.estimated_duration_min and lot_count >= 3:
-            from app.services.calendar_engine import (
+            from app.infrastructure.calendar_engine import (
                 _PROCESS_HOURS as _CAL_HOURS,
                 _get_category as _cal_cat,
             )

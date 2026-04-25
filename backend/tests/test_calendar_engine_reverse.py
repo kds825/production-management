@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from app.services.calendar_engine import (
+from app.infrastructure.calendar_engine import (
     calculate_end_datetime,
     calculate_start_datetime,
 )

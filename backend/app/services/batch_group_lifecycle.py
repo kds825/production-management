@@ -212,7 +212,7 @@ def compute_restore_at_plan(
 
     from app.services.cascade.snap import build_snapshot
     from app.services.cascade.service import plan_cascade_preview_on_snap
-    from app.services.calendar_engine import (
+    from app.infrastructure.calendar_engine import (
         reverse_advance as _calendar_reverse_advance,
     )
 

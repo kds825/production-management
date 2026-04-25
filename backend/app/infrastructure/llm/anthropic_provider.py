@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 
-from app.services.llm_providers import ExplainPayload
+from app.infrastructure.llm import ExplainPayload
 
 _MODEL = "claude-haiku-4-5-20251001"
 

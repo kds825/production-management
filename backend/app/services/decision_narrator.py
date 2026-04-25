@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from kiwipiepy import Kiwi
 
-from app.services.llm_providers import (
+from app.infrastructure.llm import (
     ExplainPayload,
     Provider,
     TemplateProvider,

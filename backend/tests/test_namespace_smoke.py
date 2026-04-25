@@ -49,7 +49,22 @@ PAIRS: List[Tuple[str, str, str]] = [
         "app.domain.batch_sheath_keys",
     ),
     # Phase 1 step 2 (infrastructure/ leaf) 후 추가:
-    # ("app.services.calendar_engine", "calculate_end_datetime", "app.infrastructure.calendar_engine"),
+    # NOTE: Phase 1 step 2 는 services/* 의 직접 importer 를 모두 새 path 로
+    # flip 했고 services/{calendar_engine, erp_parser, wip_parser, excel_exporter,
+    # wip_template, wip_lifecycle_listener, llm_providers/}.py 자체를 제거했다.
+    # 따라서 legacy path 가 더는 resolve 되지 않으므로 본 표에 PAIR 항목 없음.
+    # shell (services/schedule_optimizer.py) 가 여전히 calendar_engine 을 재export
+    # 하므로 그것만 호환 검증한다.
+    (
+        "app.services.schedule_optimizer",
+        "calculate_end_datetime",
+        "app.infrastructure.calendar_engine",
+    ),
+    (
+        "app.services.schedule_optimizer",
+        "calculate_start_datetime",
+        "app.infrastructure.calendar_engine",
+    ),
     # Phase 1 step 3 후 추가:
     # ("app.services.audit_logger", "log_decision", "app.application._shared.audit_logger"),
     # ("app.services.constraint_params", "ConstraintParams", "app.application._shared.constraint_params"),

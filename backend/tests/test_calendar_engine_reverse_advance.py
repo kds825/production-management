@@ -18,7 +18,7 @@ working_days={0..4}, holidays=set()) 를 전제하지만, 본 프로젝트의
 
 from datetime import datetime, timedelta
 
-from app.services.calendar_engine import reverse_advance
+from app.infrastructure.calendar_engine import reverse_advance
 
 
 def test_simple_no_gap(calendar_ctx):

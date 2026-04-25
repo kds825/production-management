@@ -106,6 +106,6 @@ Session.bulk_insert_mappings = _guarded_bulk_insert  # type: ignore[method-assig
 # Why: database.py 는 앱 기동 시 가장 먼저 import 되는 인프라 모듈이므로,
 # 여기서 등록하면 FastAPI app 생성 전에 listener 가 확실히 활성화된다.
 # register_wip_listener() 는 내부적으로 _registered flag 로 중복 등록을 방지한다.
-from app.services.wip_lifecycle_listener import register_wip_listener  # noqa: E402
+from app.infrastructure.wip_lifecycle_listener import register_wip_listener  # noqa: E402
 
 register_wip_listener()

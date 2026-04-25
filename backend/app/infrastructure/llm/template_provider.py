@@ -14,7 +14,7 @@ Top-3 contributions by weight balance signal vs noise.
 
 from __future__ import annotations
 
-from app.services.llm_providers import ExplainPayload
+from app.infrastructure.llm import ExplainPayload
 
 
 class TemplateProvider:

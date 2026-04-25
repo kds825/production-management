@@ -20,7 +20,7 @@ _RUN_LABEL = "TEST_WIP_LISTENER_T6"
 @pytest.fixture
 def listener_registered(db):
     """Listener 명시 등록. 모듈 레벨 event 라 테스트 후 제거는 불필요."""
-    from app.services.wip_lifecycle_listener import register_wip_listener
+    from app.infrastructure.wip_lifecycle_listener import register_wip_listener
 
     register_wip_listener()
     yield

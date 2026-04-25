@@ -87,7 +87,7 @@ def test_shortage_batch_triggers_listener_recursion(db):
     db.commit()
 
     # Listener 자동 등록 (T7 이후 import 시 등록됨)
-    from app.services.wip_lifecycle_listener import register_wip_listener
+    from app.infrastructure.wip_lifecycle_listener import register_wip_listener
 
     register_wip_listener()
 
