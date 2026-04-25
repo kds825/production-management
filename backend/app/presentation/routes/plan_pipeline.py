@@ -28,6 +28,7 @@ from app.services.pipeline.run_labeler import (  # noqa: F401 — re-export for 
     parse_date_yyyymmdd,
 )
 from app.services.pipeline.stage1 import run_solver_stage  # noqa: F401
+from app.services.pipeline.stage2 import run_greedy_stage  # noqa: F401
 
 # Public re-export under the helper's canonical name (kept importable from
 # the route module so callers / tests can reach it as plan_pipeline.new_run_label
@@ -1069,8 +1070,9 @@ def _execute_stage2_core(
     저장).
     """
     if optimizer == "greedy":
-        schedule_result = auto_schedule(run_label, db, base_date=base_date_dt)
-        schedule_result["engine"] = "greedy"
+        schedule_result = run_greedy_stage(
+            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule
+        )
     else:
         # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
         # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
