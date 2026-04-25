@@ -59,6 +59,13 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from app.services.constraint_params import ConstraintParams
+from app.services.solver.constraints.global_.decision_vars import (  # noqa: F401  # used at §6-b
+    DecisionVars,
+    add_decision_vars,
+)
+from app.services.solver.constraints.global_.frozen_pins import (  # noqa: F401  # used at §6-b-2
+    apply_frozen_pins,
+)
 from app.services.solver.constraints.global_.idle_terms import (  # noqa: F401  # used at §6-f
     collect_idle_terms,
 )
@@ -84,6 +91,9 @@ from app.services.solver.constraints.process.sheath_color_sequence import (  # n
 )
 from app.services.solver.constraints.process.transition import (  # noqa: F401  # used at Round-2-transition
     collect_transition_terms,
+)
+from app.services.solver.constraints.global_.warm_start import (  # noqa: F401  # used at §6-b2
+    apply_warm_start_hints,
 )
 
 
@@ -209,213 +219,45 @@ def build_model(
         {e.equipment_code for eqs in equipment_by_process.values() for e in eqs}
     )
 
-    # 6-b. 결정변수: start / end / equip_bool / tardiness
-    start_vars: dict[str, cp_model.IntVar] = {}
-    end_vars: dict[str, cp_model.IntVar] = {}
-    equip_vars: dict[str, dict[str, cp_model.IntVar]] = {}
-    tardiness_vars: dict[str, cp_model.IntVar] = {}
+    # 6-b. 결정변수: start / end / equip_bool / tardiness / dur.
+    # Phase 1 추출: solver/constraints/global_/decision_vars.py
+    _dv = add_decision_vars(
+        model=model,
+        group_meta=group_meta,
+        max_horizon_min=_MAX_HORIZON_MIN,
+        tardiness_hard=tardiness_hard,
+        warnings=_warnings,
+    )
+    start_vars = _dv.start_vars
+    end_vars = _dv.end_vars
+    equip_vars = _dv.equip_vars
+    tardiness_vars = _dv.tardiness_vars
+    dur_vars = _dv.dur_vars
 
-    # Round 2 HIGH #5: 그룹별 "effective dur" — per_eq_dur_enabled 이면 설비 bool
-    # 에 종속된 선형합으로 표현, 아니면 스칼라. end = start + dur 로 고정.
-    # dur_vars[gk]: None (스칼라) 또는 IntVar.
-    dur_vars: dict[str, Any] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        dur = meta["cpsat_dur"]
-        per_eq = meta.get("per_eq_dur_enabled", False)
-        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
+    # 6-b-2. Frozen groups — 긴급수주 재최적화 시 진행 배치 고정.
+    # Phase 1 추출: solver/constraints/global_/frozen_pins.py
+    apply_frozen_pins(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+        equip_vars=equip_vars,
+        frozen_group_keys=frozen_group_keys,
+        frozen_tasks_snapshot=frozen_tasks_snapshot,
+        max_horizon_min=_MAX_HORIZON_MIN,
+        warnings=_warnings,
+    )
 
-        if per_eq and dur_by_eq:
-            # 설비별 dur: dur_var = sum(eq_bool_i * dur_i). equip_vars 는 exactly_one
-            # 이므로 dur_var 는 정확히 한 설비의 dur 를 갖게 된다 (scalar product).
-            _min_dur = min(dur_by_eq.values())
-            _max_dur = max(dur_by_eq.values())
-            dur_var = model.new_int_var(_min_dur, _max_dur, f"dur_{gk}")
-            # s upper bound: horizon - min_dur (그래야 어떤 설비 선택에도 e ≤ horizon)
-            s = model.new_int_var(0, _MAX_HORIZON_MIN - _min_dur, f"s_{gk}")
-            e = model.new_int_var(_min_dur, _MAX_HORIZON_MIN, f"e_{gk}")
-            model.add(e == s + dur_var)
-            dur_vars[gk] = dur_var
-        else:
-            s = model.new_int_var(0, _MAX_HORIZON_MIN - dur, f"s_{gk}")
-            e = model.new_int_var(dur, _MAX_HORIZON_MIN, f"e_{gk}")
-            model.add(e == s + dur)
-            dur_vars[gk] = None
-
-        start_vars[gk] = s
-        end_vars[gk] = e
-
-        if tardiness_hard:
-            # P9-B: 납기 hard constraint — end_var ≤ due_wmin 로 직접 강제.
-            # due 가 있을 때만 제약 추가. (due_wmin == _MAX_HORIZON_MIN 인 no-due
-            # 그룹은 제약 추가해도 무의미하게 통과하므로 skip — 모델 경량화.)
-            #
-            # Past-due 처리 (개정): 기존에는 due_wmin<0 이면 제약도 skip, tardiness_vars
-            # 도 미생성 → solver 가 past-due 그룹을 "자유변수(어디 배치해도 obj 영향 0)"
-            # 로 보고 임의 위치 선택 → EDD 순서 역전(납기 빠른 게 뒤로 밀림) 관찰됨.
-            # 수정: past-due 는 hard 불가이지만 **soft tardiness 항은 생성** 해서
-            # `weight × (end + |past|)` 이 objective 에 반영되게 함. 이렇게 하면
-            # solver 가 past-due 그룹의 end 를 작게 하려 앞쪽에 배치 → EDD 실현.
-            if meta.get("earliest_due") is not None:
-                if meta["due_wmin"] < 0:
-                    _warnings.append(
-                        f"그룹 {gk}: 납기 {meta['earliest_due']} 이미 "
-                        f"{abs(meta['due_wmin'])}min 지남 — tardiness hard 강제 skip, "
-                        f"soft penalty 로 전환"
-                    )
-                    # Past-due: soft tardiness 생성. tard = max(0, e - due_wmin)
-                    # due_wmin<0 이므로 tard = e - due_wmin = e + |past| (항상 양수)
-                    tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_past_{gk}")
-                    model.add_max_equality(
-                        tard, [e - meta["due_wmin"], model.new_constant(0)]
-                    )
-                    tardiness_vars[gk] = tard
-                else:
-                    model.add(e <= meta["due_wmin"])
-            # placeholder — 이후 코드가 tardiness_vars[gk] 를 참조하지 않아도 안전
-        else:
-            # Soft 모드 (폴백용): 기존 weight-based tardiness.
-            # Round 2 MED #13: due_wmin 음수 허용. `end - due_wmin` 이 음수 due 에
-            # 대해 `end + |past|` 로 자연 증가 → "3일 overdue 는 1일 overdue 의
-            # 3배 penalty" 실현. tard upper bound 를 2×horizon 으로 확장해
-            # 음수 due_wmin 에서도 max_equality 가 안전하게 동작.
-            tard = model.new_int_var(0, 2 * _MAX_HORIZON_MIN, f"t_{gk}")
-            # tardiness = max(0, end - due)
-            model.add_max_equality(tard, [e - meta["due_wmin"], model.new_constant(0)])
-            tardiness_vars[gk] = tard
-
-        eq_bools: dict[str, cp_model.IntVar] = {}
-        for eq in meta["eligible"]:
-            eq_bools[eq.equipment_code] = model.new_bool_var(
-                f"eq_{gk}_{eq.equipment_code}"
-            )
-        equip_vars[gk] = eq_bools
-        model.add_exactly_one(eq_bools.values())
-
-        # Round 2 HIGH #5: per_eq_dur_enabled 이면 dur_var == sum(bool_i * dur_i).
-        # exactly_one 이 보장되어 있으므로 선형합 = 선택된 설비의 dur.
-        if dur_vars.get(gk) is not None:
-            _dur_by_eq_local = meta["cpsat_dur_by_eq"]
-            model.add(
-                dur_vars[gk]
-                == sum(
-                    eq_bools[_ec] * int(_dur_by_eq_local[_ec])
-                    for _ec in eq_bools.keys()
-                )
-            )
-
-    # 6-b-2. Frozen groups — 기존 ScheduleTask 로 start/end/equipment 고정
-    # Why: 긴급수주 재최적화 시 이미 진행 중/완료/base_date 이전 'scheduled' 배치는
-    # 움직이면 안 된다 (실제 생산 중인 블록을 이동시키면 작업 중단/폐기 비용 발생).
-    # 호출자가 frozen_group_keys 로 대상을 명시하면 해당 그룹의 start_var/end_var/
-    # equip_var 를 DB 값으로 박아 솔버가 나머지 그룹만 자유변수로 최적화.
-    # 방어적 동작: DB 에 해당 task 없으면 warning 만 기록하고 skip (stale key 대응).
-    #
-    # Task 2A.2 (Rev 3): DB 접근은 caller (cp_sat_schedule) 가 이미 수행해
-    # `frozen_tasks_snapshot` 으로 주입했다. 여기서는 pure dict 조회만 수행해
-    # services/solver/ 경계 불변식 (infrastructure import 금지) 을 준수.
-    if frozen_group_keys:
-        _snapshot = frozen_tasks_snapshot or {}
-        for _gk in frozen_group_keys:
-            if _gk not in group_meta:
-                # group_meta 에 없음 — 이미 스케줄링 불가(설비 없음) 또는 WIP skip
-                _warnings.append(
-                    f"frozen_group_keys: '{_gk}' 은(는) group_meta 에 없어 고정 불가 (skip)"
-                )
-                continue
-            _snap = _snapshot.get(_gk)
-            if _snap is None:
-                _warnings.append(
-                    f"frozen_group_keys: '{_gk}' 에 해당하는 ScheduleTask 없음 (skip)"
-                )
-                continue
-
-            _fixed_start_wmin = int(_snap["start_wmin"])
-            _fixed_eq_code = _snap["equipment_code"]
-
-            # 변수 domain 범위를 벗어나면 모델이 INFEASIBLE → clamp 후 warning
-            _dur = group_meta[_gk]["cpsat_dur"]
-            if _fixed_start_wmin > _MAX_HORIZON_MIN - _dur:
-                _warnings.append(
-                    f"frozen_group_keys: '{_gk}' start 가 horizon 초과 → 고정 skip"
-                )
-                continue
-
-            model.add(start_vars[_gk] == _fixed_start_wmin)
-            # end 는 (start + dur) 로 이미 묶여있으므로 end 고정은 start 고정과 동치.
-            # 방어적으로 end 도 같이 박되 실패하지 않도록 별도 equality 불필요.
-            # 단, cpsat_dur 와 실제 DB duration 이 다를 수 있어 end 를 명시 고정하면
-            # INFEASIBLE 가능 → start 만 박는다.
-
-            # 설비 고정: 해당 설비 bool=1, 나머지=0
-            if _fixed_eq_code in equip_vars[_gk]:
-                for _ec, _bv in equip_vars[_gk].items():
-                    if _ec == _fixed_eq_code:
-                        model.add(_bv == 1)
-                    else:
-                        model.add(_bv == 0)
-            else:
-                # eligible 에 없는 설비로 실행 중 → eligible 확장 없이 warning
-                # (eligible 재계산은 spec 범위 밖 — 재최적화가 해당 그룹 재배치 시도)
-                _warnings.append(
-                    f"frozen_group_keys: '{_gk}' 의 고정 설비 '{_fixed_eq_code}' 가 "
-                    f"eligible 에 없음 → 설비 고정 skip (시간만 고정)"
-                )
-
-    # ── 6-b2. 웜스타트 힌트 주입 (자유 변수 대상) ────────────────────────
-    # 왜 여기: frozen_group_keys 의 hard-pin 이 먼저 적용된 후에 주입해야
-    # 배타성이 자연스럽다 (pinned 그룹에 힌트 주는 건 no-op). 또한 모든
-    # start_vars/equip_vars 선언이 끝난 시점이라 dict 조회가 안전.
-    #
-    # add_hint() 특성:
-    #   - hard constraint 가 아닌 "탐색 시작점" 제안. 더 나은 해 발견 시 자유 이동.
-    #   - 힌트가 현 제약과 충돌하면 silent-fail (솔버는 죽지 않고 전역 탐색으로).
-    #   - 포트폴리오 워커 간 공유되어 여러 워커가 근방에서 병렬 탐색.
-    #
-    # ERP 재업로드·증분 시나리오에서 이전 해의 대부분 feasibility 를 유지한 채
-    # 변경 부분만 재탐색 → 실측 2.5~5× speedup 기대 (PoC 데이터 측정 필요).
-    _warm_start_applied = 0
-    _warm_start_skipped = 0
-    if warm_start_hints:
-        _frozen_set = frozen_group_keys or set()
-        for _gk, _snap in warm_start_hints.items():
-            # 이미 hard-pin — 힌트 redundant
-            if _gk in _frozen_set:
-                _warm_start_skipped += 1
-                continue
-            # 모델에 없는 그룹 (스테일 키)
-            if _gk not in start_vars:
-                _warm_start_skipped += 1
-                continue
-            if not isinstance(_snap, dict):
-                _warm_start_skipped += 1
-                continue
-            _hint_applied_one = False
-            # 시작 시각 힌트 — horizon 범위 체크 후 주입
-            _start_wmin = _snap.get("start_wmin")
-            if isinstance(_start_wmin, int):
-                _dur = group_meta[_gk]["cpsat_dur"]
-                if 0 <= _start_wmin <= _MAX_HORIZON_MIN - _dur:
-                    try:
-                        model.add_hint(start_vars[_gk], _start_wmin)
-                        _hint_applied_one = True
-                    except Exception:
-                        # add_hint 가 어떤 이유로든 실패해도 전체 optimize 를
-                        # 깨뜨리면 안 됨 — silent degrade.
-                        pass
-            # 설비 힌트 — eligible 에 있을 때만
-            _eq_code = _snap.get("equipment_code")
-            if _eq_code and _eq_code in equip_vars.get(_gk, {}):
-                try:
-                    for _ec, _bv in equip_vars[_gk].items():
-                        model.add_hint(_bv, 1 if _ec == _eq_code else 0)
-                    _hint_applied_one = True
-                except Exception:
-                    pass
-            if _hint_applied_one:
-                _warm_start_applied += 1
-            else:
-                _warm_start_skipped += 1
+    # 6-b2. 웜스타트 힌트 주입 (자유 변수 대상).
+    # Phase 1 추출: solver/constraints/global_/warm_start.py
+    _warm_start_applied, _warm_start_skipped = apply_warm_start_hints(
+        model=model,
+        group_meta=group_meta,
+        start_vars=start_vars,
+        equip_vars=equip_vars,
+        warm_start_hints=warm_start_hints,
+        frozen_group_keys=frozen_group_keys,
+        max_horizon_min=_MAX_HORIZON_MIN,
+    )
 
     # 6-c. 설비 충돌 방지 (no_overlap)
     # Round 2 HIGH #5: per_eq_dur_enabled 이면 interval size 는 설비별 상수 dur_i.
