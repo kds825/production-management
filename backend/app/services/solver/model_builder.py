@@ -59,11 +59,14 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.schedule_optimizer import (
-    PREDECESSOR_PROCESS,
-)
 from app.services.sheath_cluster import build_sheath_clusters
-from app.services.solver.constraints.global_.predecessor import (
+from app.services.solver.constraints.global_.idle_terms import (  # noqa: F401  # used at §6-f
+    collect_idle_terms,
+)
+from app.services.solver.constraints.global_.no_overlap import (  # noqa: F401  # used at §6-c
+    add_equipment_no_overlap,
+)
+from app.services.solver.constraints.global_.predecessor import (  # noqa: F401  # used at §6-d/§6-e
     add_core_st_precedence,
     add_predecessor_precedence,
     compute_proc_groups_by_sq,
@@ -402,53 +405,17 @@ def build_model(
 
     # 6-c. 설비 충돌 방지 (no_overlap)
     # Round 2 HIGH #5: per_eq_dur_enabled 이면 interval size 는 설비별 상수 dur_i.
-    # 해당 설비 bool=1 일 때만 interval active 이므로 (optional_interval + bv), 각
-    # 설비 interval 이 자신의 고유 dur 를 사용 → solver 가 "빠른 설비에 가면
-    # overlap 덜 발생" 을 정확히 인식. end_vars[gk] 는 여전히 sum 기반 dur_var 와
-    # 연동되므로 선택된 설비의 interval 만 e 와 일치 (나머지는 비활성).
-    itv_vars: dict[tuple[str, str], Any] = {}
-    for gk in groups:
-        meta = group_meta[gk]
-        dur_scalar = meta["cpsat_dur"]
-        per_eq_enabled = meta.get("per_eq_dur_enabled", False)
-        dur_by_eq = meta.get("cpsat_dur_by_eq") or {}
-        for eq_code, bv in equip_vars[gk].items():
-            # Per-equipment interval size: 활성 설비의 고유 dur.
-            _itv_size = (
-                int(dur_by_eq.get(eq_code, dur_scalar))
-                if per_eq_enabled
-                else dur_scalar
-            )
-            # end_vars[gk] 와 선택된 설비의 interval 만 정합 — 비활성 interval 은
-            # start/size/end 값 검증 안됨 (CP-SAT optional 의미). 단 안전을 위해
-            # 고정 size interval 을 위한 별도 end helper 사용:
-            if per_eq_enabled:
-                # optional interval 은 size=상수 일 때 자체 end IntVar 를 요구.
-                # start 는 공통 start_vars[gk] 사용, end 는 helper 생성.
-                _e_eq = model.new_int_var(
-                    _itv_size, _MAX_HORIZON_MIN, f"e_{gk}_{eq_code}"
-                )
-                # bv=1 일 때만 (s + size == _e_eq AND _e_eq == end_vars[gk]) 강제.
-                # bv=0 이면 interval 비활성이므로 _e_eq 값 임의 — 제약 없음.
-                model.add(_e_eq == start_vars[gk] + _itv_size).only_enforce_if(bv)
-                model.add(_e_eq == end_vars[gk]).only_enforce_if(bv)
-                itv = model.new_optional_interval_var(
-                    start_vars[gk], _itv_size, _e_eq, bv, f"itv_{gk}_{eq_code}"
-                )
-            else:
-                itv = model.new_optional_interval_var(
-                    start_vars[gk], dur_scalar, end_vars[gk], bv, f"itv_{gk}_{eq_code}"
-                )
-            itv_vars[(gk, eq_code)] = itv
-
-    for eq_code in all_eq_codes:
-        itvs = [
-            itv_vars[(gk, eq_code)]
-            for gk in groups
-            if eq_code in equip_vars.get(gk, {})
-        ]
-        if len(itvs) >= 2:
-            model.add_no_overlap(itvs)
+    # 6-c. 설비 충돌 방지 (no_overlap).
+    # Phase 1 추출: solver/constraints/global_/no_overlap.py 모듈로 이동.
+    itv_vars = add_equipment_no_overlap(
+        model=model,
+        group_meta=group_meta,
+        all_eq_codes=all_eq_codes,
+        start_vars=start_vars,
+        end_vars=end_vars,
+        equip_vars=equip_vars,
+        max_horizon_min=_MAX_HORIZON_MIN,
+    )
 
     # 6-d / 6-e. 공정 선후관계 + CORE→ST 선행.
     # Phase 1 추출: solver/constraints/global_/predecessor.py 모듈로 이동.
@@ -467,19 +434,15 @@ def build_model(
         start_vars=start_vars,
     )
 
-    # 6-f. 목적함수: 파이프라인 유휴 최소화 + 색상 체인 최소화 (+ soft 모드에선 tardiness)
-    # 유휴 = succ_end - pred_end (≥ 0, 6-d 하드 제약으로 보장). 납기 가중치(수십~수백)
-    # 대비 훨씬 낮은 _IDLE_WEIGHT 로 soft 최적화 — 파이프라인이 빠른 공정일수록
-    # 솔버가 start_vars 를 늦춰서 pred_end 와 succ_end 를 정렬시킨다.
-    idle_terms: list = []
-    for _gk in groups:
-        _pred_proc = PREDECESSOR_PROCESS.get(group_meta[_gk]["rep"].process_name)
-        if not _pred_proc:
-            continue
-        for _pred_gk in proc_groups_by_sq.get((_pred_proc, group_meta[_gk]["sq"]), []):
-            _idle = model.new_int_var(0, _MAX_HORIZON_MIN, f"idle_{_pred_gk}_{_gk}")
-            model.add(_idle == end_vars[_gk] - end_vars[_pred_gk])
-            idle_terms.append(_idle)
+    # 6-f. 파이프라인 유휴 시간 soft penalty.
+    # Phase 1 추출: solver/constraints/global_/idle_terms.py 모듈로 이동.
+    idle_terms = collect_idle_terms(
+        model=model,
+        group_meta=group_meta,
+        end_vars=end_vars,
+        proc_groups_by_sq=proc_groups_by_sq,
+        max_horizon_min=_MAX_HORIZON_MIN,
+    )
 
     # 6-f-hard. 시스 색상 체인 Hard Constraint (sheath_color_hard=True 일 때만)
     #
