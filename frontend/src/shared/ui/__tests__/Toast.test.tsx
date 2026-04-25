@@ -75,4 +75,44 @@ describe("toastStore action slot", () => {
     useToastStore.getState().dismissAll();
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
+
+  /**
+   * Week 4 Task 4B.4 — meta.runId 저장 + 표시 prefix 계약.
+   *
+   * Toast.tsx 의 footer 렌더링은 store 의 `t.meta?.runId` 만 의존하므로,
+   * (a) store 가 meta 를 그대로 보존하고 (b) prefix slice(0, 8) 가 안정적으로
+   * 8자 ID 를 산출함을 확인하면 UI 레이어 회귀를 방지할 수 있다 (DOM 환경 부재 우회).
+   * 실제 DOM 렌더 + 클립보드 복사 회귀는 Playwright e2e 로 커버.
+   */
+  it("show() with meta.runId stores the runId on the toast item", () => {
+    const runId = "11111111-2222-3333-4444-555555555555";
+    useToastStore
+      .getState()
+      .show("API 실패", "error", 4000, undefined, { runId });
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].meta).toBeDefined();
+    expect(toasts[0].meta!.runId).toBe(runId);
+    // Toast.tsx 가 노출하는 짧은 prefix — 운영자 가독성 + full UUID 는 클립보드로 복사.
+    expect(runId.slice(0, 8)).toBe("11111111");
+  });
+
+  it("show() without meta yields undefined meta (backward compatible)", () => {
+    useToastStore.getState().show("plain", "info");
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].meta).toBeUndefined();
+  });
+
+  it("show() with meta.runId=null persists null (apiFetch 가 헤더 부재 시 null 부여)", () => {
+    useToastStore
+      .getState()
+      .show("API 실패", "error", 4000, undefined, { runId: null });
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts[0].meta).toBeDefined();
+    expect(toasts[0].meta!.runId).toBeNull();
+    // Toast.tsx: runId=null/undefined → footer 미렌더. UI 회귀 방지를 위해 nullish 보존.
+  });
 });

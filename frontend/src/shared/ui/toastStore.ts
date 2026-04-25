@@ -14,6 +14,19 @@ export interface ToastAction {
   onClick: () => void;
 }
 
+/**
+ * Week 4 Task 4B.4 — 토스트 부가 메타데이터.
+ *
+ * 현재는 `runId` 만 사용 — 백엔드 X-Run-Id 헤더 (Week 2 Task 2A.4) 를 운영자가
+ * 토스트에서 복사하기 위함. 향후 traceId / debugUrl 등 추가 시 동일 인터페이스 확장.
+ *
+ * 기존 호출처(action 만 사용) 와 호환되도록 toastStore 의 `show` 시그니처는
+ * 4번째 인자(action) 위치를 보존하고, meta 는 5번째 옵셔널 인자로 추가한다.
+ */
+export interface ToastMeta {
+  runId?: string | null;
+}
+
 export interface ToastItem {
   id: string;
   message: string;
@@ -21,6 +34,8 @@ export interface ToastItem {
   durationMs: number;
   // optional — 기존 호출처는 영향 없음.
   action?: ToastAction;
+  // Week 4 Task 4B.4 — 에러 토스트 코릴레이션 ID 등 부가 정보. 기존 호출처는 영향 없음.
+  meta?: ToastMeta;
 }
 
 interface ToastState {
@@ -30,6 +45,7 @@ interface ToastState {
     variant?: ToastVariant,
     durationMs?: number,
     action?: ToastAction,
+    meta?: ToastMeta,
   ) => void;
   dismiss: (id: string) => void;
   // 테스트/전역 cleanup 용 헬퍼. 기존 호출처는 사용하지 않아도 무방.
@@ -38,10 +54,10 @@ interface ToastState {
 
 export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
-  show: (message, variant = "info", durationMs = 4000, action) => {
+  show: (message, variant = "info", durationMs = 4000, action, meta) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     set((s) => ({
-      toasts: [...s.toasts, { id, message, variant, durationMs, action }],
+      toasts: [...s.toasts, { id, message, variant, durationMs, action, meta }],
     }));
     // duration 이 0 이하면 auto-dismiss 비활성 — 호출처에서 수동 dismiss 요구하는 패턴.
     if (durationMs > 0) {

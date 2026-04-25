@@ -24,6 +24,17 @@ import {
 } from "../api/cascade.types";
 import { FEATURE_FLAG_CASCADE_V2 } from "@/shared/config/featureFlags";
 import { useToastStore } from "@/shared/ui/toastStore";
+import { ApiError } from "@/shared/api/client";
+
+/**
+ * Week 4 Task 4B.4 — 에러로부터 X-Run-Id (apiFetch 가 ApiError 에 부여한 값) 추출.
+ *
+ * cascadePreview / bulkUpdate 는 fetch 직접 사용하는 별도 경로(BulkUpdateError 등) 도
+ * 있어 ApiError 가 아닐 수 있다 — 그 경우 runId 는 null. 토스트 측에서 falsy 면 footer 미렌더.
+ */
+function extractRunId(e: unknown): string | null {
+  return e instanceof ApiError ? e.runId : null;
+}
 
 /**
  * 훅의 `commit` / legacy 경로가 공유하는 최소 입력 계약.
@@ -107,6 +118,9 @@ export function useScheduleChangeWithCascade(
             showToast(
               `되돌리기 실패: ${e instanceof Error ? e.message : String(e)}`,
               "error",
+              undefined,
+              undefined,
+              { runId: extractRunId(e) },
             );
           }
         },
@@ -146,7 +160,10 @@ export function useScheduleChangeWithCascade(
         setModalState({ open: true, preview, input });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        showToast(`재배치 계산 실패: ${msg}`, "error");
+        // Week 4 Task 4B.4 — runId 가 있으면 toast 가 footer 에 코릴레이션 ID 노출.
+        showToast(`재배치 계산 실패: ${msg}`, "error", undefined, undefined, {
+          runId: extractRunId(e),
+        });
       } finally {
         setIsPreviewLoading(false);
       }
@@ -209,6 +226,9 @@ export function useScheduleChangeWithCascade(
       showToast(
         `적용 실패: ${e instanceof Error ? e.message : String(e)}`,
         "error",
+        undefined,
+        undefined,
+        { runId: extractRunId(e) },
       );
     }
   }, [
