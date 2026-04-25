@@ -354,15 +354,14 @@ def run_diff(refac_base: str, main_base: str) -> Report:
             result.error = f"refac:{re_} main:{me}"
         elif rs != ms:
             result.diff = [f"status_code: refac={rs} main={ms}"]
-        elif tmpl in STATEFUL_OR_BINARY:
-            # DB drift / 바이너리 metadata — list 길이/숫자 무시한 shape.
+        elif tmpl in STATEFUL_OR_BINARY or tmpl in LLM_NONDETERMINISTIC:
+            # LLM / DB drift / 바이너리 metadata — list 길이/숫자 무시한 shape.
+            # LLM 은 highlights 같은 list 항목 개수도 매 호출마다 다를 수 있어
+            # length 비교도 회피.
             result.diff = deep_diff(
                 shape_only(rb, hide_list_len=True),
                 shape_only(mb, hide_list_len=True),
             )
-        elif tmpl in LLM_NONDETERMINISTIC:
-            # LLM 비결정론 — shape (top-level keys + 배열 길이) 만 비교.
-            result.diff = deep_diff(shape_only(rb), shape_only(mb))
         else:
             result.diff = deep_diff(normalize(rb), normalize(mb))
 
