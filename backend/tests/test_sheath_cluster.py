@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from app.services.sheath_cluster import (
+from app.domain.sheath_cluster import (
     SheathCluster,
     build_sheath_clusters,
     cluster_sort_key,

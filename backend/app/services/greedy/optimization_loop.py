@@ -282,7 +282,7 @@ def _run_optimization_once(
     # 그리디 경로의 batch_groups 는 {gk: [batches...]} 형식이라 묶음 빌더가 기대하는
     # {gk: {"batches": [...], "earliest_due": ..., "cpsat_dur": ..., "pred_ready": ...}}
     # 형식으로 wrapping 한 뒤 전달한다.
-    from app.services.sheath_cluster import (
+    from app.domain.sheath_cluster import (
         build_sheath_clusters,
         cluster_sort_key,
     )

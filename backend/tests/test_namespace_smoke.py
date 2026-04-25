@@ -30,8 +30,24 @@ from typing import List, Tuple
 # 매 phase step 후 추가. 빈 list 일 때는 trivially pass.
 PAIRS: List[Tuple[str, str, str]] = [
     # Phase 1 step 1 (domain/ leaf) 후 추가:
-    # ("app.services.sheath_cluster", "build_sheath_clusters", "app.domain.sheath_cluster"),
-    # ("app.services.tardiness_metrics", "count_tardiness", "app.domain.tardiness"),
+    # batch_grouping/__init__ 가 도메인 키들을 재export 하는지 (호환 표면)
+    (
+        "app.services.batch_grouping",
+        "_SHEATH_COLOR_RANK",
+        "app.domain.batch_sheath_keys",
+    ),
+    (
+        "app.services.batch_grouping",
+        "_WIP_COVERED_PROCESSES",
+        "app.domain.batch_sheath_keys",
+    ),
+    ("app.services.batch_grouping", "_A120_COLORS", "app.domain.batch_sheath_keys"),
+    ("app.services.batch_grouping", "_TFR8_PATTERN", "app.domain.batch_sheath_keys"),
+    (
+        "app.services.batch_grouping",
+        "_compose_sheath_group_key",
+        "app.domain.batch_sheath_keys",
+    ),
     # Phase 1 step 2 (infrastructure/ leaf) 후 추가:
     # ("app.services.calendar_engine", "calculate_end_datetime", "app.infrastructure.calendar_engine"),
     # Phase 1 step 3 후 추가:

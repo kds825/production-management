@@ -22,7 +22,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.sheath_cluster import build_sheath_clusters
+from app.domain.sheath_cluster import build_sheath_clusters
 
 
 def add_sheath_color_hard_chain(

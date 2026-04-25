@@ -1,7 +1,7 @@
 """통합 테스트: 같은 묶음 그룹이 solved_order 에서 연속으로 나오는지."""
 
 from datetime import date, datetime
-from app.services.sheath_cluster import build_sheath_clusters, cluster_sort_key
+from app.domain.sheath_cluster import build_sheath_clusters, cluster_sort_key
 
 
 class _FakeBatch:

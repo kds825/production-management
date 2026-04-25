@@ -978,7 +978,7 @@ def cp_sat_schedule(
     #        "설비가 빨리 사용 가능한 묶음" 부터 처리 → 설비 idle 최소화.
     # 2차 키: latest_due (같은 pred_ready 이면 납기 순)
     # 3차 키: color_rank (같은 납기면 색상 체인 유도)
-    from app.services.sheath_cluster import (
+    from app.domain.sheath_cluster import (
         build_sheath_clusters,
         cluster_sort_key,
     )

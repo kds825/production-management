@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.sheath_cluster import count_color_transitions
+from app.domain.sheath_cluster import count_color_transitions
 
 
 # ---------------------------------------------------------------------------

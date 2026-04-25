@@ -30,10 +30,11 @@ from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.speed_master import SpeedMaster
 from app.infrastructure.models.wip_inventory import WipInventory
-from app.services.batch_grouping.constants import (
+from app.domain.batch_sheath_keys import (
     _SHEATH_COLOR_RANK,
     _TFR8_PATTERN,
     _WIP_COVERED_PROCESSES,
+    _compose_sheath_group_key,
 )
 from app.services.batch_grouping.helpers import (
     _find_item,
@@ -44,7 +45,6 @@ from app.services.batch_grouping.helpers import (
     _process_order,
     extract_sq,
 )
-from app.services.batch_grouping.sheath import _compose_sheath_group_key
 from app.services.constraint_params import ConstraintParams, resolve_spec_setup_min
 
 

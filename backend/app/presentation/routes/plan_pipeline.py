@@ -1171,7 +1171,7 @@ def list_batch_group_orders(batch_group: str, db: Session = Depends(get_db)):
         wip_qty_map = {wid: float(tl or 0) for wid, tl, _ in wip_rows}
         wip_stage_map2 = {wid: (ps or "") for wid, _, ps in wip_rows}
 
-    from app.services.batch_grouping import _WIP_COVERED_PROCESSES
+    from app.domain.batch_sheath_keys import _WIP_COVERED_PROCESSES
 
     def _to_dict(b: ProductionBatch) -> dict:
         raw_len = float(b.total_length_m or 0)

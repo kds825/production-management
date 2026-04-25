@@ -186,7 +186,7 @@ def cluster_sort_key(cluster: SheathCluster, groups_meta: dict) -> tuple:
     → latest_due 를 다시 primary 로 두어 납기 순서 보장. pred_ready_wmin
        은 같은 납기 내 tiebreak 로만 사용 (idle 최소화 효과).
     """
-    from app.services.batch_grouping import _SHEATH_COLOR_RANK
+    from app.domain.batch_sheath_keys import _SHEATH_COLOR_RANK
 
     meta = compute_cluster_meta(cluster, groups_meta)
     latest_due = meta["latest_due"] or date.max

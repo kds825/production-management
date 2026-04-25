@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.tardiness_metrics import count_tardiness
+from app.domain.tardiness import count_tardiness
 
 
 def _seed_batch_and_task(

@@ -28,42 +28,16 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.domain.constants import (
-    PROCESS_ORDER,
-    PREDECESSOR_PROCESS,
-    _DEFAULT_WELDING_MIN,
-    _WIP_SKIP_PROCESSES,
-)
 from app.exceptions import SchedulerOverlapError
-from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.equipment_master import EquipmentMaster  # noqa: F401
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.infrastructure.models.speed_master import SpeedMaster
 from app.services.audit_logger import log_decision
-from app.services.calendar_engine import calculate_end_datetime
-from app.services.constraint_params import ConstraintParams, resolve_color_change_min
-from app.services.greedy.slot_finder import _find_available_slot
 from app.services.jit_scheduling import apply_jit_delay
-from app.services.scheduling_shared.group_ops import (
-    _extract_core_main_sq,
-    _get_drum_winding_min,
-    _get_stranding_setup_min,
-    _is_core_group,
-    _is_sheath_group,
-    _schedule_multi_equipment,
-    _st_sq,
-)
-from app.services.scheduling_shared.slot_filters import (
-    _filter_by_sheath_routing,
-    _find_eligible_equipment,
-    _narrow_by_stranding,
-    align_start_to_predecessor_end,
-)
 
 
 # ── 환경 분기 / 라우팅 상수 ─────────────────────────────────────────────────
@@ -100,12 +74,9 @@ def _group_earliest_due(batches: list) -> date:
 def _sheath_group_color_rank(batches: list) -> int:
     """대표 배치의 sheath_color 로부터 색상 순위를 반환 (A'' 접근안).
 
-    순위는 batch_grouping._SHEATH_COLOR_RANK 를 참조 (단일 소스 유지).
-    순환 import 회피를 위해 함수 내부에서 지연 로드한다.
+    순위는 domain.batch_sheath_keys._SHEATH_COLOR_RANK 를 참조 (단일 소스 유지).
     """
-    # 지연 import: batch_grouping 모듈의 비공개 상수를 참조하되 top-level
-    # 순환 의존성과 린터의 "unused import 제거" 부작용을 동시에 방지한다.
-    from app.services.batch_grouping import _SHEATH_COLOR_RANK
+    from app.domain.batch_sheath_keys import _SHEATH_COLOR_RANK
 
     if not batches:
         return 99
@@ -356,7 +327,7 @@ def auto_schedule(
             # 납기 초과 리포트 — solver 결과와 무관하게 DB 기준으로 집계.
             # 운영자/UI 가 "납기 초과 N" 배지/리스트로 활용. past-due 포함.
             try:
-                from app.services.tardiness_metrics import count_tardiness
+                from app.domain.tardiness import count_tardiness
 
                 result["tardiness_report"] = count_tardiness(run_label, db)
             except Exception as _e:  # noqa: BLE001
@@ -605,7 +576,6 @@ def _purge_run_tasks(db: Session, run_label: str) -> None:
         synchronize_session=False,
     )
     db.flush()
-
 
 
 # ── Greedy core (Week 9 SRP cleanup) ────────────────────────────────────────

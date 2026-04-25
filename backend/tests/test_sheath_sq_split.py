@@ -14,7 +14,7 @@ from datetime import date
 
 def test_sheath_group_key_splits_same_color_week_by_sq():
     """같은 색상·같은 납기 주차라도 SQ 가 다르면 batch_group 이 달라야 한다."""
-    from app.services.batch_grouping import _compose_sheath_group_key
+    from app.domain.batch_sheath_keys import _compose_sheath_group_key
 
     k1 = _compose_sheath_group_key(
         proc="저압시스", color="흑", due_date=date(2026, 4, 13), sq=120
@@ -32,7 +32,7 @@ def test_sheath_group_key_splits_same_color_week_by_sq():
 
 def test_sheath_group_key_routes_a100_for_other_colors():
     """A100 라우팅 색상(갈/회/녹/황 …)은 A100 prefix + SQ 접미."""
-    from app.services.batch_grouping import _compose_sheath_group_key
+    from app.domain.batch_sheath_keys import _compose_sheath_group_key
 
     k = _compose_sheath_group_key(
         proc="저압시스", color="갈", due_date=date(2026, 4, 13), sq=95
@@ -43,7 +43,7 @@ def test_sheath_group_key_routes_a100_for_other_colors():
 
 def test_sheath_group_key_half_week_bucket_preserved():
     """반주차 H1/H2 분리가 SQ 분할과 동시에 작동해야 한다 (납기 우선 보존)."""
-    from app.services.batch_grouping import _compose_sheath_group_key
+    from app.domain.batch_sheath_keys import _compose_sheath_group_key
 
     # 월요일(W15H1) vs 목요일(W15H2) — 같은 주차 내 H1/H2 분리
     k_mon = _compose_sheath_group_key(
@@ -60,7 +60,7 @@ def test_sheath_group_key_half_week_bucket_preserved():
 
 def test_sheath_group_key_high_voltage_includes_sq():
     """고압시스도 SQ 접미가 포함돼 일관성 유지 (실질은 633SQ 단일이라 변화 적음)."""
-    from app.services.batch_grouping import _compose_sheath_group_key
+    from app.domain.batch_sheath_keys import _compose_sheath_group_key
 
     k = _compose_sheath_group_key(proc="고압시스", color="흑/적", due_date=None, sq=633)
     assert "_633SQ" in k, f"고압시스 SQ 접미 누락: {k}"
@@ -70,7 +70,7 @@ def test_sheath_group_key_high_voltage_includes_sq():
 
 def test_sheath_group_key_fallback_for_missing_due_and_color():
     """납기/색상 누락 → '기타' + '9999W99X' 폴백 + SQ 접미."""
-    from app.services.batch_grouping import _compose_sheath_group_key
+    from app.domain.batch_sheath_keys import _compose_sheath_group_key
 
     k = _compose_sheath_group_key(proc="저압시스", color="", due_date=None, sq=50)
     assert "기타" in k, f"색상 폴백 누락: {k}"
