@@ -63,6 +63,7 @@ app.include_router(audit.router, prefix="/api")
 app.include_router(decisions.router, prefix="/api")
 app.include_router(decision_card.router, prefix="/api")
 app.include_router(decision_feedback.router, prefix="/api")
+app.include_router(decision_feedback.admin_router, prefix="/api")
 app.include_router(change_sets.router, prefix="/api")
 
 

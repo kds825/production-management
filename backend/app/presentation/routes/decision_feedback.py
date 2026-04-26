@@ -20,10 +20,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.application.decisions.feedback_clustering import list_clusters
 from app.infrastructure.database import get_db
 from app.infrastructure.models.decision_feedback import DecisionFeedback
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.presentation.schemas.decision_feedback import (
+    DecisionFeedbackAdminPatch,
+    DecisionFeedbackBulkPatch,
     DecisionFeedbackCreate,
     DecisionFeedbackResponse,
 )
@@ -145,3 +148,101 @@ def create_decision_feedback(
         operator_id=fb.operator_id,
         status=fb.status,
     )
+
+
+# ── admin 큐 (Step 6-admin) ────────────────────────────────────────────
+
+
+admin_router = APIRouter(prefix="/admin/decision-feedback", tags=["decision_feedback"])
+
+
+def _to_response(fb: DecisionFeedback) -> DecisionFeedbackResponse:
+    return DecisionFeedbackResponse(
+        id=fb.id,
+        created_at=fb.created_at,
+        run_label=fb.run_label,
+        batch_id=fb.batch_id,
+        task_id=fb.task_id,
+        section=fb.section,
+        line_anchor=fb.line_anchor,
+        constraint_id_hint=fb.constraint_id_hint,
+        free_text=fb.free_text,
+        operator_id=fb.operator_id,
+        status=fb.status,
+    )
+
+
+@admin_router.get("", response_model=list[DecisionFeedbackResponse])
+def list_feedback(
+    status: str | None = "open",
+    db: Session = Depends(get_db),
+) -> list[DecisionFeedbackResponse]:
+    """admin 큐 — status 필터 + created_at DESC."""
+    q = db.query(DecisionFeedback)
+    if status:
+        q = q.filter(DecisionFeedback.status == status)
+    rows = q.order_by(DecisionFeedback.created_at.desc()).limit(200).all()
+    return [_to_response(r) for r in rows]
+
+
+@admin_router.get("/clusters")
+def list_feedback_clusters(
+    status: str | None = "open",
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """(process_name, line_anchor) cluster + impact_score 정렬 (CEO §8)."""
+    return list_clusters(db, status_filter=status, limit=50)
+
+
+@admin_router.patch("/bulk")
+def bulk_update_feedback(
+    payload: DecisionFeedbackBulkPatch,
+    db: Session = Depends(get_db),
+) -> dict:
+    """bulk action — IDs 일괄 status 변경. wontfix 시 dev_notes 필수."""
+    if payload.status == "wontfix" and not (
+        payload.dev_notes and payload.dev_notes.strip()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="wontfix 처리는 운영자에게 전달할 사유 (dev_notes) 가 필요합니다",
+        )
+    rows = db.query(DecisionFeedback).filter(DecisionFeedback.id.in_(payload.ids)).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="해당 의견을 찾을 수 없습니다")
+    updated = 0
+    for r in rows:
+        r.status = payload.status
+        if payload.dev_notes is not None:
+            r.dev_notes = payload.dev_notes
+        updated += 1
+    db.commit()
+    return {"updated": updated, "status": payload.status}
+
+
+@admin_router.patch("/{fb_id}", response_model=DecisionFeedbackResponse)
+def update_feedback(
+    fb_id: int,
+    payload: DecisionFeedbackAdminPatch,
+    db: Session = Depends(get_db),
+) -> DecisionFeedbackResponse:
+    """단건 status / dev_notes / linked_pr_url 변경."""
+    fb = db.query(DecisionFeedback).filter(DecisionFeedback.id == fb_id).one_or_none()
+    if fb is None:
+        raise HTTPException(status_code=404, detail=f"feedback {fb_id} 미존재")
+    if payload.status == "wontfix" and not (
+        (payload.dev_notes or fb.dev_notes or "").strip()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="wontfix 처리는 운영자에게 전달할 사유 (dev_notes) 가 필요합니다",
+        )
+    if payload.status is not None:
+        fb.status = payload.status
+    if payload.dev_notes is not None:
+        fb.dev_notes = payload.dev_notes
+    if payload.linked_pr_url is not None:
+        fb.linked_pr_url = payload.linked_pr_url
+    db.commit()
+    db.refresh(fb)
+    return _to_response(fb)

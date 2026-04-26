@@ -58,3 +58,23 @@ class DecisionFeedbackResponse(BaseModel):
     free_text: str
     operator_id: str
     status: str
+
+
+# ── admin 큐 GET / PATCH (Step 6-admin) ────────────────────────────────
+
+
+class DecisionFeedbackAdminPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Optional[Literal["open", "investigating", "fixed", "wontfix"]] = None
+    dev_notes: Optional[str] = Field(default=None, max_length=2000)
+    linked_pr_url: Optional[str] = Field(default=None, max_length=255)
+
+
+class DecisionFeedbackBulkPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[int] = Field(..., min_length=1)
+    status: Literal["investigating", "fixed", "wontfix"]
+    dev_notes: Optional[str] = Field(default=None, max_length=2000)
+    """wontfix 시 reason 필수 — route 에서 검증."""
