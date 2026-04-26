@@ -30,6 +30,7 @@ location transparently.
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -163,6 +164,150 @@ def _seed_state_from_existing(
     return process_end, first_output, insul_first, core_first
 
 
+@dataclass
+class GroupingContext:
+    """`_group_and_sort` 의 lookup + per-equipment mutable state.
+
+    추출 의도 (Phase 4 step 2c): per-call mutable + read-only lookup 을 한
+    객체로 묶어 _assign_group 에 단일 인자로 전달. SchedulerState 와 의미
+    분리:
+      - SchedulerState: 파이프라인 진행 상태 (timeline / predecessor / 첫
+        드럼 출력 등 — retry 사이 cross-contamination 회피 대상)
+      - GroupingContext: 그룹핑/정렬용 lookup + 시스 묶음 boundary 추적
+        (per-equipment last cluster_id 만 mutable, 나머지는 build 후 read-only)
+
+    `prev_cluster_on_eq` 는 inner loop 에서 best_eq 갱신 시 mutate 되는
+    유일한 mutable field — 시스 묶음 append 정책 (CP-SAT 와 동일 규칙) 의
+    boundary 판단에 사용.
+    """
+
+    sq_to_wire_d: dict[int, float] = field(default_factory=dict)
+    wire_d_earliest: dict[float, date] = field(default_factory=dict)
+    cluster_rank: dict[str, tuple[int, int]] = field(default_factory=dict)
+    gk_to_cluster_id: dict[str, str] = field(default_factory=dict)
+    prev_cluster_on_eq: dict[str, str] = field(default_factory=dict)
+
+
+def _group_and_sort(
+    batches: list[ProductionBatch], db: Session
+) -> tuple[list[tuple[str, list[ProductionBatch]]], GroupingContext]:
+    """batch_groups 빌드 + ST 소선경 grouping + 시스 색상 묶음 lookup + 정렬.
+
+    출력:
+      - ordered_group_items: 정렬된 (group_key, [batches]) 리스트
+        정렬 우선순위:
+          tier 0 = CORE/AL-CORE (선행 공정)
+          tier 1 = ST- 연선 (소선경 클러스터 단위 연속 배치)
+          tier 2 = 절연/시스 등 (PROCESS_ORDER → EDD)
+        시스 그룹: 묶음 단위(date 주차 / 색상 / EDD) — CP-SAT 와 동일
+        규칙. 색상은 같은 주차 내에서만 묶어 납기 우선 정책 위반 회피.
+
+      - ctx: GroupingContext (sq_to_wire_d, wire_d_earliest, cluster_rank,
+        gk_to_cluster_id, prev_cluster_on_eq=빈 dict)
+    """
+    from app.domain.sheath_cluster import (
+        build_sheath_clusters,
+        cluster_sort_key,
+    )
+
+    batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
+    for batch in batches:
+        key = batch.batch_group or f"_single_{batch.batch_id}"
+        batch_groups.setdefault(key, []).append(batch)
+
+    # ── drum_lot_master에서 SQ별 소선경(wire_diameter) 로드 ──────────────
+    sq_to_wire_d: dict[int, float] = {
+        int(d.cross_section): float(d.wire_diameter)
+        for d in db.query(DrumLotMaster).all()
+        if d.wire_diameter is not None
+    }
+
+    # 소선경 클러스터별 최초 납기: 가장 급한 소선경 클러스터를 먼저 처리.
+    wire_d_earliest: dict[float, date] = {}
+    for gk, gb in batch_groups.items():
+        if gk.startswith("ST-"):
+            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
+            if wd > 0:
+                ed = _group_earliest_due(gb)
+                if wd not in wire_d_earliest or ed < wire_d_earliest[wd]:
+                    wire_d_earliest[wd] = ed
+
+    # ── 시스 색상 묶음 lookup — CP-SAT 와 동일 규칙 ─────────────────────
+    # 그리디 경로의 batch_groups 는 {gk: [batches...]} 형식이라 묶음 빌더가
+    # 기대하는 {gk: {"batches": ..., "earliest_due": ..., ...}} 형식으로
+    # wrapping 한 뒤 전달.
+    gm_for_cluster = {
+        gk: {
+            "batches": gb,
+            "earliest_due": _group_earliest_due(gb),
+            "cpsat_dur": int(sum(float(b.estimated_duration_min or 0) for b in gb)),
+            "pred_ready": None,
+        }
+        for gk, gb in batch_groups.items()
+    }
+    sheath_clusters = build_sheath_clusters(gm_for_cluster)
+    sorted_clusters = sorted(
+        sheath_clusters, key=lambda c: cluster_sort_key(c, gm_for_cluster)
+    )
+    cluster_rank: dict[str, tuple[int, int]] = {}
+    for ci, cluster in enumerate(sorted_clusters):
+        for gi, gk_c in enumerate(cluster.group_keys):
+            cluster_rank[gk_c] = (ci, gi)
+
+    gk_to_cluster_id: dict[str, str] = {}
+    for c in sorted_clusters:
+        for gk_c in c.group_keys:
+            gk_to_cluster_id[gk_c] = c.cluster_id
+
+    def _group_sort_key(kv):
+        gk, gb = kv
+        tier = 0 if _is_core_group(gk) else (1 if gk.startswith("ST-") else 2)
+        proc_order = PROCESS_ORDER.get(gb[0].process_name, 50) if gb else 50
+        earliest_due = _group_earliest_due(gb)
+        cust_prio = gb[0].customer_priority or 99 if gb else 99
+
+        # 시스 체인: 묶음 단위 정렬 — CP-SAT _solved_order_key 와 동일 규칙.
+        # cluster_rank 는 build_sheath_clusters 로 구성된 lookup 으로,
+        # (cluster_idx, position_in_cluster) 를 제공한다.
+        if _is_sheath_group(gk, gb):
+            rank = cluster_rank.get(gk, (10**9, 10**9))
+            return (
+                tier,
+                date.max,  # ST- 클러스터 납기 (비해당)
+                0.0,  # ST- 소선경 (비해당)
+                proc_order,
+                rank[0],  # 1차: 묶음 순위 (납기 임박 묶음 먼저)
+                rank[1],  # 2차: 묶음 내 순서
+                earliest_due,  # 3차: 실제 EDD (tiebreak)
+                cust_prio,
+            )
+
+        # 비시스 기존 정렬 (호환성 유지)
+        return (
+            tier,
+            wire_d_earliest.get(sq_to_wire_d.get(_st_sq(gk), 0.0), date.max)
+            if gk.startswith("ST-")
+            else date.max,
+            sq_to_wire_d.get(_st_sq(gk), 0.0) if gk.startswith("ST-") else 0.0,
+            proc_order,
+            earliest_due,
+            # 시스 정렬키와 길이를 맞추기 위한 padding
+            0,
+            date.max,
+            cust_prio,
+        )
+
+    ordered = sorted(batch_groups.items(), key=_group_sort_key)
+
+    ctx = GroupingContext(
+        sq_to_wire_d=sq_to_wire_d,
+        wire_d_earliest=wire_d_earliest,
+        cluster_rank=cluster_rank,
+        gk_to_cluster_id=gk_to_cluster_id,
+    )
+    return ordered, ctx
+
+
 def _run_optimization_once(
     run_label: str, db: Session, *, base_date: datetime | None = None
 ) -> dict:
@@ -235,126 +380,17 @@ def _run_optimization_once(
     state.first_insul_output = _seed_fi
     state.core_first_drum_by_main_sq.update(_seed_cf)
 
-    # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
-    from collections import OrderedDict
+    # ── 그룹핑 + 정렬 (Phase 4 step 2c 추출) ───────────────────────────────
+    # batch_group 단위 그루핑 + ST 소선경 cluster + 시스 색상 묶음 lookup +
+    # 정렬 우선순위 (CORE → ST 소선경 클러스터 → 절연/시스 EDD) 계산.
+    # ctx.prev_cluster_on_eq 는 inner loop 에서 시스 묶음 boundary 추적용.
+    ordered_group_items, group_ctx = _group_and_sort(batches, db)
 
-    batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
-    for batch in batches:
-        key = batch.batch_group or f"_single_{batch.batch_id}"
-        batch_groups.setdefault(key, []).append(batch)
-
-    # ── drum_lot_master에서 SQ별 소선경(wire_diameter) 로드 ──────────────────
-    # ST- 연선 그룹 정렬 시 동일 소선경 그룹이 연속 배치되도록 하기 위해 사용
-    sq_to_wire_d: dict[int, float] = {
-        int(d.cross_section): float(d.wire_diameter)
-        for d in db.query(DrumLotMaster).all()
-        if d.wire_diameter is not None
-    }
-
-    # 소선경 클러스터별 최초 납기: wire_diameter → min(due_date of all ST- groups in cluster)
-    # 가장 급한 소선경 클러스터를 먼저 처리하기 위해 사용
-    wire_d_earliest: dict[float, date] = {}
-    for gk, gb in batch_groups.items():
-        if gk.startswith("ST-"):
-            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
-            if wd > 0:
-                ed = _group_earliest_due(gb)
-                if wd not in wire_d_earliest or ed < wire_d_earliest[wd]:
-                    wire_d_earliest[wd] = ed
-
-    # ── 시스 색상 묶음 lookup — CP-SAT 와 동일 규칙 ─────────────────────────
-    # 그리디 경로의 batch_groups 는 {gk: [batches...]} 형식이라 묶음 빌더가 기대하는
-    # {gk: {"batches": [...], "earliest_due": ..., "cpsat_dur": ..., "pred_ready": ...}}
-    # 형식으로 wrapping 한 뒤 전달한다.
-    from app.domain.sheath_cluster import (
-        build_sheath_clusters,
-        cluster_sort_key,
-    )
-
-    _gm_for_cluster = {
-        gk: {
-            "batches": gb,
-            "earliest_due": _group_earliest_due(gb),
-            "cpsat_dur": int(sum(float(b.estimated_duration_min or 0) for b in gb)),
-            "pred_ready": None,
-        }
-        for gk, gb in batch_groups.items()
-    }
-    _sheath_clusters_g = build_sheath_clusters(_gm_for_cluster)
-    _sorted_clusters_g = sorted(
-        _sheath_clusters_g, key=lambda c: cluster_sort_key(c, _gm_for_cluster)
-    )
-    _cluster_rank_g: dict[str, tuple[int, int]] = {}
-    for _ci, _cluster in enumerate(_sorted_clusters_g):
-        for _gi, _gk_c in enumerate(_cluster.group_keys):
-            _cluster_rank_g[_gk_c] = (_ci, _gi)
-
-    # 설비별 마지막 처리 시스 묶음 ID 추적 — 묶음 내부/경계 append 정책에 사용.
-    # auto_schedule 호출 당 초기화 (모듈 레벨 상태 공유 방지).
-    _gk_to_cluster_id_g: dict[str, str] = {}
-    for _c in _sorted_clusters_g:
-        for _gk_c in _c.group_keys:
-            _gk_to_cluster_id_g[_gk_c] = _c.cluster_id
-    _prev_cluster_on_eq_g: dict[str, str] = {}  # equipment_code → last cluster_id
-
-    # ── 그룹 처리 순서 결정 ──────────────────────────────────────────────────
-    # 우선순위:
-    #   0 = CORE/AL-CORE: 선행 공정이므로 반드시 먼저 스케줄링
-    #   1 = ST- 연선 그룹: 소선경(wire_diameter) 클러스터 단위로 연속 배치
-    #       클러스터 내 정렬: 클러스터 최초납기 → 소선경 → 그룹 최초납기
-    #   2 = 그 외 공정(절연·시스 등): 공정 순서(PROCESS_ORDER) 최우선 → EDD
-    #       파이프라인 보장: 절연(2)이 시스(4)보다 항상 먼저 스케줄링되어야
-    #       process_first_output_by_sq에 절연 데이터가 등록된 후 시스가 참조 가능.
-    #
-    # 시스 그룹 전용 체인 정렬:
-    #   - 1차: 납기 주 버킷(H1/H2) — 납기 최우선
-    #   - 2차: 색상 순위 (_SHEATH_COLOR_RANK: 흑→갈→회→청…) — 같은 주차 내 묶기
-    #   - 3차: 실제 납기일 (같은 주+색상 내 stable EDD)
-    #   → 납기를 지키면서 같은 주차 내에서만 색상을 묶어 교체 비용 최소화.
-    #     색상을 1차로 두면 멀리 있는 주차의 같은 색상 그룹이 먼저 끌려와
-    #     급한 납기(다른 색상)가 뒤로 밀리는 현상이 발생해 사용자 룰과 상충.
-    #   Tradeoff: 같은 주차 내에 여러 색상이 있으면 그만큼 교체가 발생한다.
-    #     하지만 시스 설비는 주당 그룹 수가 제한적(≤ ~4건)이라 주차별 교체는
-    #     최대 2~3회 수준으로 수렴. 납기 준수 이득이 더 크다.
-    def _group_sort_key(kv):
-        gk, gb = kv
-        tier = 0 if _is_core_group(gk) else (1 if gk.startswith("ST-") else 2)
-        proc_order = PROCESS_ORDER.get(gb[0].process_name, 50) if gb else 50
-        earliest_due = _group_earliest_due(gb)
-        cust_prio = gb[0].customer_priority or 99 if gb else 99
-
-        # 시스 체인: 묶음 단위 정렬 — CP-SAT _solved_order_key 와 동일 규칙
-        # _cluster_rank_g 는 _group_sort_key 정의 전에 build_sheath_clusters 로 구성된
-        # lookup 테이블로, (cluster_idx, position_in_cluster) 를 제공한다.
-        if _is_sheath_group(gk, gb):
-            rank = _cluster_rank_g.get(gk, (10**9, 10**9))
-            return (
-                tier,
-                date.max,  # ST- 클러스터 납기 (비해당)
-                0.0,  # ST- 소선경 (비해당)
-                proc_order,
-                rank[0],  # 1차: 묶음 순위 (납기 임박 묶음 먼저)
-                rank[1],  # 2차: 묶음 내 순서
-                earliest_due,  # 3차: 실제 EDD (tiebreak)
-                cust_prio,
-            )
-
-        # 비시스 기존 정렬 (호환성 유지)
-        return (
-            tier,
-            wire_d_earliest.get(sq_to_wire_d.get(_st_sq(gk), 0.0), date.max)
-            if gk.startswith("ST-")
-            else date.max,
-            sq_to_wire_d.get(_st_sq(gk), 0.0) if gk.startswith("ST-") else 0.0,
-            proc_order,
-            earliest_due,
-            # 시스 정렬키와 길이를 맞추기 위한 padding (비교 시 영향 없도록 동일 상수)
-            0,
-            date.max,
-            cust_prio,
-        )
-
-    ordered_group_items = sorted(batch_groups.items(), key=_group_sort_key)
+    # NOTE: audit log reason (per-task) 이 마지막 batches 원소의 sq_mm2 / due_date
+    # 를 출력하기 위해 outer loop 변수 누설 (`for batch in batches:` 종료 후
+    # batches[-1]) 에 의존했던 기존 동치 행동을 명시적으로 보존. step 2c 추출 후
+    # outer loop 가 helper 로 이동했으므로 같은 값을 명시 binding.
+    batch = batches[-1] if batches else None  # noqa: F841  # used in audit log reason
 
     for group_key, group_batches in ordered_group_items:
         rep = group_batches[0]  # 대표 배치 (설비 선정용)
@@ -415,11 +451,11 @@ def _run_optimization_once(
             and sq_key not in state.sq_to_equip
             and not _is_core_group(group_key)
         ):
-            wire_d = sq_to_wire_d.get(sq, 0.0)
+            wire_d = group_ctx.sq_to_wire_d.get(sq, 0.0)
             if wire_d > 0:
                 same_wd_equips = set()
                 for (proc, s), eq_code in state.sq_to_equip.items():
-                    if proc == "연선" and sq_to_wire_d.get(s, -1.0) == wire_d:
+                    if proc == "연선" and group_ctx.sq_to_wire_d.get(s, -1.0) == wire_d:
                         same_wd_equips.add(eq_code)
                 if same_wd_equips:
                     wd_match = [
@@ -482,7 +518,7 @@ def _run_optimization_once(
                 tasks_created=state.tasks_created,
                 result=result,
                 welding_min=state.welding_min,
-                sq_to_wire_d=sq_to_wire_d,
+                sq_to_wire_d=group_ctx.sq_to_wire_d,
             )
             if split_ok:
                 continue
@@ -548,7 +584,7 @@ def _run_optimization_once(
                 actual_setup = _get_stranding_setup_min(
                     float(prev_batch.sq_mm2) if prev_batch.sq_mm2 else None,
                     float(rep.sq_mm2) if rep.sq_mm2 else None,
-                    sq_to_wire_d,
+                    group_ctx.sq_to_wire_d,
                     spec_min=setup_min,
                     compound_min=compound_min,
                 )
@@ -670,8 +706,8 @@ def _run_optimization_once(
             # _find_available_slot 이 빈 공간 사용 → 납기 보호)
             eq_earliest = earliest
             if rep.process_name in ("저압시스", "고압시스"):
-                current_cluster_id = _gk_to_cluster_id_g.get(group_key)
-                prev_cluster = _prev_cluster_on_eq_g.get(eq_code)
+                current_cluster_id = group_ctx.gk_to_cluster_id.get(group_key)
+                prev_cluster = group_ctx.prev_cluster_on_eq.get(eq_code)
                 if slots and current_cluster_id:
                     last_end = max(s[1] for s in slots)
                     append_earliest = max(eq_earliest, last_end)
@@ -822,9 +858,9 @@ def _run_optimization_once(
 
         # 시스 묶음 기반 append 정책 — 현재 그룹의 cluster_id 로 갱신
         if rep.process_name in ("저압시스", "고압시스"):
-            _cid_g = _gk_to_cluster_id_g.get(group_key)
+            _cid_g = group_ctx.gk_to_cluster_id.get(group_key)
             if _cid_g:
-                _prev_cluster_on_eq_g[best_eq.equipment_code] = _cid_g
+                group_ctx.prev_cluster_on_eq[best_eq.equipment_code] = _cid_g
 
         state.tasks_created.append(task)
 
