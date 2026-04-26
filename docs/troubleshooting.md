@@ -26,17 +26,8 @@ Skeleton of known Week 0 symptoms hit so far. Append new sections as the pilot u
 - **Cause:** A migration's `downgrade()` is incomplete, or manual edits drifted the schema.
 - **Fix:**
   - Restore from the archived baseline: `docs/archive/schema_asis_20260423.sql` and `docs/archive/constraint_config_sample_20260423.json`.
-  - Follow the break-glass steps in `docs/archive/README.md` to re-seed a fresh Supabase project or local Postgres (Path D is Supabase-native).
+  - Follow the break-glass steps in `docs/archive/README.md` to re-seed a fresh Supabase project.
   - Note: `c3d4e5f6a7b8` now depends on `b9e2f4a6d018` (batch_group fix, Task 0.1b). Confirm `alembic history` reflects that order before retrying.
-
-## `docker compose: service not found`
-
-- **Symptom:** `docker compose up backend` or `... up frontend` errors with "service not found".
-- **Cause:** Wrong mental model. Path D runs backend and frontend **native** (`uvicorn` + `next dev`). `docker-compose.yml` only defines a `db` service, and even that is unused in day-to-day dev.
-- **Fix:**
-  - Start backend: `cd backend && uvicorn app.main:app --reload --port $BACKEND_PORT`.
-  - Start frontend: `cd frontend && npm run dev`.
-  - DB: point `DATABASE_URL` at Supabase (or local Postgres) per `.env.worktree`. Do not reach for `docker compose up`.
 
 ## Worktree contamination (wrong branch / diffs bleeding between tracks)
 

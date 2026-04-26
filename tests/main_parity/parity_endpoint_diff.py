@@ -24,8 +24,8 @@ deep-diff 한다.
 Why GET-only 우선:
   Supabase 단일 DB 를 양 서버가 공유하므로 destructive POST (stage1/stage2,
   schedule revert) 는 두 번 실행 시 두 번째가 다른 state 를 본다. POST 비교는
-  Phase 1+ 에서 ephemeral docker DB (kbi_postgres:5432) 로만 가능 — 본 baseline
-  단계에서는 GET 만 비교한다.
+  Phase 1+ 에서 GitHub Actions service-container 의 ephemeral postgres 로만
+  가능 — 본 baseline 단계에서는 GET 만 비교한다.
 """
 
 from __future__ import annotations

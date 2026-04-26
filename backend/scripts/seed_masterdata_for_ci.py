@@ -60,9 +60,10 @@ _FIXTURE_PATH = _BACKEND_ROOT / "tests" / "fixtures" / "parity" / "01_nominal.js
 def _guard_not_supabase() -> None:
     """Refuse to mutate Supabase-hosted databases.
 
-    The CI throwaway Postgres uses ``localhost:5432``. Any DATABASE_URL
-    carrying ``supabase.co`` is a sign the caller mis-wired env and is
-    about to wipe real masterdata.
+    Dev/runtime is Supabase-native. This script targets the GitHub Actions
+    service-container Postgres (CI-only, ephemeral, ``localhost:5432`` from
+    inside the runner). Any DATABASE_URL carrying ``supabase.co`` means the
+    caller mis-wired env and is about to wipe real masterdata.
     """
     url = os.environ.get("DATABASE_URL", "")
     if "supabase.co" in url:

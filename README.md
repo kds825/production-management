@@ -22,7 +22,7 @@ ERP 수주 + 재공실사 데이터를 업로드하면 공정별 작업지시서
 
 - Python 3.11+ (3.9 이상 필수 — `zoneinfo` 표준 라이브러리 사용)
 - Node.js 18+
-- PostgreSQL 15+ (Docker 또는 Supabase)
+- Supabase Postgres (cloud) — `backend/.env` 의 `DATABASE_URL` 로 연결
 
 ### Windows 실행 시 참고
 
@@ -37,8 +37,10 @@ ERP 수주 + 재공실사 데이터를 업로드하면 공정별 작업지시서
 
 ### Backend (.env)
 
+`DATABASE_URL` 은 필수. 누락 시 `Settings` import 단계에서 즉시 ValidationError 로 실패 (silent local fallback X — Supabase-native 일원화).
+
 ```bash
-DATABASE_URL=postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler
+DATABASE_URL=postgresql://<user>:<password>@<supabase-host>:5432/postgres
 LLM_PROVIDER=openai              # openai 또는 anthropic
 OPENAI_API_KEY=sk-...            # OpenAI 사용 시
 OPENAI_MODEL=gpt-4.1             # OpenAI 모델 (기본: gpt-4.1)
@@ -57,20 +59,13 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ## 데이터베이스 설정
 
-### 로컬 개발 (Docker)
+`DATABASE_URL` 을 `backend/.env` 에 Supabase 연결 문자열로 설정한 후:
 
 ```bash
-docker-compose up -d  # PostgreSQL 시작
 cd backend
 alembic upgrade head  # 스키마 마이그레이션
-python seed_db.py     # 마스터 데이터 적재
+# 마스터 데이터는 Supabase 에 이미 적재되어 있음 — 신규 환경에 한해 python seed_db.py
 ```
-
-### Supabase 사용 시
-
-`DATABASE_URL`을 `.env`에 Supabase 연결 문자열로 설정
-
-> 마스터 데이터(설비, 선속, 제약조건 등)가 Supabase DB에 이미 적재되어 있으면 별도 시드 작업 불필요.
 
 ---
 

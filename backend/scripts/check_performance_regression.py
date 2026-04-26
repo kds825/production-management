@@ -98,12 +98,9 @@ if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 # ── CWD-robust .env loading ─────────────────────────────────────────────
-# `app/config.py` sets `env_file = ".env"` (relative to CWD), so running
-# this script from repo root instead of `backend/` silently falls back
-# to the DATABASE_URL default (local Docker DB) — whose schema drifts
-# from Supabase and triggers UndefinedColumn on the first query. Loading
-# `backend/.env` explicitly here makes the script CWD-agnostic without
-# touching `app/config.py` (broader scope — separate task).
+# Settings 는 backend/.env 의 DATABASE_URL 을 필수로 요구한다 (Supabase-
+# native). 본 스크립트를 repo root 에서 실행하면 backend/.env 가 자동
+# 로드되지 않아 ValidationError 가 나므로 명시적으로 load_dotenv 한다.
 #
 # `override=False` respects values already set by the caller (CI, devs
 # running `DATABASE_URL=... python scripts/...`), matching pydantic-

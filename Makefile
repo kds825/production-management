@@ -3,7 +3,7 @@ SHELL := /bin/bash
 export
 
 .PHONY: bootstrap doctor verify parity parity-quick parity-fixture \
-        test test-backend test-frontend lint typecheck db-fresh
+        test test-backend test-frontend lint typecheck
 
 bootstrap:
 	@command -v python3.11 >/dev/null || { echo "python3.11 required"; exit 1; }
@@ -74,10 +74,3 @@ lint:
 typecheck:
 	cd backend && source venv/bin/activate && mypy app/ || true
 	cd frontend && npm run typecheck
-
-db-fresh:
-	@echo "⚠ This uses the throwaway docker-compose DB (kbi/kbi_poc_2026/kbi_scheduler), NOT Supabase."
-	docker compose up -d db
-	sleep 3
-	DATABASE_URL="postgresql://kbi:kbi_poc_2026@localhost:5432/kbi_scheduler" \
-	  bash -c 'cd backend && source venv/bin/activate && alembic upgrade head && python seed_db.py'
