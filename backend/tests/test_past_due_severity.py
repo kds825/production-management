@@ -78,8 +78,7 @@ def seeded_past_due_pair(db):
         )
     db.flush()
 
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     auto_schedule(run_label=RUN, db=db)
     db.flush()
 

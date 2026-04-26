@@ -337,8 +337,7 @@ def test_high_voltage_sheath_ends_after_high_voltage_insulation(db):
 
     from app.infrastructure.models.production_batch import ProductionBatch
     from app.infrastructure.models.schedule_task import ScheduleTask
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     run_label = "test-hv-align"
 
     # 고압절연 4드럼 (CV#1+CV#2 분배 발동) / 고압시스 4드럼 (A150+B100 분배 발동)
@@ -426,8 +425,7 @@ def test_high_voltage_sheath_block_width_preserved(db):
 
     from app.infrastructure.models.production_batch import ProductionBatch
     from app.infrastructure.models.schedule_task import ScheduleTask
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     run_label = "test-hv-width"
     # end-alignment 테스트와 동일한 극단 비율 fixture: 4드럼 + insulation 30000m / sheath 1500m
     # batch_group 공유로 _schedule_multi_equipment 경로 발동

@@ -11,8 +11,7 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 def test_insulation_end_aligns_with_stranding_end(db: Session):
     """절연 선속이 연선의 2배라도 절연 끝이 연선 끝보다 빠르면 안 됨.
     역산 공식 적용 후: 절연 끝이 연선 끝에 정렬 (±1시간 이내)."""
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     _seed_stranding_then_insulation(
         db,
         run_label="test-pipeline-1",
@@ -37,8 +36,7 @@ def test_insulation_end_aligns_with_stranding_end(db: Session):
 
 def test_insulation_start_not_before_first_drum(db: Session):
     """절연 시작 ≥ 연선 첫 드럼 완료 시각."""
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     _seed_stranding_multi_drum(
         db,
         run_label="test-pipeline-2",
@@ -83,8 +81,7 @@ def test_cp_sat_pipeline_end_constraint(db):
 
 def test_insulation_block_width_unchanged(db: Session):
     """블록 width 는 선속 기반 고정 — 역산 공식 적용해도 width 늘어나지 않음."""
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     _seed_stranding_then_insulation(
         db,
         run_label="test-pipeline-3",
@@ -207,7 +204,7 @@ def test_assembly_to_sheath_pipeline_end_constraint(db):
     파이프라인 동기화의 일반성 검증 — 연선→절연 케이스 외에도
     연합→시스 쌍에서 pred_end <= succ_end 불변식이 유지되어야 함.
     """
-    from app.services.schedule_optimizer import auto_schedule
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     from datetime import date
 
     # 연합 + 시스 쌍 (같은 SQ) 시드

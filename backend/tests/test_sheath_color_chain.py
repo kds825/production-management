@@ -240,8 +240,7 @@ def test_sheath_scheduler_actual_order_forms_color_chain(db):
     본 테스트는 "납기 그룹 내에서는 단일 색" 이라는 실사용 시나리오로
     색상 체인이 형성됨을 검증한다 (KBI 현장 실제 패턴).
     """
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     rows = [
         {
             "color": "흑",
@@ -318,8 +317,7 @@ def test_sheath_half_week_split_separates_same_week_early_late_due(db):
     """같은 주(W15) 내 월·목요일 납기 차이 → H1/H2 분리 그룹.
     효과: EDD H1 그룹이 EDD H2 그룹보다 먼저 스케줄.
     """
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     # 같은 W15 주 내 흑 색상 4건:
     #   월(4/6) H1: 납기 임박
     #   수(4/8) H1
@@ -389,8 +387,7 @@ def test_long_color_chain_not_broken_by_half_week(db):
     batch_group 을 H1/H2 bucket 형식으로 pre-seed 하여 A120 라우팅이
     타게 함 — batch_grouping 의 새 H1/H2 bucket 포맷과 정합.
     """
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     rows = [
         # (color, sq, due, so, bucket)
         ("흑", 50, date(2026, 4, 6), "SO-CCH-1", "2026W15H1"),  # 월

@@ -11,9 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.services.schedule_optimizer import _find_available_slot
-
-
+from app.application.scheduling.greedy.slot_finder import _find_available_slot
 def test_find_slot_respects_ceiling_before_adjacent_slot():
     """duration 67min 이지만 end 올림 후 05:00 → 04:41 slot 과 충돌해야."""
     earliest = datetime(2026, 4, 8, 3, 0)  # 03:00

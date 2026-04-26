@@ -15,9 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.services.schedule_optimizer import _tardiness_boost_retry
-
-
+from app.application.scheduling.greedy.auto_schedule import _tardiness_boost_retry
 def _seed_pair(
     db: Session, run_label: str, batch_group: str, due_date: date, end_dt: datetime
 ) -> int:

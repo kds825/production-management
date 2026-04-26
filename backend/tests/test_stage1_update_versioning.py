@@ -228,8 +228,7 @@ def test_compare_runs_basic(db: Session) -> None:
 
 def test_purge_preserves_frozen_task(db: Session) -> None:
     """_purge_run_tasks 가 frozen 배치의 ScheduleTask 를 보존하는지 확인."""
-    from app.services.schedule_optimizer import _purge_run_tasks
-
+    from app.application.scheduling.greedy.auto_schedule import _purge_run_tasks
     run_label = "20260420_120000"
     _seed_sales_order(db, run_label, "S200")
 

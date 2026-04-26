@@ -79,8 +79,7 @@ def seeded_slack_edd(db):
         )
     db.flush()
 
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     auto_schedule(run_label=RUN_LABEL, db=db)
     db.flush()
 

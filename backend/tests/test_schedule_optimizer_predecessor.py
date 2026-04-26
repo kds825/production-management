@@ -64,8 +64,7 @@ def seeded_serial_chain(db):
         )
     db.flush()
 
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     auto_schedule(run_label=RUN_LABEL_SERIAL, db=db)
     db.flush()
     return order
@@ -139,8 +138,7 @@ def seeded_61core_chain(db):
     )
     db.flush()
 
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     auto_schedule(run_label=RUN_LABEL_61, db=db)
     db.flush()
     return order

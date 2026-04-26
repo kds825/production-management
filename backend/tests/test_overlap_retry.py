@@ -30,8 +30,7 @@ def _seed_minimal(db: Session, run_label: str):
 
 def test_overlap_retry_returns_ok_when_no_overlap(db):
     """No overlap → result has overlap_alert=False."""
-    from app.services.schedule_optimizer import auto_schedule
-
+    from app.application.scheduling.greedy.auto_schedule import auto_schedule
     _seed_minimal(db, run_label="test-retry-ok")
     result = auto_schedule(run_label="test-retry-ok", db=db)
     assert result.get("overlap_alert") is False
