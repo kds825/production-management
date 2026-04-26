@@ -16,6 +16,25 @@ from typing import TYPE_CHECKING
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 
+# Module-level rebind 으로 monkeypatch 호환 (Phase 5 §9.4 shell delete 후 본 모듈
+# 이 calculate_*_datetime / _find_available_slot 의 patch anchor 역할을 대체).
+# slot_finder 직접 import 는 application/_shared ↔ scheduling/greedy 순환을
+# 야기하므로 module-load 시점에 lazy 배선 — `_find_available_slot` / calendar
+# 함수들을 본 모듈 namespace 에 한 번 bind 한 뒤, align_start_to_predecessor_end
+# 는 sys.modules[__name__] 경유로 attribute 를 읽는다 (monkeypatch 즉시 반영).
+
+from app.infrastructure.calendar_engine import (  # noqa: F401
+    calculate_end_datetime,
+    calculate_start_datetime,
+)
+
+# Late-bound — slot_finder import 가 slot_filters ↔ greedy 순환을 야기.
+# 첫 align_start_to_predecessor_end 호출 시 sys.modules 에서 slot_finder 의
+# canonical 함수를 lookup 하여 본 모듈 attribute 로 cache. 테스트는
+# monkeypatch.setattr(slot_filters, "_find_available_slot", mock) 로 직접
+# attribute 를 patch 하면 즉시 반영된다 (cache 우회).
+_find_available_slot = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -155,16 +174,23 @@ def align_start_to_predecessor_end(
 
     반환: (aligned_start, aligned_end)
     """
-    # 지역 import — schedule_optimizer 모듈 namespace 의 이름을 그대로 사용해야
-    # 테스트가 monkeypatch.setattr(schedule_optimizer, ...) 로 주입한 mock 이
-    # 실시간으로 적용된다. calculate_start_datetime / calculate_end_datetime 은
-    # calendar_engine 원본을 다시 import 하지 않고 schedule_optimizer 경유로
-    # 가져와 patched 바인딩을 읽도록 한다 (Week 3 sub-commit D 호환성 유지).
-    from app.services import schedule_optimizer as _so
+    # 지역 lookup — sys.modules 경유 self-module attribute 를 매번 읽어
+    # monkeypatch.setattr(slot_filters, ...) 가 즉시 반영되도록. 직전 셸
+    # (services/schedule_optimizer.py) 가 Phase 5 §9.4 에서 삭제 → 본 모듈
+    # 이 새 monkeypatch anchor.
+    import sys as _sys
 
-    _find_available_slot = _so._find_available_slot
-    calculate_start_datetime = _so.calculate_start_datetime
-    calculate_end_datetime = _so.calculate_end_datetime
+    _self = _sys.modules[__name__]
+    # Late-bind _find_available_slot — slot_finder 직접 import 가 순환 야기.
+    if _self._find_available_slot is None:
+        from app.application.scheduling.greedy.slot_finder import (
+            _find_available_slot as _slot_impl,
+        )
+
+        _self._find_available_slot = _slot_impl
+    _find_available_slot = _self._find_available_slot
+    calculate_start_datetime = _self.calculate_start_datetime
+    calculate_end_datetime = _self.calculate_end_datetime
 
     pipeline_procs: list[str] = []
     if pred_proc:

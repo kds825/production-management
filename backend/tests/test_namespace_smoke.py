@@ -4,21 +4,13 @@
 -----------------------
 
 `docs/architecture-target.md` §4 Phase 1 진행 중에는 `services/X.py` 의 함수가
-`domain/`, `application/`, `infrastructure/` 의 새 모듈로 이동한다. 일부
-모듈 (특히 `services/schedule_optimizer.py` D7-C shell) 은 Phase 5 까지
-**re-export 셸 형태로 보존**되어 21 monkeypatch test site 의 contract 를
-지킨다.
+`domain/`, `application/`, `infrastructure/` 의 새 모듈로 이동한다.
 
 본 테스트는 shell 이 reexport 하는 모든 심볼이 새 위치의 함수 객체와
-**동일한 Python object (`is` 비교)** 임을 보증한다. 매 phase step 후 갱신.
-
-phase 진행 중 새 path 의 import 가 아직 안 되는 상황도 graceful — 일시적
-ImportError 는 failures 로 누적되되 그 step 의 commit message 가 새 path
-import 를 동시 commit 한 경우에는 그린이어야 한다.
-
-Phase 5 §9.4 에서 shell + `services/__init__.py` 가 삭제되면 본 테스트는
-`PAIRS` 가 비워지고 trivially pass 가 된다. 이후에는 raw smoke import +
-일반 pytest 가 보호한다.
+**동일한 Python object (`is` 비교)** 임을 보증했다. Phase 5 §9.4 에서
+shell + `services/__init__.py` 가 삭제되어 PAIRS 는 D7-C 와 무관한 cross-
+package 검증만 남는다 (cp_sat orchestrator re-export 등). 이후에는 raw
+smoke import + 일반 pytest 가 보호한다.
 """
 
 from __future__ import annotations
@@ -27,10 +19,11 @@ import importlib
 from typing import List, Tuple
 
 # (legacy module path, attribute name, new module path)
-# 매 phase step 후 추가. 빈 list 일 때는 trivially pass.
+# Phase 5 §9.4 후: services/schedule_optimizer 셸 삭제로 그 path 는 모두 제거.
+# 남은 것은 cross-package re-export invariant (cp_sat orchestrator 의 calendar_ops /
+# db_ops 노출) + ingest aggregate __init__ 의 도메인 키 재노출.
 PAIRS: List[Tuple[str, str, str]] = [
-    # Phase 1 step 1 (domain/ leaf) 후 추가:
-    # batch_grouping/__init__ 가 도메인 키들을 재export 하는지 (호환 표면)
+    # ingest aggregate __init__.py 의 batch_sheath_keys 재export 호환 표면.
     (
         "app.application.ingest",
         "_SHEATH_COLOR_RANK",
@@ -48,51 +41,8 @@ PAIRS: List[Tuple[str, str, str]] = [
         "_compose_sheath_group_key",
         "app.domain.batch_sheath_keys",
     ),
-    # Phase 1 step 2 (infrastructure/ leaf) 후 추가:
-    # NOTE: Phase 1 step 2 는 services/* 의 직접 importer 를 모두 새 path 로
-    # flip 했고 services/{calendar_engine, erp_parser, wip_parser, excel_exporter,
-    # wip_template, wip_lifecycle_listener, llm_providers/}.py 자체를 제거했다.
-    # 따라서 legacy path 가 더는 resolve 되지 않으므로 본 표에 PAIR 항목 없음.
-    # shell (services/schedule_optimizer.py) 가 여전히 calendar_engine 을 재export
-    # 하므로 그것만 호환 검증한다.
-    (
-        "app.services.schedule_optimizer",
-        "calculate_end_datetime",
-        "app.infrastructure.calendar_engine",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "calculate_start_datetime",
-        "app.infrastructure.calendar_engine",
-    ),
-    # Phase 1 step 3 후 추가:
-    # NOTE: Phase 1 step 2 와 동일한 패턴 — services/{audit_logger, constraint_params,
-    # scheduling_shared/}.py 자체를 git mv 로 application/_shared/ (또는 도메인) 에
-    # 옮겼다. 따라서 legacy `app.services.constraint_params` 등은 더는 resolve 되지
-    # 않는다 (PAIR 등록 불가). schedule_optimizer 셸은 application/_shared/ 의
-    # group_ops/slot_filters 를 새 path 에서 재export 하므로 그것만 호환 검증한다.
-    (
-        "app.services.schedule_optimizer",
-        "_is_core_group",
-        "app.application._shared.group_ops",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "_st_sq",
-        "app.application._shared.group_ops",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "_find_eligible_equipment",
-        "app.application._shared.slot_filters",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "align_start_to_predecessor_end",
-        "app.application._shared.slot_filters",
-    ),
-    # cp_sat_optimizer 모듈도 application/_shared/ 의 헬퍼들을 재export 하므로
-    # 같은 호환 표면을 가진다 (E402, F401 noqa 로 보호).
+    # cp_sat orchestrator 가 application/_shared/ 의 헬퍼들을 재export 하는지
+    # (D7-C invariant — orchestrator-level 모니터링 동안 유지).
     (
         "app.application.scheduling.cp_sat.orchestrator",
         "resolve_base_date",
@@ -102,35 +52,6 @@ PAIRS: List[Tuple[str, str, str]] = [
         "app.application.scheduling.cp_sat.orchestrator",
         "_delete_task_safely",
         "app.application._shared.db_ops",
-    ),
-    # Phase 1 step 4a (solver/* + greedy/* + jit_scheduling 이동) 후 추가:
-    # services/{solver,greedy,jit_scheduling} 자체는 git mv 로 사라졌고,
-    # schedule_optimizer 셸 + cp_sat_optimizer 가 새 path 의 함수들을 재export 하므로
-    # 그 호환 표면을 검증한다 (D7-C invariant).
-    (
-        "app.services.schedule_optimizer",
-        "apply_jit_delay",
-        "app.application.scheduling.greedy.jit_scheduling",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "auto_schedule",
-        "app.application.scheduling.greedy.auto_schedule",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "_run_optimization_once",
-        "app.application.scheduling.greedy.auto_schedule",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "_find_available_slot",
-        "app.application.scheduling.greedy.slot_finder",
-    ),
-    (
-        "app.services.schedule_optimizer",
-        "reschedule_affected_groups",
-        "app.application.scheduling.greedy.reschedule_affected",
     ),
 ]
 
@@ -169,11 +90,12 @@ def test_legacy_paths_resolve_to_new_objects() -> None:
 
 
 def test_smoke_imports_succeed() -> None:
-    """주요 layer 패키지가 모두 import 가능 — cycle / missing module 검출."""
+    """주요 layer 패키지가 모두 import 가능 — cycle / missing module 검출.
+
+    Phase 5 §9.4 에서 ``app.services`` 패키지 삭제 → 본 smoke 에서도 제거.
+    """
     importlib.import_module("app.main")
     importlib.import_module("app.domain")
+    importlib.import_module("app.application")
     importlib.import_module("app.infrastructure")
     importlib.import_module("app.presentation")
-    importlib.import_module(
-        "app.services"
-    )  # Phase 5 종료 시 삭제됨 — 그 시점에 본 라인 제거

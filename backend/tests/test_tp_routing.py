@@ -58,16 +58,26 @@ def test_non_tp_process_unaffected():
 
 
 def test_live_code_has_tp2_preferred_block():
-    """schedule_optimizer.py 에 실제 TP-2 preferred 블록이 존재하는지 source 확인."""
+    """optimization_loop.py 에 실제 TP-2 preferred 블록이 존재하는지 source 확인.
+
+    Phase 1 step 4a 이후 본 로직은 application/scheduling/greedy/optimization_loop.py
+    의 _run_optimization_once 안에 정의된다 (직전 services/schedule_optimizer.py
+    셸은 Phase 5 §9.4 에서 삭제).
+    """
     from pathlib import Path
 
     src = (
-        Path(__file__).parent.parent / "app" / "services" / "schedule_optimizer.py"
+        Path(__file__).parent.parent
+        / "app"
+        / "application"
+        / "scheduling"
+        / "greedy"
+        / "optimization_loop.py"
     ).read_text(encoding="utf-8")
     # 핵심 블록의 특징 문자열 존재 확인
     assert "T/P 공정 preferred 설비" in src, (
-        "schedule_optimizer.py 에 T/P preferred 블록 주석이 사라짐 — 회귀 의심"
+        "optimization_loop.py 에 T/P preferred 블록 주석이 사라짐 — 회귀 의심"
     )
     assert 'equipment_code == "TP-2"' in src, (
-        "schedule_optimizer.py 에 TP-2 narrowing 로직 누락"
+        "optimization_loop.py 에 TP-2 narrowing 로직 누락"
     )

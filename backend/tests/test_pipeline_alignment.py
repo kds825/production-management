@@ -16,7 +16,8 @@ def _mock_db():
 
 def test_returns_input_when_no_predecessor_end_recorded(monkeypatch):
     """process_end_by_sq 에 예상 선행공정 종료가 없으면 start/end 변경 없음."""
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     current_start = datetime(2026, 4, 10, 8, 0)
     current_end = datetime(2026, 4, 15, 8, 0)
@@ -40,7 +41,8 @@ def test_returns_input_when_no_predecessor_end_recorded(monkeypatch):
 
 def test_returns_input_when_already_aligned(monkeypatch):
     """현재 end >= pred_end_latest 이면 변경 없음 (reverse_start ≤ current_start)."""
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     # calculate_start_datetime(pred_end=4/15, duration=5일)=4/10 → current_start(=4/10)와 같음
     monkeypatch.setattr(
@@ -82,7 +84,8 @@ def test_returns_input_when_already_aligned(monkeypatch):
 def test_delays_start_when_predecessor_ends_later(monkeypatch):
     """pred_end > current_end 이면 reverse_start = pred_end - duration, start 지연.
     불변식: aligned_end == pred_end (블록 폭 유지)."""
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     monkeypatch.setattr(
         schedule_optimizer,
@@ -133,7 +136,8 @@ def test_tail_offset_applies_even_when_phase1_did_not_shift_start(monkeypatch):
     하지만 current_end < pred_end 면 aligned_end 가 pred_end 로 bump 되면서
     tail 없이 정확히 pred_end 에 정렬 → TIE. 이 케이스도 shift 되어야 한다.
     """
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     monkeypatch.setattr(
         schedule_optimizer,
@@ -187,7 +191,8 @@ def test_tail_offset_shifts_end_strictly_after_pred_end(monkeypatch):
     후공정은 선행 마지막 드럼이 나와야 자기 마지막 드럼을 돌릴 수 있으므로
     T_succ_end = T_pred_end + per_drum_succ. 블록 폭은 그대로 유지.
     """
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     monkeypatch.setattr(
         schedule_optimizer,
@@ -237,7 +242,8 @@ def test_tail_offset_shifts_end_strictly_after_pred_end(monkeypatch):
 
 def test_mixed_sq_uses_max_pred_end(monkeypatch):
     """혼합 SQ 그룹(고압시스 색상별) — 모든 SQ의 pred_end 중 최대값 사용."""
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     monkeypatch.setattr(
         schedule_optimizer,
@@ -282,7 +288,8 @@ def test_mixed_sq_uses_max_pred_end(monkeypatch):
 
 def test_sheath_also_checks_assembly_end(monkeypatch):
     """시스(저압/고압)는 절연 외에 연합 종료도 선행으로 고려."""
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application._shared.slot_filters")
 
     monkeypatch.setattr(
         schedule_optimizer,

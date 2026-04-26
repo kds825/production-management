@@ -30,9 +30,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.application.validation.constraint_checker import validate_all
-from app.services.schedule_optimizer import (  # noqa: F401
+from app.application.scheduling.greedy.auto_schedule import _purge_run_tasks  # noqa: F401
+from app.application.scheduling.greedy.optimization_loop import (  # noqa: F401
     _run_optimization_once,
-    _purge_run_tasks,
 )
 from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule  # noqa: F401
 
