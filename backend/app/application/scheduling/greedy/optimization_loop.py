@@ -73,6 +73,7 @@ from app.application._shared.slot_filters import (
     _narrow_by_stranding,
     align_start_to_predecessor_end,
 )
+from app.application.scheduling.greedy.scheduler_state import SchedulerState
 
 
 def _group_earliest_due(batches: list) -> date:
@@ -191,10 +192,19 @@ def _run_optimization_once(
 
     # Phase 2 추출: greedy/loaders/master_data.py
     _md = load_master_data(db)
-    equipment_by_process = _md.equipment_by_process
-    speed_map = _md.speed_map
-    constraint_params = _md.constraint_params
-    welding_min = _md.welding_min
+
+    # Phase 4: SchedulerState — per-call mutable + master state container.
+    # 모든 in-progress dict (timeline / predecessor_map / sq_to_equip / ...) 와
+    # master data (equipment_by_process / speed_map / constraint_params / welding_min) 를
+    # 한 객체로 묶어 (a) 함께 진화하는 의도 명시 (b) retry 사이 cross-contamination
+    # 회피. 매 호출마다 새로 생성 (default_factory 격리). isolation invariant 는
+    # tests/test_scheduler_state_isolation.py 가 freeze.
+    state = SchedulerState(
+        equipment_by_process=_md.equipment_by_process,
+        speed_map=_md.speed_map,
+        constraint_params=_md.constraint_params,
+        welding_min=_md.welding_min,
+    )
 
     # Load existing tasks (to check overlaps)
     existing_tasks = (
@@ -206,55 +216,24 @@ def _run_optimization_once(
     )
 
     # Build equipment timeline: equipment_code → list of (start, end) occupied slots
-    timeline = {}
     for t in existing_tasks:
-        timeline.setdefault(t.equipment_code, []).append(
+        state.timeline.setdefault(t.equipment_code, []).append(
             (t.start_datetime, t.end_datetime)
         )
 
     # ── 부분 재스케줄용: 기존 tasks 로부터 파이프라인 state seed ──────────────
-    # 전체 재스케줄에서는 existing_tasks=[] 이므로 모두 빈 dict / None.
+    # 전체 재스케줄에서는 existing_tasks=[] 이므로 no-op.
     # 부분 재스케줄 시 비영향 그룹 task 가 후행 그룹의 선행 제약을 채운다.
     (
-        _seed_pipeline_process_end,
-        _seed_pipeline_first_output,
-        _seed_first_insul_output,
-        _seed_core_first_drum,
+        _seed_pe,
+        _seed_fo,
+        _seed_fi,
+        _seed_cf,
     ) = _seed_state_from_existing(existing_tasks, db)
-
-    # Track predecessor tasks by (sales_order_id, sales_order_line)
-    predecessor_map = {}  # (order_id, order_line) → last task_id for this order
-
-    # 용접 시간 추적 (4-4): equipment_code → last placed batch (sq_mm2, sales_order_id)
-    last_batch_on_equip: dict[str, ProductionBatch] = {}
-
-    # ── 규칙 2: 19연선 이상(70SQ+)은 같은 SQ→같은 설비 고정 ────────────────
-    # 이미 배정된 SQ→설비 매핑을 추적하여 동일 SQ는 같은 설비에 배치
-    sq_to_equip: dict[tuple[str, int], str] = {}  # (process_name, sq) → equipment_code
-
-    tasks_created = []
-
-    # 공정 간 선행관계 추적 — SQ 단위로 앞 공정의 종료 시각 기록
-    # 연선_120SQ 종료 → 저압절연_120SQ 시작 가능
-    # 저압절연_120SQ 종료 → A100_120SQ / A120_120SQ 시작 가능
-    process_end_by_sq: dict[tuple[str, int], datetime] = dict(
-        _seed_pipeline_process_end
-    )
-    # key: (공정명, SQ) → value: 해당 공정+SQ 그룹의 종료 시각
-
-    # 파이프라인 겹침용: 앞 공정에서 첫 번째 드럼이 출력되는 시각
-    # 연선에서 1틀이 나오면 절연 시작 가능, 절연 1틀 나오면 시스 시작 가능
-    # = task.start_datetime + setup_min + (group_run_duration / drum_count)
-    process_first_output_by_sq: dict[tuple[str, int], datetime] = dict(
-        _seed_pipeline_first_output
-    )
-
-    # 저압절연 전체 중 가장 이른 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
-    first_insul_output: datetime | None = _seed_first_insul_output
-
-    # 61연선 코어(T6B0/AL6BO) 첫 드럼 출력 시각 — pipeline overlap 기준
-    # "CORE-300-..." 첫 드럼 완료 후 "ST-300-..." 시작 가능
-    core_first_drum_by_main_sq: dict[int, datetime] = dict(_seed_core_first_drum)
+    state.process_end_by_sq.update(_seed_pe)
+    state.process_first_output_by_sq.update(_seed_fo)
+    state.first_insul_output = _seed_fi
+    state.core_first_drum_by_main_sq.update(_seed_cf)
 
     # ── batch_group 단위로 그루핑 ────────────────────────────────────────────
     from collections import OrderedDict
@@ -381,7 +360,7 @@ def _run_optimization_once(
         rep = group_batches[0]  # 대표 배치 (설비 선정용)
 
         # 10-3: 시스 재질 라우팅
-        candidate_equip = equipment_by_process.get(rep.process_name, [])
+        candidate_equip = state.equipment_by_process.get(rep.process_name, [])
         if rep.process_name in ("고압시스", "저압시스"):
             candidate_equip = _filter_by_sheath_routing(rep, candidate_equip)
 
@@ -412,10 +391,10 @@ def _run_optimization_once(
         if (
             is_stranding
             and sq >= 70
-            and sq_key in sq_to_equip
+            and sq_key in state.sq_to_equip
             and not _is_core_group(group_key)
         ):
-            preferred_eq = sq_to_equip[sq_key]
+            preferred_eq = state.sq_to_equip[sq_key]
             pref_match = [e for e in eligible if e.equipment_code == preferred_eq]
             if pref_match:
                 eligible = pref_match
@@ -431,11 +410,15 @@ def _run_optimization_once(
 
         # ── 규칙 3: 소선경 그루핑 ────────────────────────────────────────────
         # drum_lot_master.wire_diameter 기준 — 동일 소선경 SQ는 같은 설비 선호
-        if is_stranding and sq_key not in sq_to_equip and not _is_core_group(group_key):
+        if (
+            is_stranding
+            and sq_key not in state.sq_to_equip
+            and not _is_core_group(group_key)
+        ):
             wire_d = sq_to_wire_d.get(sq, 0.0)
             if wire_d > 0:
                 same_wd_equips = set()
-                for (proc, s), eq_code in sq_to_equip.items():
+                for (proc, s), eq_code in state.sq_to_equip.items():
                     if proc == "연선" and sq_to_wire_d.get(s, -1.0) == wire_d:
                         same_wd_equips.add(eq_code)
                 if same_wd_equips:
@@ -454,8 +437,8 @@ def _run_optimization_once(
             )
             # 미스케줄된 공정을 max 시간으로 등록 → 후행 공정이 이 공정 없이 시작하는 것을 방지
             sq_int = int(rep.sq_mm2 or 0)
-            process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
-            process_first_output_by_sq[(rep.process_name, sq_int)] = datetime.max
+            state.process_end_by_sq[(rep.process_name, sq_int)] = datetime.max
+            state.process_first_output_by_sq[(rep.process_name, sq_int)] = datetime.max
             continue
 
         # ── 멀티설비 분배: 드럼 수 >= 2 이고 적격 설비 >= 2 일 때
@@ -473,7 +456,7 @@ def _run_optimization_once(
             (
                 is_stranding
                 and not _is_core_group(group_key)
-                and sq_key not in sq_to_equip
+                and sq_key not in state.sq_to_equip
             )
             or is_high_insul
             or is_high_sheath
@@ -488,17 +471,17 @@ def _run_optimization_once(
                 base_date=base_date,
                 run_label=run_label,
                 db=db,
-                speed_map=speed_map,
-                timeline=timeline,
-                last_batch_on_equip=last_batch_on_equip,
-                sq_to_equip=sq_to_equip,
-                predecessor_map=predecessor_map,
-                process_end_by_sq=process_end_by_sq,
-                process_first_output_by_sq=process_first_output_by_sq,
-                core_first_drum_by_main_sq=core_first_drum_by_main_sq,
-                tasks_created=tasks_created,
+                speed_map=state.speed_map,
+                timeline=state.timeline,
+                last_batch_on_equip=state.last_batch_on_equip,
+                sq_to_equip=state.sq_to_equip,
+                predecessor_map=state.predecessor_map,
+                process_end_by_sq=state.process_end_by_sq,
+                process_first_output_by_sq=state.process_first_output_by_sq,
+                core_first_drum_by_main_sq=state.core_first_drum_by_main_sq,
+                tasks_created=state.tasks_created,
                 result=result,
-                welding_min=welding_min,
+                welding_min=state.welding_min,
                 sq_to_wire_d=sq_to_wire_d,
             )
             if split_ok:
@@ -512,7 +495,7 @@ def _run_optimization_once(
         if rep_speed <= 0:
             # SpeedMaster에서 해당 설비+SQ 조합의 line_speed 조회
             for eq in eligible:
-                sm = speed_map.get((eq.equipment_code, float(rep.sq_mm2 or 0)))
+                sm = state.speed_map.get((eq.equipment_code, float(rep.sq_mm2 or 0)))
                 if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
                     rep_speed = float(sm.line_speed_mpm)
                     break
@@ -537,7 +520,7 @@ def _run_optimization_once(
 
         setup_min = float(rep.setup_time_min or 0)
         drum_winding_min = _get_drum_winding_min(
-            eligible[0].equipment_code, rep.sq_mm2, speed_map
+            eligible[0].equipment_code, rep.sq_mm2, state.speed_map
         )
         total_duration = group_duration + setup_min + drum_winding_min
 
@@ -548,16 +531,18 @@ def _run_optimization_once(
 
         for eq in eligible:
             eq_code = eq.equipment_code
-            slots = timeline.get(eq_code, [])
+            slots = state.timeline.get(eq_code, [])
 
             eq_total_duration = total_duration
 
             # 4-1: 연선 셋업 3-tier (동일SQ=0 / 동일소선경=선재교체 / 다른소선경=규격교체)
-            prev_batch = last_batch_on_equip.get(eq_code)
+            prev_batch = state.last_batch_on_equip.get(eq_code)
             if prev_batch is not None and rep.process_name == "연선":
                 compound_min = float(
-                    speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None)
-                    and speed_map[(eq_code, float(rep.sq_mm2 or 0))].setup_compound_min
+                    state.speed_map.get((eq_code, float(rep.sq_mm2 or 0)), None)
+                    and state.speed_map[
+                        (eq_code, float(rep.sq_mm2 or 0))
+                    ].setup_compound_min
                     or 0
                 )
                 actual_setup = _get_stranding_setup_min(
@@ -598,7 +583,7 @@ def _run_optimization_once(
                     sm_color_val = sm_color[0] if sm_color else None
                     color_change_min = resolve_color_change_min(
                         sm_color_min=sm_color_val,
-                        params=constraint_params,
+                        params=state.constraint_params,
                     )
             eq_total_duration += color_change_min
 
@@ -617,7 +602,9 @@ def _run_optimization_once(
                     valid_firsts = [
                         t
                         for sq_i in all_sqs
-                        if (t := process_first_output_by_sq.get((pred_proc, sq_i)))
+                        if (
+                            t := state.process_first_output_by_sq.get((pred_proc, sq_i))
+                        )
                         and t < datetime.max
                     ]
                     if valid_firsts:
@@ -627,7 +614,7 @@ def _run_optimization_once(
                 else:
                     # 단일 SQ 그룹: 해당 SQ의 선행 제약만 확인
                     sq_i = next(iter(all_sqs))
-                    pred_first = process_first_output_by_sq.get((pred_proc, sq_i))
+                    pred_first = state.process_first_output_by_sq.get((pred_proc, sq_i))
                     if pred_first and pred_first > earliest:
                         earliest = pred_first
                 if rep.process_name == "고압시스":
@@ -635,8 +622,8 @@ def _run_optimization_once(
 
             # 시스 배치(A100/A120): 저압절연 첫 번째 드럼 출력 후 시작
             if group_key.startswith("A100_") or group_key.startswith("A120_"):
-                if first_insul_output and first_insul_output > earliest:
-                    earliest = first_insul_output
+                if state.first_insul_output and state.first_insul_output > earliest:
+                    earliest = state.first_insul_output
 
             # 61연선 ST- 그룹: 동일 SQ의 CORE/AL-CORE 첫 드럼 출력 후 시작 (overlap)
             # 예: "ST-633-..." 그룹 → core_first_drum_by_main_sq[633] 이후 시작
@@ -645,7 +632,7 @@ def _run_optimization_once(
                     main_sq = int(group_key.split("-")[1])
                 except (IndexError, ValueError):
                     main_sq = sq_int
-                core_first = core_first_drum_by_main_sq.get(main_sq)
+                core_first = state.core_first_drum_by_main_sq.get(main_sq)
                 if core_first and core_first > earliest:
                     earliest = core_first
 
@@ -668,10 +655,10 @@ def _run_optimization_once(
             if not _skip_individual:
                 for b in group_batches:
                     pred_key = (b.sales_order_id, b.sales_order_line)
-                    pred_tid = predecessor_map.get(pred_key)
+                    pred_tid = state.predecessor_map.get(pred_key)
                     if pred_tid:
                         pred_task = next(
-                            (t for t in tasks_created if t.task_id == pred_tid),
+                            (t for t in state.tasks_created if t.task_id == pred_tid),
                             None,
                         )
                         if pred_task and pred_task.end_datetime > earliest:
@@ -728,12 +715,12 @@ def _run_optimization_once(
             process_name=rep.process_name,
             pred_proc=pred_proc,
             group_sqs={int(b.sq_mm2 or 0) for b in group_batches},
-            process_end_by_sq=process_end_by_sq,
+            process_end_by_sq=state.process_end_by_sq,
             current_start=best_start,
             current_end=end_dt,
             duration_min=best_total_duration,
             tail_offset_min=_per_drum_min,
-            slots=timeline.get(best_eq.equipment_code, []),
+            slots=state.timeline.get(best_eq.equipment_code, []),
             db=db,
             equipment_code=best_eq.equipment_code,
         )
@@ -747,7 +734,7 @@ def _run_optimization_once(
         # ── 그룹당 1 schedule_task 생성 ──────────────────────────────────────
         # 체인 하이라이트 — 본 그룹의 상류 task id 를 predecessor 로 고정.
         # 같은 group 내 복수 order 가 있어도 대표 order 의 predecessor 로 일관 처리.
-        rep_pred_task_id = predecessor_map.get(
+        rep_pred_task_id = state.predecessor_map.get(
             (rep.sales_order_id, rep.sales_order_line)
         )
 
@@ -765,16 +752,18 @@ def _run_optimization_once(
         db.add(task)
         db.flush()
 
-        timeline.setdefault(best_eq.equipment_code, []).append((best_start, end_dt))
+        state.timeline.setdefault(best_eq.equipment_code, []).append(
+            (best_start, end_dt)
+        )
 
         # 공정+SQ별 종료 시각 갱신 (후공정 선행관계 추적)
         sq_int = int(rep.sq_mm2 or 0)
         proc_sq_key = (rep.process_name, sq_int)
         if (
-            proc_sq_key not in process_end_by_sq
-            or end_dt > process_end_by_sq[proc_sq_key]
+            proc_sq_key not in state.process_end_by_sq
+            or end_dt > state.process_end_by_sq[proc_sq_key]
         ):
-            process_end_by_sq[proc_sq_key] = end_dt
+            state.process_end_by_sq[proc_sq_key] = end_dt
 
         # ── 파이프라인 겹침: 첫 번째 드럼 출력 시각 계산 ────────────────────
         # 연선 ST-: 헤더 배치(seq=-1)의 drum_count = 실제 틀 수
@@ -793,10 +782,10 @@ def _run_optimization_once(
         # CORE-/AL-CORE- 그룹 제외: 절연은 ST(54BO) 첫 드럼 기준으로 시작해야 함
         # (CORE 첫 드럼은 너무 이르므로 후행 공정 선행 제약으로 부적합)
         if not _is_core_group(group_key) and (
-            proc_sq_key not in process_first_output_by_sq
-            or first_output_dt < process_first_output_by_sq[proc_sq_key]
+            proc_sq_key not in state.process_first_output_by_sq
+            or first_output_dt < state.process_first_output_by_sq[proc_sq_key]
         ):
-            process_first_output_by_sq[proc_sq_key] = first_output_dt
+            state.process_first_output_by_sq[proc_sq_key] = first_output_dt
 
         # 61연선 CORE-/AL-CORE- 그룹 첫 드럼 출력 시각 기록 — pipeline overlap
         # CU: "CORE-{main_sq}-...", AL: "AL-CORE-{main_sq}-..." 패턴
@@ -804,29 +793,32 @@ def _run_optimization_once(
             main_sq = _extract_core_main_sq(group_key)
             if main_sq is not None:
                 if (
-                    main_sq not in core_first_drum_by_main_sq
-                    or first_output_dt < core_first_drum_by_main_sq[main_sq]
+                    main_sq not in state.core_first_drum_by_main_sq
+                    or first_output_dt < state.core_first_drum_by_main_sq[main_sq]
                 ):
-                    core_first_drum_by_main_sq[main_sq] = first_output_dt
+                    state.core_first_drum_by_main_sq[main_sq] = first_output_dt
 
         # 저압절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
         if rep.process_name == "저압절연":
-            if first_insul_output is None or first_output_dt < first_insul_output:
-                first_insul_output = first_output_dt
+            if (
+                state.first_insul_output is None
+                or first_output_dt < state.first_insul_output
+            ):
+                state.first_insul_output = first_output_dt
 
         # 그룹 내 모든 배치의 predecessor + status 갱신
         for b in group_batches:
             pred_key = (b.sales_order_id, b.sales_order_line)
-            predecessor_map[pred_key] = task.task_id
+            state.predecessor_map[pred_key] = task.task_id
             b.equipment_code = best_eq.equipment_code
             b.status = "scheduled"
 
         # 규칙 2: SQ→설비 매핑 기록 (CORE/AL-CORE 그룹 제외 — 코어는 ST설비 고정 대상 아님)
         if rep.process_name == "연선" and not _is_core_group(group_key):
-            sq_to_equip[sq_key] = best_eq.equipment_code
+            state.sq_to_equip[sq_key] = best_eq.equipment_code
 
         # 용접 시간 추적 (4-4): 설비별 마지막 배치 갱신 (그룹의 마지막 배치)
-        last_batch_on_equip[best_eq.equipment_code] = group_batches[-1]
+        state.last_batch_on_equip[best_eq.equipment_code] = group_batches[-1]
 
         # 시스 묶음 기반 append 정책 — 현재 그룹의 cluster_id 로 갱신
         if rep.process_name in ("저압시스", "고압시스"):
@@ -834,7 +826,7 @@ def _run_optimization_once(
             if _cid_g:
                 _prev_cluster_on_eq_g[best_eq.equipment_code] = _cid_g
 
-        tasks_created.append(task)
+        state.tasks_created.append(task)
 
         # Check delivery date violation — 그룹 내 가장 빠른 납기 기준
         # 납기는 사용자 요구 상 하드 제약 → severity=error 로 상향
@@ -880,7 +872,7 @@ def _run_optimization_once(
                     "id": "4-4",
                     "name": "용접 시간",
                     "result": "pass",
-                    "detail": f"welding={welding_min:.0f}분 (스플라이스 로트 시 적용)",
+                    "detail": f"welding={state.welding_min:.0f}분 (스플라이스 로트 시 적용)",
                 },
                 {
                     "id": "4-5",
