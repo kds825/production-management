@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.models.wip_inventory import WipInventory
 from app.infrastructure.models.sales_order import SalesOrder
 from app.infrastructure.models.decision_criteria import DecisionCriteria
-from app.application._shared.audit_logger import log_decision
+from app.application._shared.audit_logger import log_wip_match
 
 _EXACT_SEARCH_LIMIT = 22  # 완전 탐색 최대 수주 건수 (2^22 ≈ 4M)
 _DP_GRANULARITY_M = 1  # DP 이산화 단위 (1m — 정확한 매칭)
@@ -224,26 +224,27 @@ def match_wip(
                 }
             )
 
-            log_decision(
+            # Phase 6: log_wip_match wrapper 사용 — decision_card ❸ 재공 활용
+            # 섹션 출처. order 단위 매칭이므로 batch_id=None (배치 생성 후
+            # batch_grouper 가 wip_matched_id 전파). 매칭 시점에는 batch.id 미존재.
+            log_wip_match(
                 db=db,
                 run_label=run_label,
                 stage="stage1",
-                action_type="wip_matched",
-                constraints_applied=[
-                    {
-                        "id": "2-1",
-                        "name": "재공 활용",
-                        "result": "pass",
-                        "detail": (
-                            f"WIP풀 {pool_sq}SQ {pool_stage} "
-                            f"총{pool_total}m → 수주 {order.order_id}:{order.order_line} "
-                            f"({float(order.ordered_qty_m or 0)}m, 환산{conv_qty}m)"
-                        ),
-                    }
-                ],
-                reason=(
-                    f"재공 매칭: {pool_stage} {pool_sq}SQ 풀{pool_total}m → "
-                    f"{order.order_id}:{order.order_line}"
+                batch_id=None,  # type: ignore[arg-type]  # order-level audit, batch 미생성 시점
+                matched_wip_id=assigned_wip.wip_id,
+                applied_rule="2-1",
+                params_used={
+                    "loss_limit_pct": loss_limit * 100,
+                    "shortage_tolerance_pct": shortage_tolerance * 100,
+                    "pool_sq": pool_sq,
+                    "pool_stage": pool_stage,
+                    "pool_total_m": pool_total,
+                },
+                detail=(
+                    f"WIP풀 {pool_sq}SQ {pool_stage} 총{pool_total}m → "
+                    f"수주 {order.order_id}:{order.order_line} "
+                    f"({float(order.ordered_qty_m or 0)}m, 환산{conv_qty}m)"
                 ),
             )
 

@@ -49,6 +49,42 @@ from app.application._shared.constraint_params import ConstraintParams
 from app.domain.constraint_rules import resolve_spec_setup_min
 
 
+def _is_outsource_rule(
+    sq: float,
+    product_group: str | None,
+    customer_name: str | None,
+) -> bool:
+    """외주 자동분류 룰 (constraint 2-2). 호출측에서 sq/제품군/고객명 추출 후 위임.
+
+    조건 (Phase 2 동일):
+      (1) SQ ≤ 10  : 소단면적 특수 공정은 사내 설비로 생산 불가
+      (2) TFR-8(... + SQ == 16  : 고온 사양 특수 외주 전용
+      (3) 아이마켓코리아 + TFR-GV 품목  : 고객 지정 외주
+    """
+    pg_orig = product_group or ""
+    pg_upper = pg_orig.upper()
+    customer = customer_name or ""
+    return (
+        sq <= 10
+        or ("TFR-8(" in pg_orig and sq == 16)
+        or (customer == "아이마켓코리아" and "TFR-GV" in pg_upper)
+    )
+
+
+def is_outsource_batch(batch: ProductionBatch) -> bool:
+    """ProductionBatch 가 외주 룰 (2-2) 에 해당하는지 판정.
+
+    decision_card phrasing._resolve_key 가 "outsource" 키로 dispatch 할 때 사용.
+    동일 룰을 SalesOrder 단계 (`create_batches`/`build_strand_batches`) 와
+    공유하기 위해 `_is_outsource_rule` 에 위임.
+    """
+    return _is_outsource_rule(
+        sq=float(batch.sq_mm2 or 0),
+        product_group=batch.product_group,
+        customer_name=batch.customer_name,
+    )
+
+
 def create_batches(
     run_label: str,
     db: Session,
@@ -209,15 +245,8 @@ def create_batches(
         if sq is None:
             continue
 
-        # 외주 분류 조건 — Phase 2와 동일
-        pg_upper = (order.product_group or "").upper()
-        customer_name_o = order.customer_name or ""
-        _is_out = (
-            sq <= 10
-            or ("TFR-8(" in (order.product_group or "") and sq == 16)
-            or (customer_name_o == "아이마켓코리아" and "TFR-GV" in pg_upper)
-        )
-        if _is_out:
+        # 외주 분류 조건 — Phase 2와 동일 (룰은 _is_outsource_rule helper)
+        if _is_outsource_rule(sq, order.product_group, order.customer_name):
             continue
 
         item_o = _find_item(order, items)
@@ -602,22 +631,12 @@ def create_batches(
             )
             continue
 
-        # ── 외주 자동분류 (2-2) ─────────────────────────────────────────────
-        # ERP 플래그와 무관하게 아래 조건 중 하나라도 해당하면 외주로 처리한다.
-        # (1) SQ <= 10: 소단면적 특수 공정은 사내 설비로 생산 불가
-        # (2) 고내화(TFR-8( 제품군) 16SQ: 고온 사양 특수 외주 전용
-        # (3) 아이마켓코리아 고객의 TFR-GV 품목: 고객 지정 외주
-        pg_upper = (order.product_group or "").upper()
-        customer_name = order.customer_name or ""
-        _is_outsourced = (
-            sq <= 10
-            or ("TFR-8(" in (order.product_group or "") and sq == 16)
-            or (customer_name == "아이마켓코리아" and "TFR-GV" in pg_upper)
-        )
-        if _is_outsourced:
+        # ── 외주 자동분류 (2-2) — 룰은 _is_outsource_rule helper ───────────
+        if _is_outsource_rule(sq, order.product_group, order.customer_name):
             result["outsource_count"] += 1
             result["warnings"].append(
-                f"수주 {order_ref}: 외주 자동분류 (SQ={sq}, 제품군={order.product_group}, 고객={customer_name})"
+                f"수주 {order_ref}: 외주 자동분류 "
+                f"(SQ={sq}, 제품군={order.product_group}, 고객={order.customer_name or ''})"
             )
             continue
 

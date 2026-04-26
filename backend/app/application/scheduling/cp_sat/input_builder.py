@@ -192,6 +192,22 @@ def build_solver_input(
             if b.process_name in skip_set:
                 b.status = "wip_complete"
                 wip_skipped += 1
+                # Phase 6: decision_card ❻ '다른 설비/시간 탈락 사유' 출처.
+                # 본 batch 가 사전 필터링 단계에서 WIP 커버리지로 스킵된 사실
+                # 을 audit_log 에 남긴다. parity-safe (audit_log 행은
+                # _collect_assignments scope 밖이므로 회귀 0).
+                log_filter_out(
+                    db=db,
+                    run_label=run_label,
+                    stage="stage1",
+                    batch_id=b.batch_id,
+                    reason_code="2-1",
+                    reason_detail=(
+                        f"WIP {b.wip_matched_id} "
+                        f"({wip_stage_map[b.wip_matched_id]}) 커버리지 → "
+                        f"{b.process_name} skip"
+                    ),
+                )
                 continue
         schedulable.append(b)
     batches = schedulable
