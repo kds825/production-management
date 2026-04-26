@@ -591,8 +591,11 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
   - §9.1 실 ERP 양 서버 동치 (Documents/ERP생산계획\_v1.xls + SM재고리스트.xls): main-parity 27/27 이 stage1/stage2 read 엔드포인트 포함하여 동치성 proxy. ERP 업로드 시 stage1+stage2 dual-run 명시 비교 미수행 — 다음 세션 권장.
   - §9.2 lex vs weighted-sum 측정 비교: docs/lex-mode-comparison.md 절차 + 시나리오 12/13 fixture 준비 완료. 실측 dual-run + drift 표 작성 미수행.
   - §9.3 gstack/QA UI walkthrough: 미수행.
-- [△] Phase 4 step 2/3/5 — helper 추출 + auto_schedule wiring + \_run_optimization_once body ≤100 LOC: 다음 세션 deferral (964 LOC 분해 위험).
+- [✓] Phase 4 step 2a — \_seed_state_from_existing 추출 (commit 15077fb, partial-rerun seed 4 dict/scalar 사전 채움 helper, setup_min/dur/lot_count 계산 분기 전 1회 정돈, body 824 → 756 LOC -68. parity 27/27 = /tmp/parity_phase4_step2a.md)
+- [✓] Phase 4 step 2b — SchedulerState wiring (commit ae48041, 9 mutable + 4 master state 를 한 객체 통합. ~50 site rename. \_schedule_multi_equipment 호출 keyword RHS 만 state.X 로, function signature 미변경. first_insul_output scalar 명시 할당. SchedulerState import F401 trap 회피. body 756 → 749 LOC -7. parity 27/27 = /tmp/parity_phase4_step2b.md)
+- [✓] Phase 4 step 2c — \_group_and_sort + GroupingContext 추출 (commit 2849f12, batch_groups 빌드 + ST 소선경 grouping + 시스 색상 묶음 lookup + 정렬 우선순위 통째 helper 로. GroupingContext 5 field (sq_to_wire_d / wire_d_earliest / cluster_rank / gk_to_cluster_id / prev_cluster_on_eq) — prev_cluster_on_eq 만 mutable (시스 묶음 boundary). closure \_group_sort_key 도 helper 안으로 이동. 회귀 fix: outer `for batch in batches:` variable 누설을 audit log reason 이 의존했음 → 본체에 `batch = batches[-1] if batches else None` 명시 binding. body 749 → 640 LOC -109. parity 27/27 = /tmp/parity_phase4_step2c.md)
+- [✓] Phase 4 step 2d — \_assign_group 추출 (commit 83ae5fd, inner per-group loop body ~549 LOC 통째 helper 로. 9 keyword 인자 (state / group_ctx / group_key / group_batches / base_date / run_label / db / result / last_batch_for_audit). early return 으로 outer `continue` 동치. body 640 → **98 LOC** (≤100 orchestrator 목표 달성). 누적 -726 LOC. parity 27/27 = /tmp/parity_phase4_step2d.md)
 
 **문서 작성**: 2026-04-26 Phase 0 종료 시점. 사용자 승인 후 즉시 갱신.
 **다음 업데이트**: 매 phase step 완료 후 §11 marker 갱신.
-**최종 갱신**: 2026-04-26 Phase 3 step 6 + Phase 4 partial + Phase 5 §9.4 (shell delete) 종료.
+**최종 갱신**: 2026-04-26 Phase 4 step 2 (\_run_optimization_once 분해 — body 824 → 98 LOC) 완료.
