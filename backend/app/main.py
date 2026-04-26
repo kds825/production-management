@@ -11,6 +11,7 @@ from app.infrastructure.logging import RunIdMiddleware
 from app.presentation.routes import audit  # noqa: F401
 from app.presentation.routes import change_sets  # noqa: F401
 from app.presentation.routes import constraints  # noqa: F401
+from app.presentation.routes import decision_card  # noqa: F401
 from app.presentation.routes import decisions  # noqa: F401
 from app.presentation.routes import equipment  # noqa: F401
 from app.presentation.routes import master_data  # noqa: F401
@@ -59,7 +60,66 @@ app.include_router(plan_pipeline.router, prefix="/api")
 app.include_router(master_data.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(decisions.router, prefix="/api")
+app.include_router(decision_card.router, prefix="/api")
 app.include_router(change_sets.router, prefix="/api")
+
+
+@app.on_event("startup")
+def _register_decision_card_providers() -> None:
+    """Phase 6 — phrasing / section / gantt provider 명시적 register.
+
+    plan §B.1 Engineer review note: lifespan startup event 안에서만 등록.
+    모듈 import time 등록 X (테스트 부팅 부작용 차단).
+    """
+    from app.application.decisions.equipment_day_gantt import (
+        DefaultGanttBuilder,
+        InsulationGanttBuilder,
+        OutsourceGanttBuilder,
+        SheathGanttBuilder,
+        StrandingGanttBuilder,
+        register_gantt_builder,
+    )
+    from app.application.decisions.phrasing import register_phrasing_provider
+    from app.application.decisions.phrasing_providers import (
+        DefaultPhrasingProvider,
+        InsulationPhrasingProvider,
+        OutsourcePhrasingProvider,
+        SheathPhrasingProvider,
+        StrandingPhrasingProvider,
+    )
+    from app.application.decisions.section_builder import (
+        DefaultSectionBuilder,
+        InsulationSectionBuilder,
+        OutsourceSectionBuilder,
+        SheathSectionBuilder,
+        StrandingSectionBuilder,
+        register_section_builder,
+    )
+
+    for p in (
+        DefaultPhrasingProvider(),
+        SheathPhrasingProvider(),
+        StrandingPhrasingProvider(),
+        InsulationPhrasingProvider(),
+        OutsourcePhrasingProvider(),
+    ):
+        register_phrasing_provider(p)
+    for sb in (
+        DefaultSectionBuilder(),
+        SheathSectionBuilder(),
+        StrandingSectionBuilder(),
+        InsulationSectionBuilder(),
+        OutsourceSectionBuilder(),
+    ):
+        register_section_builder(sb)
+    for gb in (
+        DefaultGanttBuilder(),
+        SheathGanttBuilder(),
+        StrandingGanttBuilder(),
+        InsulationGanttBuilder(),
+        OutsourceGanttBuilder(),
+    ):
+        register_gantt_builder(gb)
 
 
 @app.get("/api/health", tags=["헬스체크"])
