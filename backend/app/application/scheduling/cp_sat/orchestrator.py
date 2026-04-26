@@ -20,11 +20,8 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 from __future__ import annotations
 
 import logging
-import math
-import os
 import time
 import uuid
-from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -60,7 +57,6 @@ from app.domain.constraint_rules import resolve_color_change_min
 from app.application.scheduling.greedy.slot_finder import _find_available_slot
 from app.application._shared.group_ops import (
     _extract_core_main_sq,
-    _get_drum_winding_min,
     _get_stranding_setup_min,
     _is_core_group,
     _is_sheath_group,
@@ -68,9 +64,6 @@ from app.application._shared.group_ops import (
     _st_sq,
 )
 from app.application._shared.slot_filters import (
-    _filter_by_sheath_routing,
-    _find_eligible_equipment,
-    _narrow_by_stranding,
     align_start_to_predecessor_end,
 )
 from app.application.scheduling.cp_sat import SolverInput
@@ -78,171 +71,41 @@ from app.application.scheduling.cp_sat.constraint_loader import (
     ConstraintSpec,
     load_active_constraints,
 )
-from app.application.scheduling.cp_sat.model_builder import BuiltModel, ModelWeights, build_model
+from app.application.scheduling.cp_sat.model_builder import (
+    BuiltModel,
+    ModelWeights,
+    build_model,
+)
 from app.application.scheduling.cp_sat.objective import compose_objective
-from app.application.scheduling.cp_sat.snapshot import SnapshotWeights, write_snapshot
+from app.application.scheduling.cp_sat.snapshot import write_snapshot
+
+# Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
+# builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
+from app.application.scheduling.cp_sat.helpers import (
+    _EDD_MIXED_PASTDUE_WEIGHT,
+    _EDD_PAIR_WEIGHT,
+    _IDLE_WEIGHT,
+    _MAX_HORIZON_MIN,
+    _PAST_SEVERITY_K,
+    _SLACK_WEIGHT_BASE,
+    _SOLVER_TIME_LIMIT_SEC,
+    _TARDINESS_WEIGHT,
+    _build_group_meta,  # noqa: F401  # used at §4-5 inline (Phase 3 step 2)
+    _build_snapshot_weights,
+    _priority_label,
+    _resolve_num_workers,
+)
 
 # Logger for non-fatal trace-write failures: observability must not kill
 # solver correctness (see Task 2A.3 wiring note near `return result`).
 _logger = logging.getLogger(__name__)
 
-# _WORK_MIN_PER_DAY 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
-# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
-
-# 연선연합(default) 카테고리 기준 1 근무일 최대 working-min (P9-E 신규).
-# Mon-Thu 22h 가동 중 휴식 2h 제외 = 20h 실가동 + 8h idle (창 내부) 합쳐 24h 창.
-# horizon 은 가장 큰 가용 카테고리 기준으로 잡아야 INFEASIBLE 를 피함 → 24h*60.
-_WORK_MIN_PER_DAY_DEFAULT = 24 * 60  # 1440분 (창 full)
-
-# CP-SAT 최대 계획 기간(근무 분) — 90 근무일. P9-E: calendar_engine 기반 축으로
-# 확장되어 기존 840*90=75600 보다 큰 값 필요 (공휴일/금요일 때문에 실가용 분은
-# 날마다 달라짐). 여유있게 90*1440 = 129600 으로 horizon 확장.
-_MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY_DEFAULT
-
-# CP-SAT 솔버 시간 제한(초)
-_SOLVER_TIME_LIMIT_SEC = 30
-
-
-# CP-SAT 포트폴리오 워커 수. 환경변수 `CPSAT_WORKERS` 로 오버라이드 가능.
-# 운영 기본값 8 — OR-Tools CP-SAT 은 워커별로 서로 다른 탐색 전략(LP/core/feasibility
-# pump 등)을 독립 스레드로 돌리고 먼저 해를 찾는 쪽이 이긴다. 4→8 로 bump 시
-# sublinear (1.5~2×) speedup 기대. 컨테이너/CI 환경 호스트 CPU 초과 방지를 위해
-# 환경변수 기반 오버라이드. 테스트 결정론을 위해 conftest 에서 `CPSAT_WORKERS=1`
-# 을 강제한다 (멀티워커는 타이밍 의존 비결정성 위험).
-def _resolve_num_workers() -> int:
-    raw = os.environ.get("CPSAT_WORKERS", "8")
-    try:
-        n = int(raw)
-    except ValueError:
-        n = 8
-    return max(1, n)
-
-
-# _DUE_HARD_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
-# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
-# _TARDINESS_WEIGHT 는 _DUE_HARD_WEIGHT 의 파생값이므로 여기 유지.
-_TARDINESS_WEIGHT = {
-    "critical": _DUE_HARD_WEIGHT * 100,
-    "urgent": _DUE_HARD_WEIGHT * 10,
-    "normal": _DUE_HARD_WEIGHT,
-}
-
-# _CHAIN_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
-# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
-_IDLE_WEIGHT = 1
-
-# On-time 그룹 간 "납기 임박도" 에 가산점을 주는 slack 가중치 base.
-# Why: tardiness_hard=True 에서 on-time 그룹은 `e ≤ due` hard constraint 만 걸리고
-# soft 항은 0 → 슬랙 3일 vs 13일이 objective 에서 동등 취급됨. 결과: 같은 설비에
-# 후보로 올라온 납기 여유 그룹이 납기 임박 그룹보다 앞에 놓이는 현상. EDD pair
-# tie-breaker (weight=1/pair) 만으론 `_IDLE_WEIGHT=1/min`, `_CHAIN_WEIGHT=120`,
-# `_TRANSITION_WEIGHT=180` 등 다른 항에 의해 압도될 수 있음.
-#
-# 해결: 각 on-time 그룹에 `weight × (end - base) / _WORK_MIN_PER_DAY` 항 추가.
-# `weight = _SLACK_WEIGHT_BASE // slack_min` → 납기 임박할수록 큰 가중치.
-#   - slack 1근무일(1440min) → w ≈ 69
-#   - slack 10근무일(14400min) → w ≈ 7
-#   → 약 10배 차등. idle_weight(1) 압도, past-due tardiness(1e5/min) 에는 열세.
-# base 를 뺀 형태로 항 scale 을 (end - now) ≈ 0 ~ horizon 에 제한 (end 자체가
-# 0~_MAX_HORIZON_MIN 라 절대값이 과대해지는 것 방지).
-_SLACK_WEIGHT_BASE = 100_000
-
-# Past-due 심각도 스케일 상수. past-due 그룹의 tardiness weight 는
-# `_TARDINESS_WEIGHT[priority] × (1 + past_days / _PAST_SEVERITY_K)` 으로 증폭.
-# Why: 기본 공식 `weight × (end - due)` 은 past-due 시 `weight × (end + |past|)`
-# = `weight × end + const` 로 계산돼 |past| 상수항이 argmin 에 기여 못함. 즉
-# "10일 지남 vs 3일 지남" 을 solver 가 동일 취급하고 WSPT (짧은 작업 먼저) 로
-# 순서를 잡음 → 가장 긴 past-due 작업이 맨 뒤로 밀림 (KBI PoC 에서 150SQ 3틀
-# past 3d 가 120SQ 3틀 past 10d 보다 뒤 배치되는 현상으로 관찰).
-# 해결: weight 자체에 심각도 배율을 곱해 오래 밀린 그룹의 `w × end` 항 gradient
-# 를 키움 → solver 가 실제로 앞으로 당기게 됨.
-# K=5 기준 배율표:
-#   past 0일  → ×1.0 (on-time 기준선)
-#   past 3일  → ×1.6
-#   past 5일  → ×2.0
-#   past 10일 → ×3.0
-#   past 20일 → ×5.0
-# priority (normal=1e5, urgent=1e6, critical=1e7) 스케일 위에 곱해지므로
-# 상대 순서만 영향, 다른 objective term 과의 상호작용은 기존과 유사.
-_PAST_SEVERITY_K = 5
-
-# 같은 공정·공유 설비 후보 쌍에서 EDD 위반(납기 빠른 게 늦게 시작)당 부과되는
-# penalty. Why: 기존 weight=1 로는 WSPT(짧은 작업 먼저) 이익을 이길 수 없어
-# 납기 임박한 긴 작업이 맨 뒤로 밀리는 현상 (KBI PoC 150SQ 33000m 납기 4/17
-# 이 300SQ 9500m 납기 4/30 뒤에 배치). on-time 그룹 간엔 past-due severity 가
-# 트리거되지 않고 slack weight 차이(수단위)도 WSPT 차이(수K~수만)를 압도
-# 하지 못함. EDD pair 를 강화해 "납기 순서" 를 명시적 soft constraint 로 강제.
-#
-# 스케일 설계:
-#   _IDLE_WEIGHT(1/min) × typical_duration(1000~3000min) ≈ 1000~3000
-#   _TRANSITION_WEIGHT(180) × 1~2 transitions ≈ 180~360
-#   → 일반 scheduling 결정에서 WSPT/idle/transition 이익은 수K 수준
-#   → EDD 위반 1쌍 penalty 를 10_000 으로 두면 이들을 지배
-#   → past-due tardiness(1e5/min × 수천min = 수억) 는 EDD 압도 → past-due
-#     은 여전히 tardiness 로 강제 (EDD 는 on-time 간 정렬 전용)
-_EDD_PAIR_WEIGHT = 10_000
-
-# "past-due ↔ on-time" 혼합 쌍 전용 heavy penalty (Hybrid C 철학).
-# Why: 과포화 설비에 past-due 긴 그룹 + on-time 짧은 그룹이 함께 올라간 상황
-# (KBI PoC 54BO1 실 사례: past-due 150SQ dur 3096min vs on-time 300SQ_2차 dur
-# 990min). 순수 가중 tardiness sum 관점에선 on-time 을 앞에 놓는 게 optimal 이
-# 될 수 있으나 (150SQ 가 어차피 납기 불가능하므로 작은 on-time 을 앞에 끼워
-# 넣는 게 총합 유리) 공장관리자 mental model 은 "past-due 가 무조건 먼저".
-#
-# 구현: past-due 가 on-time 뒤에 놓이면 `_EDD_MIXED_PASTDUE_WEIGHT` 만큼 penalty.
-# tardiness weight (1e6~1e7/min × 수천 min = 1e9~1e10/그룹) 스케일에 맞춰
-# 1e9 로 설정 — 단일 violation 이 그룹당 tardiness 한 항 수준의 기여로 생김.
-# "past-due 앞당김으로 얻는 tardiness 감소 < EDD 위반 페널티" 관계를 만들어
-# solver 가 항상 past-due 를 먼저 놓게 유도. hard constraint 가 아닌 soft 이유:
-# past-due 가 물리적으로 먼저 끝날 수 없는 corner case (dur 이 상상 초월) 에
-# feasibility 를 유지하기 위함.
-#
-# 스케일 근거: 실측 case 에서 Option A↔B 의 tardiness delta 가 1.7e9 수준.
-# _EDD_MIXED_PASTDUE_WEIGHT = 1e9 은 단일 violation 으로도 이 delta 를 압도.
-_EDD_MIXED_PASTDUE_WEIGHT = 1_000_000_000
-
-# _TRANSITION_WEIGHT 는 app.domain.constants 로 이동 (Week 3 Task 3A.1).
-# 위 import 블록에서 re-export 되어 기존 path 유지 (D7-C).
-
-
-# ── 진단: solver 스냅샷 덤프 ──────────────────────────────────────────────
-# Why: EDD 역전·frozen 고정 등 scheduling 이상을 사후 추적하려면 solver 의 입력
-# (group_meta, frozen 집합) 과 출력(start/end/equipment/tardiness 및 각 목적함수
-# 항의 기여값) 이 한 파일에 묶여 있어야 재현 가능한 진단이 된다. 로그만으로는
-# run_label 당 데이터를 재구성하기 어려움. 실패(쓰기 오류) 는 solver 결과를
-# 막지 않도록 조용히 삼킨다.
-
-
-def _build_snapshot_weights() -> SnapshotWeights:
-    """Bundle the cp_sat_optimizer scaling weights for the snapshot writer.
-
-    Reading these once at call-site keeps ``solver/snapshot.py`` free of
-    upstream module imports while preserving the "what weights ran"
-    record that diagnostic tooling relies on.
-    """
-    return SnapshotWeights(
-        tardiness_normal=_TARDINESS_WEIGHT["normal"],
-        past_severity_k=_PAST_SEVERITY_K,
-        slack_base=_SLACK_WEIGHT_BASE,
-        edd_pair=_EDD_PAIR_WEIGHT,
-        edd_mixed_pastdue=_EDD_MIXED_PASTDUE_WEIGHT,
-        transition=_TRANSITION_WEIGHT,
-        chain=_CHAIN_WEIGHT,
-        idle=_IDLE_WEIGHT,
-    )
-
-
-# ── 헬퍼 ──────────────────────────────────────────────────────────────────
-
-
-def _priority_label(customer_priority: int | None) -> str:
-    cp = customer_priority or 99
-    if cp <= 3:
-        return "critical"
-    if cp <= 7:
-        return "urgent"
-    return "normal"
-
+# _TARDINESS_WEIGHT / _IDLE_WEIGHT / _SLACK_WEIGHT_BASE / _PAST_SEVERITY_K /
+# _EDD_PAIR_WEIGHT / _EDD_MIXED_PASTDUE_WEIGHT / _MAX_HORIZON_MIN / _SOLVER_TIME_LIMIT_SEC
+# 상수, _resolve_num_workers / _build_snapshot_weights / _priority_label /
+# _compute_group_duration helpers, _build_group_meta 는 모두 helpers.py 로 이동
+# (Phase 3 step 2). 위 import 블록에서 가져온다.
+# 가중치 설계 의도는 helpers.py 의 상수 docstring 참조.
 
 # _work_days_between, _working_minutes_between, _due_work_min 은
 # app.application._shared.calendar_ops 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치).
@@ -254,44 +117,6 @@ from app.application._shared.calendar_ops import (  # noqa: E402, F401
     _work_days_between,  # re-export until Week 9 (D7-C)
     _working_minutes_between,  # re-export until Week 9 (D7-C)
 )
-
-
-def _compute_group_duration(
-    group_batches: list[ProductionBatch],
-    eligible: list[EquipmentMaster],
-    speed_map: dict,
-) -> float:
-    """배치 그룹의 순수 작업 duration(분, 설업 제외)."""
-    rep = group_batches[0]
-    rep_speed = float(rep.line_speed_mpm or 0)
-    if rep_speed <= 0:
-        for eq in eligible:
-            sm = speed_map.get((eq.equipment_code, float(rep.sq_mm2 or 0)))
-            if sm and sm.line_speed_mpm and float(sm.line_speed_mpm) > 0:
-                rep_speed = float(sm.line_speed_mpm)
-                break
-    line_speed = rep_speed if rep_speed > 0 else 10
-
-    header = next((b for b in group_batches if b.batch_seq == -1), None)
-    if header is not None:
-        hd = float(header.estimated_duration_min or 0)
-        if hd <= 0:
-            ls = float(header.line_speed_mpm or 0) or line_speed
-            hd = float(header.total_length_m or 0) / ls if ls > 0 else 60
-        return hd
-
-    total = 0.0
-    for b in group_batches:
-        d = float(b.estimated_duration_min or 0)
-        if d <= 0:
-            ls = float(b.line_speed_mpm or 0) or line_speed
-            d = (
-                (float(b.total_length_m or 0) + float(b.extra_length_m or 0)) / ls
-                if ls > 0
-                else 60
-            )
-        total += d
-    return total
 
 
 # _compute_group_duration_map, _is_multi_equip_group 은
@@ -592,142 +417,17 @@ def cp_sat_schedule(
         welding_min = solver_input_override.welding_min
         sq_to_wire_d = dict(solver_input_override.sq_to_wire_d)
 
-    # ── 4. 그루핑 ─────────────────────────────────────────────────────────
-    batch_groups: OrderedDict[str, list[ProductionBatch]] = OrderedDict()
-    for b in batches:
-        key = b.batch_group or f"_single_{b.batch_id}"
-        batch_groups.setdefault(key, []).append(b)
-
-    # ── 5. 그룹별 메타 계산 ───────────────────────────────────────────────
-    group_meta: dict[str, dict] = {}
-    for gk, gb in batch_groups.items():
-        rep = gb[0]
-        candidate = equipment_by_process.get(rep.process_name, [])
-
-        if rep.process_name in ("고압시스", "저압시스"):
-            candidate = _filter_by_sheath_routing(rep, candidate)
-        if gk.startswith("A120_"):
-            candidate = [e for e in candidate if e.equipment_code == "SH-A120"]
-        elif gk.startswith("A100_"):
-            candidate = [e for e in candidate if e.equipment_code == "SH-A100"]
-
-        eligible = _find_eligible_equipment(rep, candidate)
-        if rep.process_name == "연선":
-            eligible = _narrow_by_stranding(rep, eligible)
-
-        if not eligible:
-            result["warnings"].append(
-                f"배치그룹 {gk}: 공정 '{rep.process_name}' SQ={rep.sq_mm2} — 적합한 설비 없음"
-            )
-            continue
-
-        work_dur = _compute_group_duration(gb, eligible, speed_map)
-        setup_min = float(rep.setup_time_min or 0)
-        drum_wind = _get_drum_winding_min(
-            eligible[0].equipment_code, rep.sq_mm2, speed_map
-        )
-        # CP-SAT 내부 duration: 실제 근무 분 그대로 사용 (최소 1분)
-        # 종전 840분 단위 올림은 모든 작업이 같은 크기로 보여 EDD 정렬이 불가능했음
-        cpsat_dur_raw = max(1, int(math.ceil(work_dur + setup_min + drum_wind)))
-
-        # Round 2 HIGH #7 (conservative): 멀티설비 분배 대상은 실제 배치 단계에서
-        # `_schedule_multi_equipment` 로 N 설비 병렬 실행 → wall-clock duration 은
-        # 대략 raw / N_split. CP-SAT 모델은 단일 interval 가정이라 raw 를 그대로
-        # 쓰면 "분할 가능 그룹이 실제보다 오래 걸린다" 고 오인해 후속 배치를 뒤로
-        # 밀게 됨. 여기서 근사치 N_split 로 나눠 solver 가 실제 wall-clock 을
-        # 반영하게 함. 완전한 분할 모델링(N intervals per group)은 별도 phase.
-        _is_multi_pre, _total_drums_pre = _is_multi_equip_group(
-            gk,
-            gb,
-            eligible,
-            {},  # pre-phase: sq_to_equip 비어있어 초기 판단
-        )
-        if _is_multi_pre and _total_drums_pre >= 2 and len(eligible) >= 2:
-            _n_split = max(1, min(_total_drums_pre, len(eligible)))
-            # 실제 setup 은 분할되지 않으므로 work_dur 만 나눔 + setup/drum_wind 유지
-            _work_per_split = work_dur / _n_split
-            cpsat_dur = max(1, int(math.ceil(_work_per_split + setup_min + drum_wind)))
-        else:
-            cpsat_dur = cpsat_dur_raw
-
-        # Round 2 HIGH #5: 설비별 duration map (solver 가 "빠른 설비 선호" 가능).
-        # 동일 배치를 설비 A/B 에 할당 시 duration 차이가 유의미하면 설비 간
-        # 개별 cpsat_dur_by_eq 를 interval 에 적용. 차이 < 10% 이면 평균값(cpsat_dur)
-        # 사용 (모델 경량화).
-        _dur_map = _compute_group_duration_map(gb, eligible, speed_map)
-        # setup/drum_wind 를 더해 각 설비별 total cpsat dur 계산.
-        # drum_wind 는 설비 카테고리 단위이므로 eligible[0] 의 값을 공통 사용
-        # (설비간 차이는 추후 개선 항목).
-        # Round 2 HIGH #7: 멀티설비 분할 대상이면 설비별 work_dur 도 N_split 로 나눔.
-        _multi_split_divisor = (
-            max(1, min(_total_drums_pre, len(eligible)))
-            if (_is_multi_pre and _total_drums_pre >= 2 and len(eligible) >= 2)
-            else 1
-        )
-        cpsat_dur_by_eq: dict[str, int] = {}
-        if _dur_map:
-            for _eq in eligible:
-                _d = _dur_map.get(_eq.equipment_code, work_dur) / _multi_split_divisor
-                cpsat_dur_by_eq[_eq.equipment_code] = max(
-                    1, int(math.ceil(_d + setup_min + drum_wind))
-                )
-        else:
-            # 빈 map (eligible 전부 speed 데이터 없음) — 단일 값으로 fallback +
-            # warning 기록. hard-coded 10 fallback 은 제거 (MED #5 요구사항).
-            for _eq in eligible:
-                cpsat_dur_by_eq[_eq.equipment_code] = cpsat_dur
-            result["warnings"].append(
-                f"그룹 {gk}: SpeedMaster 에 (설비, SQ={rep.sq_mm2}) 데이터 없음 — "
-                f"설비별 duration 차등 없이 단일값 {cpsat_dur}min 사용"
-            )
-
-        # spread 판단 (10% 이상 차이나면 per-eq interval 사용)
-        _dur_values = list(cpsat_dur_by_eq.values())
-        _dur_spread_ratio = 0.0
-        if _dur_values and max(_dur_values) > 0:
-            _dur_spread_ratio = (max(_dur_values) - min(_dur_values)) / max(_dur_values)
-        _per_eq_dur_enabled = _dur_spread_ratio >= 0.10
-
-        earliest_due = min((b.due_date for b in gb if b.due_date), default=None)
-        due_wmin = (
-            _due_work_min(earliest_due, base_date) if earliest_due else _MAX_HORIZON_MIN
-        )
-
-        # Past-due 심각도 배율 — due_wmin < 0 일수록 더 큰 가중치.
-        # 예: 10일 과거 → past_days = 10 → severity_mul = 1 + 10/5 = 3.0.
-        # on-time 그룹은 past_days=0 → ×1.0 (기존 priority 가중치 그대로).
-        #
-        # divisor 는 `_WORK_MIN_PER_DAY` (840, 1근무일) — `_due_work_min` 이
-        # legacy fallback 에서 `wd * _WORK_MIN_PER_DAY` 로 산출하므로 동일
-        # 축. 기존 구현은 `_WORK_MIN_PER_DAY_DEFAULT` (1440, 24h full) 로
-        # 나눠 past_days 가 840/1440 ≈ 0.58배 과소평가, severity 배율이
-        # 설계치의 68% 수준으로 약화됐음 (c5be1a6 의 의도와 어긋남).
-        # 실측: 150SQ 실 past 4일 → snapshot past_days=1.17 (= 4 × 840/1440),
-        # severity 1.23 (정상 1.8). 수정 후 past_days=4.0, severity 1.8 회복.
-        _past_days = max(0, (-due_wmin) / _WORK_MIN_PER_DAY) if due_wmin < 0 else 0.0
-        _severity_mul = 1.0 + _past_days / _PAST_SEVERITY_K
-        _weight = int(
-            _TARDINESS_WEIGHT[_priority_label(rep.customer_priority)] * _severity_mul
-        )
-
-        group_meta[gk] = {
-            "rep": rep,
-            "batches": gb,
-            "eligible": eligible,
-            "work_dur": work_dur,
-            "setup_min": setup_min,
-            "drum_wind": drum_wind,
-            "cpsat_dur": cpsat_dur,
-            # Round 2 HIGH #5
-            "cpsat_dur_by_eq": cpsat_dur_by_eq,
-            "per_eq_dur_enabled": _per_eq_dur_enabled,
-            "due_wmin": due_wmin,
-            "weight": _weight,
-            "earliest_due": earliest_due,
-            # 인접 쌍 chain_terms 계산용 ordinal — None 안전
-            "due_date_ord": earliest_due.toordinal() if earliest_due else None,
-            "sq": int(rep.sq_mm2 or 0),
-        }
+    # ── 4-5. 그루핑 + 그룹별 메타 계산 ─────────────────────────────────────
+    # Phase 3 step 2: §4 (그루핑) + §5 (group_meta) 는 helpers._build_group_meta
+    # 로 이동. behaviour 1:1 보존 — eligible 필터, cpsat_dur_by_eq, due_wmin /
+    # severity / weight 산식 모두 동일. warnings 는 in-place append.
+    batch_groups, group_meta = _build_group_meta(
+        batches,
+        equipment_by_process,
+        speed_map,
+        base_date=base_date,
+        warnings_out=result["warnings"],
+    )
 
     if not group_meta:
         result["warnings"].append("스케줄링 가능한 배치 그룹 없음")
@@ -1545,7 +1245,9 @@ def cp_sat_schedule(
     # fails (e.g., schema drift, network blip), log a warning and let the
     # caller receive a valid `result`. The unit test suite asserts the
     # happy path; parity 11/11 catches SAVEPOINT rollback regressions.
-    from app.application.scheduling.cp_sat.decision_aggregator import build_decision_inputs
+    from app.application.scheduling.cp_sat.decision_aggregator import (
+        build_decision_inputs,
+    )
     from app.application.scheduling.cp_sat.trace_writer import (
         TraceMetadata,
         compute_input_hash,

@@ -53,15 +53,45 @@ _INFRASTRUCTURE_PREFIXES = (
 )
 
 
+def _is_type_checking_guarded(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    """Return True if ``node`` is nested inside an ``if TYPE_CHECKING:`` block.
+
+    runtime 에 실행되지 않는 import 는 boundary 위반이 아니다 (DB I/O 없음).
+    """
+    cursor = parents.get(node)
+    while cursor is not None:
+        if isinstance(cursor, ast.If):
+            test = cursor.test
+            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+                return True
+            if (
+                isinstance(test, ast.Attribute)
+                and isinstance(test.value, ast.Name)
+                and test.attr == "TYPE_CHECKING"
+            ):
+                return True
+        cursor = parents.get(cursor)
+    return False
+
+
 def _module_imports_infrastructure(py_path: Path) -> list[str]:
     """Return the list of `app.infrastructure.*` names the file imports.
 
     Walks AST (not regex) so inline comments and string literals don't
-    false-positive.
+    false-positive. ``if TYPE_CHECKING:`` block 의 import 는 runtime 에서
+    실행되지 않으므로 (PEP 484) boundary 검사에서 제외 — 함수 시그니처
+    type-hint 전용 import 는 DB I/O 가 아니다.
     """
     tree = ast.parse(py_path.read_text(), filename=str(py_path))
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
     hits: list[str] = []
     for node in ast.walk(tree):
+        if _is_type_checking_guarded(node, parents):
+            continue
         if isinstance(node, ast.ImportFrom) and node.module:
             for prefix in _INFRASTRUCTURE_PREFIXES:
                 if node.module == prefix or node.module.startswith(prefix + "."):
