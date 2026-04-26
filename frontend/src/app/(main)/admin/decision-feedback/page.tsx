@@ -195,9 +195,9 @@ function ClusterList({
             {c.frequency}건 · 운영자 {c.distinct_operators}명 · 영향 카드{" "}
             {c.cards_affected}건
           </div>
-          <p className="text-pwc-body italic text-pwc-gray-600 mb-3 line-clamp-2">
-            “{c.sample_free_text}”
-          </p>
+          <blockquote className="text-pwc-quote text-pwc-gray-600 mb-3 line-clamp-2 border-l-2 border-pwc-gray-200 pl-2">
+            {c.sample_free_text}
+          </blockquote>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

@@ -65,6 +65,15 @@
   --text-pwc-buttonText-sm: 13px;
   --text-pwc-buttonText-sm--line-height: 18px;
   --text-pwc-buttonText-sm--font-weight: 600;
+  --text-pwc-quote: 16px;
+  --text-pwc-quote--line-height: 24px;
+  --text-pwc-quote--font-style: italic;
+
+  /* breakpoint 토큰 (UI review §3 — 모든 카드 시나리오 일관 768/1024/1440) */
+  --breakpoint-bp-mobile: 480px;
+  --breakpoint-bp-tablet: 768px;
+  --breakpoint-bp-desktop: 1024px;
+  --breakpoint-bp-wide: 1440px;
 }
 
 :root {
