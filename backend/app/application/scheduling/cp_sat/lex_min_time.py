@@ -200,6 +200,72 @@ def solve_lex_min_time(
     )
 
 
+@dataclass
+class AdaptedSolveResult:
+    """orchestrator §7 가 두 path (weighted-sum / lex) 에서 동일하게 소비하는
+    결과 shape. weighted-sum 은 ``cp_model.CpSolver().solve(model)`` 직접
+    호출로 (solver, status, wall_s) 를 만들고, lex 는 본 모듈의
+    ``_adapt_lex_to_solve_result`` 로 만든다.
+
+    필드 의미:
+        solver      — ``CpSolver`` 인스턴스 (``solver.value(var)`` 호출 가능).
+        status      — ``cp_model`` 상수 (OPTIMAL / FEASIBLE).
+        wall_s      — 솔브 elapsed seconds (계측용).
+        built       — ``BuiltModel``. lex path 는 deepcopy 본을 가리킴 (vars
+                       가 ``solver`` 와 같은 protobuf 식별자).
+        lex_t_star / lex_makespan_min / lex_all_due_met — lex 결과 메트릭.
+                       weighted-sum path 는 모두 ``None``.
+        mode        — ``"lex_min_time"`` / ``"weighted_sum"`` /
+                       ``"weighted_sum_fallback_from_lex"``.
+    """
+
+    solver: cp_model.CpSolver
+    status: int
+    wall_s: float
+    built: BuiltModel
+    lex_t_star: int | None = None
+    lex_makespan_min: int | None = None
+    lex_all_due_met: bool | None = None
+    mode: str = "weighted_sum"
+
+
+def _adapt_lex_to_solve_result(
+    lex_res: LexResult,
+    lex_built: BuiltModel,
+    wall_s: float,
+) -> AdaptedSolveResult:
+    """``LexResult`` 를 orchestrator 가 소비하는 ``AdaptedSolveResult`` 로 변환.
+
+    호출 전제: ``lex_res.status ∈ {"OPTIMAL", "FEASIBLE"}``. INFEASIBLE_A/B/
+    UNKNOWN 은 caller 가 미리 거른 후 weighted-sum 폴백을 처리한다.
+
+    같은 ``ScheduleTask`` insert 경로 사용 — ``lex_built`` 의 vars 와
+    ``lex_res.solver`` 가 동일한 protobuf 식별자를 가리키므로 §8 캘린더
+    그리디는 ``solver.value(start_vars[gk])`` 로 읽을 수 있다.
+    """
+    if lex_res.status not in ("OPTIMAL", "FEASIBLE"):
+        raise ValueError(
+            f"_adapt_lex_to_solve_result expects OPTIMAL/FEASIBLE, "
+            f"got {lex_res.status!r} (caller must filter INFEASIBLE_* / UNKNOWN "
+            f"and trigger weighted-sum fallback explicitly)"
+        )
+    if lex_res.solver is None:
+        raise ValueError(
+            "lex_res.solver must be present on OPTIMAL/FEASIBLE — None signals "
+            "internal inconsistency in solve_lex_min_time"
+        )
+    return AdaptedSolveResult(
+        solver=lex_res.solver,
+        status=cp_model.OPTIMAL if lex_res.status == "OPTIMAL" else cp_model.FEASIBLE,
+        wall_s=wall_s,
+        built=lex_built,
+        lex_t_star=lex_res.t_star,
+        lex_makespan_min=lex_res.makespan_min,
+        lex_all_due_met=lex_res.all_due_met,
+        mode="lex_min_time",
+    )
+
+
 def _infer_horizon(built: BuiltModel) -> int:
     """end_vars 의 최대 upper-bound 를 horizon 으로 추정.
 

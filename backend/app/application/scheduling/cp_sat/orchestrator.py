@@ -564,7 +564,10 @@ def cp_sat_schedule(
     if min_time_mode:
         import copy as _copy
 
-        from app.application.scheduling.cp_sat.lex_min_time import solve_lex_min_time
+        from app.application.scheduling.cp_sat.lex_min_time import (
+            _adapt_lex_to_solve_result,
+            solve_lex_min_time,
+        )
 
         _lex_built = _copy.deepcopy(_built)
         _lex_t0 = time.perf_counter()
@@ -577,19 +580,19 @@ def cp_sat_schedule(
         )
         _lex_wall_s = time.perf_counter() - _lex_t0
         if _lex_res.status in ("OPTIMAL", "FEASIBLE"):
-            # lex 성공 — _built 를 deepcopy 본으로 rebind 하여 unpack 시
-            # vars 가 lex.solver.value() 로 읽히도록.
+            # adapter (Phase 3 step 4) 가 LexResult → AdaptedSolveResult 변환.
+            # 같은 ScheduleTask insert 경로 사용 — adapted.built 의 vars 와
+            # adapted.solver 가 동일 protobuf 식별자.
+            adapted = _adapt_lex_to_solve_result(_lex_res, _lex_built, _lex_wall_s)
             _used_lex = True
-            _built = _lex_built
-            solver = _lex_res.solver
-            status = (
-                cp_model.OPTIMAL if _lex_res.status == "OPTIMAL" else cp_model.FEASIBLE
-            )
-            _solve_wall_s = _lex_wall_s
-            result["solver_mode"] = "lex_min_time"
-            result["lex_t_star"] = _lex_res.t_star
-            result["lex_makespan_min"] = _lex_res.makespan_min
-            result["lex_all_due_met"] = _lex_res.all_due_met
+            _built = adapted.built
+            solver = adapted.solver
+            status = adapted.status
+            _solve_wall_s = adapted.wall_s
+            result["solver_mode"] = adapted.mode
+            result["lex_t_star"] = adapted.lex_t_star
+            result["lex_makespan_min"] = adapted.lex_makespan_min
+            result["lex_all_due_met"] = adapted.lex_all_due_met
         else:
             # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (원본 _built 유지).
             result["warnings"].append(
