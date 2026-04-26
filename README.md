@@ -139,25 +139,27 @@ npm run dev  # http://localhost:3000
 
 ## 파이프라인 아키텍처
 
-### Stage 1: 배치 생성 (batch_grouping.py)
+> **2026-04 리팩토링 완료**: `services/` 단일 디렉토리 → `domain/` + `application/{ingest, scheduling, decisions, validation, cascade, _shared}/` + `infrastructure/{parsers, exporters, llm, calendar_engine}/` 4-layer Clean Architecture 로 분해. 자세한 매핑은 [docs/architecture-target.md](docs/architecture-target.md) 참조.
+
+### Stage 1: 배치 생성 (`application/ingest/batch_grouper.py`)
 
 ```
 ERP 수주 파일 (.xls)
     │
     ▼
-┌──────────────────┐
-│  erp_parser.py   │  ERP 파싱 → sales_order 테이블
-└──────────────────┘
+┌────────────────────────────────────┐
+│  infrastructure/parsers/           │
+│   erp_parser.py / wip_parser.py    │  → sales_order / wip_inventory
+└────────────────────────────────────┘
     │
     ▼
-┌──────────────────┐
-│  wip_parser.py   │  재공실사 파싱 → wip_inventory 테이블
-│  wip_matching.py │  WIP ↔ 수주 매칭 (SQ + 색상 기준)
-└──────────────────┘
+┌────────────────────────────────────┐
+│  application/ingest/wip_matching   │  WIP ↔ 수주 매칭 (SQ + 색상 기준)
+└────────────────────────────────────┘
     │
     ▼
 ┌──────────────────────────────────────────────────┐
-│  batch_grouping.py                                │
+│  application/ingest/batch_grouper.py              │
 │                                                    │
 │  수주 1건 → 공정별 production_batch 생성           │
 │  ┌─────────────────────────────────────────┐      │
@@ -183,14 +185,17 @@ ERP 수주 파일 (.xls)
   Excel 작업지시서 (8시트: 연선/B100/A100/A120/연합/CV절연/A150시스/고압연선)
 ```
 
-### Stage 2: 자동 스케줄링 (schedule_optimizer.py)
+### Stage 2: 자동 스케줄링 (CP-SAT 기본 + 그리디 fallback)
+
+기본 엔진은 **CP-SAT** (`application/scheduling/cp_sat/orchestrator.py`). lex_min_time 모드 지원 (Phase A: max_tardiness min, Phase B: makespan min — 실측 weighted-sum 대비 158× 빠름, [docs/lex-mode-comparison.md §6](docs/lex-mode-comparison.md) 참조). 폴백/리트라이 시 **그리디** (`application/scheduling/greedy/optimization_loop.py`) 호출.
 
 ```
 production_batch (batch_group 단위)
     │
     ▼
 ┌──────────────────────────────────────────────────┐
-│  schedule_optimizer.py                            │
+│  application/scheduling/cp_sat/orchestrator.py    │
+│  (또는 greedy/optimization_loop.py — 폴백)         │
 │                                                    │
 │  1. 공정 순서 정렬 (연선→절연→연합→시스)           │
 │  2. WIP 매칭 공정 스킵 (wip_complete)              │
@@ -218,7 +223,7 @@ production_batch (batch_group 단위)
 │  │  - 종료시간 정각 올림 (09:48→10:00)       │      │
 │  └─────────────────────────────────────────┘      │
 │                                                    │
-│  calendar_engine.py:                               │
+│  infrastructure/calendar_engine.py:                │
 │    월~목: 22h, 금: 14h, 토/일: 0h                  │
 │    안전교육: 매월 마지막 2주 월요일 -2h             │
 │    공휴일: 0h                                      │
@@ -276,67 +281,67 @@ Stage 2 스케줄링 알고리즘:
 
 ### 납기/우선순위 (3건)
 
-| ID  | 제약조건             | 적용 단계 | 제어 | 코드 위치                                              |
-| --- | -------------------- | --------- | ---- | ------------------------------------------------------ |
-| 1-1 | 거래처 우선순위      | Stage 1,2 | 코드 | batch_grouping (\_sort_key), schedule_optimizer (정렬) |
-| 1-2 | 납기 기준(도착/출하) | Stage 1,2 | 코드 | batch_grouping (\_sort_key), schedule_optimizer (정렬) |
-| 1-3 | 긴급 변경 대응       | 수동      | —    | D&D로 블록 이동                                        |
+| ID  | 제약조건             | 적용 단계 | 제어 | 코드 위치                                                                |
+| --- | -------------------- | --------- | ---- | ------------------------------------------------------------------------ |
+| 1-1 | 거래처 우선순위      | Stage 1,2 | 코드 | application/ingest/batch_grouper, application/scheduling/{cp_sat,greedy} |
+| 1-2 | 납기 기준(도착/출하) | Stage 1,2 | 코드 | application/ingest/batch_grouper, application/scheduling/{cp_sat,greedy} |
+| 1-3 | 긴급 변경 대응       | 수동      | —    | D&D로 블록 이동                                                          |
 
 ### SM수량/재고 (4건)
 
-| ID  | 제약조건                      | 적용 단계 | 제어 | 코드 위치                             |
-| --- | ----------------------------- | --------- | ---- | ------------------------------------- |
-| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | 코드 | wip_matching, batch_grouping          |
-| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | 코드 | batch_grouping (sq<=10 or "고내화")   |
-| 2-3 | 틀단위 기준 생산              | Stage 1   | 코드 | batch_group으로 대체                  |
-| 2-4 | 61연선 분리                   | Stage 1   | 코드 | batch_grouping (is_61strand, sq>=300) |
+| ID  | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                           |
+| --- | ----------------------------- | --------- | ---- | --------------------------------------------------- |
+| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | 코드 | application/ingest/wip_matching, batch_grouper      |
+| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | 코드 | application/ingest/batch_grouper (sq<=10 or 고내화) |
+| 2-3 | 틀단위 기준 생산              | Stage 1   | 코드 | batch_group으로 대체                                |
+| 2-4 | 61연선 분리                   | Stage 1   | 코드 | application/ingest/batch_grouper (is_61strand)      |
 
 ### 색상관리 (3건)
 
-| ID  | 제약조건                      | 적용 단계 | 제어   | 코드 위치                                       |
-| --- | ----------------------------- | --------- | ------ | ----------------------------------------------- |
-| 3-1 | 색상별 여척 추가 (7m+시료10m) | Stage 1   | **DB** | batch_grouping (extra_length_m, sample_extra_m) |
-| 3-2 | 색상 묶음 배치                | Stage 1   | 코드   | batch_grouping (\_sort_key: sheath_color)       |
-| 3-3 | 설비별 색상그룹 제한          | Stage 1   | 코드   | batch_grouping (A100=갈회, A120=흑청)           |
+| ID  | 제약조건                      | 적용 단계 | 제어   | 코드 위치                                                 |
+| --- | ----------------------------- | --------- | ------ | --------------------------------------------------------- |
+| 3-1 | 색상별 여척 추가 (7m+시료10m) | Stage 1   | **DB** | application/ingest/batch_grouper (extra_length_m)         |
+| 3-2 | 색상 묶음 배치                | Stage 1   | 코드   | domain/sheath_cluster + ingest/batch_grouper (\_sort_key) |
+| 3-3 | 설비별 색상그룹 제한          | Stage 1   | 코드   | application/ingest/batch_grouper (A100=갈회, A120=흑청)   |
 
 ### 시간/속도 (5건)
 
-| ID  | 제약조건                   | 적용 단계 | 제어   | 코드 위치                                 |
-| --- | -------------------------- | --------- | ------ | ----------------------------------------- |
-| 4-1 | 규격교체 시간 (동일SQ=0분) | Stage 2   | 코드   | schedule_optimizer (same_sq → setup=0)    |
-| 4-2 | 색상교체 시간 (+120분)     | Stage 2   | 코드   | schedule_optimizer (color_change_min=120) |
-| 4-3 | 드럼 권취 시간             | Stage 2   | 코드   | schedule_optimizer (setup_start_min)      |
-| 4-4 | 용접 시간                  | Stage 2   | **DB** | schedule_optimizer (welding_min)          |
-| 4-5 | 테이핑 속도 제한           | Stage 2   | 코드   | schedule_optimizer (\_get_tp_line_speed)  |
+| ID  | 제약조건                   | 적용 단계 | 제어   | 코드 위치                                            |
+| --- | -------------------------- | --------- | ------ | ---------------------------------------------------- |
+| 4-1 | 규격교체 시간 (동일SQ=0분) | Stage 2   | 코드   | application/scheduling/{cp_sat,greedy} (same_sq → 0) |
+| 4-2 | 색상교체 시간 (+120분)     | Stage 2   | 코드   | application/scheduling/{cp_sat,greedy}               |
+| 4-3 | 드럼 권취 시간             | Stage 2   | 코드   | application/scheduling/{cp_sat,greedy}               |
+| 4-4 | 용접 시간                  | Stage 2   | **DB** | application/scheduling/{cp_sat,greedy} (welding_min) |
+| 4-5 | 테이핑 속도 제한           | Stage 2   | 코드   | application/scheduling/greedy (\_get_tp_line_speed)  |
 
 ### 설비배정 (6건)
 
-| ID   | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                       |
-| ---- | ----------------------------- | --------- | ---- | ----------------------------------------------- |
-| 5-1  | SQ 기준 설비 배정             | Stage 2   | 코드 | schedule_optimizer (\_SQ_TO_WIRE_DIAMETER)      |
-| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | 코드 | batch_grouping (\_sort_key: stranding_type)     |
-| 5-3  | 다심 우선배치                 | Stage 1   | 코드 | batch_grouping (\_sort_key: multi_core_penalty) |
-| 5-5  | TFR-GV 절연 생략              | Stage 1   | 코드 | batch_grouping (skip_stranding, sq<=25)         |
-| 10-3 | 시스 재질 라우팅              | Stage 2   | 코드 | schedule_optimizer (\_filter_by_sheath_routing) |
-| 10-4 | 전압별 드럼 분류              | Stage 1   | 코드 | batch_grouping (\_sort_key: voltage)            |
+| ID   | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                                     |
+| ---- | ----------------------------- | --------- | ---- | ------------------------------------------------------------- |
+| 5-1  | SQ 기준 설비 배정             | Stage 2   | 코드 | application/scheduling/greedy (\_SQ_TO_WIRE_DIAMETER)         |
+| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | 코드 | application/ingest/batch_grouper (\_sort_key: stranding_type) |
+| 5-3  | 다심 우선배치                 | Stage 1   | 코드 | application/ingest/batch_grouper (multi_core_penalty)         |
+| 5-5  | TFR-GV 절연 생략              | Stage 1   | 코드 | application/ingest/batch_grouper (skip_stranding, sq<=25)     |
+| 10-3 | 시스 재질 라우팅              | Stage 2   | 코드 | application/scheduling/greedy (\_filter_by_sheath_routing)    |
+| 10-4 | 전압별 드럼 분류              | Stage 1   | 코드 | application/ingest/batch_grouper (\_sort_key: voltage)        |
 
 ### 가동시간 (4건)
 
-| ID  | 제약조건                       | 적용 단계 | 제어   | 코드 위치                               |
-| --- | ------------------------------ | --------- | ------ | --------------------------------------- |
-| 6-1 | 안전교육(매월 마지막2주 월-2h) | Stage 2   | 코드   | calendar_engine (\_is_last_two_mondays) |
-| 6-2 | 금요일 야간 단축 (14h)         | Stage 2   | 코드   | calendar_engine (weekday==4 → 14h)      |
-| 6-4 | 공휴일/휴무 (0h)               | Stage 2   | **DB** | calendar_engine (CAL-HOL 조회)          |
-| —   | 토/일 미가동 (0h)              | Stage 2   | 코드   | calendar_engine (weekday>=5 → 0h)       |
+| ID  | 제약조건                       | 적용 단계 | 제어   | 코드 위치                                              |
+| --- | ------------------------------ | --------- | ------ | ------------------------------------------------------ |
+| 6-1 | 안전교육(매월 마지막2주 월-2h) | Stage 2   | 코드   | infrastructure/calendar_engine (\_is_last_two_mondays) |
+| 6-2 | 금요일 야간 단축 (14h)         | Stage 2   | 코드   | infrastructure/calendar_engine (weekday==4 → 14h)      |
+| 6-4 | 공휴일/휴무 (0h)               | Stage 2   | **DB** | infrastructure/calendar_engine (CAL-HOL 조회)          |
+| —   | 토/일 미가동 (0h)              | Stage 2   | 코드   | infrastructure/calendar_engine (weekday>=5 → 0h)       |
 
 ### 기타 (4건)
 
-| ID   | 제약조건               | 적용 단계 | 제어   | 코드 위치                              |
-| ---- | ---------------------- | --------- | ------ | -------------------------------------- |
-| 7-1  | 불량 재작업 버퍼 (+5%) | Stage 1   | **DB** | batch_grouping (defect_buffer_pct)     |
-| 9-1  | 선행공정 완료 체크     | Stage 2   | 코드   | schedule_optimizer (process_end_by_sq) |
-| 10-2 | CU/AL 재질 분리        | Stage 2   | 코드   | schedule_optimizer (\_infer_material)  |
-| 10-5 | 4심 계산법             | Stage 1   | 코드   | batch_grouping (core_count==4 → "4C")  |
+| ID   | 제약조건               | 적용 단계 | 제어   | 코드 위치                                               |
+| ---- | ---------------------- | --------- | ------ | ------------------------------------------------------- |
+| 7-1  | 불량 재작업 버퍼 (+5%) | Stage 1   | **DB** | application/ingest/batch_grouper (defect_buffer_pct)    |
+| 9-1  | 선행공정 완료 체크     | Stage 2   | 코드   | application/scheduling/greedy (process_end_by_sq)       |
+| 10-2 | CU/AL 재질 분리        | Stage 2   | 코드   | application/scheduling/greedy (\_infer_material)        |
+| 10-5 | 4심 계산법             | Stage 1   | 코드   | application/ingest/batch_grouper (core_count==4 → "4C") |
 
 ### 미적용 (3건)
 
@@ -398,39 +403,85 @@ TFR-GV:   연선 → 시스 (절연 없음, SQ<=25은 연선도 생략)
 
 ## 프로젝트 구조
 
+> 4-layer Clean Architecture (`domain` ← `application` ← `infrastructure` / `presentation`). `services/` 단일 디렉토리는 2026-04 리팩토링으로 제거됨.
+
 ```
-backend/
-  app/
-    services/
-      erp_parser.py          # ERP .xls 파싱
-      wip_parser.py          # 재공실사 파싱
-      wip_matching.py        # WIP ↔ 수주 매칭
-      batch_grouping.py      # Stage 1: 배치 생성 (제약조건 적용)
-      schedule_optimizer.py  # Stage 2: 자동 스케줄링 (제약조건 적용)
-      calendar_engine.py     # 가동시간 계산 (주말/공휴일/안전교육)
-      excel_exporter.py      # Excel 작업지시서 생성
-    presentation/routes/
-      plan_pipeline.py       # Stage 1/2 API
-      schedules.py           # 간트 태스크 CRUD
-    infrastructure/models/   # SQLAlchemy ORM 모델
+backend/app/
+  domain/                              # pure logic (no DB, no I/O)
+    constants.py                       # 공정 순서, 상수
+    constraint_rules.py                # resolve_spec / resolve_color
+    sheath_cluster.py                  # 시스 색상 묶음 클러스터링
+    batch_sheath_keys.py               # 시스 키 빌드
+    tardiness.py                       # 납기 초과 metric
+    constraints.py / entities.py
+
+  application/                         # use-case orchestration
+    _shared/                           # cross-cutting (audit, calendar_ops, slot_filters, ...)
+    ingest/                            # Stage 1 입수
+      stage1.py / pipeline_orchestrator.py
+      batch_grouper.py                 # 배치 생성 + 제약조건 적용
+      batch_splitter.py / batch_helpers.py
+      wip_matching.py / wip_promotion.py
+    scheduling/
+      cp_sat/                          # CP-SAT 엔진 (기본)
+        orchestrator.py                # 진입점 (cp_sat_schedule)
+        model_builder.py / objective.py / lex_min_time.py
+        constraints/                   # 6 카테고리 (process / equipment / ...)
+      greedy/                          # 그리디 엔진 (폴백/리트라이)
+        auto_schedule.py               # retry harness 진입점
+        optimization_loop.py           # 메인 루프 (Phase 4 SRP, body 98 LOC)
+        scheduler_state.py             # SchedulerState dataclass
+        slot_finder.py / reschedule_affected.py / jit_scheduling.py
+    decisions/                         # LLM 설명 (Phase 2 분해)
+      narrator.py / explain_batch.py / summarize_run.py / risk_detector.py
+    validation/                        # 제약 점검 / lifecycle
+    cascade/                           # 변경 전파
+    ingest/stage2.py / stage2_job_queue.py / sm_inventory.py
+
+  infrastructure/                      # I/O adapters
+    database.py / memory_store.py
+    calendar_engine.py                 # 가동시간 계산
+    parsers/{erp_parser,wip_parser}.py
+    exporters/{excel_exporter,wip_template}.py
+    llm/{anthropic_provider,template_provider}.py
+    models/                            # SQLAlchemy ORM
+    logging/
+
+  presentation/                        # FastAPI HTTP layer
+    routes/
+      plan_pipeline.py                 # Stage 1/2 API
+      schedules/                       # 간트 태스크 CRUD (서브패키지)
+      audit.py / equipment.py / master_data.py / constraints.py / ...
+    schemas/
 
 frontend/src/
   app/(main)/
-    plan-register/           # 생산계획 등록 (파일 업로드)
-    scheduling-review/       # 스케줄링 검토 (배치 테이블, WIP)
-    scheduler/               # 간트 차트 (D&D, 블록 분할)
-    audit/                   # 감사 추적
-    master/                  # 마스터 데이터 관리
+    plan-register/                     # 생산계획 등록 (파일 업로드)
+    scheduling-review/                 # 스케줄링 검토
+    scheduler/                         # 간트 차트
+    audit/                             # 감사 추적
+    master/
   features/
-    scheduler/components/
-      SchedulerView.tsx      # 간트 메인 뷰
-      GanttTaskBlock.tsx     # 블록 (색상별 배경)
-      ViewFilter.tsx         # 전체/저압/고압/공정별 필터
-      BatchSplitModal.tsx    # 배치 분할 모달
-    scheduling-review/
-      store/                 # 배치 상태관리
-      components/            # 테이블, WIP, AI 분석
+    scheduler/components/{SchedulerView,GanttTaskBlock,ViewFilter,BatchSplitModal}.tsx
+    scheduling-review/{store,components}/
 ```
+
+---
+
+## 리팩토링 이력 (Phase 0 ~ 5, 2026-04)
+
+`services/` 단일 디렉토리 (85 files, 17,910 LOC) → 4-layer Clean Architecture 로 재구조화. 자세한 청사진은 [docs/architecture-target.md](docs/architecture-target.md).
+
+| Phase   | 핵심 작업                                                                                                                        | 결과 지표                                                                              |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 0 / 0.5 | audit + characterization smoke test (진입 게이트)                                                                                | 27/27 main-parity baseline 확립                                                        |
+| 1       | `domain/` + `infrastructure/` + `application/{_shared, scheduling/{cp_sat,greedy}, ingest, validation, cascade, decisions}` 신설 | parity 27/27 유지 (steps 1~6)                                                          |
+| 2       | `llm_explainer.py` → `decisions/{narrator, explain_batch, summarize_run, risk_detector}` 분해 + hallucination filter 양쪽 적용   | pytest 435 green                                                                       |
+| 3       | `cp_sat_schedule` 1657 LOC → ≤200 LOC orchestrator + helpers + objective + lex_min_time wiring + 시나리오 12/13 fixture          | parity 13/13 결정론 hash freeze                                                        |
+| 4       | `SchedulerState` dataclass + `_run_optimization_once` 분해 (body 824 → **98 LOC**, helper 4개 + GroupingContext)                 | pytest 451 + parity 27/27                                                              |
+| 5       | 실 ERP dual-run (회귀 0) + lex vs weighted-sum 실측 (lex 158× faster) + UI E2E (콘솔 에러 0) + `services/` 셸 디렉토리 삭제      | [docs/lex-mode-comparison.md §6](docs/lex-mode-comparison.md), final main-parity 27/27 |
+
+**검증 게이트** (모든 Phase 통과): `pytest backend/tests/ -q` (450+ tests) + main-parity harness 27/27 + parity-quick 11/11 + frontend Playwright smoke + verification-stage1.
 
 ---
 
