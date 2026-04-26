@@ -123,6 +123,11 @@ _SCENARIOS: list[tuple[str, str, str | None]] = [
     ("09_single_batch", "09_single_batch", None),
     ("10_all_vs_none_constraints", "10a_all_constraints", "all"),
     ("10_all_vs_none_constraints", "10b_none_constraints", "none"),
+    # Phase 3 step 6 (target.md §4): lex_min_time 분기 검증용 시나리오.
+    # 12: 모든 due 충족 (lex Phase A 가 T* = 0 반환).
+    # 13: 모든 due past-due (lex Phase A 가 T* > 0 반환 → Phase B 실행).
+    ("12_all_due_met", "12_all_due_met", None),
+    ("13_past_due_forced", "13_past_due_forced", None),
 ]
 
 # Columns stripped from every serialized ORM row. These are either

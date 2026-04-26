@@ -525,20 +525,26 @@ def cp_sat_schedule(
         WORK_MIN_PER_DAY=_WORK_MIN_PER_DAY,
     )
 
-    _built: BuiltModel = build_model(
-        group_meta=group_meta,
-        equipment_by_process=equipment_by_process,
-        weights=_weights,
-        constraint_params=constraint_params,
-        random_seed=random_seed,
-        frozen_group_keys=frozen_group_keys,
-        frozen_tasks_snapshot=frozen_tasks_snapshot,
-        sheath_color_hard=sheath_color_hard,
-        tardiness_hard=tardiness_hard,
-        warm_start_hints=warm_start_hints,
-        base_date=base_date,
-        warnings_out=result["warnings"],
-    )
+    # build_model 호출을 closure 로 wrap — lex INFEASIBLE 폴백 시 model 재구성
+    # 가능 (cp_model 내부 IntAffine 등이 picklable 하지 않아 deepcopy 불가능).
+    # 일반 경로 (min_time_mode=False) 는 1회만 호출.
+    def _build_solver_model() -> BuiltModel:
+        return build_model(
+            group_meta=group_meta,
+            equipment_by_process=equipment_by_process,
+            weights=_weights,
+            constraint_params=constraint_params,
+            random_seed=random_seed,
+            frozen_group_keys=frozen_group_keys,
+            frozen_tasks_snapshot=frozen_tasks_snapshot,
+            sheath_color_hard=sheath_color_hard,
+            tardiness_hard=tardiness_hard,
+            warm_start_hints=warm_start_hints,
+            base_date=base_date,
+            warnings_out=result["warnings"],
+        )
+
+    _built: BuiltModel = _build_solver_model()
     # ── 7-pre. 솔버 공통 파라미터 (lex / weighted 두 path 공유) ───────────
     # time_limit_sec override — 증분 경로는 10s, 전역 재최적화는 60s 등 호출자
     # 시나리오에 따라 조정. None/<=0 이면 기본값 유지 (하위호환).
@@ -562,17 +568,19 @@ def cp_sat_schedule(
     # 호출되도록 분기 안으로 이동.
     _used_lex = False
     if min_time_mode:
-        import copy as _copy
-
         from app.application.scheduling.cp_sat.lex_min_time import (
             _adapt_lex_to_solve_result,
             solve_lex_min_time,
         )
 
-        _lex_built = _copy.deepcopy(_built)
+        # lex 가 _built.model 을 mutate 한다 (max_tard 변수 + Phase B 의
+        # max_tard ≤ T* hard constraint). cp_model 내부 IntAffine 객체가
+        # picklable 하지 않아 deepcopy 불가능 → INFEASIBLE 폴백 시 model
+        # 을 _build_solver_model() 로 재구성. 일반 lex 성공 경로는 추가
+        # 비용 0 (1회 build).
         _lex_t0 = time.perf_counter()
         _lex_res = solve_lex_min_time(
-            _lex_built,
+            _built,
             time_limit_phase_a_sec=_time_limit,
             time_limit_phase_b_sec=_time_limit,
             num_workers=_num_workers,
@@ -583,7 +591,7 @@ def cp_sat_schedule(
             # adapter (Phase 3 step 4) 가 LexResult → AdaptedSolveResult 변환.
             # 같은 ScheduleTask insert 경로 사용 — adapted.built 의 vars 와
             # adapted.solver 가 동일 protobuf 식별자.
-            adapted = _adapt_lex_to_solve_result(_lex_res, _lex_built, _lex_wall_s)
+            adapted = _adapt_lex_to_solve_result(_lex_res, _built, _lex_wall_s)
             _used_lex = True
             _built = adapted.built
             solver = adapted.solver
@@ -594,10 +602,12 @@ def cp_sat_schedule(
             result["lex_makespan_min"] = adapted.lex_makespan_min
             result["lex_all_due_met"] = adapted.lex_all_due_met
         else:
-            # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (원본 _built 유지).
+            # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (모델 재구성).
+            # _built 는 lex 시도 중 mutate 되어 사용 불가 → 새로 build.
             result["warnings"].append(
-                f"lex_min_time {_lex_res.status} → weighted-sum 폴백"
+                f"lex_min_time {_lex_res.status} → weighted-sum 폴백 (모델 재구성)"
             )
+            _built = _build_solver_model()
             result["solver_mode"] = "weighted_sum_fallback_from_lex"
     else:
         result["solver_mode"] = "weighted_sum"
