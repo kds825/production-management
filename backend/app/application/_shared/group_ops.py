@@ -270,15 +270,11 @@ def _schedule_multi_equipment(
     Returns:
         True면 분배 성공 (호출측에서 continue), False면 단일설비 경로로 폴백.
     """
-    # _find_available_slot, align_start_to_predecessor_end 는 schedule_optimizer
-    # 에 남아 있어 (Week 3 sub-commit D 이후 slot_filters 로 이동). re-export
-    # 셸이 라우팅을 처리하므로 여기서는 schedule_optimizer 경유로 import 한다.
-    # 지역 import 이유: top-level 로 두면 schedule_optimizer ↔ scheduling_shared
-    # 순환 import 가 발생.
-    from app.services.schedule_optimizer import (
-        _find_available_slot,
-        align_start_to_predecessor_end,
-    )
+    # 지역 import: top-level 로 두면 group_ops ↔ slot_finder/slot_filters 의
+    # 모듈 로딩 순서가 미세하게 깨질 수 있어 callsite-import 로 안정화 (직전
+    # 세션 trap 회귀 방지).
+    from app.application._shared.slot_filters import align_start_to_predecessor_end
+    from app.application.scheduling.greedy.slot_finder import _find_available_slot
 
     rep = group_batches[0]
     sq = int(rep.sq_mm2 or 0)

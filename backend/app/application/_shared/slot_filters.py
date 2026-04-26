@@ -229,9 +229,12 @@ def _filter_by_sheath_routing(
     - LLDPE → equipment_code == 'A150' 설비만
     - PVC   → 표준 라우팅 (필터 없음)
     """
-    # _get_sheath_type 과 _SHEATH_ROUTING 은 schedule_optimizer 에 남아 있음
-    # (배치 모델 자체와 결합도가 높음). 지역 import 로 순환 회피.
-    from app.services.schedule_optimizer import _SHEATH_ROUTING, _get_sheath_type
+    # _get_sheath_type / _SHEATH_ROUTING 은 greedy 패키지의 auto_schedule /
+    # optimization_loop 안에 정의됨 (배치 모델 자체와 결합도가 높음). 지역
+    # import 로 순환 회피 — slot_filters 가 _shared 라 application 위로 import
+    # 하면 cycle 발생.
+    from app.application.scheduling.greedy.auto_schedule import _SHEATH_ROUTING
+    from app.application.scheduling.greedy.optimization_loop import _get_sheath_type
 
     sheath_type = _get_sheath_type(batch)
     routing_key = _SHEATH_ROUTING.get(sheath_type, "PVC")
