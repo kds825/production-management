@@ -18,6 +18,8 @@ from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.wip_upload_log import WipUploadLog
 from app.infrastructure.models.solver_run import SolverRun
 from app.infrastructure.models.solver_decision import SolverDecision
+from app.infrastructure.models.decision_feedback import DecisionFeedback
+from app.infrastructure.models.decision_card_telemetry import DecisionCardTelemetry
 
 __all__ = [
     "CustomerMaster",
@@ -38,4 +40,6 @@ __all__ = [
     "WipUploadLog",
     "SolverRun",
     "SolverDecision",
+    "DecisionFeedback",
+    "DecisionCardTelemetry",
 ]
