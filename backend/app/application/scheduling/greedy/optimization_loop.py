@@ -87,6 +87,81 @@ def _group_earliest_due(batches: list) -> date:
     return min(dates) if dates else date.max
 
 
+def _seed_state_from_existing(
+    existing_tasks: list[ScheduleTask], db: Session
+) -> tuple[
+    dict[tuple[str, int], datetime],
+    dict[tuple[str, int], datetime],
+    datetime | None,
+    dict[int, datetime],
+]:
+    """Partial-rerun pipeline state seed — existing_tasks 로부터 4 개 dict/scalar 사전 채움.
+
+    부분 재스케줄(partial reschedule) 호출 시 비영향 그룹의 task 가
+    `existing_tasks` 로 전달됨. 본 함수는 그 task 들로부터 후행 그룹의
+    선행 제약을 사전에 채워 반환한다:
+
+    - process_end_by_sq seed: (process_name, sq) → 최대 end_datetime
+    - process_first_output_by_sq seed: (process_name, sq) → 가장 이른 첫 드럼 출력
+    - first_insul_output seed: 저압/고압절연 중 가장 이른 첫 드럼 출력
+    - core_first_drum_by_main_sq seed: CORE/AL-CORE main_sq → 첫 드럼 출력
+
+    전체 재스케줄 시 `existing_tasks=[]` → 모두 빈 dict / None 반환 (no-op).
+    """
+    process_end: dict[tuple[str, int], datetime] = {}
+    first_output: dict[tuple[str, int], datetime] = {}
+    insul_first: datetime | None = None
+    core_first: dict[int, datetime] = {}
+
+    if not existing_tasks:
+        return process_end, first_output, insul_first, core_first
+
+    seed_batch_ids = {t.batch_id for t in existing_tasks if t.batch_id is not None}
+    seed_batches = (
+        db.query(ProductionBatch)
+        .filter(ProductionBatch.batch_id.in_(seed_batch_ids))
+        .all()
+        if seed_batch_ids
+        else []
+    )
+    seed_batch_map = {b.batch_id: b for b in seed_batches}
+
+    for t in existing_tasks:
+        if t.start_datetime is None or t.end_datetime is None:
+            continue
+        b = seed_batch_map.get(t.batch_id)
+        if b is None:
+            continue
+        proc = b.process_name or ""
+        sq_int = int(b.sq_mm2 or 0)
+        proc_sq = (proc, sq_int)
+
+        if proc_sq not in process_end or t.end_datetime > process_end[proc_sq]:
+            process_end[proc_sq] = t.end_datetime
+
+        setup_min = float(t.setup_time_min or 0)
+        dur = float(b.estimated_duration_min or 0)
+        lot_count = max(int(b.drum_count or 1), 1)
+        first_drum_min = setup_min + (dur / lot_count if lot_count else dur)
+        first_out = calculate_end_datetime(
+            t.start_datetime, first_drum_min, db, t.equipment_code
+        )
+
+        if not _is_core_group(b.batch_group or ""):
+            if proc_sq not in first_output or first_out < first_output[proc_sq]:
+                first_output[proc_sq] = first_out
+            if proc in ("저압절연", "고압절연"):
+                if insul_first is None or first_out < insul_first:
+                    insul_first = first_out
+        else:
+            msq = _extract_core_main_sq(b.batch_group or "")
+            if msq is not None:
+                if msq not in core_first or first_out < core_first[msq]:
+                    core_first[msq] = first_out
+
+    return process_end, first_output, insul_first, core_first
+
+
 def _run_optimization_once(
     run_label: str, db: Session, *, base_date: datetime | None = None
 ) -> dict:
@@ -137,85 +212,15 @@ def _run_optimization_once(
             (t.start_datetime, t.end_datetime)
         )
 
-    # ── 부분 재스케줄용: 기존 tasks에서 파이프라인 상태 사전 초기화 ────────────
-    # 전체 재스케줄(full reschedule)에서는 existing_tasks가 비어 있으므로 no-op.
-    # 부분 재스케줄 시 비영향 그룹 tasks가 existing_tasks로 전달되므로
-    # 이를 바탕으로 process_end_by_sq / process_first_output_by_sq 등을 미리 채운다.
-    _seed_pipeline_process_end: dict[tuple[str, int], datetime] = {}
-    _seed_pipeline_first_output: dict[tuple[str, int], datetime] = {}
-    _seed_first_insul_output: datetime | None = None
-    _seed_core_first_drum: dict[int, datetime] = {}
-
-    if existing_tasks:
-        _seed_batch_ids = {t.batch_id for t in existing_tasks if t.batch_id is not None}
-        _seed_batches = (
-            (
-                db.query(ProductionBatch)
-                .filter(ProductionBatch.batch_id.in_(_seed_batch_ids))
-                .all()
-            )
-            if _seed_batch_ids
-            else []
-        )
-        _seed_batch_map = {b.batch_id: b for b in _seed_batches}
-
-        for t in existing_tasks:
-            if t.start_datetime is None or t.end_datetime is None:
-                continue
-            b = _seed_batch_map.get(t.batch_id)
-            if b is None:
-                continue
-            proc = b.process_name or ""
-            sq_int = int(b.sq_mm2 or 0)
-            proc_sq = (proc, sq_int)
-
-            # process_end_by_sq: 해당 (공정, SQ)의 최대 종료 시각
-            if (
-                proc_sq not in _seed_pipeline_process_end
-                or t.end_datetime > _seed_pipeline_process_end[proc_sq]
-            ):
-                _seed_pipeline_process_end[proc_sq] = t.end_datetime
-
-            # process_first_output_by_sq: 첫 번째 드럼 출력 시각
-            if not _is_core_group(b.batch_group or ""):
-                _setup_min = float(t.setup_time_min or 0)
-                _dur = float(b.estimated_duration_min or 0)
-                _lot_count = max(int(b.drum_count or 1), 1)
-                _first_drum_min = _setup_min + (
-                    _dur / _lot_count if _lot_count else _dur
-                )
-                _first_out = calculate_end_datetime(
-                    t.start_datetime, _first_drum_min, db, t.equipment_code
-                )
-                if (
-                    proc_sq not in _seed_pipeline_first_output
-                    or _first_out < _seed_pipeline_first_output[proc_sq]
-                ):
-                    _seed_pipeline_first_output[proc_sq] = _first_out
-                if proc in ("저압절연", "고압절연"):
-                    if (
-                        _seed_first_insul_output is None
-                        or _first_out < _seed_first_insul_output
-                    ):
-                        _seed_first_insul_output = _first_out
-            else:
-                # CORE 그룹 → core_first_drum_by_main_sq 채우기
-                _setup_min = float(t.setup_time_min or 0)
-                _dur = float(b.estimated_duration_min or 0)
-                _lot_count = max(int(b.drum_count or 1), 1)
-                _first_drum_min = _setup_min + (
-                    _dur / _lot_count if _lot_count else _dur
-                )
-                _first_out = calculate_end_datetime(
-                    t.start_datetime, _first_drum_min, db, t.equipment_code
-                )
-                _msq = _extract_core_main_sq(b.batch_group or "")
-                if _msq is not None:
-                    if (
-                        _msq not in _seed_core_first_drum
-                        or _first_out < _seed_core_first_drum[_msq]
-                    ):
-                        _seed_core_first_drum[_msq] = _first_out
+    # ── 부분 재스케줄용: 기존 tasks 로부터 파이프라인 state seed ──────────────
+    # 전체 재스케줄에서는 existing_tasks=[] 이므로 모두 빈 dict / None.
+    # 부분 재스케줄 시 비영향 그룹 task 가 후행 그룹의 선행 제약을 채운다.
+    (
+        _seed_pipeline_process_end,
+        _seed_pipeline_first_output,
+        _seed_first_insul_output,
+        _seed_core_first_drum,
+    ) = _seed_state_from_existing(existing_tasks, db)
 
     # Track predecessor tasks by (sales_order_id, sales_order_line)
     predecessor_map = {}  # (order_id, order_line) → last task_id for this order
