@@ -171,6 +171,11 @@ def cp_sat_schedule(
     solver_input_override: SolverInput | None = None,
     num_search_workers: int | None = None,
     run_id_override: str | None = None,
+    # ── Phase 3 step 3 (target.md §3 row 5): lex_min_time wiring ──────────
+    # 납기 lexicographic 우선 (Phase A: max_tardiness 최소 → Phase B: makespan
+    # 최소). True 시 weighted-sum objective 대신 lex 솔버 호출. INFEASIBLE_A/B
+    # / UNKNOWN 발생 시 자동으로 weighted-sum 폴백 (model 은 deepcopy 로 보호).
+    min_time_mode: bool = False,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.
@@ -219,11 +224,20 @@ def cp_sat_schedule(
             - 효과: ERP 재업로드·증분 시나리오에서 이전 해의 대부분 feasibility 를
               유지한 채 변경 부분만 재탐색 → 실측 2.5~5× speedup 기대.
             - `result["warm_start_applied"]` / `warm_start_skipped` 카운터로 관측.
+        min_time_mode: True 면 lexicographic 솔버 (Phase A: max_tardiness 최소
+            → Phase B: makespan 최소) 사용. weighted-sum tardiness term 대신
+            "납기 우선, 그 안에서 최소시간" 도메인 언어 1:1 매핑.
+              - lex 가 OPTIMAL/FEASIBLE 이면 그 결과를 §8 캘린더 그리디 입력으로 사용.
+              - INFEASIBLE_A/B/UNKNOWN 이면 자동으로 weighted-sum 폴백 (warning 기록).
+              - 모델은 lex 시도 전에 deepcopy 되어 폴백 시 원본 무손상.
+              - `result["solver_mode"]` ∈ {"lex_min_time", "weighted_sum",
+                "weighted_sum_fallback_from_lex"} 로 어떤 path 가 사용됐는지 기록.
 
     Returns:
         {"total_tasks", "violations", "warnings", "solver_status", "objective_value",
          "solver_wall_time_s", "solver_n_groups", "solver_num_workers",
-         "warm_start_applied", "warm_start_skipped"}
+         "warm_start_applied", "warm_start_skipped", "solver_mode"} (+ "lex_t_star",
+        "lex_makespan_min", "lex_all_due_met" when min_time_mode 사용시)
     """
     result: dict[str, Any] = {
         "total_tasks": 0,
@@ -525,15 +539,79 @@ def cp_sat_schedule(
         base_date=base_date,
         warnings_out=result["warnings"],
     )
-    compose_objective(
-        _built,
-        weights=_weights,
-        group_meta=group_meta,
-        tardiness_hard=tardiness_hard,
+    # ── 7-pre. 솔버 공통 파라미터 (lex / weighted 두 path 공유) ───────────
+    # time_limit_sec override — 증분 경로는 10s, 전역 재최적화는 60s 등 호출자
+    # 시나리오에 따라 조정. None/<=0 이면 기본값 유지 (하위호환).
+    _time_limit = (
+        int(time_limit_sec)
+        if (time_limit_sec and int(time_limit_sec) > 0)
+        else _SOLVER_TIME_LIMIT_SEC
     )
+    # 워커 수: 환경변수 기반 해상도. 운영 기본 8, CI/테스트는 1로 강제 (결정론).
+    # Task 1.1 (Rev 3): `num_search_workers` kwarg 가 주어지면 env 해상도를
+    # override — parity harness 가 워커 수를 1 로 고정해 비결정성을 제거.
+    if num_search_workers is not None and int(num_search_workers) > 0:
+        _num_workers = max(1, int(num_search_workers))
+    else:
+        _num_workers = _resolve_num_workers()
+
+    # ── 7-a. min_time_mode: lex 솔버 시도 (Phase 3 step 3) ────────────────
+    # Lex 가 OPTIMAL/FEASIBLE 이면 그 솔버를 그대로 §8 캘린더 그리디에 전달.
+    # INFEASIBLE_A/B/UNKNOWN 이면 weighted-sum 폴백 (원본 _built 유지를 위해
+    # lex 시도 전 deepcopy). compose_objective 는 weighted-sum path 에서만
+    # 호출되도록 분기 안으로 이동.
+    _used_lex = False
+    if min_time_mode:
+        import copy as _copy
+
+        from app.application.scheduling.cp_sat.lex_min_time import solve_lex_min_time
+
+        _lex_built = _copy.deepcopy(_built)
+        _lex_t0 = time.perf_counter()
+        _lex_res = solve_lex_min_time(
+            _lex_built,
+            time_limit_phase_a_sec=_time_limit,
+            time_limit_phase_b_sec=_time_limit,
+            num_workers=_num_workers,
+            random_seed=int(random_seed),
+        )
+        _lex_wall_s = time.perf_counter() - _lex_t0
+        if _lex_res.status in ("OPTIMAL", "FEASIBLE"):
+            # lex 성공 — _built 를 deepcopy 본으로 rebind 하여 unpack 시
+            # vars 가 lex.solver.value() 로 읽히도록.
+            _used_lex = True
+            _built = _lex_built
+            solver = _lex_res.solver
+            status = (
+                cp_model.OPTIMAL if _lex_res.status == "OPTIMAL" else cp_model.FEASIBLE
+            )
+            _solve_wall_s = _lex_wall_s
+            result["solver_mode"] = "lex_min_time"
+            result["lex_t_star"] = _lex_res.t_star
+            result["lex_makespan_min"] = _lex_res.makespan_min
+            result["lex_all_due_met"] = _lex_res.all_due_met
+        else:
+            # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (원본 _built 유지).
+            result["warnings"].append(
+                f"lex_min_time {_lex_res.status} → weighted-sum 폴백"
+            )
+            result["solver_mode"] = "weighted_sum_fallback_from_lex"
+    else:
+        result["solver_mode"] = "weighted_sum"
+
+    # weighted-sum 경로: lex 미사용 또는 lex INFEASIBLE 폴백 시.
+    if not _used_lex:
+        compose_objective(
+            _built,
+            weights=_weights,
+            group_meta=group_meta,
+            tardiness_hard=tardiness_hard,
+        )
 
     # §6 의 로컬 변수를 `cp_sat_schedule` 후속 코드(§7~§9 + 스냅샷 writer)가 쓸
     # 수 있도록 unpack. 이름은 기존 코드와 1:1 호환되도록 유지 (파러티 보존).
+    # _built 는 lex 성공 시 _lex_built 로 rebind 된 상태 — vars 는 lex.solver
+    # 가 인지하는 것과 동일.
     model = _built.model
     groups = _built.groups
     start_vars = _built.start_vars
@@ -549,51 +627,37 @@ def cp_sat_schedule(
     result["warm_start_applied"] = _built.warm_start_applied
     result["warm_start_skipped"] = _built.warm_start_skipped
 
-    # ── 7. 솔버 실행 ──────────────────────────────────────────────────────
-    solver = cp_model.CpSolver()
-    # time_limit_sec override — 증분 경로는 10s, 전역 재최적화는 60s 등 호출자
-    # 시나리오에 따라 조정. None/<=0 이면 기본값 유지 (하위호환).
-    _time_limit = (
-        int(time_limit_sec)
-        if (time_limit_sec and int(time_limit_sec) > 0)
-        else _SOLVER_TIME_LIMIT_SEC
-    )
-    solver.parameters.max_time_in_seconds = _time_limit
-    # 워커 수: 환경변수 기반 해상도. 운영 기본 8, CI/테스트는 1로 강제 (결정론).
-    # Task 1.1 (Rev 3): `num_search_workers` kwarg 가 주어지면 env 해상도를
-    # override — parity harness 가 워커 수를 1 로 고정해 비결정성을 제거.
-    # 유효값은 >= 1 로 clamp, None/<=0 이면 기존 `_resolve_num_workers()` 사용.
-    if num_search_workers is not None and int(num_search_workers) > 0:
-        _num_workers = max(1, int(num_search_workers))
-    else:
-        _num_workers = _resolve_num_workers()
-    solver.parameters.num_search_workers = _num_workers
-    solver.parameters.log_search_progress = False
-    # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
-    solver.parameters.random_seed = int(random_seed)
+    # ── 7-b. weighted-sum 솔버 실행 (lex 미사용 또는 폴백 path) ────────────
+    if not _used_lex:
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = _time_limit
+        solver.parameters.num_search_workers = _num_workers
+        solver.parameters.log_search_progress = False
+        # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
+        solver.parameters.random_seed = int(random_seed)
 
-    # ── Phase 1 개선: 수렴 가속 파라미터 ──────────────────────────────────
-    # 왜 이 세 파라미터를 추가하는가:
-    #   (1) linearization_level=2 — 정수 스케줄링 문제에서 LP 이완 정확도를
-    #       상승시켜 분기한정(branch-and-bound) 가지치기 효율을 높임. 최적성은
-    #       유지되고 수렴만 빨라진다 (OR-Tools 기본 1 → 2).
-    #   (2) cp_model_probing_level=2 — constraint propagation 을 강하게 돌려
-    #       INFEASIBLE 을 조기에 탐지. Level 2/3 완화 모드 전환을 앞당겨
-    #       재시도 누적 시간을 단축.
-    #   (3) relative_gap_limit — Level 1 (hard 납기 + hard 색상) 에서만 적용.
-    #       이 모드는 FEASIBLE 이면 납기/색상 제약이 100% 만족되므로, 소프트
-    #       목적함수(idle + chain_diff) 를 2% 이내로 근사해도 운영상 동등.
-    #       완화 모드(Level 2/3) 에서는 품질이 중요하므로 gap 미적용.
-    solver.parameters.linearization_level = 2
-    solver.parameters.cp_model_probing_level = 2
-    if tardiness_hard and sheath_color_hard:
-        solver.parameters.relative_gap_limit = 0.02
+        # ── Phase 1 개선: 수렴 가속 파라미터 ──────────────────────────────
+        # 왜 이 세 파라미터를 추가하는가:
+        #   (1) linearization_level=2 — 정수 스케줄링 문제에서 LP 이완 정확도를
+        #       상승시켜 분기한정(branch-and-bound) 가지치기 효율을 높임. 최적성은
+        #       유지되고 수렴만 빨라진다 (OR-Tools 기본 1 → 2).
+        #   (2) cp_model_probing_level=2 — constraint propagation 을 강하게 돌려
+        #       INFEASIBLE 을 조기에 탐지. Level 2/3 완화 모드 전환을 앞당겨
+        #       재시도 누적 시간을 단축.
+        #   (3) relative_gap_limit — Level 1 (hard 납기 + hard 색상) 에서만 적용.
+        #       이 모드는 FEASIBLE 이면 납기/색상 제약이 100% 만족되므로, 소프트
+        #       목적함수(idle + chain_diff) 를 2% 이내로 근사해도 운영상 동등.
+        #       완화 모드(Level 2/3) 에서는 품질이 중요하므로 gap 미적용.
+        solver.parameters.linearization_level = 2
+        solver.parameters.cp_model_probing_level = 2
+        if tardiness_hard and sheath_color_hard:
+            solver.parameters.relative_gap_limit = 0.02
 
-    # 계측: solve() wall-time. 성능 개선 판정의 baseline 데이터 소스.
-    # result 에 직접 기록 → 상위 호출자가 Prometheus/로그로 집계 가능.
-    _solve_t0 = time.perf_counter()
-    status = solver.solve(model)
-    _solve_wall_s = time.perf_counter() - _solve_t0
+        # 계측: solve() wall-time. 성능 개선 판정의 baseline 데이터 소스.
+        _solve_t0 = time.perf_counter()
+        status = solver.solve(model)
+        _solve_wall_s = time.perf_counter() - _solve_t0
+
     status_name = solver.status_name(status)
     result["solver_status"] = status_name
     result["solver_wall_time_s"] = round(_solve_wall_s, 3)
