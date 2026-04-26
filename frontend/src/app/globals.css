@@ -11,6 +11,60 @@
   --font-sans:
     var(--font-noto-sans-kr), "Pretendard Variable", "Pretendard",
     "Apple SD Gothic Neo", sans-serif;
+
+  /* PwC samildevkit 토큰 — Phase 6 Decision Card v2.
+   * 운영자 50건 카드 봐도 같은 색 = 같은 종류 신호 학습 일관성. */
+  --color-pwc-primary-100: #fff7e0;
+  --color-pwc-primary-200: #ffd2b3;
+  --color-pwc-primary-300: #ffb27f;
+  --color-pwc-primary-400: #ff8700;
+  --color-pwc-primary-500: #f66d00;
+
+  --color-pwc-gray-100: #f3f4f6;
+  --color-pwc-gray-200: #e5e7eb;
+  --color-pwc-gray-300: #d1d5db;
+  --color-pwc-gray-400: #9ca3af;
+  --color-pwc-gray-500: #6b7280;
+  --color-pwc-gray-600: #5f5f62;
+
+  --color-pwc-blue-100: #bedbff;
+  --color-pwc-blue-300: #6ba6ff;
+  --color-pwc-blue-400: #2b6ee5;
+  --color-pwc-blue-500: #193cb8;
+
+  --color-pwc-status-default-bg: #f3f4f6;
+  --color-pwc-status-default-text: #5f5f62;
+  --color-pwc-status-success-bg: #d1fadf;
+  --color-pwc-status-success-text: #059669;
+  --color-pwc-status-warning-bg: #fef3c7;
+  --color-pwc-status-warning-text: #b45309;
+  --color-pwc-status-danger-bg: #fee2e2;
+  --color-pwc-status-danger-text: #b42318;
+  --color-pwc-status-info-bg: #dbeafe;
+  --color-pwc-status-info-text: #1d4ed8;
+
+  --color-pwc-bg-elevated: #ffffff;
+  --color-pwc-text-inverse: #ffffff;
+
+  /* Type Scale — text-pwc-* 토큰 */
+  --text-pwc-title4: 24px;
+  --text-pwc-title4--line-height: 32px;
+  --text-pwc-title4--font-weight: 700;
+  --text-pwc-subTitle2: 16px;
+  --text-pwc-subTitle2--line-height: 24px;
+  --text-pwc-subTitle2--font-weight: 600;
+  --text-pwc-body: 14px;
+  --text-pwc-body--line-height: 22px;
+  --text-pwc-subBody: 13px;
+  --text-pwc-subBody--line-height: 20px;
+  --text-pwc-caption: 12px;
+  --text-pwc-caption--line-height: 18px;
+  --text-pwc-badge: 12px;
+  --text-pwc-badge--line-height: 16px;
+  --text-pwc-badge--font-weight: 600;
+  --text-pwc-buttonText-sm: 13px;
+  --text-pwc-buttonText-sm--line-height: 18px;
+  --text-pwc-buttonText-sm--font-weight: 600;
 }
 
 :root {

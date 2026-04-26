@@ -21,6 +21,8 @@ import { useScheduleStore } from "../../store/scheduleStore";
 import { TodayMarker } from "../TodayMarker";
 import { ChainHighlightOverlay } from "../ChainHighlightOverlay";
 import { DecisionCard } from "../DecisionCard";
+import { DecisionCardV2 } from "../decision/DecisionCardV2";
+import { isDecisionCardV2Enabled } from "../decision/featureFlag";
 import { useTimelineNavigation } from "../../../../shared/hooks/useTimelineNavigation";
 import type { Equipment, ViewFilterType } from "../../types";
 import type { CascadePreviewResponse } from "../../api/cascade.types";
@@ -149,6 +151,10 @@ export function SchedulerView({
   // batch_id 가 없는 task (예: 미배정 임시 블록) 는 카드 미표시 — 백엔드 트레이스 매칭 불가.
   const selectedBatchId =
     selectedTask?.batch_id != null ? String(selectedTask.batch_id) : null;
+  const selectedBatchIdNum =
+    selectedTask?.batch_id != null ? Number(selectedTask.batch_id) : null;
+  const runLabel = useScheduleStore((s) => s.runLabel);
+  const useV2Card = isDecisionCardV2Enabled();
 
   // 필터 적용
   const filteredEquipment = useFilteredEquipment(
@@ -433,7 +439,14 @@ export function SchedulerView({
                     }
                     decisionCardSlot={
                       showCardHere ? (
-                        <DecisionCard batchId={selectedBatchId} />
+                        useV2Card && runLabel && selectedBatchIdNum != null ? (
+                          <DecisionCardV2
+                            runLabel={runLabel}
+                            batchId={selectedBatchIdNum}
+                          />
+                        ) : (
+                          <DecisionCard batchId={selectedBatchId} />
+                        )
                       ) : undefined
                     }
                   />
