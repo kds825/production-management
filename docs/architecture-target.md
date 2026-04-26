@@ -583,8 +583,11 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 3 step 5 — dual-mode 비교 docs (commit da8e950, docs/lex-mode-comparison.md — \_purge_run_data vs \_purge_run_tasks 의미 차이 + 별도 run_label 권장 + 비교 메트릭 + INFEASIBLE 폴백 동작)
 - [✓] Phase 3 step 6 — 시나리오 12/13 fixture + lex 분기 결정론 검증 (commit e8c2220, 12_all_due_met (T\*=0) + 13_past_due_forced (T\*=5980) seed + capture + hash freeze. orchestrator deepcopy → \_build_solver_model() 재호출 전환 (cp_model IntAffine picklable 아님). pytest 435 + parity 13/13 + main-parity 27/27 = /tmp/parity_phase3_step6.md)
 - [✓] Phase 4 step 1+4 — SchedulerState dataclass + isolation test (commit 378c08c, application/scheduling/greedy/scheduler_state.py 신설 — 10 mutable + 4 master-data field, default_factory 격리. tests/test_scheduler_state_isolation.py 16 tests freeze 격리 invariant. step 2/3/5 (helper 추출 + auto_schedule wiring + body ≤100 LOC) 는 964 LOC 분해 위험으로 다음 세션 deferral. pytest 451 + parity 13/13 + main-parity 27/27 = /tmp/parity_phase4.md)
-- [△] Phase 5 partial — main-parity 27/27 final / §11 markers 갱신 완료. 미완료 항목:
-  - §9.4 (shell delete + 21 patch site flip): tests/test_overlap_retry, test_pipeline_alignment, test_pipeline_sync 등 다수의 monkeypatch.setattr(schedule_optimizer, ...) 사용 — cross-file 광범위 retarget 필요. shell 90 LOC 는 무료 보험 (P1) 으로 유지 가능. **다음 세션 atomic commit 분리 권장**: (a) 각 test 의 schedule_optimizer.X import → 직접 path, (b) monkeypatch target → 실제 모듈 (auto_schedule / optimization_loop / reschedule_affected), (c) production lazy import 정리 (input_builder.py:33, slot_filters.py:234, group_ops.py:278), (d) shell + services/\_\_init\_\_.py 삭제.
+- [✓] Phase 5 §9.4-a — 13 test files `from app.services.schedule_optimizer import X` → canonical path 22건 retarget (commit 37bd851)
+- [✓] Phase 5 §9.4-b — production lazy imports (slot_filters / group_ops / input_builder) shell 우회 → canonical 직접 import (commit 85f0ac2)
+- [✓] Phase 5 §9.4-c — `_so` 참조 (auto_schedule / reschedule_affected) sys.modules[\_\_name\_\_] self-module reference 로 전환, test_overlap_retry / test_jit_integration / test_tardiness_boost_retry 의 schedule_optimizer alias 를 importlib.import_module 경유 canonical (commit 97181db). 직전 세션 trap 회귀 방지: 패키지 \_\_init\_\_.py 가 동명 함수 re-export 시 attribute access 가 함수로 resolve.
+- [✓] Phase 5 §9.4-d — services/schedule_optimizer.py shell + services/ 디렉토리 삭제. test_namespace_smoke PAIRS 정리 (services.schedule_optimizer entry 전체 제거), test_tp_routing source-string 경로 갱신 (services/ → application/scheduling/greedy/optimization_loop.py), slot_filters.align_start_to_predecessor_end 의 monkeypatch anchor 를 sys.modules[\_\_name\_\_] 로 전환. parity 27/27 = /tmp/parity_phase5_step9_4d_final.md (commit 5d540de)
+- [△] Phase 5 미완료 (deferral):
   - §9.1 실 ERP 양 서버 동치 (Documents/ERP생산계획\_v1.xls + SM재고리스트.xls): main-parity 27/27 이 stage1/stage2 read 엔드포인트 포함하여 동치성 proxy. ERP 업로드 시 stage1+stage2 dual-run 명시 비교 미수행 — 다음 세션 권장.
   - §9.2 lex vs weighted-sum 측정 비교: docs/lex-mode-comparison.md 절차 + 시나리오 12/13 fixture 준비 완료. 실측 dual-run + drift 표 작성 미수행.
   - §9.3 gstack/QA UI walkthrough: 미수행.
@@ -592,4 +595,4 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 
 **문서 작성**: 2026-04-26 Phase 0 종료 시점. 사용자 승인 후 즉시 갱신.
 **다음 업데이트**: 매 phase step 완료 후 §11 marker 갱신.
-**최종 갱신**: 2026-04-26 Phase 3 step 6 + Phase 4 partial + Phase 5 partial 종료.
+**최종 갱신**: 2026-04-26 Phase 3 step 6 + Phase 4 partial + Phase 5 §9.4 (shell delete) 종료.
