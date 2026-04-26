@@ -14,14 +14,22 @@
  * onFeedback prop 은 Step 6-MVP 에서 wire-up. 본 MVP 는 prop 형태만 정의.
  */
 
+import { useState } from "react";
+
 import { useDecisionCardV2 } from "../../hooks/useDecisionCardV2";
 
+import { DecisionFeedbackDialog } from "./DecisionFeedbackDialog";
 import type { DecisionCardV2 as DecisionCardV2Data } from "./decisionCardTypes";
 import { Handoff } from "./Handoff";
 import { Header } from "./Header";
 import { Impact } from "./Impact";
 import { VerdictSummary } from "./VerdictSummary";
 import { Why } from "./Why";
+
+function readOperatorId(): string {
+  if (typeof window === "undefined") return "anonymous";
+  return window.localStorage.getItem("kbi.operator_id") || "anonymous";
+}
 
 interface ContainerProps {
   runLabel: string;
@@ -34,7 +42,7 @@ interface ViewProps {
   onFeedback?: (anchor: string) => void;
 }
 
-/** Container — fetch + status 분기. */
+/** Container — fetch + status 분기 + DecisionFeedbackDialog state. */
 export function DecisionCardV2({
   runLabel,
   batchId,
@@ -44,6 +52,12 @@ export function DecisionCardV2({
     runLabel,
     batchId,
   });
+  const [dialogAnchor, setDialogAnchor] = useState<string | null>(null);
+
+  const handleFeedback = (anchor: string) => {
+    setDialogAnchor(anchor);
+    onFeedback?.(anchor);
+  };
 
   if (status === "loading") {
     return (
@@ -83,7 +97,18 @@ export function DecisionCardV2({
   }
   if (status === "idle" || data == null) return null;
 
-  return <DecisionCardV2View data={data} onFeedback={onFeedback} />;
+  return (
+    <>
+      <DecisionCardV2View data={data} onFeedback={handleFeedback} />
+      <DecisionFeedbackDialog
+        open={dialogAnchor !== null}
+        onClose={() => setDialogAnchor(null)}
+        card={data}
+        initialAnchor={dialogAnchor}
+        operatorId={readOperatorId()}
+      />
+    </>
+  );
 }
 
 /** Pure presenter — 단위 테스트용 (props only, hook 미사용). */
