@@ -576,9 +576,20 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 1 step 5 — 잔여 services/ 이동 (decisions/narrator + validation/{constraint_checker,schedule_validators,batch_group_lifecycle} + ingest/{pipeline_orchestrator,stage1,stage2,run_labeler,batch_grouper,batch_splitter,batch_helpers,wip_matching,wip_promotion} + cascade/ + sm_inventory + stage2_job_queue. 41 importer + 4 잔존 stale (`from app.services import X`) 갱신, ingest aggregate **init**.py 신설(D7-C compat), parity 27/27 = /tmp/parity_phase1_step5.md)
 - [✓] Phase 1 step 6 — routes import flip (3 routes flip: plan_pipeline auto_schedule → application.scheduling.greedy.auto_schedule, schedules/cascade + schedules/**init** PREDECESSOR_PROCESS → app.domain.constants. llm_explainer route 는 Phase 2 까지 유지, schedule_optimizer 셸 Phase 5 §9.4 까지 유지. parity 27/27 = /tmp/parity_phase1_step6.md)
 - [✓] Phase 2 — llm_explainer 분해 (services/llm_explainer.py 삭제, application/decisions/{risk_detector, \_llm_client, explain_batch, summarize_run}.py 신설, narrator.py 에 detect_hallucinations public helper 추가, hallucination filter 가 explain_batch + summarize_run 양쪽에 적용. 신규 5 unit test (3 noun class 거부 + 도메인 통과 + base allow). pytest 435 green, parity 27/27 = /tmp/parity_phase2.md)
-- [ ] Phase 3 step 1~6 — cp_sat_schedule 분해 + lex wiring
-- [ ] Phase 4 — SchedulerState SRP
-- [ ] Phase 5 §9.1~§9.5 — e2e + QA + shell delete + 최종 parity
+- [✓] Phase 3 step 1 — cp_sat_schedule §1~§9 식별 + CpSatRunState 설계 (step 2 commit 0aef136 에 포함, derail signal 평가: clean)
+- [✓] Phase 3 step 2 — §4-5 추출 → cp_sat/helpers.py (commit 0aef136, orchestrator 1657 → 1359 LOC, 가중치 상수 + helpers + \_build_group_meta 이동, solver_boundary TYPE_CHECKING-aware 강화. parity 27/27 = /tmp/parity_phase3_step2.md)
+- [✓] Phase 3 step 3 — min_time_mode flag + lex 분기 + INFEASIBLE 폴백 (commit d7a82fc, compose_objective 분기 안 이동, result["solver_mode"] / lex_t_star / lex_makespan_min / lex_all_due_met 추가. parity 27/27 = /tmp/parity_phase3_step3.md)
+- [✓] Phase 3 step 4 — \_adapt_lex_to_solve_result adapter 신설 (commit 8aca635, lex_min_time.py 에 AdaptedSolveResult dataclass + adapter, orchestrator §7-a ad-hoc rebind 정돈. parity 27/27 = /tmp/parity_phase3_step4.md)
+- [✓] Phase 3 step 5 — dual-mode 비교 docs (commit da8e950, docs/lex-mode-comparison.md — \_purge_run_data vs \_purge_run_tasks 의미 차이 + 별도 run_label 권장 + 비교 메트릭 + INFEASIBLE 폴백 동작)
+- [✓] Phase 3 step 6 — 시나리오 12/13 fixture + lex 분기 결정론 검증 (commit e8c2220, 12_all_due_met (T\*=0) + 13_past_due_forced (T\*=5980) seed + capture + hash freeze. orchestrator deepcopy → \_build_solver_model() 재호출 전환 (cp_model IntAffine picklable 아님). pytest 435 + parity 13/13 + main-parity 27/27 = /tmp/parity_phase3_step6.md)
+- [✓] Phase 4 step 1+4 — SchedulerState dataclass + isolation test (commit 378c08c, application/scheduling/greedy/scheduler_state.py 신설 — 10 mutable + 4 master-data field, default_factory 격리. tests/test_scheduler_state_isolation.py 16 tests freeze 격리 invariant. step 2/3/5 (helper 추출 + auto_schedule wiring + body ≤100 LOC) 는 964 LOC 분해 위험으로 다음 세션 deferral. pytest 451 + parity 13/13 + main-parity 27/27 = /tmp/parity_phase4.md)
+- [△] Phase 5 partial — main-parity 27/27 final / §11 markers 갱신 완료. 미완료 항목:
+  - §9.4 (shell delete + 21 patch site flip): tests/test_overlap_retry, test_pipeline_alignment, test_pipeline_sync 등 다수의 monkeypatch.setattr(schedule_optimizer, ...) 사용 — cross-file 광범위 retarget 필요. shell 90 LOC 는 무료 보험 (P1) 으로 유지 가능. **다음 세션 atomic commit 분리 권장**: (a) 각 test 의 schedule_optimizer.X import → 직접 path, (b) monkeypatch target → 실제 모듈 (auto_schedule / optimization_loop / reschedule_affected), (c) production lazy import 정리 (input_builder.py:33, slot_filters.py:234, group_ops.py:278), (d) shell + services/\_\_init\_\_.py 삭제.
+  - §9.1 실 ERP 양 서버 동치 (Documents/ERP생산계획\_v1.xls + SM재고리스트.xls): main-parity 27/27 이 stage1/stage2 read 엔드포인트 포함하여 동치성 proxy. ERP 업로드 시 stage1+stage2 dual-run 명시 비교 미수행 — 다음 세션 권장.
+  - §9.2 lex vs weighted-sum 측정 비교: docs/lex-mode-comparison.md 절차 + 시나리오 12/13 fixture 준비 완료. 실측 dual-run + drift 표 작성 미수행.
+  - §9.3 gstack/QA UI walkthrough: 미수행.
+- [△] Phase 4 step 2/3/5 — helper 추출 + auto_schedule wiring + \_run_optimization_once body ≤100 LOC: 다음 세션 deferral (964 LOC 분해 위험).
 
 **문서 작성**: 2026-04-26 Phase 0 종료 시점. 사용자 승인 후 즉시 갱신.
 **다음 업데이트**: 매 phase step 완료 후 §11 marker 갱신.
+**최종 갱신**: 2026-04-26 Phase 3 step 6 + Phase 4 partial + Phase 5 partial 종료.
