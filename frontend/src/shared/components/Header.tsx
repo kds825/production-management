@@ -2,6 +2,8 @@
 
 import Image from "next/image";
 
+import { BellIcon } from "@/features/scheduler/components/decision/BellIcon";
+
 interface HeaderProps {
   onAddTask?: () => void;
   isEditMode?: boolean;
@@ -55,8 +57,18 @@ export function Header({
           className="px-3 py-1.5 text-xs font-medium rounded-md transition-all border"
           style={
             isEditMode
-              ? { backgroundColor: "#C41230", color: "#FFFFFF", borderColor: "#C41230", cursor: "pointer" }
-              : { backgroundColor: "#FFFFFF", color: "#4A2C2A", borderColor: "#4A2C2A", cursor: "pointer" }
+              ? {
+                  backgroundColor: "#C41230",
+                  color: "#FFFFFF",
+                  borderColor: "#C41230",
+                  cursor: "pointer",
+                }
+              : {
+                  backgroundColor: "#FFFFFF",
+                  color: "#4A2C2A",
+                  borderColor: "#4A2C2A",
+                  cursor: "pointer",
+                }
           }
         >
           {isEditMode ? "저장하기" : "수정하기"}
@@ -79,6 +91,7 @@ export function Header({
           </button>
         )}
 
+        <BellIcon />
         <span className="text-[9px] text-gray-300 px-1.5 py-0.5">v0.1</span>
       </div>
     </header>

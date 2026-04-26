@@ -32,6 +32,64 @@ from app.presentation.schemas.decision_feedback import (
 router = APIRouter(prefix="/decision-feedback", tags=["decision_feedback"])
 
 
+@router.get("/me", response_model=list[DecisionFeedbackResponse])
+def list_my_feedback(
+    operator_id: str,
+    db: Session = Depends(get_db),
+) -> list[DecisionFeedbackResponse]:
+    """운영자 자기 의견 history (CEO §1 my-feedback view).
+
+    `operator_id` 쿼리 — PoC 단계라 신뢰. JWT 도입 후 헤더 / claim 로 교체.
+    """
+    rows = (
+        db.query(DecisionFeedback)
+        .filter(DecisionFeedback.operator_id == operator_id)
+        .order_by(DecisionFeedback.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [
+        DecisionFeedbackResponse(
+            id=r.id,
+            created_at=r.created_at,
+            run_label=r.run_label,
+            batch_id=r.batch_id,
+            task_id=r.task_id,
+            section=r.section,
+            line_anchor=r.line_anchor,
+            constraint_id_hint=r.constraint_id_hint,
+            free_text=r.free_text,
+            operator_id=r.operator_id,
+            status=r.status,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/unread-count")
+def unread_resolution_count(
+    operator_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """topbar bell icon — 운영자가 아직 못 본 fixed/wontfix 처리 건수.
+
+    PoC: status in ('fixed', 'wontfix') 모두 unread 로 카운트. UI review §12 — 운영자가
+    bell 클릭 후 my-feedback view 진입 시 reset 은 후속 spec.
+    """
+    from sqlalchemy import func
+
+    cnt = (
+        db.query(func.count(DecisionFeedback.id))
+        .filter(
+            DecisionFeedback.operator_id == operator_id,
+            DecisionFeedback.status.in_(("fixed", "wontfix")),
+        )
+        .scalar()
+        or 0
+    )
+    return {"unread": int(cnt)}
+
+
 @router.post("", response_model=DecisionFeedbackResponse, status_code=201)
 def create_decision_feedback(
     payload: DecisionFeedbackCreate,

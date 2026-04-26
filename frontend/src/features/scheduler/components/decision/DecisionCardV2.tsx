@@ -18,11 +18,15 @@ import { useState } from "react";
 
 import { useDecisionCardV2 } from "../../hooks/useDecisionCardV2";
 
+import { Alternatives } from "./Alternatives";
+import { BundleCompare } from "./BundleCompare";
 import { DecisionFeedbackDialog } from "./DecisionFeedbackDialog";
 import type { DecisionCardV2 as DecisionCardV2Data } from "./decisionCardTypes";
+import { EquipmentDay } from "./EquipmentDay";
 import { Handoff } from "./Handoff";
 import { Header } from "./Header";
 import { Impact } from "./Impact";
+import { ProvenanceBadge } from "./ProvenanceBadge";
 import { VerdictSummary } from "./VerdictSummary";
 import { Why } from "./Why";
 
@@ -128,8 +132,11 @@ export function DecisionCardV2View({ data, onFeedback }: ViewProps) {
         dueDate={data.due_date}
         placementText={data.placement_text}
       />
-      <div className="px-4 pt-3">
-        <VerdictSummary text={data.verdict_summary} />
+      <div className="px-4 pt-3 flex flex-wrap items-center gap-2">
+        <ProvenanceBadge info={data.provenance} />
+        <div className="flex-1 min-w-[200px]">
+          <VerdictSummary text={data.verdict_summary} />
+        </div>
       </div>
       <Why
         lines={data.why}
@@ -145,6 +152,19 @@ export function DecisionCardV2View({ data, onFeedback }: ViewProps) {
         wipMatch={data.wip_match}
         outsourceHandoff={data.outsource_handoff}
         defaultExpanded={expanded.section_3 === true}
+      />
+      <EquipmentDay
+        rows={data.equipment_day}
+        sortLabel={data.equipment_day_sort_label}
+        defaultExpanded={expanded.section_4 === true}
+      />
+      <BundleCompare
+        rows={data.bundle_compare}
+        defaultExpanded={expanded.section_5 === true}
+      />
+      <Alternatives
+        rows={data.alternatives}
+        defaultExpanded={expanded.section_6 === true}
       />
     </article>
   );
