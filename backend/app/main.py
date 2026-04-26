@@ -15,6 +15,7 @@ from app.presentation.routes import decision_card  # noqa: F401
 from app.presentation.routes import decision_feedback  # noqa: F401
 from app.presentation.routes import decisions  # noqa: F401
 from app.presentation.routes import equipment  # noqa: F401
+from app.presentation.routes import kpi_dashboard  # noqa: F401
 from app.presentation.routes import master_data  # noqa: F401
 from app.presentation.routes import orders  # noqa: F401
 from app.presentation.routes import plan_pipeline  # noqa: F401
@@ -64,6 +65,7 @@ app.include_router(decisions.router, prefix="/api")
 app.include_router(decision_card.router, prefix="/api")
 app.include_router(decision_feedback.router, prefix="/api")
 app.include_router(decision_feedback.admin_router, prefix="/api")
+app.include_router(kpi_dashboard.router, prefix="/api")
 app.include_router(change_sets.router, prefix="/api")
 
 
