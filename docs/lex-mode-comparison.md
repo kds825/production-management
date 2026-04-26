@@ -114,8 +114,110 @@ schedule_task 비교 (per task_id 매핑):
 관측. fallback 시 warnings 에 `"lex_min_time INFEASIBLE_A → weighted-sum
 폴백"` 1건 추가.
 
-## 6. Phase 5 §9.2 본 비교 (TBD)
+## 6. Phase 5 §9.2 본 비교 결과
 
-실 ERP 파일 기반 dual-run 결과 + per-task drift 표 + per-cluster 색상
-체인 보존율 + makespan 차이를 본 문서에 추가 예정 (Phase 5 §9.2 종료
-시점).
+**측정**: 2026-04-26
+**입력**: `run_label=20260425_225331` (Stage 1 ingest 985 production_batch,
+실 ERP 데이터), `time_limit_sec=30`, `tardiness_hard=False`,
+`sheath_color_hard=False` (양쪽 동일 — INFEASIBLE 회피용 soft 모드)
+**스크립트**: `/tmp/lex_dual_run.py` (cp_sat_schedule 직접 호출,
+production_batch.status `planned` reset → 호출 → schedule_task dump 패턴)
+**원시 출력**: `/tmp/lex_dual_run.json`
+
+### 6.1 솔버 메트릭
+
+| 메트릭               | weighted-sum (Run 1)       | lex_min_time (Run 2) | 비고                         |
+| -------------------- | -------------------------- | -------------------- | ---------------------------- |
+| `solver_mode`        | `weighted_sum`             | `lex_min_time`       | lex 폴백 없음                |
+| `solver_status`      | FEASIBLE                   | **OPTIMAL**          | lex 가 OPTIMAL 도달          |
+| `solver_wall_time_s` | 30.04 (타임아웃 hit)       | **0.19**             | lex 가 158× 빠름             |
+| `total_tasks`        | 103                        | 105                  | lex 가 2 groups 더 placement |
+| `objective_value`    | 8,113,247,190,597 (가중합) | — (lex 분리)         | 가중합 vs lex 분리           |
+| `lex_t_star` (분)    | (없음)                     | 19,140               | 약 13.3일 max tardiness      |
+| `lex_makespan_min`   | (없음)                     | 24,074               | 약 16.7일 makespan           |
+| `lex_all_due_met`    | (없음)                     | False                | over-saturated 입력 확인     |
+| `warnings`           | 2                          | 3                    | lex 가 1건 추가              |
+
+**핵심 관찰**:
+
+1. **lex 가 wall-time 158× 빠름** — Phase A (max_tardiness 최소) +
+   Phase B (makespan 최소) 의 두 작은 LP 가 weighted-sum 의 거대 가중합
+   탐색보다 훨씬 빠르게 OPTIMAL 도달.
+2. **lex 가 2 groups 더 placement** — 입력이 모든 납기 충족 불가능
+   (T\*>0) 인 over-saturated 시나리오에서 lex 가 더 많은 그룹을 배치 가능
+   하다는 것은 자연스러운 결과 (Phase A 가 max_tardiness 만 최소화하므로
+   tardiness 간 차이를 무시할 수 있어 더 많은 placement 허용).
+3. **weighted-sum 은 timeout 으로 sub-optimal** — 30 초 한도 내 OPTIMAL
+   도달 실패. 가중치 비율이 큰 (8E12) 가중합이 탐색 공간을 폭발시킴.
+
+### 6.2 schedule_task drift
+
+| 비교 항목              | 값  | 비고                                 |
+| ---------------------- | --- | ------------------------------------ |
+| common batch_groups    | 96  | 양쪽 모두 placement 된 그룹          |
+| ws-only groups         | 0   | weighted-sum 만 picked               |
+| lex-only groups        | 2   | lex 만 picked (위 1번 결과)          |
+| equipment changes      | 5   | 5 그룹 (5/96 = 5.2%) 이 다른 설비    |
+| start_datetime changes | 52  | 52 그룹 (52/96 = 54.2%) 시작 시각 차 |
+
+설비 배정은 대부분 동일 (94.8% 동일). 시작 시각은 절반 이상 변동 — lex 가
+makespan 최소화 path 를 다르게 선택. 이는 lex Phase B 가 explicit 하게
+makespan 을 minimize 하기 때문.
+
+### 6.3 시스 색상 클러스터 보존율
+
+| 모드         | 보존 / 전체 인접 쌍 | 비율   |
+| ------------ | ------------------- | ------ |
+| weighted-sum | 57 / 57             | 100.0% |
+| lex_min_time | 59 / 59             | 100.0% |
+
+**양쪽 모두 100% 보존** — 시스 (저압/고압) 그룹이 같은 prefix
+(A100\_/A120\_/FH\_/FL\_) 끼리 같은 설비에 연속 배치되는 비율. lex 가
+chain_terms 를 무시한다는 §4.2 우려에도 불구하고 본 데이터에서는 색상
+체인이 100% 보존됨. 이는 (a) sheath cluster 가 hard constraint 로 들어
+가 있지 않고도 greedy 단계의 sort 정책 (cluster_sort_key) 이 연속 배치를
+보장하기 때문 — CP-SAT 의 chain_terms penalty 와 무관하게 캘린더 그리디
+가 클러스터 단위 정렬을 enforce.
+
+### 6.4 캘린더 그리디 makespan
+
+| 모드         | greedy timeline makespan | 비고                            |
+| ------------ | ------------------------ | ------------------------------- |
+| weighted-sum | 38,400 min (~640h)       | CP-SAT order → greedy placement |
+| lex_min_time | 38,400 min (~640h)       | 동일 결과                       |
+| **delta**    | **+0 min (+0.00%)**      | 동치                            |
+
+CP-SAT 는 group order 를 결정하고, 캘린더 그리디가 실제 시작/종료 시각을
+배정. 본 데이터에서는 두 path 의 group order 차이가 캘린더 그리디 단계
+에서 동일 makespan 으로 수렴. 이는 (a) 캘린더 calendar (작업가능시간)
+제약이 makespan 을 dominant 하게 결정 (b) 두 path 모두 동일 캘린더 위에
+서 각자 최선의 packing 을 함을 시사.
+
+> 주의: lex 의 `lex_makespan_min=24,074` 은 **CP-SAT 모델 내부의 work-min
+> 단위 makespan** (작업가능 분만 셈, off-hours 미포함). 캘린더 그리디
+> 38,400 min 은 **wall-clock minutes** (off-hours 포함). 두 값은 직접
+> 비교 불가하나 같은 입력에 대한 두 mode 의 wall-clock makespan 이 동일
+> 하다는 것이 핵심.
+
+### 6.5 결론 / 권장 default
+
+| 시나리오                               | 권장 모드                | 근거                                                                     |
+| -------------------------------------- | ------------------------ | ------------------------------------------------------------------------ |
+| **납기 over-saturated (T\*>0 가능성)** | `lex_min_time`           | 158× 빠름, OPTIMAL 보장, 더 많은 placement, 동일 makespan                |
+| **납기 모두 충족 가능 (T\*=0 예상)**   | weighted-sum             | secondary metric (idle / EDD / chain) 함께 최적화                        |
+| **dev / ad-hoc 빠른 답이 필요한 경우** | `lex_min_time`           | 158× wall-time 우월                                                      |
+| **production batch (현재 default)**    | weighted-sum (변경 없음) | 본 측정만으로 default 변경하기엔 sample 1건 — 추가 시나리오 검증 후 결정 |
+
+### 6.6 Caveats
+
+- **단일 measurement** — `run_label=20260425_225331` (985 batch) 한 set
+  결과. 다른 입력 (납기 모두 충족 가능, batch 수 < 100, 시스 비중 높음
+  등) 시나리오 별 추가 측정 필요.
+- **soft constraint 모드** — `tardiness_hard=False`,
+  `sheath_color_hard=False` 로 측정. retry harness 의 default Level 0
+  (양쪽 hard) 환경에서는 두 모드 모두 INFEASIBLE 발생 (data 가 hard 납기
+  제약 위반). production retry 단계 (Level 3 soft 도달 시) 에서만 lex
+  유의미.
+- **schedule_optimizer (greedy) idempotency** — production_batch.status
+  를 reset 후 호출하므로 idempotent. 단 호출 후 status 가 'scheduled'
+  로 mutate 되어 정상 운영 시에는 stage2 가 다시 'planned' 로 전환 필요.
