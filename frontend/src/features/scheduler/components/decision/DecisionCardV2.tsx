@@ -16,10 +16,14 @@
 
 import { useState } from "react";
 
-import { useDecisionCardV2 } from "../../hooks/useDecisionCardV2";
+import {
+  readDebugMode,
+  useDecisionCardV2,
+} from "../../hooks/useDecisionCardV2";
 
 import { Alternatives } from "./Alternatives";
 import { BundleCompare } from "./BundleCompare";
+import { DebugInspector } from "./DebugInspector";
 import { DecisionFeedbackDialog } from "./DecisionFeedbackDialog";
 import type { DecisionCardV2 as DecisionCardV2Data } from "./decisionCardTypes";
 import { EquipmentDay } from "./EquipmentDay";
@@ -55,6 +59,7 @@ export function DecisionCardV2({
   const { data, status, error, refetch } = useDecisionCardV2({
     runLabel,
     batchId,
+    debug: readDebugMode(),
   });
   const [dialogAnchor, setDialogAnchor] = useState<string | null>(null);
 
@@ -166,6 +171,7 @@ export function DecisionCardV2View({ data, onFeedback }: ViewProps) {
         rows={data.alternatives}
         defaultExpanded={expanded.section_6 === true}
       />
+      <DebugInspector debug={data.debug} />
     </article>
   );
 }

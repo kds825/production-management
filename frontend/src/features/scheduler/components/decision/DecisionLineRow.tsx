@@ -1,8 +1,8 @@
 /**
- * 자연어 줄 row — anchor + natural + severity badge.
+ * 자연어 줄 row — anchor + natural + severity badge + Tier 2 ⓘ popover.
  *
  * onFeedback 콜백: ⚠ 마크 클릭 시 line_anchor 와 함께 호출 → 부모가 dialog
- * 띄움. v2 MVP 는 prop 만 정의 (Step 6-MVP 에서 wire-up).
+ * 띄움. line.detail 이 있으면 ⓘ 호버 popover 노출 (Step 5).
  */
 
 import type { DecisionLine } from "./decisionCardTypes";
@@ -15,6 +15,7 @@ interface Props {
 
 export function DecisionLineRow({ line, onFeedback }: Props) {
   const showFlag = line.severity === "warn" || line.severity === "fail";
+  const hasDetail = Object.keys(line.detail || {}).length > 0;
   return (
     <li className="flex items-start gap-2">
       <span
@@ -28,6 +29,26 @@ export function DecisionLineRow({ line, onFeedback }: Props) {
         {line.constraint_id ? (
           <span className="text-pwc-caption text-pwc-gray-500 ml-2 font-mono">
             #{line.constraint_id}
+          </span>
+        ) : null}
+        {hasDetail ? (
+          <span
+            className="text-pwc-caption text-pwc-status-info-text ml-1 cursor-help relative group"
+            tabIndex={0}
+            aria-label="추가 설명"
+          >
+            ⓘ
+            <span
+              role="tooltip"
+              className="invisible group-hover:visible group-focus:visible absolute left-0 top-full mt-1 z-10 bg-pwc-bg-elevated border border-pwc-gray-200 rounded shadow-md p-2 min-w-[260px] text-pwc-subBody text-pwc-gray-600 whitespace-pre-wrap"
+            >
+              {Object.entries(line.detail).map(([k, v]) => (
+                <span key={k} className="block">
+                  <strong className="text-pwc-gray-500">{k}:</strong>{" "}
+                  {String(v)}
+                </span>
+              ))}
+            </span>
           </span>
         ) : null}
       </span>

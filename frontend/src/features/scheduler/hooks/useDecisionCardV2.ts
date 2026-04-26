@@ -46,6 +46,14 @@ function readUserRole(): string {
   return window.localStorage.getItem("kbi.user_role") || "admin";
 }
 
+/** ?debug=1 URL 쿼리 또는 localStorage 'kbi.debug_mode' = '1' → debug 요청. */
+export function readDebugMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("debug") === "1") return true;
+  return window.localStorage.getItem("kbi.debug_mode") === "1";
+}
+
 interface Args {
   runLabel: string | null;
   batchId: number | null;
