@@ -183,7 +183,8 @@ def test_env_var_disabled_by_default():
 
     auto_schedule 레벨 통합 검증 — 내부 call 여부를 mock 으로.
     """
-    from app.services import schedule_optimizer
+    import importlib
+    schedule_optimizer = importlib.import_module("app.application.scheduling.greedy.auto_schedule")
 
     # JIT 함수를 mock — 실제 호출 발생 시 감지
     with patch.object(

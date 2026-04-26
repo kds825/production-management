@@ -116,7 +116,8 @@ def test_boost_retry_rollback_preserves_original_priority(db):
     # run_label 과 호환 안 되는 kwarg 조합으로 예외 유발. 본 테스트의
     # 초점은 "rollback 이후 batch.priority 원복" 이므로, 예외 경로를
     # 어떻게든 타면 충분.
-    import app.services.schedule_optimizer as so
+    import importlib
+    so = importlib.import_module("app.application.scheduling.greedy.auto_schedule")
 
     _orig_auto = so.auto_schedule
 

@@ -624,9 +624,13 @@ def reschedule(
 
     # 재스케줄링 실행 — auto_schedule은 status='planned' 배치만 처리하므로 frozen 배치 안전.
     # warm_start_hints 는 kwargs 로 흘러 _run_with_retry → cp_sat_schedule 까지 전파.
-    # monkeypatch 호환 — 테스트가 `schedule_optimizer.auto_schedule = ...` 패치 시
-    # 본 호출이 패치를 따르도록 모듈 lookup.
-    from app.services import schedule_optimizer as _so
+    # monkeypatch 호환 — 테스트가 auto_schedule 모듈의 attribute 를 패치하면
+    # 본 호출이 그 패치를 따르도록 sys.modules 경유 모듈 lookup (canonical path).
+    # 패키지 __init__.py 가 같은 이름 함수를 re-export 해 from-import 로는 함수가
+    # 잡혀 attribute access 가 깨짐 — 직접 sys.modules 에서 submodule 을 잡는다.
+    import sys as _sys
+
+    _so = _sys.modules["app.application.scheduling.greedy.auto_schedule"]
 
     result = _so.auto_schedule(
         run_label,

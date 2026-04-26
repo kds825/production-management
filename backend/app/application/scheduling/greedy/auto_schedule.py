@@ -132,7 +132,13 @@ def auto_schedule(
 
     # monkeypatch 호환 lookup — 테스트가 schedule_optimizer 셸의 attribute 를
     # 패치해도 본 호출이 패치 결과를 따라가도록 동적 lookup 한다.
-    from app.services import schedule_optimizer as _so
+    import sys as _sys
+
+    # 패키지 __init__.py 가 `from .auto_schedule import auto_schedule` 로 같은
+    # 이름의 함수를 export 해 `from app.application.scheduling.greedy import
+    # auto_schedule` 이 함수로 resolve 된다 — 모듈 자체를 참조하려면
+    # sys.modules[__name__] (현재 submodule) 을 직접 lookup.
+    _so = _sys.modules[__name__]
 
     # ── Phase 2 개선: warm_start_hints 자동 생성 ──────────────────────────
     # 왜 자동 생성:
@@ -462,7 +468,13 @@ def _tardiness_boost_retry(
     # monkeypatch 호환 — 기존 테스트 (test_tardiness_boost_retry) 가
     # `schedule_optimizer.auto_schedule = _faulty_auto` 로 mock 한 뒤
     # 본 함수의 재호출이 mock 을 따르도록 모듈 lookup 으로 해소한다.
-    from app.services import schedule_optimizer as _so
+    import sys as _sys
+
+    # 패키지 __init__.py 가 `from .auto_schedule import auto_schedule` 로 같은
+    # 이름의 함수를 export 해 `from app.application.scheduling.greedy import
+    # auto_schedule` 이 함수로 resolve 된다 — 모듈 자체를 참조하려면
+    # sys.modules[__name__] (현재 submodule) 을 직접 lookup.
+    _so = _sys.modules[__name__]
 
     sp = db.begin_nested()
     try:
