@@ -8,7 +8,7 @@ interface EquipmentSidebarProps {
 
 // 공정별 SVG 아이콘 (PwC 스타일 — 미니멀, 단색, 16px)
 function ProcessIcon({ type }: { type: string }) {
-  const color = PROCESS_COLORS[type] ?? "#78909C";
+  const color = PROCESS_COLORS[type] ?? "var(--viz-process-default)";
 
   switch (type) {
     case "drawing":
@@ -148,15 +148,16 @@ function ProcessIcon({ type }: { type: string }) {
 
 // 공정별 색상 (PwC 스타일 — 차분한 톤)
 const PROCESS_COLORS: Record<string, string> = {
-  drawing: "#5C6BC0", // 인디고
-  stranding: "#26A69A", // 틸
-  hv_insulation: "#C41230", // KBI Red
-  lv_insulation: "#EF6C00", // 오렌지
-  taping: "#7E57C2", // 퍼플
-  cabling: "#42A5F5", // 블루
-  lv_jacketing: "#66BB6A", // 그린
-  hv_jacketing: "#C41230", // KBI Red
-  neutral_wire: "#78909C", // 그레이블루
+  // PR4 Task B.4 — 토큰 참조. globals.css --viz-process-* 와 동기화.
+  drawing: "var(--viz-process-drawing)",
+  stranding: "var(--viz-process-stranding)",
+  hv_insulation: "var(--viz-process-hv-insulation)",
+  lv_insulation: "var(--viz-process-lv-insulation)",
+  taping: "var(--viz-process-taping)",
+  cabling: "var(--viz-process-cabling)",
+  lv_jacketing: "var(--viz-process-lv-jacketing)",
+  hv_jacketing: "var(--viz-process-hv-jacketing)",
+  neutral_wire: "var(--viz-process-neutral-wire)",
 };
 
 // 공정 유형 한국어 레이블
@@ -175,7 +176,8 @@ const PROCESS_LABELS: Record<string, string> = {
 export function EquipmentSidebar({ equipment }: EquipmentSidebarProps) {
   const label =
     PROCESS_LABELS[equipment.process_type] ?? equipment.process_type;
-  const processColor = PROCESS_COLORS[equipment.process_type] ?? "#78909C";
+  const processColor =
+    PROCESS_COLORS[equipment.process_type] ?? "var(--viz-process-default)";
   const isAvailable = equipment.status === "available";
 
   return (

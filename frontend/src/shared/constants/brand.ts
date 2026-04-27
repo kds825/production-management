@@ -7,7 +7,7 @@ export const KBI_BRAND = {
     primary: "var(--color-brand-primary)",
     primaryDark: "var(--accent-primary-hover)",
     secondary: "var(--kbi-brown)",
-    accent: "#D4A574", // (KBI 보조 — 토큰 미정의, 그대로 hex)
+    accent: "var(--accent-warm)",
     background: "var(--color-bg-muted)",
     surface: "var(--bg-surface)",
     text: "var(--color-text-primary)",
@@ -23,18 +23,18 @@ export const KBI_BRAND = {
     //   색을 분리해 시각 혼동을 방지하고, 두 overlay 는 store 상 상호배타로 활성화한다.
     //   참조: docs/specs/2026-04-20-gantt-version-diff-overlay-design.md
     diff: {
-      added: "#10B981", // emerald-500 — 녹색 outline / "+" 뱃지
-      moved: "#3B82F6", // blue-500 — 파란 outline + ghost dashed
-      removed: "#9CA3AF", // gray-400 — 회색 dashed (필터 ON 시)
+      added: "var(--viz-diff-added)", // 녹색 outline / "+" 뱃지
+      moved: "var(--viz-diff-moved)", // 파란 outline + ghost dashed
+      removed: "var(--viz-diff-removed)", // 회색 dashed (필터 ON 시)
     },
     taskColors: {
-      "TFR-CV-WB": "#C41230",
-      "TFR-CV": "#E65100",
-      HFCO: "#1565C0",
-      "TFR-8": "#6A1B9A",
-      "TFR-GV": "#2E7D32",
-      "CNCV-W": "#00695C",
-      default: "#78909C",
+      "TFR-CV-WB": "var(--viz-product-tfr-cv-wb)",
+      "TFR-CV": "var(--viz-product-tfr-cv)",
+      HFCO: "var(--viz-product-hfco)",
+      "TFR-8": "var(--viz-product-tfr-8)",
+      "TFR-GV": "var(--viz-product-tfr-gv)",
+      "CNCV-W": "var(--viz-product-cncv-w)",
+      default: "var(--viz-product-default)",
     },
   },
   fonts: {
@@ -61,26 +61,22 @@ export type ProductGroup = keyof typeof KBI_BRAND.colors.taskColors;
  *   전체적으로 earthy·warm-shifted, 명도 L≈28~46% (흰 텍스트 가독 확보).
  * 클러스터 내 SQ 오름차순 = 명도 내림차순 (작은 SQ → 연한 톤)
  */
+// PR4 Task B.2 — 토큰 참조. globals.css --viz-sq-cluster-* 와 동기화.
 const SQ_COLORS: Record<number, string> = {
-  // wire_diameter 2.21mm 클러스터 (웜 틸 — 청록에서 따뜻하게 조정)
-  16: "#3D909E", // 밝은 웜 틸        L≈42%
-  25: "#2A7282", // 중간 웜 틸        L≈34%
-  70: "#165666", // 짙은 웜 틸        L≈26%
-  // wire_diameter 2.64mm 클러스터 (슬레이트 블루 — KBI 차분한 계열)
-  35: "#4D7EB0", // 밝은 슬레이트     L≈45%
-  95: "#355E94", // 중간 슬레이트     L≈36%
-  185: "#1E4478", // 짙은 네이비       L≈28%
-  300: "#122E60", // 딥 네이비         L≈22%
-  // wire_diameter 2.92mm 클러스터 (플럼 — 보라에서 KBI 레드 언더톤으로)
-  120: "#7A4898", // 밝은 플럼         L≈40%
-  400: "#562878", // 짙은 플럼         L≈28%
-  // wire_diameter 3.02mm 클러스터 (포레스트 — 초록에서 earthy하게)
-  50: "#3A8C5C", // 밝은 포레스트     L≈38%
-  240: "#1E6840", // 짙은 포레스트     L≈28%
-  // 기타 — KBI 브랜드 컬러에서 직접 파생
-  150: "#C07820", // KBI Orange 파생 (앰버)      L≈40%
-  200: "#937A61", // KBI Champagne Gold           L≈38%
-  633: "#B01E38", // KBI Sunrise Red 파생 (딥 크림슨) L≈30%
+  16: "var(--viz-sq-warm-teal-light)",
+  25: "var(--viz-sq-warm-teal-mid)",
+  70: "var(--viz-sq-warm-teal-dark)",
+  35: "var(--viz-sq-slate-blue-light)",
+  95: "var(--viz-sq-slate-blue-mid)",
+  185: "var(--viz-sq-slate-blue-dark)",
+  300: "var(--viz-sq-slate-blue-deep)",
+  120: "var(--viz-sq-plum-light)",
+  400: "var(--viz-sq-plum-deep)",
+  50: "var(--viz-sq-forest-light)",
+  240: "var(--viz-sq-forest-deep)",
+  150: "var(--viz-sq-amber)",
+  200: "var(--viz-sq-champagne)",
+  633: "var(--viz-sq-crimson)",
 };
 
 /**
@@ -96,7 +92,10 @@ export function getContrastTextColor(hex: string): string {
     v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
   // 흰색(L=1) 대비비: (1.05) / (L + 0.05)
-  return 1.05 / (L + 0.05) >= 3.5 ? "#FFFFFF" : "#1A1A1A";
+  // PR4 Task B.3 — CSS context consumer 만 호환 (style.color 등). HTML attribute X.
+  return 1.05 / (L + 0.05) >= 3.5
+    ? "var(--color-text-inverse)"
+    : "var(--color-text-primary)";
 }
 
 /** SQ 값으로 색상 반환. 미등록 SQ는 해시 폴백. */

@@ -735,14 +735,14 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           width: segW,
           display: "flex",
           alignItems: "stretch",
-          outline: isSelected ? "2px solid #FBBF24" : "none",
+          outline: isSelected ? "2px solid var(--signal-selected)" : "none",
           outlineOffset: 1,
           // frozen 배치 좌측 강조 보더 — 첫 세그먼트만 적용
           ...(isFirst && frozenBorderColor
             ? { borderLeft: `3px solid ${frozenBorderColor}` }
             : {}),
           // 납기 초과 배치 — 하단 빨간 테두리로 강조
-          ...(isLate ? { borderBottom: "3px solid #FF0000" } : {}),
+          ...(isLate ? { borderBottom: "3px solid var(--signal-alert)" } : {}),
           // 신규 배치 글로우 — 첫 세그먼트에만, 드래그 중에는 비활성
           ...(isFirst && isNew && !isDragging
             ? { animation: "newBatchGlow 1s ease-in-out 2" }
@@ -864,7 +864,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   fontSize: 8,
                   fontWeight: 700,
                   lineHeight: 1.4,
-                  backgroundColor: "#FF0000",
+                  backgroundColor: "var(--signal-alert)",
                   color: "var(--color-text-inverse)",
                   whiteSpace: "nowrap",
                   pointerEvents: "none",
@@ -1002,7 +1002,11 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             )}
             {lotLabel && (
               <div
-                style={{ marginBottom: 4, color: "var(--status-warning-border)", fontWeight: 600 }}
+                style={{
+                  marginBottom: 4,
+                  color: "var(--status-warning-border)",
+                  fontWeight: 600,
+                }}
               >
                 작업지시: {lotLabel} ({task.volume_m.toLocaleString()}m)
               </div>

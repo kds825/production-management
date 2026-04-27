@@ -17,9 +17,10 @@ export const EQUIPMENT_BY_PROCESS: Record<ProcessGroup, EquipmentGroup[]> = {
   "T/P": ["T/P"],
 };
 
+// PR4 Task B.5 — 토큰 참조. globals.css --status-success/-warning 동기화.
 export const PROCESS_STATUS_COLORS = {
-  진행: "#16A34A",
-  대기: "#F59E0B",
+  진행: "var(--status-success)",
+  대기: "var(--status-warning)",
 } as const;
 
 export type ProcessStatus = keyof typeof PROCESS_STATUS_COLORS;
