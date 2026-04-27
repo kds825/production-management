@@ -242,13 +242,13 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
             {formatDateShort(data.assigned_end)}
           </span>
           <span className="text-[color:var(--color-text-secondary)]">·</span>
-          <span className="text-[10px] text-[color:var(--color-text-tertiary)] font-mono">
+          <span className="text-tiny text-[color:var(--color-text-tertiary)] font-mono">
             {data.run_label}
           </span>
         </div>
         <span
           data-testid="decision-card-pill"
-          className="inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap border"
+          className="inline-flex items-center text-tiny font-medium px-2 py-0.5 rounded-full whitespace-nowrap border"
           style={{
             color: pillColorVar,
             borderColor: pillColorVar,
@@ -277,7 +277,7 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
               return (
                 <li
                   key={c.constraint_id}
-                  className="flex items-center gap-2 text-[11px]"
+                  className="flex items-center gap-2 text-small"
                 >
                   <span className="w-14 shrink-0 text-[color:var(--color-text-secondary)] truncate">
                     {c.korean_name}
@@ -313,7 +313,7 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
         {data.llm_was_template && (
           <span
             data-testid="decision-card-template-badge"
-            className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded bg-[color:var(--color-bg-muted)] text-[color:var(--color-text-secondary)] border border-[color:var(--color-border-default)]"
+            className="shrink-0 text-mini font-medium px-1.5 py-0.5 rounded bg-[color:var(--color-bg-muted)] text-[color:var(--color-text-secondary)] border border-[color:var(--color-border-default)]"
             title="LLM 호출 실패 — 템플릿 기반 요약"
           >
             템플릿
@@ -327,10 +327,10 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
           data-testid="decision-card-manual-override"
           className="mt-2 pt-2 border-t border-[color:var(--color-border-muted)]"
         >
-          <summary className="cursor-pointer text-[11px] font-medium text-[color:var(--color-warning)]">
+          <summary className="cursor-pointer text-small font-medium text-[color:var(--color-warning)]">
             수동 조정 내역
           </summary>
-          <div className="mt-2 flex flex-col gap-1 text-[11px] text-[color:var(--color-text-secondary)]">
+          <div className="mt-2 flex flex-col gap-1 text-small text-[color:var(--color-text-secondary)]">
             <div>
               <span className="font-semibold text-[color:var(--color-text-primary)]">
                 사유:

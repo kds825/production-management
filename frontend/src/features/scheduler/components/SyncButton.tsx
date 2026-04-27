@@ -24,7 +24,7 @@ export function SyncButton() {
       <button
         onClick={handleSync}
         disabled={isDisabled}
-        className="flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+        className="flex items-center gap-1.5 text-small font-medium px-3 py-1.5 rounded-md transition-colors"
         style={{
           backgroundColor: isDisabled
             ? "var(--neutral-100)"
@@ -67,7 +67,7 @@ export function SyncButton() {
         생산계획 동기화
         {confirmedBatches.length > 0 && (
           <span
-            className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full text-white"
+            className="text-mini font-semibold px-1.5 py-0.5 rounded-full text-white"
             style={{ backgroundColor: "var(--color-brand-primary)" }}
           >
             {confirmedBatches.length}
@@ -78,7 +78,7 @@ export function SyncButton() {
       {/* 동기화 완료 토스트 */}
       {showToast && (
         <div
-          className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-md text-[11px] font-medium text-white whitespace-nowrap z-50 shadow-sm"
+          className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-md text-small font-medium text-white whitespace-nowrap z-50 shadow-sm"
           style={{ backgroundColor: "var(--status-success-text)" }}
         >
           동기화 완료

@@ -35,16 +35,16 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
         }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold" style={{ color: "var(--status-danger-text-strong)" }}>
+          <span className="text-small font-bold" style={{ color: "var(--status-danger-text-strong)" }}>
             납기 초과 배치
           </span>
           <span
-            className="px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
+            className="px-1.5 py-0.5 rounded-full text-tiny font-bold text-white"
             style={{ backgroundColor: "var(--color-danger)" }}
           >
             {lateTasks.length}건
           </span>
-          <span className="text-[10px] text-gray-400">
+          <span className="text-tiny text-gray-400">
             — 배치 종료 시각이 납기일을 초과한 수주 목록
           </span>
         </div>
@@ -56,11 +56,11 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
         </button>
       </div>
       {lateTasks.length === 0 ? (
-        <div className="px-4 py-3 text-[11px] text-gray-400">
+        <div className="px-4 py-3 text-small text-gray-400">
           납기 초과 배치가 없습니다.
         </div>
       ) : (
-        <table className="w-full text-[11px] border-collapse">
+        <table className="w-full text-small border-collapse">
           <thead>
             <tr style={{ backgroundColor: "var(--kbi-red-tint-12)" }}>
               {[
@@ -109,13 +109,13 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                 <td className="px-3 py-1.5" style={{ whiteSpace: "nowrap" }}>
                   {t.status === "unassigned" ? (
                     <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+                      className="px-1.5 py-0.5 rounded text-tiny font-bold text-white"
                       style={{ backgroundColor: "var(--color-text-tertiary)" }}
                     >
                       미배치
                     </span>
                   ) : (
-                    <span className="text-gray-400 text-[10px]">배치됨</span>
+                    <span className="text-gray-400 text-tiny">배치됨</span>
                   )}
                 </td>
                 <td
@@ -151,7 +151,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                   ).toLocaleDateString("ko-KR")}
                 </td>
                 <td
-                  className="px-3 py-1.5 font-mono text-gray-400 text-[10px]"
+                  className="px-3 py-1.5 font-mono text-gray-400 text-tiny"
                   style={{ whiteSpace: "nowrap" }}
                 >
                   {t.batch_group ?? "-"}

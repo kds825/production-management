@@ -45,7 +45,7 @@ export function SchedulerToolbar({
       {/* 주말 열 접기/펴기 */}
       <button
         onClick={onToggleWeekends}
-        className="flex items-center gap-1.5 text-[11px] font-medium transition-colors"
+        className="flex items-center gap-1.5 text-small font-medium transition-colors"
         style={{
           color: hideWeekends
             ? "var(--color-brand-primary)"
@@ -60,7 +60,7 @@ export function SchedulerToolbar({
 
       <button
         onClick={onToggleHideEmpty}
-        className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 hover:text-gray-900 transition-colors"
+        className="flex items-center gap-1.5 text-small font-medium text-gray-600 hover:text-gray-900 transition-colors"
       >
         <span>{hideEmpty ? "▶" : "▼"}</span>
         <span>
@@ -75,7 +75,7 @@ export function SchedulerToolbar({
           <span className="text-gray-300 select-none">|</span>
           <button
             onClick={onToggleHiddenList}
-            className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors"
+            className="text-small text-blue-500 hover:text-blue-700 transition-colors"
           >
             {showHiddenList ? "목록 닫기" : "목록 보기"}
           </button>
@@ -87,7 +87,7 @@ export function SchedulerToolbar({
           {hiddenEquipment.map((eq) => (
             <span
               key={eq.id}
-              className="text-[10px] px-1.5 py-0.5 rounded"
+              className="text-tiny px-1.5 py-0.5 rounded"
               style={{
                 backgroundColor: "var(--color-border-default)",
                 color: "var(--color-text-secondary)",

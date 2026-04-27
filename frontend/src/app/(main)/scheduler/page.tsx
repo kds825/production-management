@@ -288,7 +288,7 @@ export default function SchedulerPage() {
             >
               {dnd.activeDrag.order.product} {dnd.activeDrag.order.spec}
               <br />
-              <span className="text-white/80 text-[9px]">
+              <span className="text-white/80 text-mini">
                 {dnd.activeDrag.order.total_length_m.toLocaleString()}m
               </span>
             </div>
@@ -304,7 +304,7 @@ export default function SchedulerPage() {
             >
               {dnd.activeDrag.task.product} {dnd.activeDrag.task.spec}
               <br />
-              <span className="text-white/80 text-[9px]">
+              <span className="text-white/80 text-mini">
                 {dnd.activeDrag.task.volume_m.toLocaleString()}m
               </span>
             </div>

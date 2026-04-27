@@ -145,7 +145,7 @@ export function BatchSplitReview({
     <div className="space-y-4">
       {/* Gap threshold control */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-blue-400">
+        <span className="text-tiny text-blue-400">
           납기 차이가 큰 배치 그룹이 감지되었습니다
           {candidates.some((c) => c.auto_split_recommended) && (
             <span
@@ -160,7 +160,7 @@ export function BatchSplitReview({
           )}
         </span>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500">납기 차이 기준</span>
+          <span className="text-tiny text-gray-500">납기 차이 기준</span>
           <input
             type="number"
             min={1}
@@ -170,7 +170,7 @@ export function BatchSplitReview({
             className="w-10 text-center text-xs border rounded px-1 py-0.5"
             style={{ borderColor: "var(--status-info-bg)" }}
           />
-          <span className="text-[10px] text-gray-500">일</span>
+          <span className="text-tiny text-gray-500">일</span>
         </div>
       </div>
 
@@ -209,7 +209,7 @@ export function BatchSplitReview({
         className="flex items-center justify-between pt-3"
         style={{ borderTop: "1px solid var(--color-border-default)" }}
       >
-        <div className="text-[11px] text-gray-500">
+        <div className="text-small text-gray-500">
           {splitSummary.length > 0 ? (
             <span>
               분할 대상:{" "}
@@ -224,7 +224,7 @@ export function BatchSplitReview({
         <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="text-[11px] font-medium px-4 py-2 rounded-md transition-colors"
+            className="text-small font-medium px-4 py-2 rounded-md transition-colors"
             style={{
               border: "1px solid var(--neutral-300)",
               color: "var(--color-text-secondary)",
@@ -235,7 +235,7 @@ export function BatchSplitReview({
           <button
             onClick={handleApply}
             disabled={applying || splitSummary.length === 0}
-            className="text-[11px] font-medium px-4 py-2 rounded-md text-white transition-opacity disabled:opacity-40"
+            className="text-small font-medium px-4 py-2 rounded-md text-white transition-opacity disabled:opacity-40"
             style={{ backgroundColor: PRIMARY }}
           >
             {applying
@@ -281,7 +281,7 @@ function CandidateCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span
-            className="text-[10px] font-bold rounded px-1.5 py-0.5"
+            className="text-tiny font-bold rounded px-1.5 py-0.5"
             style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             {index + 1}
@@ -289,12 +289,12 @@ function CandidateCard({
           <span className="text-xs font-semibold text-gray-800">
             연선 {c.sq_mm2}SQ
           </span>
-          <span className="text-[10px] text-gray-400">
+          <span className="text-tiny text-gray-400">
             {c.lot_count}틀 · {c.total_length_m.toLocaleString()}m
           </span>
           {c.auto_split_recommended && (
             <span
-              className="text-[9px] font-semibold rounded px-1 py-0.5"
+              className="text-mini font-semibold rounded px-1 py-0.5"
               style={{
                 backgroundColor: "var(--status-warning-bg)",
                 color: "var(--status-warning-text)",
@@ -306,7 +306,7 @@ function CandidateCard({
           )}
         </div>
         <span
-          className="text-[10px] font-medium"
+          className="text-tiny font-medium"
           style={{
             color:
               splitCount > 1
@@ -335,7 +335,7 @@ function CandidateCard({
                   : "1px solid var(--neutral-300)",
               }}
             >
-              <div className="text-[10px] font-medium text-gray-700">
+              <div className="text-tiny font-medium text-gray-700">
                 {chunk.order_count}수주
                 {chunk.has_urgent && (
                   <span
@@ -346,11 +346,11 @@ function CandidateCard({
                   </span>
                 )}
               </div>
-              <div className="text-[10px] text-gray-500">
+              <div className="text-tiny text-gray-500">
                 {chunk.total_m.toLocaleString()}m
               </div>
               <div
-                className="text-[9px]"
+                className="text-mini"
                 style={{
                   color:
                     chunk.days_until_due !== undefined &&
@@ -374,7 +374,7 @@ function CandidateCard({
                 title={cuts[i] ? "클릭하여 분할 취소" : "클릭하여 여기서 분할"}
               >
                 <span
-                  className="text-[9px] font-medium"
+                  className="text-mini font-medium"
                   style={{
                     color: cuts[i] ? PRIMARY : "var(--color-text-tertiary)",
                   }}
@@ -382,7 +382,7 @@ function CandidateCard({
                   {c.gaps_days[i]}일
                 </span>
                 <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] transition-colors"
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-small transition-colors"
                   style={{
                     backgroundColor: cuts[i]
                       ? "var(--kbi-red-tint-5)"

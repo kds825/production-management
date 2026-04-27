@@ -385,7 +385,7 @@ export function PromoteBaselineDialog({
                   placeholder="예: 2026-04-25-1430-JK"
                   className="w-full rounded border border-[color:var(--color-border-default)] bg-[color:var(--color-bg-elevated)] px-2 py-1.5 text-xs text-[color:var(--color-text-primary)]"
                 />
-                <p className="mt-1 text-[10px] text-[color:var(--color-text-tertiary)]">
+                <p className="mt-1 text-tiny text-[color:var(--color-text-tertiary)]">
                   changed_by 는 자동으로 BASELINE_&lt;tag&gt;_&lt;UTC iso&gt;
                   형식으로 저장됩니다.
                 </p>

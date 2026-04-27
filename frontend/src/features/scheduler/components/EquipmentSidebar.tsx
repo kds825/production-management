@@ -215,7 +215,7 @@ export function EquipmentSidebar({ equipment }: EquipmentSidebarProps) {
           {equipment.name}
         </span>
         <span
-          className="text-[9px] truncate block leading-tight"
+          className="text-mini truncate block leading-tight"
           style={{ color: processColor }}
         >
           {label}

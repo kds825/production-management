@@ -130,7 +130,7 @@ export function BatchInspector({
             style={{ backgroundColor: "var(--color-brand-primary)" }}
           />
           <span
-            className="text-[11px] font-semibold"
+            className="text-small font-semibold"
             style={{ color: "var(--kbi-brown)" }}
           >
             {batchGroupOrders.filter(
@@ -141,7 +141,7 @@ export function BatchInspector({
           </span>
           {selectedTask?.batch_group && (
             <span
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+              className="text-tiny font-mono px-1.5 py-0.5 rounded"
               style={{
                 backgroundColor: "var(--kbi-red-tint-5)",
                 color: "var(--color-brand-primary)",
@@ -172,7 +172,7 @@ export function BatchInspector({
                     onClick={() =>
                       prev && onNavigateToProcessBatch(prev.batch_group)
                     }
-                    className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                    className="px-2 py-0.5 text-tiny rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
                     style={{
                       borderColor: "var(--neutral-300)",
                       color: "var(--kbi-brown)",
@@ -186,7 +186,7 @@ export function BatchInspector({
                     &larr; 이전공정
                   </button>
                   <span
-                    className="text-[9px] px-1 font-mono"
+                    className="text-mini px-1 font-mono"
                     style={{ color: "var(--color-text-tertiary)" }}
                   >
                     {currentIdx + 1}/{processFlow.length}
@@ -196,7 +196,7 @@ export function BatchInspector({
                     onClick={() =>
                       next && onNavigateToProcessBatch(next.batch_group)
                     }
-                    className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
+                    className="px-2 py-0.5 text-tiny rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
                     style={{
                       borderColor: "var(--neutral-300)",
                       color: "var(--kbi-brown)",
@@ -233,33 +233,33 @@ export function BatchInspector({
           {/* 작업 요약 — 4 컬럼 그리드 */}
           <div className="grid grid-cols-4 gap-x-3 gap-y-2 mb-2">
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 규격
               </span>
               <span
-                className="text-[11px] font-semibold"
+                className="text-small font-semibold"
                 style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedTask.spec || "-"}
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 배정 설비
               </span>
               <span
-                className="text-[11px] font-semibold"
+                className="text-small font-semibold"
                 style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedEquipment?.name || selectedTask.equipment_id || "-"}
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 총 길이
               </span>
               <span
-                className="text-[11px] font-semibold"
+                className="text-small font-semibold"
                 style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedTask.volume_m
@@ -268,10 +268,10 @@ export function BatchInspector({
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 작업 기간
               </span>
-              <span className="text-[11px] text-gray-600">
+              <span className="text-small text-gray-600">
                 {new Date(selectedTask.start).toLocaleString("ko-KR", {
                   month: "numeric",
                   day: "numeric",
@@ -288,10 +288,10 @@ export function BatchInspector({
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 선속
               </span>
-              <span className="text-[11px] text-gray-600">
+              <span className="text-small text-gray-600">
                 {selectedTask.line_speed_m_per_min
                   ? `${selectedTask.line_speed_m_per_min}m/min`
                   : "-"}
@@ -304,7 +304,7 @@ export function BatchInspector({
                 STATUS_CONFIG[selectedTask.status] ?? STATUS_CONFIG.planned;
               return (
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                  <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                     배치 상태
                   </span>
                   <button
@@ -316,7 +316,7 @@ export function BatchInspector({
                       gap: 3,
                       padding: "2px 7px",
                       borderRadius: 4,
-                      fontSize: 11,
+                      fontSize: "var(--text-small)",
                       fontWeight: 600,
                       backgroundColor: cfg.bg,
                       color: cfg.text,
@@ -329,7 +329,11 @@ export function BatchInspector({
                   >
                     {cfg.label}
                     {selectedTask.batch_id && (
-                      <span style={{ fontSize: 8, opacity: 0.75 }}>▾</span>
+                      <span
+                        style={{ fontSize: "var(--text-micro)", opacity: 0.75 }}
+                      >
+                        ▾
+                      </span>
                     )}
                   </button>
                 </div>
@@ -337,11 +341,11 @@ export function BatchInspector({
             })()}
 
             <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+              <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                 수주 건수
               </span>
               <span
-                className="text-[11px] font-semibold"
+                className="text-small font-semibold"
                 style={{ color: "var(--color-brand-primary)" }}
               >
                 {batchGroupOrders.filter(
@@ -355,7 +359,7 @@ export function BatchInspector({
 
           {/* 배치 그룹 수주 목록 테이블 */}
           {batchGroupLoading ? (
-            <div className="flex items-center gap-2 py-2 text-[11px] text-gray-400">
+            <div className="flex items-center gap-2 py-2 text-small text-gray-400">
               <span
                 className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
                 style={{ animation: "spin 1s linear infinite" }}
@@ -368,43 +372,43 @@ export function BatchInspector({
             /* batch_group 가 없거나 API 실패 시 기존 단일 수주 정보 표시 */
             <div className="grid grid-cols-6 gap-x-4 gap-y-1">
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   수주번호
                 </span>
-                <span className="text-[11px] text-gray-700">
+                <span className="text-small text-gray-700">
                   {selectedTask.order_id || "-"}
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   거래처
                 </span>
-                <span className="text-[11px] text-gray-700">
+                <span className="text-small text-gray-700">
                   {selectedTask.customer || "-"}
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   제품군
                 </span>
-                <span className="text-[11px] text-gray-700">
+                <span className="text-small text-gray-700">
                   {selectedTask.product || "-"}
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   색상
                 </span>
-                <span className="text-[11px] text-gray-700">
+                <span className="text-small text-gray-700">
                   {selectedTask.color || "-"}
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   납기
                 </span>
                 <span
-                  className="text-[11px]"
+                  className="text-small"
                   style={{
                     color: selectedTask.delivery_date
                       ? new Date(selectedTask.delivery_date).getTime() <
@@ -422,10 +426,10 @@ export function BatchInspector({
                 </span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                <span className="text-mini font-medium text-gray-400 uppercase tracking-wider">
                   길이
                 </span>
-                <span className="text-[11px] text-gray-700">
+                <span className="text-small text-gray-700">
                   {selectedTask.volume_m
                     ? `${selectedTask.volume_m.toLocaleString()}m`
                     : "-"}
@@ -469,11 +473,11 @@ export function BatchInspector({
                 >
                   <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
                 </svg>
-                <span className="text-[10px] font-medium text-gray-400">
+                <span className="text-tiny font-medium text-gray-400">
                   작업 시간 구성
                 </span>
               </div>
-              <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-small">
                 <span>
                   <span className="text-gray-400">총 기간</span>{" "}
                   <span className="font-medium text-gray-700">{totalHrs}h</span>
@@ -527,12 +531,12 @@ export function BatchInspector({
           >
             <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a1 1 0 110 2 1 1 0 010-2zm-1 4h2v5H7V7z" />
           </svg>
-          <span className="text-[10px] font-medium text-gray-400">
+          <span className="text-tiny font-medium text-gray-400">
             AI 스케줄링 근거
           </span>
         </div>
         {auditPanel.loading && (
-          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+          <div className="flex items-center gap-2 text-small text-gray-400">
             <span
               className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full"
               style={{ animation: "spin 1s linear infinite" }}
@@ -541,25 +545,25 @@ export function BatchInspector({
           </div>
         )}
         {auditPanel.error && !auditPanel.loading && (
-          <p className="text-[11px] text-gray-400 italic">
+          <p className="text-small text-gray-400 italic">
             스케줄링 근거를 불러올 수 없습니다.
           </p>
         )}
         {auditPanel.data && !auditPanel.loading && (
           <div className="flex flex-col gap-1">
             {(auditPanel.data.explanation || auditPanel.data.reasoning) && (
-              <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap">
+              <p className="text-small text-gray-600 leading-relaxed whitespace-pre-wrap">
                 {auditPanel.data.explanation ?? auditPanel.data.reasoning}
               </p>
             )}
             {auditPanel.data.scheduled_at && (
-              <p className="text-[10px] text-gray-400">
+              <p className="text-tiny text-gray-400">
                 배정 시각:{" "}
                 {new Date(auditPanel.data.scheduled_at).toLocaleString("ko-KR")}
               </p>
             )}
             {auditPanel.data.changed_by && (
-              <p className="text-[10px] text-gray-400">
+              <p className="text-tiny text-gray-400">
                 변경자: {auditPanel.data.changed_by}
               </p>
             )}
@@ -575,7 +579,7 @@ export function BatchInspector({
                   ].includes(k),
               )
               .map(([k, v]) => (
-                <p key={k} className="text-[10px] text-gray-500">
+                <p key={k} className="text-tiny text-gray-500">
                   <span className="font-medium">{k}</span>: {String(v)}
                 </p>
               ))}

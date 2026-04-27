@@ -43,7 +43,7 @@ export function CompareDetailsModal({
               버전 비교
             </h2>
             {compareMode.diffResponse && (
-              <div className="text-[10px] text-gray-500 mt-0.5">
+              <div className="text-tiny text-gray-500 mt-0.5">
                 {compareMode.diffResponse.run_label_before} →{" "}
                 {compareMode.diffResponse.run_label_after}
               </div>
@@ -59,13 +59,13 @@ export function CompareDetailsModal({
 
         <div className="p-5 overflow-y-auto flex-1">
           {compareMode.loading && (
-            <div className="text-[12px] text-gray-500">
+            <div className="text-xs text-gray-500">
               비교 데이터 로드 중...
             </div>
           )}
           {compareMode.error && (
             <div
-              className="text-[12px] p-3 rounded"
+              className="text-xs p-3 rounded"
               style={{
                 backgroundColor: "var(--kbi-red-tint-12)",
                 color: "var(--status-danger-text-strong)",
@@ -82,7 +82,7 @@ export function CompareDetailsModal({
                   className="rounded p-3 text-center"
                   style={{ backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }}
                 >
-                  <div className="text-[10px] font-medium">추가됨</div>
+                  <div className="text-tiny font-medium">추가됨</div>
                   <div className="text-2xl font-bold">
                     {compareMode.diffResponse.summary.added}
                   </div>
@@ -91,7 +91,7 @@ export function CompareDetailsModal({
                   className="rounded p-3 text-center"
                   style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
                 >
-                  <div className="text-[10px] font-medium">이동됨</div>
+                  <div className="text-tiny font-medium">이동됨</div>
                   <div className="text-2xl font-bold">
                     {compareMode.diffResponse.summary.moved}
                   </div>
@@ -103,7 +103,7 @@ export function CompareDetailsModal({
                     color: "var(--status-danger-text-strong)",
                   }}
                 >
-                  <div className="text-[10px] font-medium">삭제됨</div>
+                  <div className="text-tiny font-medium">삭제됨</div>
                   <div className="text-2xl font-bold">
                     {compareMode.diffResponse.summary.removed}
                   </div>
@@ -115,7 +115,7 @@ export function CompareDetailsModal({
                     color: "var(--neutral-text-primary)",
                   }}
                 >
-                  <div className="text-[10px] font-medium">변경 없음</div>
+                  <div className="text-tiny font-medium">변경 없음</div>
                   <div className="text-2xl font-bold">
                     {compareMode.diffResponse.summary.unchanged}
                   </div>
@@ -124,7 +124,7 @@ export function CompareDetailsModal({
 
               {compareMode.diffResponse.added_tasks.length > 0 && (
                 <div className="mb-4">
-                  <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                  <h3 className="text-small font-semibold text-gray-700 mb-2">
                     추가된 배치 ({compareMode.diffResponse.added_tasks.length})
                   </h3>
                   <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
@@ -133,7 +133,7 @@ export function CompareDetailsModal({
                       .map((t) => (
                         <div
                           key={t.task_id}
-                          className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                          className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"
@@ -163,7 +163,7 @@ export function CompareDetailsModal({
 
               {compareMode.diffResponse.removed_tasks.length > 0 && (
                 <div className="mb-4">
-                  <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                  <h3 className="text-small font-semibold text-gray-700 mb-2">
                     삭제된 배치 ({compareMode.diffResponse.removed_tasks.length}
                     )
                   </h3>
@@ -173,7 +173,7 @@ export function CompareDetailsModal({
                       .map((t) => (
                         <div
                           key={t.task_id}
-                          className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                          className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"
@@ -198,7 +198,7 @@ export function CompareDetailsModal({
 
               {compareMode.diffResponse.moved_tasks.length > 0 && (
                 <div className="mb-4">
-                  <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                  <h3 className="text-small font-semibold text-gray-700 mb-2">
                     이동된 배치 (상위{" "}
                     {Math.min(5, compareMode.diffResponse.moved_tasks.length)}/
                     {compareMode.diffResponse.moved_tasks.length})
@@ -214,7 +214,7 @@ export function CompareDetailsModal({
                       .map((t) => (
                         <div
                           key={t.task_id}
-                          className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                          className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"

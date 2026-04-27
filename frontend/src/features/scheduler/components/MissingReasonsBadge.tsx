@@ -34,7 +34,7 @@ export function MissingReasonsBadge() {
       role="status"
       aria-label={`사유 미기록 ${count}건 — 관리자 일괄 검토 필요`}
       title="드래그-드롭 후 사유가 입력되지 않은 변경 세트 수"
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border bg-[color:var(--color-bg-elevated)] border-[color:var(--color-warning)] text-[color:var(--color-warning)]"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-small font-medium border bg-[color:var(--color-bg-elevated)] border-[color:var(--color-warning)] text-[color:var(--color-warning)]"
     >
       <svg
         width="10"

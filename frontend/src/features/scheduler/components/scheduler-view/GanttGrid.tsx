@@ -180,7 +180,7 @@ export function DateHeader({
                 <>
                   {/* 날짜 + 주차 (월요일에만) */}
                   <span
-                    className="text-[10px] font-semibold leading-tight"
+                    className="text-tiny font-semibold leading-tight"
                     style={{
                       color: weekend
                         ? "var(--color-brand-primary)"
@@ -192,7 +192,7 @@ export function DateHeader({
                       <span
                         style={{
                           marginLeft: 3,
-                          fontSize: 8,
+                          fontSize: "var(--text-micro)",
                           fontWeight: 500,
                           color: "var(--color-text-tertiary)",
                         }}
@@ -203,9 +203,11 @@ export function DateHeader({
                   </span>
                   {/* 요일 */}
                   <span
-                    className="text-[9px] leading-tight"
+                    className="text-mini leading-tight"
                     style={{
-                      color: weekend ? "var(--signal-weekend)" : "var(--color-text-tertiary)",
+                      color: weekend
+                        ? "var(--signal-weekend)"
+                        : "var(--color-text-tertiary)",
                     }}
                   >
                     {dowLabel}
@@ -233,7 +235,7 @@ export function DateHeader({
             }}
           >
             <span
-              className="text-[8px]"
+              className="text-micro"
               style={{ color: "var(--color-text-tertiary)" }}
             >
               {marker.label}

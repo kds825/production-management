@@ -95,7 +95,7 @@ export function DeadlineMarker({
               left: 3,
               backgroundColor: marker.color,
               color: "var(--color-text-inverse)",
-              fontSize: 9,
+              fontSize: "var(--text-mini)",
               fontWeight: 700,
               padding: "1px 3px",
               borderRadius: 2,

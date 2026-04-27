@@ -68,7 +68,7 @@ export function CollapsiblePanel({
           </span>
           {count != null && count > 0 && (
             <span
-              className="text-[10px] font-medium text-white px-1.5 py-0.5 rounded-full"
+              className="text-tiny font-medium text-white px-1.5 py-0.5 rounded-full"
               style={{ backgroundColor: "var(--color-brand-primary)" }}
             >
               {count}

@@ -89,7 +89,7 @@ export function SchedulerToolbar({
         <button
           onClick={onAutoSchedule}
           disabled={autoScheduleLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-small font-medium text-white transition-opacity disabled:opacity-50"
           style={{ backgroundColor: "var(--color-brand-primary)" }}
           title="최신 런에 대해 Stage 2 자동배열 실행"
         >
@@ -112,7 +112,7 @@ export function SchedulerToolbar({
         <button
           onClick={onToggleCompareMode}
           disabled={compareModeLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-60"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-small font-medium transition-colors disabled:opacity-60"
           style={{
             backgroundColor: compareModeEnabled ? "var(--status-info-text)" : "var(--status-info-bg)",
             color: compareModeEnabled ? "var(--color-text-inverse)" : "var(--status-info-text)",
@@ -163,7 +163,7 @@ export function SchedulerToolbar({
             />
             <button
               onClick={onOpenCompareList}
-              className="px-2 py-1 text-[11px] rounded border border-gray-200 hover:bg-gray-50"
+              className="px-2 py-1 text-small rounded border border-gray-200 hover:bg-gray-50"
               aria-haspopup="dialog"
             >
               목록
@@ -172,7 +172,7 @@ export function SchedulerToolbar({
         )}
 
         {compareModeError && (
-          <span className="text-[10px] text-red-600 ml-2">
+          <span className="text-tiny text-red-600 ml-2">
             {compareModeError}
           </span>
         )}
@@ -182,7 +182,7 @@ export function SchedulerToolbar({
           diffResponse.summary.added === 0 &&
           diffResponse.summary.moved === 0 &&
           diffResponse.summary.removed === 0 && (
-            <span className="text-[10px] text-green-700 ml-2">
+            <span className="text-tiny text-green-700 ml-2">
               ✓ 두 버전이 동일합니다
             </span>
           )}
@@ -198,7 +198,7 @@ export function SchedulerToolbar({
       <div className="px-3 py-2 shrink-0 border-l border-gray-200">
         <button
           onClick={onToggleLatePanel}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-small font-medium transition-colors"
           style={{
             backgroundColor:
               lateTaskCount > 0
@@ -222,7 +222,7 @@ export function SchedulerToolbar({
           납기 초과
           {lateTaskCount > 0 && (
             <span
-              className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
+              className="ml-0.5 px-1.5 py-0.5 rounded-full text-tiny font-bold text-white"
               style={{ backgroundColor: "var(--color-danger)" }}
             >
               {lateTaskCount}
@@ -237,7 +237,7 @@ export function SchedulerToolbar({
           <button
             onClick={onOpenWipModal}
             disabled={!wipRunLabel}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-small font-medium text-white transition-opacity disabled:opacity-50"
             style={{ backgroundColor: "var(--color-brand-primary)" }}
             title="SM재고 실적 업데이트"
           >

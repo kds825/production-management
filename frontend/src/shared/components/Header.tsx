@@ -96,7 +96,7 @@ export function Header({
         )}
 
         <BellIcon />
-        <span className="text-[9px] text-gray-300 px-1.5 py-0.5">v0.1</span>
+        <span className="text-mini text-gray-300 px-1.5 py-0.5">v0.1</span>
       </div>
     </header>
   );

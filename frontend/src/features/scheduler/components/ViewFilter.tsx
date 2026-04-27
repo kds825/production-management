@@ -102,7 +102,7 @@ export function ViewFilter() {
       className="flex items-center gap-2 px-4 py-2 bg-white flex-wrap"
       style={{ minHeight: 44 }}
     >
-      <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-1">
+      <span className="text-tiny font-semibold text-gray-500 uppercase tracking-wide mr-1">
         필터
       </span>
 
@@ -165,7 +165,7 @@ export function ViewFilter() {
                   key={opt.value}
                   onClick={() => toggleProcess(opt.value)}
                   className={[
-                    "px-2 py-0.5 text-[10px] rounded border transition-colors",
+                    "px-2 py-0.5 text-tiny rounded border transition-colors",
                     selected
                       ? "text-white border-transparent"
                       : "text-gray-600 bg-white border-gray-200 hover:bg-gray-50",

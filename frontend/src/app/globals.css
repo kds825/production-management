@@ -87,6 +87,14 @@
   --breakpoint-bp-tablet: 768px;
   --breakpoint-bp-desktop: 1024px;
   --breakpoint-bp-wide: 1440px;
+
+  /* PR5 — 컴팩트 UI 텍스트 (Tailwind default text-xs=12px 미만).
+     Tailwind v4 @theme 의 --text-* 는 자동으로 utility 생성:
+     text-micro / text-mini / text-tiny / text-small */
+  --text-micro: 8px;
+  --text-mini: 9px;
+  --text-tiny: 10px;
+  --text-small: 11px;
 }
 
 :root {

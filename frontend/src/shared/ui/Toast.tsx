@@ -118,7 +118,7 @@ function ReasonPromptChips({
               disabled={submitting !== null || flashed}
               aria-label={`사유 선택: ${chip}`}
               className={[
-                "text-[11px] px-2 py-1 rounded border transition-colors",
+                "text-small px-2 py-1 rounded border transition-colors",
                 "border-[color:var(--color-border-default)]",
                 "text-[color:var(--color-text-primary)]",
                 "hover:bg-[color:var(--color-bg-hover)]",
@@ -133,7 +133,7 @@ function ReasonPromptChips({
         })}
       </div>
       {error ? (
-        <span className="text-[10px] text-[color:var(--color-danger)]">
+        <span className="text-tiny text-[color:var(--color-danger)]">
           {error}
         </span>
       ) : null}
@@ -177,11 +177,11 @@ function ToastItemView({
         </span>
         {runId ? (
           // Week 4 Task 4B.4 — 운영자 코릴레이션 ID. 8자 prefix 노출 + full UUID 복사.
-          // text-[10px] 는 이미 chipMuted 등에서 쓰이는 보조정보용 사이즈.
-          <div className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
+          // text-tiny 는 이미 chipMuted 등에서 쓰이는 보조정보용 사이즈.
+          <div className="flex items-center gap-1 text-tiny text-[color:var(--color-text-secondary)]">
             <span>오류 코드</span>
             <code
-              className="font-mono text-[10px] px-1 py-0.5 rounded bg-[color:var(--color-bg-muted)] text-[color:var(--color-text-primary)]"
+              className="font-mono text-tiny px-1 py-0.5 rounded bg-[color:var(--color-bg-muted)] text-[color:var(--color-text-primary)]"
               title={runId}
             >
               {runId.slice(0, RUN_ID_DISPLAY_LENGTH)}

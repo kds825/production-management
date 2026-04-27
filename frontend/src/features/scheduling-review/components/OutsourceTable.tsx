@@ -45,7 +45,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
         >
           외주 생산 ({orders.length}건)
         </h3>
-        <span className="text-[11px]" style={{ color: "var(--status-warning-text)" }}>
+        <span className="text-small" style={{ color: "var(--status-warning-text)" }}>
           외주 업체에 발주되는 항목입니다
         </span>
       </div>
@@ -77,7 +77,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                 {COL_DEFS.map((col, i) => (
                   <th
                     key={col.key}
-                    className="text-[10px] font-semibold px-3 py-2"
+                    className="text-tiny font-semibold px-3 py-2"
                     style={{
                       color: "var(--status-warning-text)",
                       textAlign: col.align as "left" | "right",
@@ -126,7 +126,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                         }}
                       >
                         <span
-                          className="block truncate text-[11px]"
+                          className="block truncate text-small"
                           style={{
                             textAlign: col.align as "left" | "right",
                             color: "var(--status-alert-text)",

@@ -404,7 +404,7 @@ export function SchedulingResultTable({
                 <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                   {crudMode === "delete" && (
                     <th
-                      className="text-[10px] font-semibold px-1 py-2"
+                      className="text-tiny font-semibold px-1 py-2"
                       style={{
                         color: "var(--color-text-secondary)",
                         borderBottom: "2px solid var(--neutral-300)",
@@ -419,7 +419,7 @@ export function SchedulingResultTable({
                   {COL_DEFS.map((col, i) => (
                     <th
                       key={col.key}
-                      className="text-[10px] font-semibold px-3 py-2"
+                      className="text-tiny font-semibold px-3 py-2"
                       style={{
                         color: "var(--color-text-secondary)",
                         textAlign: col.align as "left" | "right",
@@ -471,7 +471,7 @@ export function SchedulingResultTable({
                             color: "var(--color-text-primary)",
                           }}
                         >
-                          <div className="flex items-center justify-between text-[10px] font-semibold">
+                          <div className="flex items-center justify-between text-tiny font-semibold">
                             <div className="flex items-center gap-2">
                               {batchNum != null && (
                                 <span style={{ color: "var(--color-text-secondary)" }}>
@@ -485,7 +485,7 @@ export function SchedulingResultTable({
                             </div>
                             {firstBatch?.batch_remarks && (
                               <span
-                                className="text-[10px] font-medium truncate ml-4"
+                                className="text-tiny font-medium truncate ml-4"
                                 style={{ color: "var(--color-text-secondary)", maxWidth: "60%" }}
                                 title={firstBatch.batch_remarks}
                               >
@@ -641,7 +641,7 @@ export function SchedulingResultTable({
                                       }
                                       onBlur={commitEdit}
                                       onKeyDown={handleKeyDown}
-                                      className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
+                                      className="w-full text-small bg-white px-1 py-0.5 rounded"
                                       style={{
                                         textAlign: col.align as
                                           | "left"
@@ -652,7 +652,7 @@ export function SchedulingResultTable({
                                     />
                                   ) : col.key === "batch_label" ? (
                                     <span
-                                      className="block truncate text-[10px] font-medium"
+                                      className="block truncate text-tiny font-medium"
                                       style={{
                                         color: "var(--color-text-tertiary)",
                                       }}
@@ -661,7 +661,7 @@ export function SchedulingResultTable({
                                     </span>
                                   ) : col.key === "notes" && isWipSkipped ? (
                                     <span
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-tiny font-semibold"
                                       style={{
                                         backgroundColor: "var(--status-info-bg)",
                                         color: "var(--status-info-text)",
@@ -671,7 +671,7 @@ export function SchedulingResultTable({
                                     </span>
                                   ) : (
                                     <span
-                                      className="block truncate text-[11px]"
+                                      className="block truncate text-small"
                                       style={{
                                         textAlign: col.align as
                                           | "left"
@@ -696,7 +696,7 @@ export function SchedulingResultTable({
                       <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                         <td
                           colSpan={leftSpan}
-                          className="px-3 py-1 text-[10px] font-medium text-right"
+                          className="px-3 py-1 text-tiny font-medium text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
                             color: "var(--color-text-secondary)",
@@ -705,7 +705,7 @@ export function SchedulingResultTable({
                           소계 {group.batches.length}건
                         </td>
                         <td
-                          className="px-3 py-1 text-[10px] font-semibold text-right"
+                          className="px-3 py-1 text-tiny font-semibold text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
                             color: "var(--color-text-primary)",
@@ -715,7 +715,7 @@ export function SchedulingResultTable({
                         </td>
                         <td
                           colSpan={2}
-                          className="px-2 py-1 text-[10px]"
+                          className="px-2 py-1 text-tiny"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
                             color: "var(--status-info)",
@@ -747,7 +747,7 @@ export function SchedulingResultTable({
                           })()}
                         </td>
                         <td
-                          className="px-3 py-1 text-[10px] font-semibold text-right"
+                          className="px-3 py-1 text-tiny font-semibold text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
                             color: "var(--color-text-primary)",
@@ -772,7 +772,7 @@ export function SchedulingResultTable({
         <div className="flex justify-end mt-2">
           <button
             onClick={confirmDelete}
-            className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+            className="text-small font-medium px-3 py-1.5 rounded-md transition-colors"
             style={{
               backgroundColor: PRIMARY,
               color: "var(--color-text-inverse)",
@@ -856,7 +856,7 @@ function CrudButton({
   return (
     <button
       onClick={disabled ? undefined : onClick}
-      className="text-[11px] font-medium px-2 py-1 rounded transition-colors"
+      className="text-small font-medium px-2 py-1 rounded transition-colors"
       style={activeStyle}
       onMouseEnter={(e) => {
         if (disabled) return;

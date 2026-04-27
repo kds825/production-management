@@ -267,14 +267,14 @@ function DiffSummaryPanel({
             긴급수주 반영 결과
           </p>
           <p
-            className="text-[11px] mt-0.5"
+            className="text-small mt-0.5"
             style={{ color: "var(--color-text-secondary)" }}
           >
             스케줄 변경 요약 · 총 {total_before} → {total_after} 건
           </p>
         </div>
         <span
-          className="font-mono text-[10px] px-2 py-0.5 rounded"
+          className="font-mono text-tiny px-2 py-0.5 rounded"
           style={{
             backgroundColor: "var(--color-bg-muted)",
             color: "var(--color-text-tertiary)",
@@ -318,7 +318,7 @@ function DiffSummaryPanel({
             <div className="flex items-center gap-1.5">
               <Icon width={12} height={12} style={{ color: fg }} />
               <span
-                className="text-[10px] font-medium uppercase"
+                className="text-tiny font-medium uppercase"
                 style={{ color: fg }}
               >
                 {label}
@@ -349,7 +349,7 @@ function DiffSummaryPanel({
           >
             {/* header row */}
             <div
-              className="grid grid-cols-12 gap-2 px-3 py-1.5 text-[10px] font-medium uppercase"
+              className="grid grid-cols-12 gap-2 px-3 py-1.5 text-tiny font-medium uppercase"
               style={{
                 backgroundColor: "var(--color-bg-muted)",
                 color: "var(--color-text-tertiary)",
@@ -766,7 +766,7 @@ function WipUploadSection({
         <a
           href={`${API}/pipeline/wip-template`}
           download="wip_template.xlsx"
-          className="text-[11px] font-medium px-3 py-1 rounded-md transition-colors"
+          className="text-small font-medium px-3 py-1 rounded-md transition-colors"
           style={{
             border: `1px solid ${PRIMARY}`,
             color: PRIMARY,
@@ -813,7 +813,7 @@ function WipUploadSection({
           <p className="text-xs text-gray-500">
             클릭하거나 파일을 끌어다 놓으세요
           </p>
-          <p className="text-[10px] text-gray-400">.xls, .xlsx 파일 지원</p>
+          <p className="text-tiny text-gray-400">.xls, .xlsx 파일 지원</p>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -865,7 +865,7 @@ function WipUploadSection({
               >
                 {wipFile.name}
               </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">
+              <p className="text-tiny text-gray-400 mt-0.5">
                 {formatFileSize(wipFile.size)} &middot;{" "}
                 {formatTime(wipFile.uploadedAt)} 업로드
               </p>
@@ -876,7 +876,7 @@ function WipUploadSection({
             {showDeleteHover && (
               <button
                 onClick={handleDelete}
-                className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
+                className="text-small font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
                   border: "1px solid var(--color-border-default)",
                   color: "var(--color-text-secondary)",
@@ -895,7 +895,7 @@ function WipUploadSection({
               </button>
             )}
             <span
-              className="text-[11px] font-medium px-3 py-1.5 rounded-md"
+              className="text-small font-medium px-3 py-1.5 rounded-md"
               style={{ backgroundColor: "var(--status-success-bg)", color: "var(--status-success)" }}
             >
               업로드 완료
@@ -905,7 +905,7 @@ function WipUploadSection({
       )}
 
       {validationError && (
-        <p className="text-[11px] mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
+        <p className="text-small mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
           {validationError}
         </p>
       )}
@@ -1233,7 +1233,7 @@ function ErpUploadSection({
             </button>
           ))}
         </div>
-        <p className="text-[11px] text-gray-500 mt-1.5">{modeDescription}</p>
+        <p className="text-small text-gray-500 mt-1.5">{modeDescription}</p>
         {uploadMode === "incremental" && (
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <span className="text-xs text-gray-600 font-medium">기준일자</span>
@@ -1244,7 +1244,7 @@ function ErpUploadSection({
               className="text-xs px-2 py-1 rounded-md"
               style={{ border: "1px solid var(--neutral-300)", color: "var(--color-text-primary)" }}
             />
-            <span className="text-[11px] text-gray-400">
+            <span className="text-small text-gray-400">
               이전 배치 고정 · 이후 배치는 긴급수주와 합산 재생성
             </span>
           </div>
@@ -1309,7 +1309,7 @@ function ErpUploadSection({
           <p className="text-xs text-gray-500">
             클릭하거나 파일을 끌어다 놓으세요
           </p>
-          <p className="text-[10px] text-gray-400">.xls, .xlsx 파일 지원</p>
+          <p className="text-tiny text-gray-400">.xls, .xlsx 파일 지원</p>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -1361,7 +1361,7 @@ function ErpUploadSection({
               >
                 {erpFile.name}
               </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">
+              <p className="text-tiny text-gray-400 mt-0.5">
                 {formatFileSize(erpFile.size)}
               </p>
             </div>
@@ -1371,7 +1371,7 @@ function ErpUploadSection({
             {showDeleteHover && !isRunning && !result && (
               <button
                 onClick={handleDelete}
-                className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
+                className="text-small font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
                   border: "1px solid var(--color-border-default)",
                   color: "var(--color-text-secondary)",
@@ -1393,7 +1393,7 @@ function ErpUploadSection({
             <button
               onClick={handleRunStage1}
               disabled={isRunning || !!result}
-              className="text-[11px] font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
+              className="text-small font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
               style={{
                 backgroundColor: isRunning || result ? "var(--color-border-default)" : PRIMARY,
                 color: isRunning || result ? "var(--color-text-tertiary)" : "var(--bg-surface)",
@@ -1430,7 +1430,7 @@ function ErpUploadSection({
       )}
 
       {validationError && (
-        <p className="text-[11px] mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
+        <p className="text-small mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
           {validationError}
         </p>
       )}
@@ -1592,7 +1592,7 @@ function ErpUploadSection({
                 <span>✂️</span>
                 배치 분할 검토
                 <span
-                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                  className="rounded-full px-1.5 py-0.5 text-tiny font-bold"
                   style={{ backgroundColor: "var(--status-info-bg)", color: "var(--status-info-text)" }}
                 >
                   {result.split_candidates.length}

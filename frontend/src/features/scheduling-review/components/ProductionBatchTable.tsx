@@ -392,7 +392,7 @@ export function ProductionBatchTable({
               }}
             />
             <span
-              className="text-[10px]"
+              className="text-tiny"
               style={{ color: "var(--color-text-secondary)" }}
             >
               진행
@@ -408,7 +408,7 @@ export function ProductionBatchTable({
               }}
             />
             <span
-              className="text-[10px]"
+              className="text-tiny"
               style={{ color: "var(--color-text-secondary)" }}
             >
               대기
@@ -418,7 +418,7 @@ export function ProductionBatchTable({
           {hasActiveFilter && (
             <div className="flex items-center gap-1.5">
               <span
-                className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                className="text-tiny px-2 py-0.5 rounded-full font-medium"
                 style={{
                   backgroundColor: "var(--kbi-red-tint-5)",
                   color: "var(--color-brand-primary)",
@@ -430,7 +430,7 @@ export function ProductionBatchTable({
               </span>
               <button
                 onClick={() => setColFilters({})}
-                className="text-[10px] px-2 py-0.5 rounded"
+                className="text-tiny px-2 py-0.5 rounded"
                 style={{
                   color: "var(--color-text-secondary)",
                   border: "1px solid var(--color-border-default)",
@@ -446,7 +446,7 @@ export function ProductionBatchTable({
         <div className="relative" ref={colMenuRef}>
           <button
             onClick={() => setColMenuOpen((v) => !v)}
-            className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border transition-colors"
+            className="flex items-center gap-1 text-tiny px-2 py-1 rounded border transition-colors"
             style={{
               borderColor: colMenuOpen
                 ? "var(--color-brand-primary)"
@@ -465,7 +465,7 @@ export function ProductionBatchTable({
             컬럼 설정
             {hiddenCols.size > 0 && (
               <span
-                className="ml-0.5 text-[9px] font-bold"
+                className="ml-0.5 text-mini font-bold"
                 style={{ color: "var(--color-brand-primary)" }}
               >
                 -{hiddenCols.size}
@@ -494,7 +494,7 @@ export function ProductionBatchTable({
                     className="w-3 h-3 accent-red-700"
                   />
                   <span
-                    className="text-[11px]"
+                    className="text-small"
                     style={{ color: "var(--neutral-text-primary)" }}
                   >
                     {col.label}
@@ -511,7 +511,7 @@ export function ProductionBatchTable({
                   />
                   <button
                     onClick={() => setHiddenCols(new Set())}
-                    className="w-full text-left px-3 py-1 text-[10px]"
+                    className="w-full text-left px-3 py-1 text-tiny"
                     style={{ color: "var(--color-text-secondary)" }}
                   >
                     모두 표시
@@ -558,7 +558,7 @@ export function ProductionBatchTable({
                     return (
                       <th
                         key={col.key}
-                        className="text-[10px] font-semibold px-3 py-2 select-none"
+                        className="text-tiny font-semibold px-3 py-2 select-none"
                         style={{
                           color: isFiltered
                             ? "var(--color-brand-primary)"
@@ -636,7 +636,7 @@ export function ProductionBatchTable({
                                 }
                                 placeholder="값 검색..."
                                 autoFocus
-                                className="w-full text-[11px] px-2 py-1 rounded"
+                                className="w-full text-small px-2 py-1 rounded"
                                 style={{
                                   border: "1px solid var(--neutral-300)",
                                   outline: "none",
@@ -661,7 +661,7 @@ export function ProductionBatchTable({
                                   }
                                 />
                                 <span
-                                  className="text-[11px] font-medium"
+                                  className="text-small font-medium"
                                   style={{
                                     color: "var(--neutral-text-primary)",
                                   }}
@@ -672,7 +672,7 @@ export function ProductionBatchTable({
                               {isFiltered && (
                                 <button
                                   onClick={() => clearColFilter(col.key)}
-                                  className="text-[10px]"
+                                  className="text-tiny"
                                   style={{
                                     color: "var(--color-brand-primary)",
                                   }}
@@ -704,7 +704,7 @@ export function ProductionBatchTable({
                                       }
                                     />
                                     <span
-                                      className="text-[11px] truncate"
+                                      className="text-small truncate"
                                       style={{
                                         color: "var(--neutral-text-primary)",
                                       }}
@@ -716,7 +716,7 @@ export function ProductionBatchTable({
                               })}
                               {filteredUniqueValues.length === 0 && (
                                 <div
-                                  className="px-3 py-3 text-[10px]"
+                                  className="px-3 py-3 text-tiny"
                                   style={{
                                     color: "var(--color-text-tertiary)",
                                   }}
@@ -737,7 +737,7 @@ export function ProductionBatchTable({
                   <tr>
                     <td
                       colSpan={visibleCols.length}
-                      className="py-8 text-center text-[11px]"
+                      className="py-8 text-center text-small"
                       style={{ color: "var(--color-text-tertiary)" }}
                     >
                       필터 결과 없음
@@ -773,7 +773,7 @@ export function ProductionBatchTable({
                               color: "var(--color-text-primary)",
                             }}
                           >
-                            <div className="flex items-center justify-between text-[10px] font-semibold">
+                            <div className="flex items-center justify-between text-tiny font-semibold">
                               <div className="flex items-center gap-2">
                                 {batchNum != null && (
                                   <span
@@ -793,7 +793,7 @@ export function ProductionBatchTable({
                               </div>
                               {firstBatch?.batch_remarks && (
                                 <span
-                                  className="text-[10px] font-medium truncate ml-4"
+                                  className="text-tiny font-medium truncate ml-4"
                                   style={{
                                     color: "var(--color-text-secondary)",
                                     maxWidth: "60%",
@@ -913,7 +913,7 @@ export function ProductionBatchTable({
                                         }
                                         onBlur={commitEdit}
                                         onKeyDown={handleKeyDown}
-                                        className="w-full text-[11px] bg-white px-1 py-0.5 rounded"
+                                        className="w-full text-small bg-white px-1 py-0.5 rounded"
                                         style={{
                                           textAlign: col.align as
                                             | "left"
@@ -925,7 +925,7 @@ export function ProductionBatchTable({
                                       />
                                     ) : col.key === "batch_label" ? (
                                       <span
-                                        className="block truncate text-[10px] font-medium"
+                                        className="block truncate text-tiny font-medium"
                                         style={{
                                           color: "var(--color-text-tertiary)",
                                         }}
@@ -937,7 +937,7 @@ export function ProductionBatchTable({
                                         onClick={() =>
                                           onBatchWipClick?.(batch.id)
                                         }
-                                        className="text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors"
+                                        className="text-small font-medium px-1.5 py-0.5 rounded transition-colors"
                                         style={{
                                           ...getWipNoteStyle(batch.notes),
                                           cursor: onBatchWipClick
@@ -949,7 +949,7 @@ export function ProductionBatchTable({
                                       </button>
                                     ) : (
                                       <span
-                                        className="block truncate text-[11px]"
+                                        className="block truncate text-small"
                                         style={{
                                           textAlign: col.align as
                                             | "left"
@@ -1001,7 +1001,7 @@ export function ProductionBatchTable({
                               >
                                 {isFirst ? (
                                   <span
-                                    className="text-[10px] font-medium"
+                                    className="text-tiny font-medium"
                                     style={{
                                       color: "var(--color-text-secondary)",
                                     }}
@@ -1010,7 +1010,7 @@ export function ProductionBatchTable({
                                   </span>
                                 ) : isTotalLen ? (
                                   <span
-                                    className="text-[10px] font-semibold"
+                                    className="text-tiny font-semibold"
                                     style={{
                                       color: "var(--color-text-primary)",
                                     }}
@@ -1019,7 +1019,7 @@ export function ProductionBatchTable({
                                   </span>
                                 ) : isConverted ? (
                                   <span
-                                    className="text-[10px] font-semibold"
+                                    className="text-tiny font-semibold"
                                     style={{
                                       color: "var(--color-text-primary)",
                                     }}
@@ -1030,7 +1030,7 @@ export function ProductionBatchTable({
                                   </span>
                                 ) : col.key === "notes" ? (
                                   <span
-                                    className="text-[10px]"
+                                    className="text-tiny"
                                     style={{ color: "var(--status-info)" }}
                                   >
                                     {(() => {

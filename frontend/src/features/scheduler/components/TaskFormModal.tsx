@@ -567,7 +567,7 @@ export function TaskFormModal({
               {validationError && (
                 <p
                   role="alert"
-                  className="text-[11px]"
+                  className="text-small"
                   style={{ color: "var(--color-danger)" }}
                 >
                   {validationError}
@@ -643,7 +643,7 @@ function Field({ label, required, error, children }: FieldProps) {
         {required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       {children}
-      {error && <p className="text-[10px] text-red-500">{error}</p>}
+      {error && <p className="text-tiny text-red-500">{error}</p>}
     </div>
   );
 }

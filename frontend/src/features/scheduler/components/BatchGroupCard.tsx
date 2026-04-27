@@ -70,7 +70,7 @@ export function BatchGroupCard({ group }: Props) {
     >
       {/* 헤더: 수주 수 + 사유 배지 */}
       <div className="flex items-start justify-between gap-1 mb-1">
-        <span className="text-[10px] font-semibold flex items-center gap-1 text-[color:var(--color-text-primary)]">
+        <span className="text-tiny font-semibold flex items-center gap-1 text-[color:var(--color-text-primary)]">
           <Link2 width={12} height={12} aria-hidden />
           {group.order_count}수주
         </span>
@@ -83,11 +83,11 @@ export function BatchGroupCard({ group }: Props) {
       <div className="flex items-center gap-1 mb-0.5">
         <span className={chipMuted}>{equipmentGroup}</span>
       </div>
-      <div className="text-[10px] truncate mb-0.5 text-[color:var(--color-text-secondary)]">
+      <div className="text-tiny truncate mb-0.5 text-[color:var(--color-text-secondary)]">
         {group.spec || "–"}
         {group.color ? ` · ${group.color}` : ""}
       </div>
-      <div className="text-[10px] truncate mb-1 text-[color:var(--color-text-tertiary)]">
+      <div className="text-tiny truncate mb-1 text-[color:var(--color-text-tertiary)]">
         {group.customer || "고객 미상"}
       </div>
 
@@ -110,7 +110,7 @@ export function BatchGroupCard({ group }: Props) {
 
       {/* 납기 */}
       <div className="flex items-center justify-between mt-1 pt-1 border-t border-[color:var(--color-border-muted)]">
-        <span className="text-[9px] text-[color:var(--color-text-tertiary)]">
+        <span className="text-mini text-[color:var(--color-text-tertiary)]">
           납기 {formatDeliveryDate(group.delivery_date)}
         </span>
       </div>

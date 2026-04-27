@@ -20,12 +20,12 @@ export const btnGhost =
   "hover:bg-[color:var(--color-bg-muted)]";
 
 export const chipMuted =
-  "inline-block text-[10px] font-medium px-1.5 py-0.5 rounded " +
+  "inline-block text-tiny font-medium px-1.5 py-0.5 rounded " +
   "text-[color:var(--color-text-secondary)] " +
   "bg-[color:var(--color-bg-muted)]";
 
 export const chipReason =
-  "inline-block text-[9px] font-medium px-1.5 py-0.5 rounded " +
+  "inline-block text-mini font-medium px-1.5 py-0.5 rounded " +
   "text-[color:var(--color-warning)] " +
   "bg-[color:var(--color-bg-muted)] " +
   "border border-[color:var(--color-warning)]";

@@ -89,7 +89,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
           AI 배치 분석 결과
         </span>
         <span
-          className="text-[10px] px-1.5 py-0.5 rounded"
+          className="text-tiny px-1.5 py-0.5 rounded"
           style={{
             backgroundColor:
               badgeColor === "var(--color-brand-primary)"
@@ -105,7 +105,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
 
       {/* Stats row */}
       <div
-        className="flex items-center gap-4 mb-3 text-[11px]"
+        className="flex items-center gap-4 mb-3 text-small"
         style={{ color: "var(--neutral-text-primary)" }}
       >
         <span>
@@ -142,7 +142,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
       {/* 리스크 미감지 — 긍정 메시지 */}
       {noRisk && (
         <div
-          className="flex items-center gap-1.5 mb-2 text-[11px]"
+          className="flex items-center gap-1.5 mb-2 text-small"
           style={{ color: "var(--status-success)" }}
         >
           <svg
@@ -166,7 +166,7 @@ export function AiInsightCard({ summary }: AiInsightCardProps) {
           {summary.highlights.map((highlight, idx) => (
             <li
               key={idx}
-              className="text-[11px] flex items-start gap-1.5"
+              className="text-small flex items-start gap-1.5"
               style={{ color: "var(--neutral-text-primary)" }}
             >
               <span

@@ -117,10 +117,10 @@ export function NumberCell({
           <span className="text-xs text-green-600">✓</span>
         )}
       </div>
-      <span className="text-[10px] text-gray-400">
+      <span className="text-tiny text-gray-400">
         ({formatMin(previewMin)})
       </span>
-      {errorMsg && <span className="text-[10px] text-red-600">{errorMsg}</span>}
+      {errorMsg && <span className="text-tiny text-red-600">{errorMsg}</span>}
     </div>
   );
 }

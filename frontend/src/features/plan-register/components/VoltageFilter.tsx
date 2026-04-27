@@ -52,7 +52,7 @@ export function VoltageFilter() {
                   isDisabled && setShowHighVoltageTooltip(true)
                 }
                 onMouseLeave={() => setShowHighVoltageTooltip(false)}
-                className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+                className="text-small font-medium px-3 py-1.5 rounded-md transition-colors"
                 style={{
                   backgroundColor: isActiveTab
                     ? "var(--kbi-brown)"
@@ -74,7 +74,7 @@ export function VoltageFilter() {
               {/* 고압 비활성 툴팁 */}
               {isDisabled && showHighVoltageTooltip && (
                 <div
-                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded text-[10px] text-white whitespace-nowrap z-50"
+                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded text-tiny text-white whitespace-nowrap z-50"
                   style={{ backgroundColor: "var(--neutral-text-primary)" }}
                 >
                   준비 중
@@ -105,7 +105,7 @@ export function VoltageFilter() {
               <button
                 key={group}
                 onClick={() => setEquipmentFilter(group)}
-                className="text-[11px] font-medium px-2.5 py-1 rounded transition-colors"
+                className="text-small font-medium px-2.5 py-1 rounded transition-colors"
                 style={{
                   backgroundColor: isActive
                     ? "var(--kbi-red-tint-5)"

@@ -10,8 +10,8 @@
  *   - hover       → bg-gray-50 (스케줄러 헤더의 자동배열/이전버전비교 버튼과 톤 통일)
  *   - focus       → KBI primary (var(--color-brand-primary)) outline — 기존 포커스 링 규약 재사용
  *
- * 크기는 기존 헤더 버튼(자동배열 등) 의 px-3/py-1.5/text-[11px] 보다 한 단계 작은
- * px-2/py-1/text-[11px] 로 잡아 pill 이 세 개 나열돼도 툴바가 복잡해지지 않도록 한다.
+ * 크기는 기존 헤더 버튼(자동배열 등) 의 px-3/py-1.5/text-small 보다 한 단계 작은
+ * px-2/py-1/text-small 로 잡아 pill 이 세 개 나열돼도 툴바가 복잡해지지 않도록 한다.
  *
  * ARIA (스펙 §Accessibility):
  *   - `aria-pressed` 로 토글 상태 노출 (role=button 은 실제 button 요소라 자동 부여)
@@ -50,7 +50,7 @@ const FilterPill: React.FC<FilterPillProps> = ({
       //   Tailwind focus:outline-* 클래스는 프로젝트마다 plugin 설정 편차가 커
       //   a11y 요구를 확실히 만족하지 못할 수 있어 JSX 레벨에서 보장한다.
       className={[
-        "inline-flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border border-gray-200",
+        "inline-flex items-center gap-1.5 px-2 py-1 text-small rounded border border-gray-200",
         "transition-colors hover:bg-gray-50",
         "focus:outline-none focus-visible:outline-[var(--color-brand-primary)]",
         active ? "text-gray-900" : "text-gray-400",

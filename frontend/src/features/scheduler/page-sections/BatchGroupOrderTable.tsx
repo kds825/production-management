@@ -60,7 +60,7 @@ export function BatchGroupOrderTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="text-[11px] whitespace-nowrap">
+      <table className="text-small whitespace-nowrap">
         <thead>
           <tr
             style={{
@@ -84,7 +84,7 @@ export function BatchGroupOrderTable({
             ).map(([label, align]) => (
               <th
                 key={label}
-                className={`text-${align} py-1 px-2 font-semibold text-gray-500 text-[10px] uppercase tracking-wider`}
+                className={`text-${align} py-1 px-2 font-semibold text-gray-500 text-tiny uppercase tracking-wider`}
               >
                 {label}
               </th>
@@ -139,7 +139,7 @@ export function BatchGroupOrderTable({
                       ).toLocaleString()}
                       m
                     </span>
-                    <span className="ml-1 text-[9px] text-gray-400">
+                    <span className="ml-1 text-mini text-gray-400">
                       (-{order.wip_length_m.toLocaleString()})
                     </span>
                   </span>
@@ -165,7 +165,7 @@ export function BatchGroupOrderTable({
               <td className="py-1 px-2 text-center">
                 {order.wip_matched_id ? (
                   <span
-                    className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                    className="inline-block px-1.5 py-0.5 rounded text-mini font-medium"
                     style={{
                       backgroundColor: "var(--status-success-bg)",
                       color: "var(--status-success)",
@@ -194,7 +194,7 @@ export function BatchGroupOrderTable({
             >
               합계 {displayRows.length}건
               {headerBatch && (
-                <span className="ml-2 text-[10px] font-normal text-gray-500">
+                <span className="ml-2 text-tiny font-normal text-gray-500">
                   (생산지시 {totalLots}틀 /{" "}
                   {headerBatch.drum_length_m.toLocaleString()}m×{totalLots})
                 </span>
@@ -223,7 +223,7 @@ export function BatchGroupOrderTable({
                 .toLocaleString()}
               m
             </td>
-            <td className="py-1 px-2 text-center text-[10px] text-gray-400">
+            <td className="py-1 px-2 text-center text-tiny text-gray-400">
               {wipCount > 0 ? `재고 ${wipCount}건` : "-"}
             </td>
           </tr>

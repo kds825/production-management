@@ -38,10 +38,10 @@ export function OverlapAlertBanner({
           ⚠️
         </span>
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[12px] font-semibold">
+          <span className="text-xs font-semibold">
             스케줄에 겹침이 있습니다 — 관리자 확인 필요
           </span>
-          <span className="text-[11px]" style={{ color: "var(--status-alert-text-soft)" }}>
+          <span className="text-small" style={{ color: "var(--status-alert-text-soft)" }}>
             {message}
           </span>
         </div>
@@ -50,7 +50,7 @@ export function OverlapAlertBanner({
         type="button"
         onClick={onDismiss}
         aria-label="겹침 경고 닫기"
-        className="shrink-0 text-[11px] font-medium px-2 py-1 rounded hover:bg-orange-200 transition-colors"
+        className="shrink-0 text-small font-medium px-2 py-1 rounded hover:bg-orange-200 transition-colors"
         style={{ color: "var(--status-alert-text)" }}
       >
         ✕ 닫기

@@ -72,13 +72,13 @@ function Row({
       onMouseLeave={() => onHover?.(null)}
       className="kbi-modal-row border-b border-[color:var(--color-border-muted)]"
     >
-      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-primary)]">
+      <td className="px-2 py-1.5 text-small text-[color:var(--color-text-primary)]">
         {entry.batch_label}
       </td>
-      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
+      <td className="px-2 py-1.5 text-small text-[color:var(--color-text-secondary)]">
         {entry.equipment_code}
       </td>
-      <td className="px-2 py-1.5 text-[11px]">
+      <td className="px-2 py-1.5 text-small">
         <span className="text-[color:var(--color-text-tertiary)]">
           {fmt(entry.old_start)}
         </span>
@@ -87,10 +87,10 @@ function Row({
           {fmt(entry.new_start)}
         </span>
       </td>
-      <td className="px-2 py-1.5 text-[11px] font-mono text-[color:var(--color-text-primary)]">
+      <td className="px-2 py-1.5 text-small font-mono text-[color:var(--color-text-primary)]">
         {deltaH(entry.old_start, entry.new_start)}
       </td>
-      <td className="px-2 py-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
+      <td className="px-2 py-1.5 text-small text-[color:var(--color-text-secondary)]">
         {labelForReason(entry.reason)}
       </td>
     </tr>
@@ -107,15 +107,15 @@ function UnresolvedRow({
   return (
     <li className="kbi-modal-unresolved-row flex flex-col gap-0.5 px-3 py-2 border-b border-[color:var(--color-border-muted)]">
       <div className="flex items-center gap-2">
-        <strong className="text-[11px] text-[color:var(--color-text-primary)]">
+        <strong className="text-small text-[color:var(--color-text-primary)]">
           {entry.batch_label || entry.task_id}
         </strong>
-        <span className="kbi-modal-unresolved-reason text-[10px] text-[color:var(--color-danger)]">
+        <span className="kbi-modal-unresolved-reason text-tiny text-[color:var(--color-danger)]">
           {UNRESOLVED_REASON_LABEL[entry.reason] ?? entry.reason}
         </span>
       </div>
       {entry.detail && (
-        <span className="kbi-modal-unresolved-detail text-[10px] text-[color:var(--color-text-tertiary)]">
+        <span className="kbi-modal-unresolved-detail text-tiny text-[color:var(--color-text-tertiary)]">
           {entry.detail}
         </span>
       )}
@@ -123,7 +123,7 @@ function UnresolvedRow({
         <button
           type="button"
           onClick={() => onManualAdjust(entry.task_id)}
-          className="kbi-modal-cta self-start text-[11px] font-medium px-2 py-1 rounded border border-[color:var(--color-danger)] text-[color:var(--color-danger)] hover:bg-[color:var(--color-bg-muted)] transition-colors"
+          className="kbi-modal-cta self-start text-small font-medium px-2 py-1 rounded border border-[color:var(--color-danger)] text-[color:var(--color-danger)] hover:bg-[color:var(--color-bg-muted)] transition-colors"
         >
           수동 조정 진입
         </button>
@@ -191,7 +191,7 @@ export function ConflictResolutionModal({
           {guidanceShown && (
             <div
               role="alert"
-              className="kbi-modal-guidance px-3 py-2 rounded border border-[color:var(--color-warning)] text-[11px] text-[color:var(--color-warning)] bg-[color:var(--color-bg-muted)]"
+              className="kbi-modal-guidance px-3 py-2 rounded border border-[color:var(--color-warning)] text-small text-[color:var(--color-warning)] bg-[color:var(--color-bg-muted)]"
             >
               자동 해소에 실패했습니다. 수동 조정이 필요합니다.
             </div>
@@ -214,7 +214,7 @@ export function ConflictResolutionModal({
               </h3>
               <table className="w-full text-left border border-[color:var(--color-border-default)] rounded">
                 <thead className="bg-[color:var(--color-bg-muted)]">
-                  <tr className="text-[10px] text-[color:var(--color-text-secondary)]">
+                  <tr className="text-tiny text-[color:var(--color-text-secondary)]">
                     <th className="px-2 py-1 font-medium">배치</th>
                     <th className="px-2 py-1 font-medium">설비</th>
                     <th className="px-2 py-1 font-medium">시간 변경</th>
@@ -251,7 +251,7 @@ export function ConflictResolutionModal({
                   />
                   앞당김 제안 ({preview.pulls.length})
                 </h3>
-                <label className="kbi-modal-pull-toggle flex items-center gap-1.5 text-[11px] text-[color:var(--color-text-secondary)] cursor-pointer">
+                <label className="kbi-modal-pull-toggle flex items-center gap-1.5 text-small text-[color:var(--color-text-secondary)] cursor-pointer">
                   <input
                     type="checkbox"
                     checked={pullToggle}
@@ -263,7 +263,7 @@ export function ConflictResolutionModal({
               </div>
               <table className="w-full text-left border border-[color:var(--color-border-default)] rounded">
                 <thead className="bg-[color:var(--color-bg-muted)]">
-                  <tr className="text-[10px] text-[color:var(--color-text-secondary)]">
+                  <tr className="text-tiny text-[color:var(--color-text-secondary)]">
                     <th className="px-2 py-1 font-medium">배치</th>
                     <th className="px-2 py-1 font-medium">설비</th>
                     <th className="px-2 py-1 font-medium">시간 변경</th>
@@ -330,7 +330,7 @@ export function ConflictResolutionModal({
           >
             <span>적용</span>
             {subtext && (
-              <span className="kbi-button-subtext text-[10px] opacity-80 mt-0.5">
+              <span className="kbi-button-subtext text-tiny opacity-80 mt-0.5">
                 {subtext}
               </span>
             )}

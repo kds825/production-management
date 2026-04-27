@@ -122,7 +122,7 @@ export function UtilizationRow({
       >
         <span
           style={{
-            fontSize: 8,
+            fontSize: "var(--text-micro)",
             color: "var(--color-text-tertiary)",
             fontWeight: 500,
           }}
@@ -167,7 +167,7 @@ export function UtilizationRow({
               <span
                 style={{
                   position: "relative",
-                  fontSize: 8,
+                  fontSize: "var(--text-micro)",
                   fontWeight: 600,
                   color: cell.color,
                   zIndex: 1,

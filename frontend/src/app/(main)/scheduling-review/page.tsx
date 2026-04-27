@@ -388,15 +388,15 @@ export default function SchedulingReviewPage() {
 
         {/* 런 선택 드롭다운 */}
         <div className="flex items-center gap-2 ml-4">
-          <label className="text-[11px] text-gray-500 whitespace-nowrap">
+          <label className="text-small text-gray-500 whitespace-nowrap">
             실행 버전
           </label>
           <select
             value={selectedRun}
             onChange={(e) => setSelectedRun(e.target.value)}
             disabled={runsLoading || runs.length === 0}
-            className="text-[11px] border border-gray-200 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1"
-            style={{ minWidth: 160, fontSize: 11 }}
+            className="text-small border border-gray-200 rounded px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1"
+            style={{ minWidth: 160, fontSize: "var(--text-small)" }}
           >
             {runs.length === 0 && (
               <option value="">{runsLoading ? "로드 중..." : "런 없음"}</option>
@@ -418,7 +418,7 @@ export default function SchedulingReviewPage() {
             !selectedRun ||
             !runs.find((r) => r.run_label === selectedRun)?.parent_run_label
           }
-          className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
+          className="flex items-center gap-1 px-3 py-1.5 rounded text-small font-medium transition-opacity disabled:opacity-40"
           style={{
             backgroundColor: "var(--status-info-bg)",
             color: "var(--status-info-text)",
@@ -454,7 +454,7 @@ export default function SchedulingReviewPage() {
             }
           }}
           disabled={!selectedRun}
-          className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
+          className="flex items-center gap-1 px-3 py-1.5 rounded text-small font-medium transition-opacity disabled:opacity-40"
           style={{
             backgroundColor: "var(--kbi-red-tint-5)",
             color: "var(--color-brand-primary)",
@@ -476,7 +476,7 @@ export default function SchedulingReviewPage() {
         <button
           onClick={handleExcelDownload}
           disabled={!selectedRun || excelLoading}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-40"
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-small font-medium text-white transition-opacity disabled:opacity-40"
           style={{ backgroundColor: "var(--status-success)" }}
           title={
             selectedRun
@@ -507,19 +507,19 @@ export default function SchedulingReviewPage() {
         {/* 배치 카운트 */}
         <div className="flex items-center gap-2">
           <span
-            className="text-[11px] font-medium px-2 py-1 rounded"
+            className="text-small font-medium px-2 py-1 rounded"
             style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             연선 {yeonseoGroupCount}배치
           </span>
           <span
-            className="text-[11px] font-medium px-2 py-1 rounded"
+            className="text-small font-medium px-2 py-1 rounded"
             style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             절연 {insulationGroupCount}배치
           </span>
           <span
-            className="text-[11px] font-medium px-2 py-1 rounded"
+            className="text-small font-medium px-2 py-1 rounded"
             style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             시스 {sheatGroupCount}배치
@@ -529,7 +529,7 @@ export default function SchedulingReviewPage() {
         <div className="h-4 w-px bg-gray-200" />
 
         {/* 배치 그룹 수 + 수주 행 수 */}
-        <span className="text-[11px] text-gray-500">
+        <span className="text-small text-gray-500">
           총{" "}
           <span style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>
             {yeonseoGroupCount + insulationGroupCount + sheatGroupCount}
@@ -553,7 +553,7 @@ export default function SchedulingReviewPage() {
                     100,
                   );
                 }}
-                className="text-[11px] font-medium px-2 py-0.5 rounded cursor-pointer transition-colors hover:bg-blue-100"
+                className="text-small font-medium px-2 py-0.5 rounded cursor-pointer transition-colors hover:bg-blue-100"
                 style={{
                   backgroundColor: "var(--status-info-bg)",
                   color: "var(--status-info)",
@@ -571,7 +571,7 @@ export default function SchedulingReviewPage() {
             <>
               <div className="h-4 w-px bg-gray-200" />
               <span
-                className="text-[11px] font-medium flex items-center gap-1"
+                className="text-small font-medium flex items-center gap-1"
                 style={{ color: "var(--status-warning)" }}
               >
                 <svg
@@ -590,15 +590,21 @@ export default function SchedulingReviewPage() {
         <div className="h-4 w-px bg-gray-200" />
 
         <span
-          className="text-[11px] flex items-center gap-1.5"
-          style={{ color: hasWip ? "var(--status-success)" : "var(--color-text-tertiary)" }}
+          className="text-small flex items-center gap-1.5"
+          style={{
+            color: hasWip
+              ? "var(--status-success)"
+              : "var(--color-text-tertiary)",
+          }}
         >
           <span
             className="inline-block rounded-full"
             style={{
               width: 6,
               height: 6,
-              backgroundColor: hasWip ? "var(--status-success)" : "var(--neutral-300)",
+              backgroundColor: hasWip
+                ? "var(--status-success)"
+                : "var(--neutral-300)",
             }}
           />
           WIP {hasWip ? "반영됨" : "없음"}
@@ -606,9 +612,11 @@ export default function SchedulingReviewPage() {
 
         <div className="h-4 w-px bg-gray-200" />
 
-        <span className="text-[11px] text-gray-500">
+        <span className="text-small text-gray-500">
           계획일{" "}
-          <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{planDate}</span>
+          <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>
+            {planDate}
+          </span>
         </span>
       </div>
 
@@ -622,11 +630,14 @@ export default function SchedulingReviewPage() {
           <button
             key={tab}
             onClick={() => setActiveProcessTab(tab)}
-            className="px-4 py-2.5 text-[11px] font-medium whitespace-nowrap transition-colors border-b-2"
+            className="px-4 py-2.5 text-small font-medium whitespace-nowrap transition-colors border-b-2"
             style={{
               borderBottomColor:
                 activeProcessTab === tab ? PRIMARY : "transparent",
-              color: activeProcessTab === tab ? PRIMARY : "var(--color-text-secondary)",
+              color:
+                activeProcessTab === tab
+                  ? PRIMARY
+                  : "var(--color-text-secondary)",
             }}
           >
             {tab}
@@ -821,7 +832,7 @@ export default function SchedulingReviewPage() {
                   버전 비교
                 </h2>
                 {compareData && (
-                  <div className="text-[10px] text-gray-500 mt-0.5">
+                  <div className="text-tiny text-gray-500 mt-0.5">
                     {compareData.run_label_before} →{" "}
                     {compareData.run_label_after}
                   </div>
@@ -838,13 +849,13 @@ export default function SchedulingReviewPage() {
             {/* Body */}
             <div className="p-5 overflow-y-auto flex-1">
               {compareLoading && (
-                <div className="text-[12px] text-gray-500">
+                <div className="text-xs text-gray-500">
                   비교 데이터 로드 중...
                 </div>
               )}
               {compareError && (
                 <div
-                  className="text-[12px] p-3 rounded"
+                  className="text-xs p-3 rounded"
                   style={{
                     backgroundColor: "var(--kbi-red-tint-12)",
                     color: "var(--status-danger-text-strong)",
@@ -860,36 +871,48 @@ export default function SchedulingReviewPage() {
                   <div className="grid grid-cols-4 gap-2 mb-4">
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }}
+                      style={{
+                        backgroundColor: "var(--status-success-bg-soft)",
+                        color: "var(--status-success-text-deep)",
+                      }}
                     >
-                      <div className="text-[10px] font-medium">추가됨</div>
+                      <div className="text-tiny font-medium">추가됨</div>
                       <div className="text-2xl font-bold">
                         {compareData.summary.added}
                       </div>
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
+                      style={{
+                        backgroundColor: "var(--status-warning-bg)",
+                        color: "var(--status-warning-text)",
+                      }}
                     >
-                      <div className="text-[10px] font-medium">이동됨</div>
+                      <div className="text-tiny font-medium">이동됨</div>
                       <div className="text-2xl font-bold">
                         {compareData.summary.moved}
                       </div>
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "var(--kbi-red-tint-12)", color: "var(--status-danger-text-strong)" }}
+                      style={{
+                        backgroundColor: "var(--kbi-red-tint-12)",
+                        color: "var(--status-danger-text-strong)",
+                      }}
                     >
-                      <div className="text-[10px] font-medium">삭제됨</div>
+                      <div className="text-tiny font-medium">삭제됨</div>
                       <div className="text-2xl font-bold">
                         {compareData.summary.removed}
                       </div>
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "var(--neutral-100)", color: "var(--neutral-text-primary)" }}
+                      style={{
+                        backgroundColor: "var(--neutral-100)",
+                        color: "var(--neutral-text-primary)",
+                      }}
                     >
-                      <div className="text-[10px] font-medium">변경 없음</div>
+                      <div className="text-tiny font-medium">변경 없음</div>
                       <div className="text-2xl font-bold">
                         {compareData.summary.unchanged}
                       </div>
@@ -899,18 +922,20 @@ export default function SchedulingReviewPage() {
                   {/* 추가된 수주 */}
                   {compareData.added_tasks.length > 0 && (
                     <div className="mb-4">
-                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                      <h3 className="text-small font-semibold text-gray-700 mb-2">
                         추가된 배치 ({compareData.added_tasks.length})
                       </h3>
                       <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
                         {compareData.added_tasks.slice(0, 50).map((t) => (
                           <div
                             key={t.task_id}
-                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                            className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                           >
                             <span
                               className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: "var(--status-success-text)" }}
+                              style={{
+                                backgroundColor: "var(--status-success-text)",
+                              }}
                             />
                             <span className="font-medium">
                               {t.sales_order_id || "-"}
@@ -937,14 +962,14 @@ export default function SchedulingReviewPage() {
                   {/* 삭제된 수주 */}
                   {compareData.removed_tasks.length > 0 && (
                     <div className="mb-4">
-                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                      <h3 className="text-small font-semibold text-gray-700 mb-2">
                         삭제된 배치 ({compareData.removed_tasks.length})
                       </h3>
                       <div className="max-h-40 overflow-y-auto border border-gray-200 rounded">
                         {compareData.removed_tasks.slice(0, 50).map((t) => (
                           <div
                             key={t.task_id}
-                            className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                            className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                           >
                             <span
                               className="inline-block w-1.5 h-1.5 rounded-full"
@@ -970,7 +995,7 @@ export default function SchedulingReviewPage() {
                   {/* 이동된 배치 (상위 5건) */}
                   {compareData.moved_tasks.length > 0 && (
                     <div className="mb-4">
-                      <h3 className="text-[11px] font-semibold text-gray-700 mb-2">
+                      <h3 className="text-small font-semibold text-gray-700 mb-2">
                         이동된 배치 (상위{" "}
                         {Math.min(5, compareData.moved_tasks.length)}/
                         {compareData.moved_tasks.length})
@@ -986,11 +1011,13 @@ export default function SchedulingReviewPage() {
                           .map((t) => (
                             <div
                               key={t.task_id}
-                              className="px-2 py-1.5 border-b border-gray-100 text-[11px] flex items-center gap-2"
+                              className="px-2 py-1.5 border-b border-gray-100 text-small flex items-center gap-2"
                             >
                               <span
                                 className="inline-block w-1.5 h-1.5 rounded-full"
-                                style={{ backgroundColor: "var(--status-warning)" }}
+                                style={{
+                                  backgroundColor: "var(--status-warning)",
+                                }}
                               />
                               <span className="font-medium">
                                 {t.sales_order_id || "-"}

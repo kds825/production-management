@@ -219,7 +219,7 @@ export function ContextMenu() {
             {selectedTask?.batch_id != null && (
               <>
                 <div className="border-t border-gray-100 my-1" />
-                <div className="px-3 py-1 text-[9px] text-gray-400 uppercase tracking-wide">
+                <div className="px-3 py-1 text-mini text-gray-400 uppercase tracking-wide">
                   상태 변경
                 </div>
                 {selectedTask.status !== "in_progress" && (
@@ -255,7 +255,7 @@ export function ContextMenu() {
             {selectedTask?.batch_id != null && selectedTask.batch_group && (
               <>
                 <div className="border-t border-gray-100 my-1" />
-                <div className="px-3 py-1 text-[9px] text-gray-400 uppercase tracking-wide">
+                <div className="px-3 py-1 text-mini text-gray-400 uppercase tracking-wide">
                   배치 관리
                 </div>
                 {(() => {

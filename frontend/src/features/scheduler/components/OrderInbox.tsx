@@ -58,7 +58,7 @@ function EquipmentGroupBadge({ group }: { group: EquipmentGroup }) {
   };
   return (
     <span
-      className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full text-white"
+      className="text-mini font-semibold px-1.5 py-0.5 rounded-full text-white"
       style={{ backgroundColor: colorMap[group] }}
     >
       {group}
@@ -135,7 +135,7 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
     >
       <div className="flex items-start justify-between gap-1 mb-1">
         <span
-          className="text-[10px] font-semibold truncate flex-1"
+          className="text-tiny font-semibold truncate flex-1"
           style={{ color: "var(--kbi-brown)" }}
         >
           {order.product}
@@ -143,33 +143,33 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
         <EquipmentGroupBadge group={group} />
       </div>
 
-      <div className="text-[10px] text-gray-500 truncate mb-0.5">
+      <div className="text-tiny text-gray-500 truncate mb-0.5">
         {order.spec || "–"}
         {order.core_count > 0 && ` \u00B7 ${order.core_count}C`}
         {order.color && ` \u00B7 ${order.color}`}
       </div>
 
       <div className="flex items-center justify-between">
-        <span className="text-[9px] text-gray-400 truncate">
+        <span className="text-mini text-gray-400 truncate">
           {order.customer}
         </span>
-        <span className="text-[9px] text-gray-500 flex-shrink-0 ml-1">
+        <span className="text-mini text-gray-500 flex-shrink-0 ml-1">
           납기 {fmtDate(order.delivery_date)}
         </span>
       </div>
 
       <div className="flex items-center justify-between mt-1 pt-1 border-t border-gray-100">
-        <span className="text-[9px] font-medium text-gray-600">
+        <span className="text-mini font-medium text-gray-600">
           {fmtLength(order.total_length_m)}
         </span>
-        <span className="text-[9px] text-gray-400">{order.order_number}</span>
+        <span className="text-mini text-gray-400">{order.order_number}</span>
       </div>
 
       {/* 클릭으로도 작업 추가 */}
       {isEditMode && (
         <button
           onClick={handleAddClick}
-          className="mt-1.5 w-full text-[9px] font-medium text-center py-1 rounded transition-colors"
+          className="mt-1.5 w-full text-mini font-medium text-center py-1 rounded transition-colors"
           style={{
             backgroundColor: "var(--kbi-red-tint-5)",
             color: "var(--color-brand-primary)",
@@ -237,7 +237,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
   if (unscheduledItems.length === 0) {
     return (
       <div className="flex items-center justify-center px-4 py-3">
-        <span className="text-[11px] text-gray-400">
+        <span className="text-small text-gray-400">
           미배정 작업이 없습니다
         </span>
       </div>
@@ -295,7 +295,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
       <div className="flex items-center gap-1 px-3 pt-2 pb-1 border-b border-gray-100">
         <button
           onClick={() => setActiveTab("전체")}
-          className="text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors"
+          className="text-tiny font-medium px-2 py-0.5 rounded-full transition-colors"
           style={{
             backgroundColor:
               activeTab === "전체"
@@ -313,7 +313,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
           <button
             key={g}
             onClick={() => setActiveTab(g)}
-            className="text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors"
+            className="text-tiny font-medium px-2 py-0.5 rounded-full transition-colors"
             style={{
               backgroundColor:
                 activeTab === g ? tabColorMap[g] : "var(--color-bg-muted)",
@@ -348,7 +348,7 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
           ),
         )}
         {visibleItems.length === 0 && (
-          <span className="text-[11px] text-gray-400 self-center">
+          <span className="text-small text-gray-400 self-center">
             해당 그룹의 미배정 작업이 없습니다
           </span>
         )}

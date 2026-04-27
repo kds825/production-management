@@ -44,7 +44,7 @@ export function WipInventoryTable({
   return (
     <div>
       <h4
-        className="text-[11px] font-semibold mb-2"
+        className="text-small font-semibold mb-2"
         style={{ color: "var(--color-text-primary)" }}
       >
         {title}
@@ -56,7 +56,7 @@ export function WipInventoryTable({
       >
         {items.length === 0 ? (
           <div
-            className="flex items-center justify-center py-8 text-[11px]"
+            className="flex items-center justify-center py-8 text-small"
             style={{
               backgroundColor: "var(--color-bg-muted)",
               color: "var(--color-text-tertiary)",
@@ -84,7 +84,7 @@ export function WipInventoryTable({
                   {COL_DEFS.map((col, i) => (
                     <th
                       key={col.key}
-                      className="text-[10px] font-semibold px-2 py-2"
+                      className="text-tiny font-semibold px-2 py-2"
                       style={{
                         color: "var(--color-text-secondary)",
                         textAlign: col.align as "left" | "right",
@@ -193,7 +193,7 @@ export function WipInventoryTable({
                           >
                             {isStageCol ? (
                               <span
-                                className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded"
+                                className="inline-block text-mini font-semibold px-1.5 py-0.5 rounded"
                                 style={
                                   String(item.process_stage ?? "").includes(
                                     "절연",
@@ -212,7 +212,7 @@ export function WipInventoryTable({
                               </span>
                             ) : isUsedCol ? (
                               <span
-                                className="text-[11px] font-medium"
+                                className="text-small font-medium"
                                 style={{
                                   color:
                                     item.used_m > 0
@@ -224,7 +224,7 @@ export function WipInventoryTable({
                               </span>
                             ) : isRemainingCol ? (
                               <span
-                                className="text-[11px] font-medium"
+                                className="text-small font-medium"
                                 style={{
                                   color:
                                     item.total_length_m - item.used_m > 0
@@ -236,7 +236,7 @@ export function WipInventoryTable({
                               </span>
                             ) : (
                               <span
-                                className="block truncate text-[11px]"
+                                className="block truncate text-small"
                                 style={{
                                   textAlign: col.align as "left" | "right",
                                   fontWeight: isActive ? 600 : 400,
@@ -264,7 +264,7 @@ export function WipInventoryTable({
       {items.some(
         (i) => (i.matchedBatchIds?.length ?? 0) > 0 || !!i.matchedBatchId,
       ) && (
-        <p className="text-[9px] text-gray-400 mt-1">
+        <p className="text-mini text-gray-400 mt-1">
           클릭하면 매칭된 배치로 이동합니다
         </p>
       )}

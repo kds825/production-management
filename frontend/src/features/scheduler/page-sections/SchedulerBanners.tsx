@@ -49,7 +49,7 @@ export function SchedulerBanners({
       {/* 자동배열 결과 알림 */}
       {autoScheduleResult && (
         <div
-          className="flex items-start justify-between gap-2 px-4 py-2 border-b text-[11px]"
+          className="flex items-start justify-between gap-2 px-4 py-2 border-b text-small"
           style={{
             backgroundColor: isAutoScheduleError
               ? "var(--kbi-red-tint-5)"

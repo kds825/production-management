@@ -62,21 +62,21 @@ function ViolationItem({ violation, taskName }: ViolationItemProps) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span
-            className="text-[9px] font-semibold px-1.5 py-0.5 rounded text-white flex-shrink-0"
+            className="text-mini font-semibold px-1.5 py-0.5 rounded text-white flex-shrink-0"
             style={{ backgroundColor: style.badgeBg }}
           >
             {VIOLATION_TYPE_LABELS[violation.type]}
           </span>
           {taskName && (
             <span
-              className="text-[9px] text-gray-500 truncate"
+              className="text-mini text-gray-500 truncate"
               title={taskName}
             >
               {taskName}
             </span>
           )}
         </div>
-        <p className="text-[10px]" style={{ color: style.text }}>
+        <p className="text-tiny" style={{ color: style.text }}>
           {violation.message}
         </p>
       </div>
@@ -121,12 +121,12 @@ export function ConstraintAlert() {
             제약 조건 알림
           </span>
           {errorCount > 0 && (
-            <span className="text-[10px] font-semibold text-white bg-red-600 rounded-full px-1.5 py-0.5">
+            <span className="text-tiny font-semibold text-white bg-red-600 rounded-full px-1.5 py-0.5">
               오류 {errorCount}
             </span>
           )}
           {warningCount > 0 && (
-            <span className="text-[10px] font-semibold text-white bg-amber-500 rounded-full px-1.5 py-0.5">
+            <span className="text-tiny font-semibold text-white bg-amber-500 rounded-full px-1.5 py-0.5">
               경고 {warningCount}
             </span>
           )}

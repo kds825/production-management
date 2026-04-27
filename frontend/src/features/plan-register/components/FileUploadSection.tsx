@@ -166,7 +166,7 @@ export function FileUploadSection() {
           <p className="text-xs text-gray-500">
             클릭하거나 파일을 끌어다 놓으세요
           </p>
-          <p className="text-[10px] text-gray-400">.xls, .xlsx 파일 지원</p>
+          <p className="text-tiny text-gray-400">.xls, .xlsx 파일 지원</p>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -226,7 +226,7 @@ export function FileUploadSection() {
               >
                 {uploadedFile.name}
               </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">
+              <p className="text-tiny text-gray-400 mt-0.5">
                 {formatFileSize(uploadedFile.size)} &middot;{" "}
                 {formatTime(uploadedFile.uploadedAt)} 업로드
               </p>
@@ -237,7 +237,7 @@ export function FileUploadSection() {
             {showDeleteHover && !isAnalyzing && (
               <button
                 onClick={handleDelete}
-                className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
+                className="text-small font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
                   border: "1px solid var(--color-border-default)",
                   color: "var(--color-text-secondary)",
@@ -260,7 +260,7 @@ export function FileUploadSection() {
             <button
               onClick={handleAnalyze}
               disabled={isAnalyzing || isAnalyzed}
-              className="text-[11px] font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
+              className="text-small font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
               style={{
                 backgroundColor:
                   isAnalyzing || isAnalyzed
@@ -305,7 +305,7 @@ export function FileUploadSection() {
       {/* 유효성 오류 메시지 */}
       {validationError && (
         <p
-          className="text-[11px] mt-1.5"
+          className="text-small mt-1.5"
           style={{ color: "var(--color-brand-primary)" }}
         >
           {validationError}

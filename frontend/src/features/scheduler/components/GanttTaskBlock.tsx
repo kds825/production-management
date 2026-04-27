@@ -861,7 +861,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   zIndex: 5,
                   padding: "1px 3px",
                   borderRadius: 3,
-                  fontSize: 8,
+                  fontSize: "var(--text-micro)",
                   fontWeight: 700,
                   lineHeight: 1.4,
                   backgroundColor: "var(--signal-alert)",
@@ -901,7 +901,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         }}
       >
         <span
-          className="text-white text-[10px] font-semibold leading-tight"
+          className="text-white text-tiny font-semibold leading-tight"
           style={{
             // 진한 빨강(var(--color-brand-primary)) 배경에서도 흰 글자가 묻히지 않도록 얇은 블랙
             // 스트로크 + 드롭섀도우를 겹침
@@ -916,7 +916,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             <span
               style={{
                 flexShrink: 0,
-                fontSize: 8,
+                fontSize: "var(--text-micro)",
                 fontWeight: 700,
                 lineHeight: 1.4,
                 padding: "0px 3px",
@@ -944,7 +944,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         </span>
         {widestSegW >= 40 && (
           <span
-            className="text-white/80 text-[9px] truncate leading-tight"
+            className="text-white/80 text-mini truncate leading-tight"
             style={{ textShadow: "0 1px 1px rgba(0,0,0,0.3)" }}
           >
             {lotLabel ? `${lotLabel} · ` : ""}
@@ -971,7 +971,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               color: "var(--fg-on-dark)",
               borderRadius: 6,
               padding: "8px 12px",
-              fontSize: 11,
+              fontSize: "var(--text-small)",
               lineHeight: 1.6,
               boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
               minWidth: 200,
@@ -991,7 +991,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   backgroundColor: "var(--status-danger-text-deep)",
                   color: "var(--status-danger-text-soft)",
                   fontWeight: 700,
-                  fontSize: 10,
+                  fontSize: "var(--text-tiny)",
                 }}
               >
                 납기 초과 +{lateDays}일 — 납기:{" "}
@@ -1019,7 +1019,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 borderTop: "1px solid var(--neutral-text-primary)",
                 marginTop: 4,
                 paddingTop: 4,
-                fontSize: 10,
+                fontSize: "var(--text-tiny)",
                 color: "var(--color-text-tertiary)",
               }}
             >

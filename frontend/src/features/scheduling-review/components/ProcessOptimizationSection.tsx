@@ -147,10 +147,14 @@ export function ProcessOptimizationSection({
         {hasWip && (
           <button
             onClick={() => setWipExpanded((v) => !v)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-small font-medium transition-colors"
             style={{
-              backgroundColor: wipExpanded ? "var(--status-info-bg)" : "var(--neutral-100)",
-              color: wipExpanded ? "var(--status-info)" : "var(--color-text-secondary)",
+              backgroundColor: wipExpanded
+                ? "var(--status-info-bg)"
+                : "var(--neutral-100)",
+              color: wipExpanded
+                ? "var(--status-info)"
+                : "var(--color-text-secondary)",
               border: `1px solid ${wipExpanded ? "var(--status-info-bg)" : "var(--color-border-default)"}`,
             }}
           >
@@ -166,7 +170,9 @@ export function ProcessOptimizationSection({
               }}
             />
             SM 재고 {wipItems!.length}건
-            <span style={{ fontSize: 9 }}>{wipExpanded ? "◀" : "▶"}</span>
+            <span style={{ fontSize: "var(--text-mini)" }}>
+              {wipExpanded ? "◀" : "▶"}
+            </span>
           </button>
         )}
       </div>
@@ -212,7 +218,7 @@ export function ProcessOptimizationSection({
                     <button
                       key={t.key}
                       onClick={() => setWipTab(t.key)}
-                      className="flex-1 text-[11px] font-semibold py-1.5 transition-colors"
+                      className="flex-1 text-small font-semibold py-1.5 transition-colors"
                       style={{
                         color: active
                           ? "var(--color-brand-primary)"
@@ -253,7 +259,7 @@ export function ProcessOptimizationSection({
         <div className="mt-2 flex justify-end">
           <button
             onClick={handleBackToWip}
-            className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+            className="text-small font-medium px-3 py-1.5 rounded-md transition-colors"
             style={{
               backgroundColor: "var(--kbi-red-tint-5)",
               color: "var(--color-brand-primary)",
