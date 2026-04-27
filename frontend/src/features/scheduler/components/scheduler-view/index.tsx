@@ -333,7 +333,7 @@ export function SchedulerView({
     <div
       ref={outerRef}
       className="flex flex-col flex-1 overflow-hidden"
-      style={{ backgroundColor: "#FAFAFA" }}
+      style={{ backgroundColor: "var(--color-bg-muted)" }}
     >
       <div
         ref={scrollContainerRef}

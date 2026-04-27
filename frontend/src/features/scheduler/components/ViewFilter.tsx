@@ -112,7 +112,7 @@ export function ViewFilter() {
         className={btn(activeType === "all")}
         style={
           activeType === "all" && !isLvOnly && !isHvOnly
-            ? { backgroundColor: "#C41230" }
+            ? { backgroundColor: "var(--color-brand-primary)" }
             : {}
         }
       >
@@ -130,7 +130,9 @@ export function ViewFilter() {
       <button
         onClick={setHvOnly}
         className={btn(isHvOnly)}
-        style={isHvOnly ? { backgroundColor: "#C41230" } : {}}
+        style={
+          isHvOnly ? { backgroundColor: "var(--color-brand-primary)" } : {}
+        }
       >
         고압만
       </button>
@@ -140,7 +142,11 @@ export function ViewFilter() {
       <button
         onClick={setProcess}
         className={btn(activeType === "process")}
-        style={activeType === "process" ? { backgroundColor: "#4A2C2A" } : {}}
+        style={
+          activeType === "process"
+            ? { backgroundColor: "var(--kbi-brown)" }
+            : {}
+        }
       >
         공정별
       </button>
@@ -164,7 +170,9 @@ export function ViewFilter() {
                       ? "text-white border-transparent"
                       : "text-gray-600 bg-white border-gray-200 hover:bg-gray-50",
                   ].join(" ")}
-                  style={selected ? { backgroundColor: "#4A2C2A" } : {}}
+                  style={
+                    selected ? { backgroundColor: "var(--kbi-brown)" } : {}
+                  }
                 >
                   {opt.label}
                 </button>

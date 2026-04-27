@@ -90,7 +90,7 @@ export function SchedulerToolbar({
           onClick={onAutoSchedule}
           disabled={autoScheduleLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-50"
-          style={{ backgroundColor: "#C41230" }}
+          style={{ backgroundColor: "var(--color-brand-primary)" }}
           title="최신 런에 대해 Stage 2 자동배열 실행"
         >
           {autoScheduleLoading ? (
@@ -115,7 +115,7 @@ export function SchedulerToolbar({
           className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-60"
           style={{
             backgroundColor: compareModeEnabled ? "#1E40AF" : "#EFF6FF",
-            color: compareModeEnabled ? "#FFFFFF" : "#1E40AF",
+            color: compareModeEnabled ? "var(--color-text-inverse)" : "#1E40AF",
             border: "1px solid #BFDBFE",
           }}
           title={
@@ -204,15 +204,15 @@ export function SchedulerToolbar({
               lateTaskCount > 0
                 ? showLatePanel
                   ? "#7F1D1D"
-                  : "#FEE2E2"
-                : "#F3F4F6",
+                  : "var(--kbi-red-tint-12)"
+                : "var(--neutral-100)",
             color:
               lateTaskCount > 0
                 ? showLatePanel
                   ? "#FCA5A5"
                   : "#B91C1C"
-                : "#6B7280",
-            border: `1px solid ${lateTaskCount > 0 ? "#FECACA" : "#E5E7EB"}`,
+                : "var(--color-text-secondary)",
+            border: `1px solid ${lateTaskCount > 0 ? "#FECACA" : "var(--color-border-default)"}`,
           }}
           title="납기를 초과한 배치 목록 보기"
         >
@@ -223,7 +223,7 @@ export function SchedulerToolbar({
           {lateTaskCount > 0 && (
             <span
               className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
-              style={{ backgroundColor: "#DC2626" }}
+              style={{ backgroundColor: "var(--color-danger)" }}
             >
               {lateTaskCount}
             </span>
@@ -238,7 +238,7 @@ export function SchedulerToolbar({
             onClick={onOpenWipModal}
             disabled={!wipRunLabel}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-50"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
             title="SM재고 실적 업데이트"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">

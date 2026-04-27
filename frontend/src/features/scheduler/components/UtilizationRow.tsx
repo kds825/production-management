@@ -100,8 +100,8 @@ export function UtilizationRow({
         width: SIDEBAR_WIDTH + timelineWidth,
         position: "relative",
         height: UTIL_ROW_HEIGHT,
-        backgroundColor: "#F9FAFB",
-        borderBottom: "1px solid #E5E7EB",
+        backgroundColor: "var(--bg-surface-alt)",
+        borderBottom: "1px solid var(--color-border-default)",
       }}
     >
       {/* 사이드바 영역 대응 스페이서 — 수평 스크롤 시 sticky 고정 */}
@@ -112,15 +112,21 @@ export function UtilizationRow({
           width: SIDEBAR_WIDTH,
           minWidth: SIDEBAR_WIDTH,
           flexShrink: 0,
-          backgroundColor: "#F3F4F6",
-          borderRight: "1px solid #E5E7EB",
+          backgroundColor: "var(--neutral-100)",
+          borderRight: "1px solid var(--color-border-default)",
           zIndex: 3,
           display: "flex",
           alignItems: "center",
           paddingLeft: 6,
         }}
       >
-        <span style={{ fontSize: 8, color: "#9CA3AF", fontWeight: 500 }}>
+        <span
+          style={{
+            fontSize: 8,
+            color: "var(--color-text-tertiary)",
+            fontWeight: 500,
+          }}
+        >
           가동률
         </span>
       </div>
@@ -138,7 +144,7 @@ export function UtilizationRow({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              borderLeft: "1px solid #E5E7EB",
+              borderLeft: "1px solid var(--color-border-default)",
               overflow: "hidden",
             }}
           >

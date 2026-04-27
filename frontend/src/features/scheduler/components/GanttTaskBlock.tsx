@@ -714,7 +714,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           task.status === "completed"
             ? "#065F46"
             : task.status === "in_progress"
-              ? "#C41230"
+              ? "var(--color-brand-primary)"
               : undefined;
 
         const segBarStyle: React.CSSProperties = {
@@ -865,7 +865,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   fontWeight: 700,
                   lineHeight: 1.4,
                   backgroundColor: "#FF0000",
-                  color: "#fff",
+                  color: "var(--color-text-inverse)",
                   whiteSpace: "nowrap",
                   pointerEvents: "none",
                 }}
@@ -922,7 +922,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 padding: "0px 3px",
                 borderRadius: 3,
                 backgroundColor: "rgba(234,88,12,0.85)",
-                color: "#fff",
+                color: "var(--color-text-inverse)",
               }}
             >
               고
@@ -968,7 +968,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 : 0,
               zIndex: 9999,
               background: "#1F2937",
-              color: "#F9FAFB",
+              color: "var(--fg-on-dark)",
               borderRadius: 6,
               padding: "8px 12px",
               fontSize: 11,
@@ -1016,10 +1016,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 marginTop: 4,
                 paddingTop: 4,
                 fontSize: 10,
-                color: "#9CA3AF",
+                color: "var(--color-text-tertiary)",
               }}
             >
-              <div style={{ fontWeight: 600, color: "#F9FAFB" }}>
+              <div style={{ fontWeight: 600, color: "var(--fg-on-dark)" }}>
                 유휴시간 상세 ({timeBreakdown.totalIdleHrs}h)
               </div>
               {timeBreakdown.gapHrs > 0 && (

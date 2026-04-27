@@ -26,19 +26,25 @@ export function SyncButton() {
         disabled={isDisabled}
         className="flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
         style={{
-          backgroundColor: isDisabled ? "#F3F4F6" : "#FEF2F2",
-          color: isDisabled ? "#D1D5DB" : "#C41230",
-          border: isDisabled ? "1px solid #E5E7EB" : "1px solid #FECACA",
+          backgroundColor: isDisabled
+            ? "var(--neutral-100)"
+            : "var(--kbi-red-tint-5)",
+          color: isDisabled
+            ? "var(--neutral-300)"
+            : "var(--color-brand-primary)",
+          border: isDisabled
+            ? "1px solid var(--color-border-default)"
+            : "1px solid #FECACA",
           cursor: isDisabled ? "not-allowed" : "pointer",
         }}
         onMouseEnter={(e) => {
           if (!isDisabled) {
-            e.currentTarget.style.backgroundColor = "#FEE2E2";
+            e.currentTarget.style.backgroundColor = "var(--kbi-red-tint-12)";
           }
         }}
         onMouseLeave={(e) => {
           if (!isDisabled) {
-            e.currentTarget.style.backgroundColor = "#FEF2F2";
+            e.currentTarget.style.backgroundColor = "var(--kbi-red-tint-5)";
           }
         }}
         title={
@@ -62,7 +68,7 @@ export function SyncButton() {
         {confirmedBatches.length > 0 && (
           <span
             className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full text-white"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
           >
             {confirmedBatches.length}
           </span>

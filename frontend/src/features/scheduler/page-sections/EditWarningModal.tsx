@@ -41,16 +41,19 @@ export function EditWarningModal({
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          backgroundColor: "#FFFFFF",
+          backgroundColor: "var(--bg-surface)",
           borderRadius: 8,
           padding: "28px 32px",
           boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-          border: "1px solid #E5E7EB",
+          border: "1px solid var(--color-border-default)",
           minWidth: 420,
           maxWidth: 500,
         }}
       >
-        <p className="text-sm font-semibold mb-2" style={{ color: "#1F2937" }}>
+        <p
+          className="text-sm font-semibold mb-2"
+          style={{ color: "var(--color-text-primary)" }}
+        >
           수정 모드를 활성화해주세요
         </p>
         <p className="text-xs text-gray-500 mb-5 leading-relaxed">
@@ -62,8 +65,8 @@ export function EditWarningModal({
             onClick={onClose}
             className="px-4 py-2 text-xs font-medium rounded-md transition-colors"
             style={{
-              border: "1px solid #E5E7EB",
-              color: "#6B7280",
+              border: "1px solid var(--color-border-default)",
+              color: "var(--color-text-secondary)",
             }}
           >
             닫기
@@ -74,7 +77,7 @@ export function EditWarningModal({
               onEnableEditMode();
             }}
             className="px-4 py-2 text-xs font-medium rounded-md text-white transition-colors"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
           >
             수정하기
           </button>

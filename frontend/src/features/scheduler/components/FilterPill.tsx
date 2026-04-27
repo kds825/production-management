@@ -63,7 +63,8 @@ const FilterPill: React.FC<FilterPillProps> = ({
       onFocus={(e) => {
         // 키보드 포커스 시에만 KBI primary 링 — 마우스 클릭 시 outline 방지
         if (e.currentTarget.matches(":focus-visible")) {
-          e.currentTarget.style.outline = "2px solid #C41230";
+          e.currentTarget.style.outline =
+            "2px solid var(--color-brand-primary)";
         }
       }}
       onBlur={(e) => {

@@ -136,7 +136,7 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
       <div className="flex items-start justify-between gap-1 mb-1">
         <span
           className="text-[10px] font-semibold truncate flex-1"
-          style={{ color: "#4A2C2A" }}
+          style={{ color: "var(--kbi-brown)" }}
         >
           {order.product}
         </span>
@@ -170,12 +170,15 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
         <button
           onClick={handleAddClick}
           className="mt-1.5 w-full text-[9px] font-medium text-center py-1 rounded transition-colors"
-          style={{ backgroundColor: "#FEF2F2", color: "#C41230" }}
+          style={{
+            backgroundColor: "var(--kbi-red-tint-5)",
+            color: "var(--color-brand-primary)",
+          }}
           onMouseEnter={(e) =>
-            (e.currentTarget.style.backgroundColor = "#FEE2E2")
+            (e.currentTarget.style.backgroundColor = "var(--kbi-red-tint-12)")
           }
           onMouseLeave={(e) =>
-            (e.currentTarget.style.backgroundColor = "#FEF2F2")
+            (e.currentTarget.style.backgroundColor = "var(--kbi-red-tint-5)")
           }
         >
           + 작업 배정
@@ -294,8 +297,14 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
           onClick={() => setActiveTab("전체")}
           className="text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors"
           style={{
-            backgroundColor: activeTab === "전체" ? "#1F2937" : "#F3F4F6",
-            color: activeTab === "전체" ? "#FFFFFF" : "#6B7280",
+            backgroundColor:
+              activeTab === "전체"
+                ? "var(--color-text-primary)"
+                : "var(--color-bg-muted)",
+            color:
+              activeTab === "전체"
+                ? "var(--color-text-inverse)"
+                : "var(--color-text-secondary)",
           }}
         >
           전체 {unscheduledItems.length}
@@ -306,8 +315,12 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
             onClick={() => setActiveTab(g)}
             className="text-[10px] font-medium px-2 py-0.5 rounded-full transition-colors"
             style={{
-              backgroundColor: activeTab === g ? tabColorMap[g] : "#F3F4F6",
-              color: activeTab === g ? "#FFFFFF" : "#6B7280",
+              backgroundColor:
+                activeTab === g ? tabColorMap[g] : "var(--color-bg-muted)",
+              color:
+                activeTab === g
+                  ? "var(--color-text-inverse)"
+                  : "var(--color-text-secondary)",
             }}
           >
             {g} {groupCounts[g]}

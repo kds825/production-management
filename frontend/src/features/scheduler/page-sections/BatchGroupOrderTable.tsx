@@ -64,8 +64,8 @@ export function BatchGroupOrderTable({
         <thead>
           <tr
             style={{
-              backgroundColor: "#F9FAFB",
-              borderBottom: "1px solid #E5E7EB",
+              backgroundColor: "var(--bg-surface-alt)",
+              borderBottom: "1px solid var(--color-border-default)",
             }}
           >
             {(
@@ -96,7 +96,7 @@ export function BatchGroupOrderTable({
             <tr
               key={order.batch_id}
               className="hover:bg-gray-50 transition-colors"
-              style={{ borderBottom: "1px solid #F3F4F6" }}
+              style={{ borderBottom: "1px solid var(--neutral-100)" }}
             >
               <td className="py-1 px-2 font-mono text-gray-700">
                 {order.sales_order_id || "-"}
@@ -117,8 +117,8 @@ export function BatchGroupOrderTable({
                   color:
                     order.due_date &&
                     new Date(order.due_date).getTime() < Date.now()
-                      ? "#DC2626"
-                      : "#4B5563",
+                      ? "var(--color-danger)"
+                      : "var(--neutral-600)",
                 }}
               >
                 {order.due_date
@@ -133,7 +133,7 @@ export function BatchGroupOrderTable({
                   <span
                     title={`원본: ${order.total_length_m.toLocaleString()}m, WIP차감: -${order.wip_length_m.toLocaleString()}m`}
                   >
-                    <span style={{ color: "#16A34A" }}>
+                    <span style={{ color: "var(--status-success)" }}>
                       {(
                         order.net_length_m ?? order.total_length_m
                       ).toLocaleString()}
@@ -166,7 +166,10 @@ export function BatchGroupOrderTable({
                 {order.wip_matched_id ? (
                   <span
                     className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
-                    style={{ backgroundColor: "#DCFCE7", color: "#16A34A" }}
+                    style={{
+                      backgroundColor: "var(--status-success-bg)",
+                      color: "var(--status-success)",
+                    }}
                   >
                     재고
                   </span>
@@ -180,14 +183,14 @@ export function BatchGroupOrderTable({
         <tfoot>
           <tr
             style={{
-              borderTop: "2px solid #E5E7EB",
-              backgroundColor: "#FDF2F2",
+              borderTop: "2px solid var(--color-border-default)",
+              backgroundColor: "var(--kbi-red-tint-5)",
             }}
           >
             <td
               colSpan={6}
               className="py-1 px-2 font-semibold"
-              style={{ color: "#C41230" }}
+              style={{ color: "var(--color-brand-primary)" }}
             >
               합계 {displayRows.length}건
               {headerBatch && (
@@ -202,14 +205,14 @@ export function BatchGroupOrderTable({
             </td>
             <td
               className="py-1 px-2 text-right font-semibold"
-              style={{ color: "#C41230" }}
+              style={{ color: "var(--color-brand-primary)" }}
               title="WIP 재고 사용량 제외한 실제 작업지시량"
             >
               {totalQty.toLocaleString()}m
             </td>
             <td
               className="py-1 px-2 text-right font-semibold"
-              style={{ color: "#C41230" }}
+              style={{ color: "var(--color-brand-primary)" }}
               title="다심 케이블 환산수량 합계 (단심은 —)"
             >
               {displayRows

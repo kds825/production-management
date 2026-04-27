@@ -36,7 +36,10 @@ export function CompareDetailsModal({
       >
         <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold" style={{ color: "#111827" }}>
+            <h2
+              className="text-sm font-semibold"
+              style={{ color: "var(--color-text-primary)" }}
+            >
               버전 비교
             </h2>
             {compareMode.diffResponse && (
@@ -64,7 +67,7 @@ export function CompareDetailsModal({
             <div
               className="text-[12px] p-3 rounded"
               style={{
-                backgroundColor: "#FEE2E2",
+                backgroundColor: "var(--kbi-red-tint-12)",
                 color: "#991B1B",
                 border: "1px solid #FECACA",
               }}
@@ -95,7 +98,10 @@ export function CompareDetailsModal({
                 </div>
                 <div
                   className="rounded p-3 text-center"
-                  style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                  style={{
+                    backgroundColor: "var(--kbi-red-tint-12)",
+                    color: "#991B1B",
+                  }}
                 >
                   <div className="text-[10px] font-medium">삭제됨</div>
                   <div className="text-2xl font-bold">
@@ -104,7 +110,10 @@ export function CompareDetailsModal({
                 </div>
                 <div
                   className="rounded p-3 text-center"
-                  style={{ backgroundColor: "#F3F4F6", color: "#374151" }}
+                  style={{
+                    backgroundColor: "var(--neutral-100)",
+                    color: "#374151",
+                  }}
                 >
                   <div className="text-[10px] font-medium">변경 없음</div>
                   <div className="text-2xl font-bold">
@@ -168,7 +177,7 @@ export function CompareDetailsModal({
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: "#DC2626" }}
+                            style={{ backgroundColor: "var(--color-danger)" }}
                           />
                           <span className="font-medium">
                             {t.sales_order_id || "-"}
@@ -223,7 +232,7 @@ export function CompareDetailsModal({
                               style={{
                                 color:
                                   t.start_delta_hours > 0
-                                    ? "#DC2626"
+                                    ? "var(--color-danger)"
                                     : "#059669",
                               }}
                             >

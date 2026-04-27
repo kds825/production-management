@@ -51,7 +51,9 @@ export function SchedulerBanners({
         <div
           className="flex items-start justify-between gap-2 px-4 py-2 border-b text-[11px]"
           style={{
-            backgroundColor: isAutoScheduleError ? "#FEF2F2" : "#F0FDF4",
+            backgroundColor: isAutoScheduleError
+              ? "var(--kbi-red-tint-5)"
+              : "#F0FDF4",
             borderColor: isAutoScheduleError ? "#FECACA" : "#BBF7D0",
             color: isAutoScheduleError ? "#B91C1C" : "#15803D",
           }}
@@ -93,9 +95,12 @@ export function SchedulerBanners({
         <div className="flex items-center justify-center gap-2 py-1 bg-amber-50 border-b border-amber-200">
           <div
             className="w-2 h-2 rounded-full animate-pulse"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
           />
-          <span className="text-xs font-medium" style={{ color: "#4A2C2A" }}>
+          <span
+            className="text-xs font-medium"
+            style={{ color: "var(--kbi-brown)" }}
+          >
             수정 모드 -- 작업 바를 드래그하여 이동하거나 하단 패널의 수주를
             드래그하여 배정하세요. 완료 후 저장하기를 클릭하세요.
           </span>
@@ -106,7 +111,7 @@ export function SchedulerBanners({
       {showSavedToast && (
         <div
           className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium"
-          style={{ backgroundColor: "#16A34A" }}
+          style={{ backgroundColor: "var(--status-success)" }}
         >
           <span>저장 완료 -- 새 버전이 생성되었습니다.</span>
         </div>

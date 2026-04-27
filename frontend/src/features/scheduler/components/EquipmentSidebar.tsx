@@ -184,15 +184,19 @@ export function EquipmentSidebar({ equipment }: EquipmentSidebarProps) {
       style={{
         width: "100%",
         minWidth: 0,
-        borderRight: "1px solid #E5E7EB",
-        backgroundColor: "#FAFAFA",
+        borderRight: "1px solid var(--color-border-default)",
+        backgroundColor: "var(--color-bg-muted)",
       }}
       title={`${equipment.name} — ${label}`}
     >
       {/* 상태 dot */}
       <div
         className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
-        style={{ backgroundColor: isAvailable ? "#16A34A" : "#D1D5DB" }}
+        style={{
+          backgroundColor: isAvailable
+            ? "var(--status-success)"
+            : "var(--neutral-300)",
+        }}
       />
 
       {/* 공정 아이콘 (SVG) */}
@@ -204,7 +208,7 @@ export function EquipmentSidebar({ equipment }: EquipmentSidebarProps) {
       <div className="min-w-0 flex-1">
         <span
           className="text-xs font-semibold truncate block leading-tight"
-          style={{ color: "#1A1A1A" }}
+          style={{ color: "var(--color-text-primary)" }}
         >
           {equipment.name}
         </span>

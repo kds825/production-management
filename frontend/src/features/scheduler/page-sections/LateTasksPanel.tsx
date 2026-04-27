@@ -29,7 +29,10 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
     >
       <div
         className="flex items-center justify-between px-4 py-2 sticky top-0 border-b"
-        style={{ backgroundColor: "#FEF2F2", borderColor: "#FECACA" }}
+        style={{
+          backgroundColor: "var(--kbi-red-tint-5)",
+          borderColor: "#FECACA",
+        }}
       >
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-bold" style={{ color: "#991B1B" }}>
@@ -37,7 +40,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
           </span>
           <span
             className="px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white"
-            style={{ backgroundColor: "#DC2626" }}
+            style={{ backgroundColor: "var(--color-danger)" }}
           >
             {lateTasks.length}건
           </span>
@@ -59,7 +62,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
       ) : (
         <table className="w-full text-[11px] border-collapse">
           <thead>
-            <tr style={{ backgroundColor: "#FEE2E2" }}>
+            <tr style={{ backgroundColor: "var(--kbi-red-tint-12)" }}>
               {[
                 "지연",
                 "상태",
@@ -89,7 +92,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
               <tr
                 key={t.id}
                 className="hover:bg-red-50 cursor-pointer border-b"
-                style={{ borderColor: "#FEE2E2" }}
+                style={{ borderColor: "var(--kbi-red-tint-12)" }}
                 onClick={() => {
                   // 해당 배치 블록 선택 및 스크롤
                   const store = useScheduleStore.getState();
@@ -99,7 +102,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
               >
                 <td
                   className="px-3 py-1.5 font-bold"
-                  style={{ color: "#DC2626", whiteSpace: "nowrap" }}
+                  style={{ color: "var(--color-danger)", whiteSpace: "nowrap" }}
                 >
                   +{lateDays}일
                 </td>
@@ -107,7 +110,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                   {t.status === "unassigned" ? (
                     <span
                       className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
-                      style={{ backgroundColor: "#9CA3AF" }}
+                      style={{ backgroundColor: "var(--color-text-tertiary)" }}
                     >
                       미배치
                     </span>

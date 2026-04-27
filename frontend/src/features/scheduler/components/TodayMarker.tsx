@@ -43,7 +43,7 @@ export function TodayMarker({
         left: todayX,
         width: 1,
         height: totalHeight,
-        backgroundColor: "#C41230",
+        backgroundColor: "var(--color-brand-primary)",
         pointerEvents: "none",
         zIndex: 5,
       }}

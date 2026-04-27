@@ -99,7 +99,7 @@ export function BatchInspector({
       style={{
         // 좁은 뷰포트(<~933px)에서 간트가 가려지지 않도록 비율 축소
         width: "min(420px, 45vw)",
-        borderColor: "#E5E7EB",
+        borderColor: "var(--color-border-default)",
       }}
     >
       {/* 패널 헤더 — sticky: 스크롤해도 항상 상단에 고정 */}
@@ -110,11 +110,11 @@ export function BatchInspector({
         <div className="flex items-center gap-2">
           <div
             className="w-1 h-4 rounded-sm"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
           />
           <span
             className="text-[11px] font-semibold"
-            style={{ color: "#4A2C2A" }}
+            style={{ color: "var(--kbi-brown)" }}
           >
             {batchGroupOrders.filter(
               (o) => o.batch_seq == null || o.batch_seq >= 0,
@@ -125,7 +125,10 @@ export function BatchInspector({
           {selectedTask?.batch_group && (
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: "#F3E8E8", color: "#C41230" }}
+              style={{
+                backgroundColor: "#F3E8E8",
+                color: "var(--color-brand-primary)",
+              }}
             >
               {selectedTask.batch_group}
             </span>
@@ -153,7 +156,10 @@ export function BatchInspector({
                       prev && onNavigateToProcessBatch(prev.batch_group)
                     }
                     className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                    style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                    style={{
+                      borderColor: "var(--neutral-300)",
+                      color: "var(--kbi-brown)",
+                    }}
                     title={
                       prev
                         ? `${prev.process_name} (${prev.batch_group})`
@@ -164,7 +170,7 @@ export function BatchInspector({
                   </button>
                   <span
                     className="text-[9px] px-1 font-mono"
-                    style={{ color: "#9CA3AF" }}
+                    style={{ color: "var(--color-text-tertiary)" }}
                   >
                     {currentIdx + 1}/{processFlow.length}
                   </span>
@@ -174,7 +180,10 @@ export function BatchInspector({
                       next && onNavigateToProcessBatch(next.batch_group)
                     }
                     className="px-2 py-0.5 text-[10px] rounded border disabled:opacity-30 hover:bg-gray-100 transition-colors"
-                    style={{ borderColor: "#D1D5DB", color: "#4A2C2A" }}
+                    style={{
+                      borderColor: "var(--neutral-300)",
+                      color: "var(--kbi-brown)",
+                    }}
                     title={
                       next
                         ? `${next.process_name} (${next.batch_group})`
@@ -200,7 +209,10 @@ export function BatchInspector({
 
       {/* 작업 요약 + 배치 그룹 수주 테이블 */}
       {selectedTask && (
-        <div className="px-4 py-3 border-b" style={{ borderColor: "#F3F4F6" }}>
+        <div
+          className="px-4 py-3 border-b"
+          style={{ borderColor: "var(--color-border-muted)" }}
+        >
           {/* 작업 요약 — 4 컬럼 그리드 */}
           <div className="grid grid-cols-4 gap-x-3 gap-y-2 mb-2">
             <div className="flex flex-col gap-0.5">
@@ -209,7 +221,7 @@ export function BatchInspector({
               </span>
               <span
                 className="text-[11px] font-semibold"
-                style={{ color: "#1F2937" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedTask.spec || "-"}
               </span>
@@ -220,7 +232,7 @@ export function BatchInspector({
               </span>
               <span
                 className="text-[11px] font-semibold"
-                style={{ color: "#1F2937" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedEquipment?.name || selectedTask.equipment_id || "-"}
               </span>
@@ -231,7 +243,7 @@ export function BatchInspector({
               </span>
               <span
                 className="text-[11px] font-semibold"
-                style={{ color: "#1F2937" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {selectedTask.volume_m
                   ? `${selectedTask.volume_m.toLocaleString()}m`
@@ -313,7 +325,7 @@ export function BatchInspector({
               </span>
               <span
                 className="text-[11px] font-semibold"
-                style={{ color: "#C41230" }}
+                style={{ color: "var(--color-brand-primary)" }}
               >
                 {batchGroupOrders.filter(
                   (o) => o.batch_seq == null || o.batch_seq >= 0,
@@ -380,9 +392,9 @@ export function BatchInspector({
                     color: selectedTask.delivery_date
                       ? new Date(selectedTask.delivery_date).getTime() <
                         Date.now()
-                        ? "#DC2626"
-                        : "#4B5563"
-                      : "#9CA3AF",
+                        ? "var(--color-danger)"
+                        : "var(--neutral-600)"
+                      : "var(--color-text-tertiary)",
                   }}
                 >
                   {selectedTask.delivery_date
@@ -429,7 +441,7 @@ export function BatchInspector({
           return (
             <div
               className="px-4 py-2 border-t"
-              style={{ borderColor: "#F3F4F6" }}
+              style={{ borderColor: "var(--color-border-muted)" }}
             >
               <div className="flex items-center gap-1.5 mb-1.5">
                 <svg width="10" height="10" viewBox="0 0 16 16" fill="#9CA3AF">
@@ -446,7 +458,10 @@ export function BatchInspector({
                 </span>
                 <span>
                   <span className="text-gray-400">실제 작업</span>{" "}
-                  <span className="font-medium" style={{ color: "#C41230" }}>
+                  <span
+                    className="font-medium"
+                    style={{ color: "var(--color-brand-primary)" }}
+                  >
                     {tb.actualWork.toFixed(1)}h
                   </span>
                 </span>

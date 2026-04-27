@@ -48,7 +48,8 @@ export function DeadlineMarker({
 
       const taskEnd = new Date(task.end).getTime();
       // 납기일 초과 여부에 따라 색상 결정
-      const color = taskEnd > deliveryTs ? "#DC2626" : "#16A34A";
+      const color =
+        taskEnd > deliveryTs ? "var(--color-danger)" : "var(--status-success)";
 
       const left = timeToX(deliveryTs, rangeStart, dayWidth) + SIDEBAR_WIDTH;
 
@@ -93,7 +94,7 @@ export function DeadlineMarker({
               top: 2,
               left: 3,
               backgroundColor: marker.color,
-              color: "#FFFFFF",
+              color: "var(--color-text-inverse)",
               fontSize: 9,
               fontWeight: 700,
               padding: "1px 3px",

@@ -19,11 +19,11 @@ const SEVERITY_STYLES: Record<
   { bg: string; border: string; text: string; icon: string; badgeBg: string }
 > = {
   error: {
-    bg: "#FEF2F2",
+    bg: "var(--kbi-red-tint-5)",
     border: "#FECACA",
     text: "#B91C1C",
     icon: "⛔",
-    badgeBg: "#DC2626",
+    badgeBg: "var(--color-danger)",
   },
   warning: {
     bg: "#FFFBEB",

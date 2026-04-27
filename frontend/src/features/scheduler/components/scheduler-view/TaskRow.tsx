@@ -410,7 +410,7 @@ export const TaskRow = memo(function TaskRow({
         style={{
           display: "flex",
           width: "100%",
-          borderBottom: "1px solid #E5E7EB",
+          borderBottom: "1px solid var(--color-border-default)",
           minHeight: rowPixelHeight,
         }}
       >
@@ -423,8 +423,8 @@ export const TaskRow = memo(function TaskRow({
             position: "sticky",
             left: 0,
             zIndex: 3,
-            backgroundColor: "#FFFFFF",
-            borderRight: "1px solid #E5E7EB",
+            backgroundColor: "var(--bg-surface)",
+            borderRight: "1px solid var(--color-border-default)",
             height: rowPixelHeight,
           }}
         >

@@ -164,10 +164,13 @@ export function BatchSplitModal() {
       }
 
       // 모달 닫기 + 페이지 새로고침 (WIP 충당 안내 메시지는 더 오래 표시)
-      setTimeout(() => {
-        closeSplitModal();
-        window.location.reload();
-      }, remainingPlanned === 0 ? 3000 : 1500);
+      setTimeout(
+        () => {
+          closeSplitModal();
+          window.location.reload();
+        },
+        remainingPlanned === 0 ? 3000 : 1500,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "분할 실패");
     } finally {
@@ -205,16 +208,22 @@ export function BatchSplitModal() {
         {/* 헤더 */}
         <div
           className="flex items-center justify-between border-b px-6 py-4"
-          style={{ borderColor: "#E5E7EB" }}
+          style={{ borderColor: "var(--color-border-default)" }}
         >
           <div>
-            <h2 className="text-lg font-bold" style={{ color: "#1F2937" }}>
+            <h2
+              className="text-lg font-bold"
+              style={{ color: "var(--color-text-primary)" }}
+            >
               배치 분할
             </h2>
             <p className="text-sm text-gray-500 mt-0.5">
               <span
                 className="font-mono px-1.5 py-0.5 rounded text-xs"
-                style={{ backgroundColor: "#FDF2F2", color: "#C41230" }}
+                style={{
+                  backgroundColor: "var(--kbi-red-tint-5)",
+                  color: "var(--color-brand-primary)",
+                }}
               >
                 {batchGroup}
               </span>{" "}
@@ -256,7 +265,7 @@ export function BatchSplitModal() {
                       }
                       onChange={toggleAll}
                       className="rounded border-gray-300"
-                      style={{ accentColor: "#C41230" }}
+                      style={{ accentColor: "var(--color-brand-primary)" }}
                     />
                   </th>
                   <th className="px-3 py-2 text-left font-medium text-gray-600">
@@ -296,7 +305,7 @@ export function BatchSplitModal() {
                           checked={isChecked}
                           onChange={() => toggleSelect(order.batch_id)}
                           className="rounded border-gray-300"
-                          style={{ accentColor: "#C41230" }}
+                          style={{ accentColor: "var(--color-brand-primary)" }}
                           onClick={(e) => e.stopPropagation()}
                         />
                       </td>
@@ -330,7 +339,10 @@ export function BatchSplitModal() {
         {orders.length > 0 && (
           <div
             className="px-6 py-3 border-t flex items-center gap-6"
-            style={{ borderColor: "#E5E7EB", backgroundColor: "#FAFAFA" }}
+            style={{
+              borderColor: "var(--color-border-default)",
+              backgroundColor: "var(--color-bg-muted)",
+            }}
           >
             <div className="flex items-center gap-4 text-xs">
               <div>
@@ -344,8 +356,13 @@ export function BatchSplitModal() {
               </div>
               <span className="text-gray-300">|</span>
               <div>
-                <span style={{ color: "#C41230" }}>새 그룹:</span>{" "}
-                <span className="font-semibold" style={{ color: "#C41230" }}>
+                <span style={{ color: "var(--color-brand-primary)" }}>
+                  새 그룹:
+                </span>{" "}
+                <span
+                  className="font-semibold"
+                  style={{ color: "var(--color-brand-primary)" }}
+                >
                   {selectedTotal.toLocaleString()}m
                 </span>
                 <span className="text-gray-400 ml-1">
@@ -372,8 +389,8 @@ export function BatchSplitModal() {
           <div
             className="px-6 py-2 text-xs border-t"
             style={{
-              borderColor: "#E5E7EB",
-              backgroundColor: error ? "#FEF2F2" : "#F0FDF4",
+              borderColor: "var(--color-border-default)",
+              backgroundColor: error ? "var(--kbi-red-tint-5)" : "#F0FDF4",
               color: error ? "#B91C1C" : "#15803D",
             }}
           >
@@ -384,7 +401,7 @@ export function BatchSplitModal() {
         {/* 푸터 */}
         <div
           className="border-t px-6 py-4 flex items-center justify-end gap-2"
-          style={{ borderColor: "#E5E7EB" }}
+          style={{ borderColor: "var(--color-border-default)" }}
         >
           <button
             onClick={closeSplitModal}
@@ -396,7 +413,7 @@ export function BatchSplitModal() {
             onClick={handleSplit}
             disabled={splitting || selectedIds.size === 0 || !!result}
             className="rounded px-4 py-1.5 text-sm text-white font-medium transition-colors disabled:opacity-50"
-            style={{ backgroundColor: "#C41230" }}
+            style={{ backgroundColor: "var(--color-brand-primary)" }}
           >
             {splitting ? "분할 중..." : `분할 (${selectedIds.size}건 이동)`}
           </button>

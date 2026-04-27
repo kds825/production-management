@@ -37,13 +37,20 @@ export function SchedulerToolbar({
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 mt-1 rounded-md flex-wrap"
-      style={{ backgroundColor: "#F3F4F6", border: "1px solid #E5E7EB" }}
+      style={{
+        backgroundColor: "var(--neutral-100)",
+        border: "1px solid var(--color-border-default)",
+      }}
     >
       {/* 주말 열 접기/펴기 */}
       <button
         onClick={onToggleWeekends}
         className="flex items-center gap-1.5 text-[11px] font-medium transition-colors"
-        style={{ color: hideWeekends ? "#C41230" : "#6B7280" }}
+        style={{
+          color: hideWeekends
+            ? "var(--color-brand-primary)"
+            : "var(--color-text-secondary)",
+        }}
       >
         <span>{hideWeekends ? "▶" : "▼"}</span>
         <span>{hideWeekends ? "주말 접힘" : "주말 펼침"}</span>
@@ -81,7 +88,10 @@ export function SchedulerToolbar({
             <span
               key={eq.id}
               className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: "#E5E7EB", color: "#6B7280" }}
+              style={{
+                backgroundColor: "var(--color-border-default)",
+                color: "var(--color-text-secondary)",
+              }}
               title={eq.process_type}
             >
               {eq.name}

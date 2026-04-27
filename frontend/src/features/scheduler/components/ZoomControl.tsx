@@ -64,7 +64,7 @@ export function ZoomControl() {
   // 축소(-): visible range를 2배로 늘림 → 하루당 더 적은 픽셀 (항상 효과적)
   function handleZoomOut() {
     const center = (range.start + range.end) / 2;
-    const halfSpan = Math.min((range.end - range.start), 90 * DAY_MS); // 최대 ±90일
+    const halfSpan = Math.min(range.end - range.start, 90 * DAY_MS); // 최대 ±90일
     setRange({ start: center - halfSpan, end: center + halfSpan });
     setDayWidthScale(1.0);
   }
@@ -213,7 +213,11 @@ export function ZoomControl() {
                 ? "text-white"
                 : "text-gray-700 bg-white hover:bg-gray-50",
             ].join(" ")}
-            style={zoomLevel === value ? { backgroundColor: "#C41230" } : {}}
+            style={
+              zoomLevel === value
+                ? { backgroundColor: "var(--color-brand-primary)" }
+                : {}
+            }
           >
             {label}
           </button>

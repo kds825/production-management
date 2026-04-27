@@ -94,8 +94,8 @@ export function DateHeader({
         zIndex: 10,
         width: "100%",
         display: "flex",
-        backgroundColor: "#FFFFFF",
-        borderBottom: "1px solid #E5E7EB",
+        backgroundColor: "var(--bg-surface)",
+        borderBottom: "1px solid var(--color-border-default)",
       }}
     >
       {/* 사이드바 헤더 — 가로 스크롤 시 좌측 고정 */}
@@ -106,8 +106,8 @@ export function DateHeader({
           position: "sticky",
           left: 0,
           zIndex: 11,
-          backgroundColor: "#F9FAFB",
-          borderRight: "1px solid #E5E7EB",
+          backgroundColor: "var(--bg-surface-alt)",
+          borderRight: "1px solid var(--color-border-default)",
           display: "flex",
           alignItems: "center",
           paddingLeft: 8,
@@ -162,7 +162,7 @@ export function DateHeader({
                 flexDirection: "column",
                 justifyContent: "center",
                 paddingLeft: weekend && colWidth < 20 ? 1 : 4,
-                borderLeft: "1px solid #E5E7EB",
+                borderLeft: "1px solid var(--color-border-default)",
                 width: colWidth,
                 overflow: "hidden",
                 // 주말 헤더 셀에 빗금 패턴 적용
@@ -181,7 +181,11 @@ export function DateHeader({
                   {/* 날짜 + 주차 (월요일에만) */}
                   <span
                     className="text-[10px] font-semibold leading-tight"
-                    style={{ color: weekend ? "#C41230" : "#374151" }}
+                    style={{
+                      color: weekend
+                        ? "var(--color-brand-primary)"
+                        : "var(--neutral-text-primary)",
+                    }}
                   >
                     {day.date.getMonth() + 1}/{day.date.getDate()}
                     {weekNumber !== null && dayWidth >= 32 && (
@@ -190,7 +194,7 @@ export function DateHeader({
                           marginLeft: 3,
                           fontSize: 8,
                           fontWeight: 500,
-                          color: "#9CA3AF",
+                          color: "var(--color-text-tertiary)",
                         }}
                       >
                         W{weekNumber}
@@ -200,7 +204,9 @@ export function DateHeader({
                   {/* 요일 */}
                   <span
                     className="text-[9px] leading-tight"
-                    style={{ color: weekend ? "#E57373" : "#9CA3AF" }}
+                    style={{
+                      color: weekend ? "#E57373" : "var(--color-text-tertiary)",
+                    }}
                   >
                     {dowLabel}
                   </span>
@@ -223,10 +229,13 @@ export function DateHeader({
               alignItems: "flex-end",
               paddingLeft: 3,
               paddingBottom: 2,
-              borderLeft: "1px dashed #D1D5DB",
+              borderLeft: "1px dashed var(--neutral-300)",
             }}
           >
-            <span className="text-[8px]" style={{ color: "#9CA3AF" }}>
+            <span
+              className="text-[8px]"
+              style={{ color: "var(--color-text-tertiary)" }}
+            >
               {marker.label}
             </span>
           </div>
@@ -339,7 +348,7 @@ export function GridLines({
               left,
               width: 1,
               height: totalHeight,
-              backgroundColor: "#E5E7EB",
+              backgroundColor: "var(--color-border-default)",
               pointerEvents: "none",
               zIndex: 0,
             }}
