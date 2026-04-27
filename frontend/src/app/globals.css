@@ -3,16 +3,29 @@
 
 @import "tailwindcss";
 
+/* ============================================================
+   KBI 코스모링크 Design System — Foundation Tokens (PR1)
+   3-layer: KBI brand (~5%) → neutral greys → semantic
+   Source: samildevkit handoff (PwC 단어/접두사 제거, KBI 단독 브랜딩)
+   See: ~/.gstack/projects/busyway1-KBI-Production-Management/
+        jaewookim-refactoring-design-20260427-003851.md
+
+   주의: 기존 `--color-pwc-*` / `--text-pwc-*` / `--breakpoint-bp-*` 토큰은
+   Phase 6 DecisionCard 가 사용 중이므로 PR1 에서는 그대로 보존.
+   PwC 접두사 정리는 PR2 hex cleanup 단계에서 사용처와 함께 일괄 처리.
+   ============================================================ */
+
 @theme {
-  --color-kbi-red: #c41230;
-  --color-kbi-red-dark: #9e0e27;
-  --color-kbi-brown: #4a2c2a;
-  --color-kbi-gold: #d4a574;
+  /* KBI 브랜드 alias — 새 KBI 토큰값을 가리킴 (Premise P1: 미세 톤 변화 동의) */
+  --color-kbi-red: var(--kbi-sunrise-red);
+  --color-kbi-red-dark: var(--accent-primary-hover);
+  --color-kbi-brown: var(--kbi-warm-gray);
+  --color-kbi-gold: var(--kbi-champagne-gold);
   --font-sans:
     var(--font-noto-sans-kr), "Pretendard Variable", "Pretendard",
     "Apple SD Gothic Neo", sans-serif;
 
-  /* PwC samildevkit 토큰 — Phase 6 Decision Card v2.
+  /* PwC samildevkit 토큰 — Phase 6 Decision Card v2 (보존, PR2 에서 정리).
    * 운영자 50건 카드 봐도 같은 색 = 같은 종류 신호 학습 일관성. */
   --color-pwc-primary-100: #fff7e0;
   --color-pwc-primary-200: #ffd2b3;
@@ -46,7 +59,7 @@
   --color-pwc-bg-elevated: #ffffff;
   --color-pwc-text-inverse: #ffffff;
 
-  /* Type Scale — text-pwc-* 토큰 */
+  /* Type Scale — text-pwc-* 토큰 (보존, PR2 에서 정리) */
   --text-pwc-title4: 24px;
   --text-pwc-title4--line-height: 32px;
   --text-pwc-title4--font-weight: 700;
@@ -77,28 +90,213 @@
 }
 
 :root {
-  --kbi-red: #c41230;
-  --kbi-red-dark: #9e0e27;
-  --kbi-brown: #4a2c2a;
-  --kbi-gold: #d4a574;
+  /* ============================================================
+     KBI BRAND COLORS — Accent Layer (use sparingly, ~5% of UI)
+     ============================================================ */
+  --kbi-sunrise-red: #d71837; /* Primary CTA, brand mark, critical/danger */
+  --kbi-warm-gray: #3f2825; /* Dark sections, sidebar, headers */
+  --kbi-light-warm-gray: #60584c; /* Sub-headers, secondary text */
+  --kbi-orange: #ec6900; /* In-progress status */
+  --kbi-champagne-gold: #93785f; /* Premium accent, near-due warnings */
+  --kbi-silver: #909297; /* Inactive, dividers */
 
-  /* v3 Phase 0: design tokens — batch_group unassign/restore UI 기반
-   * 모든 프로젝트 UI 색상은 이 변수 경유. raw hex 하드코딩 금지. */
-  --color-brand-primary: #c41230;
-  --color-text-primary: #111827;
-  --color-text-secondary: #6b7280;
-  --color-text-tertiary: #9ca3af;
-  --color-text-inverse: #ffffff;
-  --color-bg-elevated: #ffffff;
-  --color-bg-muted: #f3f4f6;
-  --color-bg-disabled: #f9fafb;
-  --color-border-default: #e5e7eb;
-  --color-border-muted: #f3f4f6;
+  /* KBI Sunrise Red tints */
+  --kbi-red-tint-5: #fdf4f5;
+  --kbi-red-tint-8: #fbedef;
+  --kbi-red-tint-12: #f8dfe3;
+  --kbi-red-tint-20: #f2c2ca;
+
+  /* KBI Warm Gray tints */
+  --kbi-warm-gray-tint-5: #faf8f7;
+  --kbi-warm-gray-tint-8: #f4f1ef;
+
+  /* ============================================================
+     NEUTRAL — Greyscale + Structure
+     (samildevkit 의 --pwc-* 접두사를 --neutral-* 로 rename, 값 동일)
+     ============================================================ */
+  --neutral-white: #ffffff;
+  --neutral-black: #000000;
+
+  --neutral-bg-primary: #ffffff;
+  --neutral-bg-secondary: #f7f7f7;
+  --neutral-bg-tertiary: #f9fafb;
+  --neutral-border: #e5e5e5;
+  --neutral-border-strong: #c6c6c8;
+
+  --neutral-100: #f3f4f6;
+  --neutral-200: #e5e6e9;
+  --neutral-300: #c6c6c8;
+  --neutral-400: #a8a8aa;
+  --neutral-500: #7f7f82;
+  --neutral-600: #5f5f62;
+
+  --neutral-text-primary: #2d2d2d;
+  --neutral-text-secondary: #5f5f62;
+  --neutral-text-tertiary: #7f7f82;
+
+  /* ============================================================
+     SEMANTIC TOKENS — 컴포넌트에서 직접 사용
+     ============================================================ */
+  /* Foreground / background */
+  --fg-1: var(--neutral-text-primary);
+  --fg-2: var(--neutral-text-secondary);
+  --fg-3: var(--neutral-text-tertiary);
+  --fg-on-dark: #ffffff;
+  --fg-on-dark-muted: rgba(255, 255, 255, 0.72);
+
+  --bg-canvas: var(--neutral-bg-secondary);
+  --bg-surface: var(--neutral-bg-primary);
+  --bg-surface-alt: var(--neutral-bg-tertiary);
+  --bg-dark: var(--kbi-warm-gray);
+  --bg-dark-hover: #4a322f;
+
+  /* Borders */
+  --border-1: var(--neutral-border);
+  --border-2: var(--neutral-border-strong);
+  --border-focus: var(--kbi-sunrise-red);
+
+  /* Accents */
+  --accent-primary: var(--kbi-sunrise-red);
+  --accent-primary-hover: #b81330;
+  --accent-primary-tint: var(--kbi-red-tint-8);
+
+  /* Status (semantic; DecisionCard / Pill / GanttTaskBlock 사용 예정) */
+  --status-success: #16a34a;
+  --status-success-bg: #dcfce7;
+  --status-progress: var(--kbi-orange);
+  --status-progress-bg: #fff1e5;
+  --status-warning: var(--kbi-champagne-gold);
+  --status-warning-bg: #f5efe9;
+  --status-danger: var(--kbi-sunrise-red);
+  --status-danger-bg: var(--kbi-red-tint-12);
+  --status-idle: var(--kbi-silver);
+  --status-idle-bg: #f3f3f4;
+
+  /* ============================================================
+     TYPE — fonts kept as current stack (Helvetica Neue 라이센스 회피)
+     samildevkit 의 PretendardJP / Helvetica Neue 로컬은 미도입 (P6 결정).
+     --font-sans 값은 위 @theme 블록의 정의와 정확히 일치해야 함
+     (Tailwind utility `font-sans` 와 var(--font-sans) 직접 참조 사이의
+     일관성 보장). 변경 시 두 곳을 함께 수정.
+     ============================================================ */
+  --font-sans:
+    var(--font-noto-sans-kr), "Pretendard Variable", "Pretendard",
+    "Apple SD Gothic Neo", sans-serif;
+  --font-kr:
+    "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Display / Title */
+  --text-title-1: 36px;
+  --lh-title-1: 44px;
+  --fw-title-1: 700;
+  --text-title-2: 32px;
+  --lh-title-2: 42px;
+  --fw-title-2: 700;
+  --text-title-3: 28px;
+  --lh-title-3: 38px;
+  --fw-title-3: 600;
+  --text-title-4: 24px;
+  --lh-title-4: 34px;
+  --fw-title-4: 600;
+
+  --text-subtitle-1: 18px;
+  --lh-subtitle-1: 28px;
+  --fw-subtitle-1: 600;
+  --text-subtitle-2: 16px;
+  --lh-subtitle-2: 26px;
+  --fw-subtitle-2: 600;
+
+  --text-body: 16px;
+  --lh-body: 24px;
+  --fw-body: 400;
+  --text-sub-body: 14px;
+  --lh-sub-body: 22px;
+  --fw-sub-body: 400;
+  --text-caption: 12px;
+  --lh-caption: 18px;
+  --fw-caption: 400;
+  --text-label: 14px;
+  --lh-label: 20px;
+  --fw-label: 500;
+  --text-badge: 12px;
+  --lh-badge: 16px;
+  --fw-badge: 500;
+
+  /* ============================================================
+     SPACING + RADII + SHADOWS + MOTION
+     ============================================================ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  --shadow-1:
+    0 1px 2px rgba(45, 45, 45, 0.04), 0 1px 1px rgba(45, 45, 45, 0.04);
+  --shadow-2:
+    0 2px 6px rgba(45, 45, 45, 0.06), 0 1px 2px rgba(45, 45, 45, 0.04);
+  --shadow-3:
+    0 8px 24px rgba(45, 45, 45, 0.08), 0 2px 4px rgba(45, 45, 45, 0.04);
+  --shadow-focus: 0 0 0 3px rgba(215, 24, 55, 0.18);
+
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+
+  /* ============================================================
+     DEPRECATED — Backward-compat aliases (PR7 에서 제거)
+     기존 사용처가 PR2 hex cleanup 에서 새 토큰으로 마이그레이션되는
+     동안 공존. 의도적으로 새 토큰값을 가리킴 — 이로 인해 머지 직후
+     KBI Red 미세 톤 변화 발생 (Premise P1 동의 완료).
+
+     주의: --color-pwc-* / --text-pwc-* / --breakpoint-bp-* 는 위 @theme
+     블록에 그대로 보존됨 (Phase 6 DecisionCard 사용 중, PR2 에서 정리).
+     ============================================================ */
+  /* DEPRECATED: use --kbi-sunrise-red */
+  --kbi-red: var(--kbi-sunrise-red);
+  /* DEPRECATED: use --accent-primary-hover */
+  --kbi-red-dark: var(--accent-primary-hover);
+  /* DEPRECATED: use --kbi-warm-gray */
+  --kbi-brown: var(--kbi-warm-gray);
+  /* DEPRECATED: use --kbi-champagne-gold */
+  --kbi-gold: var(--kbi-champagne-gold);
+
+  /* DEPRECATED: use --accent-primary */
+  --color-brand-primary: var(--accent-primary);
+  /* DEPRECATED: use --fg-1 / --fg-2 / --fg-3 */
+  --color-text-primary: var(--fg-1);
+  --color-text-secondary: var(--fg-2);
+  --color-text-tertiary: var(--fg-3);
+  --color-text-inverse: var(--fg-on-dark);
+  /* DEPRECATED: use --bg-surface / --bg-canvas */
+  --color-bg-elevated: var(--bg-surface);
+  --color-bg-muted: var(--neutral-100);
+  --color-bg-disabled: var(--neutral-bg-tertiary);
+  /* DEPRECATED: use --border-1 */
+  --color-border-default: var(--border-1);
+  --color-border-muted: var(--neutral-100);
+  /* 의미 유지 (overlay 색은 새 시스템에 직접 대응 토큰 없음) */
   --color-overlay: rgba(0, 0, 0, 0.3);
-  --color-success: #059669;
-  --color-danger: #dc2626;
-  --color-warning: #d97706;
-  /* 공정별 pastel 토큰 — 한글 키는 의도적 (업무 도메인 용어 1:1 매핑) */
+  /* DEPRECATED: use --status-success / --status-danger / --status-warning */
+  --color-success: var(--status-success);
+  --color-danger: var(--status-danger);
+  --color-warning: var(--status-warning);
+
+  /* 도메인 전용 — 공정별 pastel. 도메인 의미를 가지므로 새 시스템과 별개 유지.
+     한글 키는 의도적 (배치/공정 도메인 용어 1:1 매핑). */
   --color-process-연선: #a5b4fc;
   --color-process-B100: #67e8f9;
   --color-process-A100: #6ee7b7;
