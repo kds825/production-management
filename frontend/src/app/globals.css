@@ -232,6 +232,23 @@
   --viz-diff-moved: #3b82f6;
   --viz-diff-removed: #9ca3af;
 
+  /* PR4 — UI-specific tab palette (OrderInbox 공정별 탭) */
+  --viz-tab-yeonseon-bg: #6366f1;
+  --viz-tab-yeonseon-accent: #a5b4fc;
+  --viz-tab-b100-bg: #0891b2;
+  --viz-tab-b100-accent: #67e8f9;
+  --viz-tab-a100-accent: #6ee7b7;
+
+  /* PR4 — Status pending (BatchCalculateButton 등 indigo) */
+  --status-pending: #6366f1;
+  --status-pending-hover: #4f46e5;
+
+  /* PR4 — Signal weekend (간트 주말 컬럼 마커) */
+  --signal-weekend: #e57373;
+
+  /* PR4 — Viz violet (보조 status indicator) */
+  --viz-violet: #8b5cf6;
+
   /* PR4 — Viz SQ cluster (wire-diameter dense palette, semantic names) */
   --viz-sq-warm-teal-light: #3d909e;
   --viz-sq-warm-teal-mid: #2a7282;

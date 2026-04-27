@@ -34,7 +34,7 @@ export function SyncButton() {
             : "var(--color-brand-primary)",
           border: isDisabled
             ? "1px solid var(--color-border-default)"
-            : "1px solid #FECACA",
+            : "1px solid var(--kbi-red-tint-20)",
           cursor: isDisabled ? "not-allowed" : "pointer",
         }}
         onMouseEnter={(e) => {
@@ -79,7 +79,7 @@ export function SyncButton() {
       {showToast && (
         <div
           className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-md text-[11px] font-medium text-white whitespace-nowrap z-50 shadow-sm"
-          style={{ backgroundColor: "#059669" }}
+          style={{ backgroundColor: "var(--status-success-text)" }}
         >
           동기화 완료
         </div>

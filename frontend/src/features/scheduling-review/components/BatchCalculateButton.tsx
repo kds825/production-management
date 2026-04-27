@@ -12,12 +12,12 @@ interface BatchCalculateButtonProps {
 }
 
 const PRIMARY = "var(--color-brand-primary)";
-const PRIMARY_HOVER = "#9E0E27";
+const PRIMARY_HOVER = "var(--accent-primary-hover)";
 const SUCCESS = "var(--status-success)";
 const ERROR_BG = "var(--color-danger)";
-const ERROR_HOVER = "#B91C1C";
-const PENDING_BG = "#6366F1";
-const PENDING_HOVER = "#4F46E5";
+const ERROR_HOVER = "var(--status-danger-text)";
+const PENDING_BG = "var(--status-pending)";
+const PENDING_HOVER = "var(--status-pending-hover)";
 
 export function BatchCalculateButton({
   isCalculating,

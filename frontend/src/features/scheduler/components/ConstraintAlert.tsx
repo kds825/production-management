@@ -20,8 +20,8 @@ const SEVERITY_STYLES: Record<
 > = {
   error: {
     bg: "var(--kbi-red-tint-5)",
-    border: "#FECACA",
-    text: "#B91C1C",
+    border: "var(--kbi-red-tint-20)",
+    text: "var(--status-danger-text)",
     icon: "⛔",
     badgeBg: "var(--color-danger)",
   },

@@ -136,13 +136,13 @@ function splitByWeekends(
 
 /** 시스 공정(SH-*) 설비의 sheath_color → 블록 배경색 매핑 */
 const SHEATH_COLOR_MAP: Record<string, string> = {
-  흑: "#374151",
+  흑: "var(--neutral-text-primary)",
   갈: "var(--status-warning-text)",
-  회: "#6B7280",
+  회: "var(--color-text-secondary)",
   청: "var(--status-info-text)",
-  녹: "#065F46",
+  녹: "var(--status-success-text-deep)",
   황: "#B45309",
-  "흑/적": "#C41230",
+  "흑/적": "var(--color-brand-primary)",
 };
 
 /**
@@ -551,7 +551,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             border: `2px dashed ${KBI_BRAND.colors.diff.removed}`,
             borderRadius: 4,
             pointerEvents: "none",
-            // 회색 15% alpha (#9CA3AF26) — 삭제는 "희미한 흔적" 시각 메타포
+            // 회색 15% alpha (var(--viz-diff-removed) + 26 hex alpha) — 삭제는 "희미한 흔적" 시각 메타포
             backgroundColor: `${KBI_BRAND.colors.diff.removed}26`,
           }
         : {
@@ -709,10 +709,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
               : 0;
 
         // frozen 배치는 좌측 3px 컬러 보더로 구분
-        // completed: dark green (#065F46), in_progress: KBI red (#C41230)
+        // completed: dark green (var(--status-success-text-deep)), in_progress: KBI red (var(--color-brand-primary))
         const frozenBorderColor =
           task.status === "completed"
-            ? "#065F46"
+            ? "var(--status-success-text-deep)"
             : task.status === "in_progress"
               ? "var(--color-brand-primary)"
               : undefined;
@@ -903,7 +903,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
         <span
           className="text-white text-[10px] font-semibold leading-tight"
           style={{
-            // 진한 빨강(#C41230) 배경에서도 흰 글자가 묻히지 않도록 얇은 블랙
+            // 진한 빨강(var(--color-brand-primary)) 배경에서도 흰 글자가 묻히지 않도록 얇은 블랙
             // 스트로크 + 드롭섀도우를 겹침
             textShadow: "0 0 2px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.6)",
             display: "flex",
@@ -967,7 +967,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                 ? blockRef.current.getBoundingClientRect().bottom + 4
                 : 0,
               zIndex: 9999,
-              background: "#1F2937",
+              background: "var(--color-text-primary)",
               color: "var(--fg-on-dark)",
               borderRadius: 6,
               padding: "8px 12px",
@@ -988,8 +988,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
                   marginBottom: 6,
                   padding: "3px 6px",
                   borderRadius: 4,
-                  backgroundColor: "#7F1D1D",
-                  color: "#FCA5A5",
+                  backgroundColor: "var(--status-danger-text-deep)",
+                  color: "var(--status-danger-text-soft)",
                   fontWeight: 700,
                   fontSize: 10,
                 }}
@@ -1016,7 +1016,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             {colorChangeMin > 0 && <div>색상 교체: {colorChangeMin}분</div>}
             <div
               style={{
-                borderTop: "1px solid #374151",
+                borderTop: "1px solid var(--neutral-text-primary)",
                 marginTop: 4,
                 paddingTop: 4,
                 fontSize: 10,
@@ -1044,7 +1044,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             </div>
             <div
               style={{
-                borderTop: "1px solid #374151",
+                borderTop: "1px solid var(--neutral-text-primary)",
                 marginTop: 4,
                 paddingTop: 4,
                 fontWeight: 600,

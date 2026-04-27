@@ -28,9 +28,9 @@ export function OverlapAlertBanner({
       aria-live="assertive"
       className="flex items-start justify-between gap-3 px-4 py-3 border-b-2"
       style={{
-        backgroundColor: "#FFEDD5", // orange-100
-        borderColor: "#FB923C", // orange-400
-        color: "#7C2D12", // orange-900
+        backgroundColor: "var(--status-alert-bg)", // orange-100
+        borderColor: "var(--status-alert-border)", // orange-400
+        color: "var(--status-alert-text)", // orange-900
       }}
     >
       <div className="flex items-start gap-2 flex-1 min-w-0">
@@ -41,7 +41,7 @@ export function OverlapAlertBanner({
           <span className="text-[12px] font-semibold">
             스케줄에 겹침이 있습니다 — 관리자 확인 필요
           </span>
-          <span className="text-[11px]" style={{ color: "#9A3412" }}>
+          <span className="text-[11px]" style={{ color: "var(--status-alert-text-soft)" }}>
             {message}
           </span>
         </div>
@@ -51,7 +51,7 @@ export function OverlapAlertBanner({
         onClick={onDismiss}
         aria-label="겹침 경고 닫기"
         className="shrink-0 text-[11px] font-medium px-2 py-1 rounded hover:bg-orange-200 transition-colors"
-        style={{ color: "#7C2D12" }}
+        style={{ color: "var(--status-alert-text)" }}
       >
         ✕ 닫기
       </button>

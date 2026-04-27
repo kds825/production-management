@@ -203,16 +203,16 @@ export function SchedulerToolbar({
             backgroundColor:
               lateTaskCount > 0
                 ? showLatePanel
-                  ? "#7F1D1D"
+                  ? "var(--status-danger-text-deep)"
                   : "var(--kbi-red-tint-12)"
                 : "var(--neutral-100)",
             color:
               lateTaskCount > 0
                 ? showLatePanel
-                  ? "#FCA5A5"
-                  : "#B91C1C"
+                  ? "var(--status-danger-text-soft)"
+                  : "var(--status-danger-text)"
                 : "var(--color-text-secondary)",
-            border: `1px solid ${lateTaskCount > 0 ? "#FECACA" : "var(--color-border-default)"}`,
+            border: `1px solid ${lateTaskCount > 0 ? "var(--kbi-red-tint-20)" : "var(--color-border-default)"}`,
           }}
           title="납기를 초과한 배치 목록 보기"
         >

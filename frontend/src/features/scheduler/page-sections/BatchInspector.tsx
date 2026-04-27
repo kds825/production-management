@@ -31,7 +31,7 @@ const STATUS_CYCLE: Record<string, string> = {
   completed: "planned",
 };
 // PR3 Task 2.4 — 토큰 참조로 재배선.
-// completed 색은 #059669 → var(--status-success) (#16a34a) — 미세 hue 변경 (시각 회귀 spec 검증).
+// completed 색은 PR3에서 #059669 → var(--status-success) (#16a34a) 미세 hue 변경 — 시각 회귀 spec 통과.
 const STATUS_CONFIG: Record<
   string,
   { label: string; bg: string; text: string }
@@ -119,7 +119,10 @@ export function BatchInspector({
       {/* 패널 헤더 — sticky: 스크롤해도 항상 상단에 고정 */}
       <div
         className="flex items-center justify-between px-4 py-2 border-b sticky top-0 z-10"
-        style={{ backgroundColor: "#FDF2F2", borderColor: "#F3D5D5" }}
+        style={{
+          backgroundColor: "var(--kbi-red-tint-5)",
+          borderColor: "var(--kbi-red-tint-12)",
+        }}
       >
         <div className="flex items-center gap-2">
           <div
@@ -140,7 +143,7 @@ export function BatchInspector({
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded"
               style={{
-                backgroundColor: "#F3E8E8",
+                backgroundColor: "var(--kbi-red-tint-5)",
                 color: "var(--color-brand-primary)",
               }}
             >

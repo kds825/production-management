@@ -524,7 +524,7 @@ export function SchedulingResultTable({
                           <tr
                             key={batch.id}
                             style={{
-                              backgroundColor: isSelected ? "#FEE2E2" : rowBg,
+                              backgroundColor: isSelected ? "var(--kbi-red-tint-12)" : rowBg,
                               color: textColor,
                             }}
                             onMouseEnter={(e) => {
@@ -537,7 +537,7 @@ export function SchedulingResultTable({
                               (
                                 e.currentTarget as HTMLElement
                               ).style.backgroundColor = isSelected
-                                ? "#FEE2E2"
+                                ? "var(--kbi-red-tint-12)"
                                 : isNewRow
                                   ? "var(--status-warning-bg)"
                                   : isWipSkipped
@@ -610,7 +610,7 @@ export function SchedulingResultTable({
                                     cursor: canEdit ? "text" : "default",
                                     backgroundColor:
                                       canEdit && !currentlyEditing
-                                        ? "#F0F9FF"
+                                        ? "var(--status-info-bg-soft)"
                                         : undefined,
                                   }}
                                   onClick={() => {
@@ -778,7 +778,7 @@ export function SchedulingResultTable({
               color: "var(--color-text-inverse)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = "#9E0E27";
+              e.currentTarget.style.backgroundColor = "var(--accent-primary-hover)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = PRIMARY;
@@ -807,7 +807,7 @@ export function SchedulingResultTable({
             color: "var(--color-text-inverse)",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "#9E0E27";
+            e.currentTarget.style.backgroundColor = "var(--accent-primary-hover)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = PRIMARY;

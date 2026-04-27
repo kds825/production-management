@@ -205,7 +205,7 @@ export function DateHeader({
                   <span
                     className="text-[9px] leading-tight"
                     style={{
-                      color: weekend ? "#E57373" : "var(--color-text-tertiary)",
+                      color: weekend ? "var(--signal-weekend)" : "var(--color-text-tertiary)",
                     }}
                   >
                     {dowLabel}

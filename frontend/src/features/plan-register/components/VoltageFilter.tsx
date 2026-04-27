@@ -114,7 +114,7 @@ export function VoltageFilter() {
                     ? "var(--color-brand-primary)"
                     : "var(--color-text-secondary)",
                   border: isActive
-                    ? "1px solid #FECACA"
+                    ? "1px solid var(--kbi-red-tint-20)"
                     : "1px solid transparent",
                 }}
               >

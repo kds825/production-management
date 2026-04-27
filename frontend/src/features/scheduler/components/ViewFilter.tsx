@@ -122,7 +122,7 @@ export function ViewFilter() {
       <button
         onClick={setLvOnly}
         className={btn(isLvOnly)}
-        style={isLvOnly ? { backgroundColor: "#1565C0" } : {}}
+        style={isLvOnly ? { backgroundColor: "var(--viz-product-hfco)" } : {}}
       >
         저압만
       </button>

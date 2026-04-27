@@ -150,7 +150,10 @@ export function BatchSplitReview({
           {candidates.some((c) => c.auto_split_recommended) && (
             <span
               className="ml-2 rounded px-1 py-0.5 font-semibold"
-              style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
+              style={{
+                backgroundColor: "var(--status-warning-bg)",
+                color: "var(--status-warning-text)",
+              }}
             >
               ⚡ 긴급 포함
             </span>
@@ -165,7 +168,7 @@ export function BatchSplitReview({
             value={gapDays}
             onChange={(e) => onGapDaysChange(Number(e.target.value) || 3)}
             className="w-10 text-center text-xs border rounded px-1 py-0.5"
-            style={{ borderColor: "#93C5FD" }}
+            style={{ borderColor: "var(--status-info-bg)" }}
           />
           <span className="text-[10px] text-gray-500">일</span>
         </div>
@@ -193,8 +196,8 @@ export function BatchSplitReview({
           className="rounded-md p-2 text-xs"
           style={{
             backgroundColor: "var(--kbi-red-tint-5)",
-            color: "#991B1B",
-            border: "1px solid #FECACA",
+            color: "var(--status-danger-text-strong)",
+            border: "1px solid var(--kbi-red-tint-20)",
           }}
         >
           {error}
@@ -292,7 +295,10 @@ function CandidateCard({
           {c.auto_split_recommended && (
             <span
               className="text-[9px] font-semibold rounded px-1 py-0.5"
-              style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
+              style={{
+                backgroundColor: "var(--status-warning-bg)",
+                color: "var(--status-warning-text)",
+              }}
               title={c.urgency_reason}
             >
               ⚡ 자동분할 권고
@@ -302,7 +308,10 @@ function CandidateCard({
         <span
           className="text-[10px] font-medium"
           style={{
-            color: splitCount > 1 ? "var(--status-info-text)" : "var(--color-text-tertiary)",
+            color:
+              splitCount > 1
+                ? "var(--status-info-text)"
+                : "var(--color-text-tertiary)",
           }}
         >
           {splitCount > 1 ? `${splitCount}개로 분할` : "분할 없음"}
@@ -329,7 +338,10 @@ function CandidateCard({
               <div className="text-[10px] font-medium text-gray-700">
                 {chunk.order_count}수주
                 {chunk.has_urgent && (
-                  <span className="ml-0.5" style={{ color: "var(--status-warning)" }}>
+                  <span
+                    className="ml-0.5"
+                    style={{ color: "var(--status-warning)" }}
+                  >
                     ⚡
                   </span>
                 )}

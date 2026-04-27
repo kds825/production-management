@@ -8,7 +8,7 @@
  *   - active=true  → dot full opacity, 텍스트 검정
  *   - active=false → dot 30% opacity, 텍스트 회색 (토글 OFF 상태 명확히 표시)
  *   - hover       → bg-gray-50 (스케줄러 헤더의 자동배열/이전버전비교 버튼과 톤 통일)
- *   - focus       → KBI primary (#C41230) outline — 기존 포커스 링 규약 재사용
+ *   - focus       → KBI primary (var(--color-brand-primary)) outline — 기존 포커스 링 규약 재사용
  *
  * 크기는 기존 헤더 버튼(자동배열 등) 의 px-3/py-1.5/text-[11px] 보다 한 단계 작은
  * px-2/py-1/text-[11px] 로 잡아 pill 이 세 개 나열돼도 툴바가 복잡해지지 않도록 한다.

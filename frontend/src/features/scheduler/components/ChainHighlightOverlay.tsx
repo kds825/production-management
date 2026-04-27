@@ -9,7 +9,7 @@ import { timeToXAdj, SIDEBAR_WIDTH, ROW_HEIGHT } from "../utils/ganttUtils";
 // SchedulerView.tsx:41 `const LANE_HEIGHT = ROW_HEIGHT;` — alias. Overlay 도 동일 alias 사용해 Y 누적 일치.
 import { LANE_HEIGHT } from "./SchedulerView";
 
-const ARROW_COLOR = "#1F2937";
+const ARROW_COLOR = "var(--color-text-primary)";
 const ARROW_WIDTH = 1.5;
 const ARROW_OPACITY = 0.85;
 const ARROW_DASH = "4,3";

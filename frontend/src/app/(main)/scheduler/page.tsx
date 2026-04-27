@@ -171,7 +171,7 @@ export default function SchedulerPage() {
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
-      style={{ backgroundColor: "#FAFAFA" }}
+      style={{ backgroundColor: "var(--color-bg-muted)" }}
     >
       {/* 상단 헤더 */}
       <Header
@@ -281,7 +281,7 @@ export default function SchedulerPage() {
             <div
               className="px-3 py-2 rounded-lg shadow-xl text-white text-xs font-semibold"
               style={{
-                backgroundColor: "#C41230",
+                backgroundColor: "var(--color-brand-primary)",
                 minWidth: 120,
                 pointerEvents: "none",
               }}
@@ -297,7 +297,7 @@ export default function SchedulerPage() {
             <div
               className="px-3 py-2 rounded-lg shadow-xl text-white text-xs font-semibold"
               style={{
-                backgroundColor: "#4A2C2A",
+                backgroundColor: "var(--kbi-brown)",
                 minWidth: 120,
                 pointerEvents: "none",
               }}

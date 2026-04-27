@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { usePlanRegisterStore } from "../store/planRegisterStore";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -154,7 +154,7 @@ export function FileUploadSection() {
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={isDragOver ? PRIMARY : "#9CA3AF"}
+            stroke={isDragOver ? PRIMARY : "var(--color-text-tertiary)"}
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"

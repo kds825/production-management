@@ -51,10 +51,10 @@ function deriveEquipmentGroup(order: Order): EquipmentGroup {
 /** 장비 그룹 배지 스타일 */
 function EquipmentGroupBadge({ group }: { group: EquipmentGroup }) {
   const colorMap: Record<EquipmentGroup, string> = {
-    연선: "#6366F1",
-    B100: "#0891B2",
-    A100: "#059669",
-    A120: "#D97706",
+    연선: "var(--viz-tab-yeonseon-bg)",
+    B100: "var(--viz-tab-b100-bg)",
+    A100: "var(--status-success-text)",
+    A120: "var(--status-warning)",
   };
   return (
     <span
@@ -110,9 +110,9 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
   }
 
   const borderColorMap: Record<EquipmentGroup, string> = {
-    연선: "#A5B4FC",
-    B100: "#67E8F9",
-    A100: "#6EE7B7",
+    연선: "var(--viz-tab-yeonseon-accent)",
+    B100: "var(--viz-tab-b100-accent)",
+    A100: "var(--viz-tab-a100-accent)",
     A120: "var(--status-warning-border)",
   };
 
@@ -262,10 +262,10 @@ export function OrderInbox({ isAnimating = false }: OrderInboxProps) {
       : unscheduledItems.filter((i) => itemEquipmentGroup(i) === activeTab);
 
   const tabColorMap: Record<EquipmentGroup, string> = {
-    연선: "#6366F1",
-    B100: "#0891B2",
-    A100: "#059669",
-    A120: "#D97706",
+    연선: "var(--viz-tab-yeonseon-bg)",
+    B100: "var(--viz-tab-b100-bg)",
+    A100: "var(--status-success-text)",
+    A120: "var(--status-warning)",
   };
 
   return (

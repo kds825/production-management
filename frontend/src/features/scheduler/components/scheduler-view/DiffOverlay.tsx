@@ -67,7 +67,7 @@ export function RemovedGhosts({
             product: r.process_name || "",
             spec: "",
             core_count: 1,
-            color: "#9CA3AF",
+            color: "var(--color-text-tertiary)",
             start: synthStart,
             end: synthEnd,
             volume_m: 0,

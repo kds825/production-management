@@ -257,7 +257,7 @@ export function ProcessOptimizationSection({
             style={{
               backgroundColor: "var(--kbi-red-tint-5)",
               color: "var(--color-brand-primary)",
-              border: "1px solid #FECACA",
+              border: "1px solid var(--kbi-red-tint-20)",
             }}
           >
             ← SM 재고로 돌아가기

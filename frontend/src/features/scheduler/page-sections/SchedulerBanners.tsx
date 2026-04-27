@@ -53,9 +53,9 @@ export function SchedulerBanners({
           style={{
             backgroundColor: isAutoScheduleError
               ? "var(--kbi-red-tint-5)"
-              : "#F0FDF4",
-            borderColor: isAutoScheduleError ? "#FECACA" : "#BBF7D0",
-            color: isAutoScheduleError ? "#B91C1C" : "#15803D",
+              : "var(--status-success-bg-soft)",
+            borderColor: isAutoScheduleError ? "var(--kbi-red-tint-20)" : "var(--status-success-border-soft)",
+            color: isAutoScheduleError ? "var(--status-danger-text)" : "var(--status-success-text)",
           }}
         >
           <span>{autoScheduleResult}</span>

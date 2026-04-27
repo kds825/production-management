@@ -129,7 +129,7 @@ export function WipInventoryTable({
                       onMouseEnter={(e) => {
                         if (!isActive) {
                           e.currentTarget.style.backgroundColor = hasMatch
-                            ? "#FEF9F9"
+                            ? "var(--kbi-red-tint-5)"
                             : "var(--color-bg-muted)";
                         }
                       }}
@@ -203,8 +203,8 @@ export function WipInventoryTable({
                                         color: "var(--status-info-text)",
                                       }
                                     : {
-                                        backgroundColor: "#ECFDF5",
-                                        color: "#065F46",
+                                        backgroundColor: "var(--status-success-bg-soft)",
+                                        color: "var(--status-success-text-deep)",
                                       }
                                 }
                               >
@@ -216,7 +216,7 @@ export function WipInventoryTable({
                                 style={{
                                   color:
                                     item.used_m > 0
-                                      ? "#B91C1C"
+                                      ? "var(--status-danger-text)"
                                       : "var(--color-text-tertiary)",
                                 }}
                               >
@@ -228,7 +228,7 @@ export function WipInventoryTable({
                                 style={{
                                   color:
                                     item.total_length_m - item.used_m > 0
-                                      ? "#15803D"
+                                      ? "var(--status-success-text)"
                                       : "var(--color-text-tertiary)",
                                 }}
                               >

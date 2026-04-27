@@ -68,8 +68,8 @@ export function CompareDetailsModal({
               className="text-[12px] p-3 rounded"
               style={{
                 backgroundColor: "var(--kbi-red-tint-12)",
-                color: "#991B1B",
-                border: "1px solid #FECACA",
+                color: "var(--status-danger-text-strong)",
+                border: "1px solid var(--kbi-red-tint-20)",
               }}
             >
               {compareMode.error}
@@ -80,7 +80,7 @@ export function CompareDetailsModal({
               <div className="grid grid-cols-4 gap-2 mb-4">
                 <div
                   className="rounded p-3 text-center"
-                  style={{ backgroundColor: "#ECFDF5", color: "#065F46" }}
+                  style={{ backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }}
                 >
                   <div className="text-[10px] font-medium">추가됨</div>
                   <div className="text-2xl font-bold">
@@ -100,7 +100,7 @@ export function CompareDetailsModal({
                   className="rounded p-3 text-center"
                   style={{
                     backgroundColor: "var(--kbi-red-tint-12)",
-                    color: "#991B1B",
+                    color: "var(--status-danger-text-strong)",
                   }}
                 >
                   <div className="text-[10px] font-medium">삭제됨</div>
@@ -112,7 +112,7 @@ export function CompareDetailsModal({
                   className="rounded p-3 text-center"
                   style={{
                     backgroundColor: "var(--neutral-100)",
-                    color: "#374151",
+                    color: "var(--neutral-text-primary)",
                   }}
                 >
                   <div className="text-[10px] font-medium">변경 없음</div>
@@ -137,7 +137,7 @@ export function CompareDetailsModal({
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: "#059669" }}
+                            style={{ backgroundColor: "var(--status-success-text)" }}
                           />
                           <span className="font-medium">
                             {t.sales_order_id || "-"}
@@ -233,7 +233,7 @@ export function CompareDetailsModal({
                                 color:
                                   t.start_delta_hours > 0
                                     ? "var(--color-danger)"
-                                    : "#059669",
+                                    : "var(--status-success-text)",
                               }}
                             >
                               {t.start_delta_hours > 0 ? "+" : ""}

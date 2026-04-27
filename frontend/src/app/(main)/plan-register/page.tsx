@@ -17,7 +17,7 @@ import {
 } from "@heroicons/react/24/outline";
 
 const ACCEPTED_EXTENSIONS = [".xls", ".xlsx"];
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 function formatFileSize(bytes: number): string {
@@ -225,18 +225,18 @@ function DiffSummaryPanel({
       label: "추가",
       value: added,
       Icon: PlusCircleIcon,
-      bg: "#D1FAE5", // success-subtle
+      bg: "var(--status-success-bg-soft)", // success-subtle
       fg: "var(--color-success)",
-      border: "#A7F3D0",
+      border: "var(--status-success-border-soft)",
     },
     {
       key: "removed",
       label: "제거",
       value: removed,
       Icon: MinusCircleIcon,
-      bg: "#FEE2E2", // danger-subtle
+      bg: "var(--kbi-red-tint-12)", // danger-subtle
       fg: "var(--color-danger)",
-      border: "#FECACA",
+      border: "var(--kbi-red-tint-20)",
     },
     {
       key: "unchanged",
@@ -290,9 +290,9 @@ function DiffSummaryPanel({
         <div
           className="flex items-start gap-2 rounded-md p-2.5 mb-3 text-xs"
           style={{
-            backgroundColor: "#FEF2F2",
-            border: "1px solid #FECACA",
-            color: "#991B1B",
+            backgroundColor: "var(--kbi-red-tint-5)",
+            border: "1px solid var(--kbi-red-tint-20)",
+            color: "var(--status-danger-text-strong)",
           }}
         >
           <ExclamationTriangleIcon
@@ -445,7 +445,7 @@ function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
       key: "added",
       label: "신규",
       value: diff.added,
-      bg: "#D1FAE5",
+      bg: "var(--status-success-bg-soft)",
       fg: "var(--color-success)",
     },
     {
@@ -459,7 +459,7 @@ function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
       key: "deleted",
       label: "삭제",
       value: diff.deleted,
-      bg: "#FEE2E2",
+      bg: "var(--kbi-red-tint-12)",
       fg: "var(--color-danger)",
     },
     {
@@ -475,7 +475,7 @@ function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
       className="rounded-lg p-3"
       style={{
         border: "1px solid var(--color-border-default)",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: "var(--bg-surface)",
       }}
     >
       <p
@@ -545,13 +545,13 @@ function BatchGridWithFrozen({
       case "in_progress":
         return { label: "진행중", bg: "var(--status-warning-bg)", fg: "var(--color-warning)" };
       case "completed":
-        return { label: "완료", bg: "#D1FAE5", fg: "var(--color-success)" };
+        return { label: "완료", bg: "var(--status-success-bg-soft)", fg: "var(--color-success)" };
       case "wip_complete":
         return { label: "WIP완료", bg: "var(--status-info-bg)", fg: "var(--status-info-text)" };
       case "regenerated":
-        return { label: "재생성", bg: "#F3F4F6", fg: "#374151" };
+        return { label: "재생성", bg: "var(--neutral-100)", fg: "var(--neutral-text-primary)" };
       case "from_file":
-        return { label: "신규 파일", bg: "#FEF2F2", fg: PRIMARY };
+        return { label: "신규 파일", bg: "var(--kbi-red-tint-5)", fg: PRIMARY };
     }
   };
 
@@ -560,7 +560,7 @@ function BatchGridWithFrozen({
       className="rounded-lg p-3"
       style={{
         border: "1px solid var(--color-border-default)",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: "var(--bg-surface)",
       }}
     >
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -587,7 +587,7 @@ function BatchGridWithFrozen({
             </span>
           )}
           {counts.regenerated > 0 && (
-            <span style={{ color: "#374151" }}>
+            <span style={{ color: "var(--neutral-text-primary)" }}>
               재생성 {counts.regenerated}
             </span>
           )}
@@ -603,7 +603,7 @@ function BatchGridWithFrozen({
             <div
               key={`frozen-${b.batch_id}`}
               className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
-              style={{ borderColor: "#F3F4F6" }}
+              style={{ borderColor: "var(--neutral-100)" }}
             >
               <span
                 className="rounded px-1.5 py-0.5 font-medium"
@@ -639,7 +639,7 @@ function BatchGridWithFrozen({
         {regeneratedCount > 0 && (
           <div
             className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0 flex-wrap"
-            style={{ borderColor: "#F3F4F6" }}
+            style={{ borderColor: "var(--neutral-100)" }}
           >
             <span
               className="rounded px-1.5 py-0.5 font-medium"
@@ -665,7 +665,7 @@ function BatchGridWithFrozen({
         {fromFileCount > 0 && (
           <div
             className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0 flex-wrap"
-            style={{ borderColor: "#F3F4F6" }}
+            style={{ borderColor: "var(--neutral-100)" }}
           >
             <span
               className="rounded px-1.5 py-0.5 font-medium"
@@ -755,12 +755,12 @@ function WipUploadSection({
     setValidationError(null);
   }, [setWipFile]);
 
-  const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
+  const uploadAreaBorderColor = isDragOver ? PRIMARY : "var(--neutral-300)";
 
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="text-sm font-semibold" style={{ color: "#111827" }}>
+        <h3 className="text-sm font-semibold" style={{ color: "var(--color-text-primary)" }}>
           2. 재공수량 파일 업로드
         </h3>
         <a
@@ -784,7 +784,7 @@ function WipUploadSection({
           className="rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors"
           style={{
             border: `1.5px dashed ${uploadAreaBorderColor}`,
-            backgroundColor: isDragOver ? "#FEF2F2" : "#FFFFFF",
+            backgroundColor: isDragOver ? "var(--kbi-red-tint-5)" : "var(--bg-surface)",
             minHeight: 120,
             transition: "border-color 150ms ease, background-color 150ms ease",
           }}
@@ -801,7 +801,7 @@ function WipUploadSection({
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={isDragOver ? PRIMARY : "#9CA3AF"}
+            stroke={isDragOver ? PRIMARY : "var(--color-text-tertiary)"}
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -835,14 +835,14 @@ function WipUploadSection({
       ) : (
         <div
           className="rounded-lg p-3 flex items-center justify-between gap-3"
-          style={{ border: "1px solid #E5E7EB", backgroundColor: "#FFFFFF" }}
+          style={{ border: "1px solid var(--color-border-default)", backgroundColor: "var(--bg-surface)" }}
           onMouseEnter={() => setShowDeleteHover(true)}
           onMouseLeave={() => setShowDeleteHover(false)}
         >
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="flex-shrink-0 rounded flex items-center justify-center"
-              style={{ width: 36, height: 36, backgroundColor: "#FEF2F2" }}
+              style={{ width: 36, height: 36, backgroundColor: "var(--kbi-red-tint-5)" }}
             >
               <svg
                 width="18"
@@ -861,7 +861,7 @@ function WipUploadSection({
             <div className="min-w-0">
               <p
                 className="text-xs font-medium truncate"
-                style={{ color: "#111827" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {wipFile.name}
               </p>
@@ -878,17 +878,17 @@ function WipUploadSection({
                 onClick={handleDelete}
                 className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
-                  border: "1px solid #E5E7EB",
-                  color: "#6B7280",
+                  border: "1px solid var(--color-border-default)",
+                  color: "var(--color-text-secondary)",
                   backgroundColor: "transparent",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "#C41230";
-                  e.currentTarget.style.color = "#C41230";
+                  e.currentTarget.style.borderColor = "var(--color-brand-primary)";
+                  e.currentTarget.style.color = "var(--color-brand-primary)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#E5E7EB";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.borderColor = "var(--color-border-default)";
+                  e.currentTarget.style.color = "var(--color-text-secondary)";
                 }}
               >
                 삭제하기
@@ -896,7 +896,7 @@ function WipUploadSection({
             )}
             <span
               className="text-[11px] font-medium px-3 py-1.5 rounded-md"
-              style={{ backgroundColor: "#DCFCE7", color: "#16A34A" }}
+              style={{ backgroundColor: "var(--status-success-bg)", color: "var(--status-success)" }}
             >
               업로드 완료
             </span>
@@ -905,7 +905,7 @@ function WipUploadSection({
       )}
 
       {validationError && (
-        <p className="text-[11px] mt-1.5" style={{ color: "#C41230" }}>
+        <p className="text-[11px] mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
           {validationError}
         </p>
       )}
@@ -1189,7 +1189,7 @@ function ErpUploadSection({
     await executeStage1(parentRunLabel, true);
   }, [executeStage1]);
 
-  const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
+  const uploadAreaBorderColor = isDragOver ? PRIMARY : "var(--neutral-300)";
 
   // 업로드 모드별 설명 텍스트
   const modeDescription =
@@ -1199,7 +1199,7 @@ function ErpUploadSection({
 
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold mb-1" style={{ color: "#111827" }}>
+      <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--color-text-primary)" }}>
         3. ERP 작업지시 파일 업로드 및 Stage 1 실행
       </h3>
       <p className="text-xs text-gray-500 mb-3">
@@ -1211,7 +1211,7 @@ function ErpUploadSection({
       <div className="mb-3">
         <div
           className="inline-flex rounded-lg overflow-hidden"
-          style={{ border: "1px solid #E5E7EB" }}
+          style={{ border: "1px solid var(--color-border-default)" }}
         >
           {(
             [
@@ -1224,9 +1224,9 @@ function ErpUploadSection({
               onClick={() => handleUploadModeChange(value)}
               className="px-4 py-1.5 text-xs font-medium transition-colors"
               style={{
-                backgroundColor: uploadMode === value ? PRIMARY : "#FFFFFF",
-                color: uploadMode === value ? "#FFFFFF" : "#4B5563",
-                borderRight: value === "full" ? "1px solid #E5E7EB" : undefined,
+                backgroundColor: uploadMode === value ? PRIMARY : "var(--bg-surface)",
+                color: uploadMode === value ? "var(--bg-surface)" : "var(--neutral-600)",
+                borderRight: value === "full" ? "1px solid var(--color-border-default)" : undefined,
               }}
             >
               {label}
@@ -1242,7 +1242,7 @@ function ErpUploadSection({
               value={baseDate}
               onChange={(e) => setBaseDate(e.target.value)}
               className="text-xs px-2 py-1 rounded-md"
-              style={{ border: "1px solid #D1D5DB", color: "#111827" }}
+              style={{ border: "1px solid var(--neutral-300)", color: "var(--color-text-primary)" }}
             />
             <span className="text-[11px] text-gray-400">
               이전 배치 고정 · 이후 배치는 긴급수주와 합산 재생성
@@ -1256,9 +1256,9 @@ function ErpUploadSection({
         <div
           className="mb-3 rounded-lg px-3 py-2 text-xs flex items-center justify-between"
           style={{
-            backgroundColor: "#F0FDF4",
-            border: "1px solid #BBF7D0",
-            color: "#166534",
+            backgroundColor: "var(--status-success-bg-soft)",
+            border: "1px solid var(--status-success-border-soft)",
+            color: "var(--status-success-text-deep)",
           }}
         >
           <span>
@@ -1280,7 +1280,7 @@ function ErpUploadSection({
           className="rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer"
           style={{
             border: `1.5px dashed ${uploadAreaBorderColor}`,
-            backgroundColor: isDragOver ? "#FEF2F2" : "#FFFFFF",
+            backgroundColor: isDragOver ? "var(--kbi-red-tint-5)" : "var(--bg-surface)",
             minHeight: 120,
             transition: "border-color 150ms ease, background-color 150ms ease",
           }}
@@ -1297,7 +1297,7 @@ function ErpUploadSection({
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={isDragOver ? PRIMARY : "#9CA3AF"}
+            stroke={isDragOver ? PRIMARY : "var(--color-text-tertiary)"}
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -1331,14 +1331,14 @@ function ErpUploadSection({
       ) : (
         <div
           className="rounded-lg p-3 flex items-center justify-between gap-3"
-          style={{ border: "1px solid #E5E7EB", backgroundColor: "#FFFFFF" }}
+          style={{ border: "1px solid var(--color-border-default)", backgroundColor: "var(--bg-surface)" }}
           onMouseEnter={() => setShowDeleteHover(true)}
           onMouseLeave={() => setShowDeleteHover(false)}
         >
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="flex-shrink-0 rounded flex items-center justify-center"
-              style={{ width: 36, height: 36, backgroundColor: "#FEF2F2" }}
+              style={{ width: 36, height: 36, backgroundColor: "var(--kbi-red-tint-5)" }}
             >
               <svg
                 width="18"
@@ -1357,7 +1357,7 @@ function ErpUploadSection({
             <div className="min-w-0">
               <p
                 className="text-xs font-medium truncate"
-                style={{ color: "#111827" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {erpFile.name}
               </p>
@@ -1373,17 +1373,17 @@ function ErpUploadSection({
                 onClick={handleDelete}
                 className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
-                  border: "1px solid #E5E7EB",
-                  color: "#6B7280",
+                  border: "1px solid var(--color-border-default)",
+                  color: "var(--color-text-secondary)",
                   backgroundColor: "transparent",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "#C41230";
-                  e.currentTarget.style.color = "#C41230";
+                  e.currentTarget.style.borderColor = "var(--color-brand-primary)";
+                  e.currentTarget.style.color = "var(--color-brand-primary)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#E5E7EB";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.borderColor = "var(--color-border-default)";
+                  e.currentTarget.style.color = "var(--color-text-secondary)";
                 }}
               >
                 삭제하기
@@ -1395,8 +1395,8 @@ function ErpUploadSection({
               disabled={isRunning || !!result}
               className="text-[11px] font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
               style={{
-                backgroundColor: isRunning || result ? "#E5E7EB" : PRIMARY,
-                color: isRunning || result ? "#9CA3AF" : "#FFFFFF",
+                backgroundColor: isRunning || result ? "var(--color-border-default)" : PRIMARY,
+                color: isRunning || result ? "var(--color-text-tertiary)" : "var(--bg-surface)",
                 cursor: isRunning || result ? "not-allowed" : "pointer",
               }}
             >
@@ -1430,7 +1430,7 @@ function ErpUploadSection({
       )}
 
       {validationError && (
-        <p className="text-[11px] mt-1.5" style={{ color: "#C41230" }}>
+        <p className="text-[11px] mt-1.5" style={{ color: "var(--color-brand-primary)" }}>
           {validationError}
         </p>
       )}
@@ -1440,9 +1440,9 @@ function ErpUploadSection({
         <div
           className="mt-3 rounded-lg p-3 text-xs"
           style={{
-            backgroundColor: "#FEF2F2",
-            border: "1px solid #FECACA",
-            color: "#991B1B",
+            backgroundColor: "var(--kbi-red-tint-5)",
+            border: "1px solid var(--kbi-red-tint-20)",
+            color: "var(--status-danger-text-strong)",
           }}
         >
           <span className="font-semibold">오류: </span>
@@ -1486,9 +1486,9 @@ function ErpUploadSection({
             <div
               className="rounded-lg p-3 text-xs"
               style={{
-                backgroundColor: "#FEF2F2",
-                border: "1px solid #FECACA",
-                color: "#991B1B",
+                backgroundColor: "var(--kbi-red-tint-5)",
+                border: "1px solid var(--kbi-red-tint-20)",
+                color: "var(--status-danger-text-strong)",
               }}
             >
               <span className="font-semibold">Diff 조회 실패: </span>
@@ -1542,13 +1542,13 @@ function ErpUploadSection({
             <div
               className="rounded-lg p-3"
               style={{
-                border: "1px solid #E5E7EB",
-                backgroundColor: "#FFFFFF",
+                border: "1px solid var(--color-border-default)",
+                backgroundColor: "var(--bg-surface)",
               }}
             >
               <p
                 className="text-xs font-semibold mb-2"
-                style={{ color: "#111827" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 파싱된 주문 ({result.parsed_orders.length}건)
               </p>
@@ -1557,7 +1557,7 @@ function ErpUploadSection({
                   <div
                     key={order.order_id}
                     className="flex items-center gap-3 text-xs py-1 border-b last:border-b-0"
-                    style={{ borderColor: "#F3F4F6" }}
+                    style={{ borderColor: "var(--neutral-100)" }}
                   >
                     <span className="font-mono text-gray-500 shrink-0">
                       {order.order_id}
@@ -1585,7 +1585,7 @@ function ErpUploadSection({
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors"
                 style={{
                   border: "1px solid var(--status-info-bg)",
-                  backgroundColor: "#F0F7FF",
+                  backgroundColor: "var(--status-info-bg-soft)",
                   color: "var(--status-info-text)",
                 }}
               >
@@ -1610,7 +1610,7 @@ function ErpUploadSection({
                 >
                   <div
                     className="relative rounded-xl shadow-2xl max-w-4xl w-full max-h-[85vh] overflow-y-auto"
-                    style={{ backgroundColor: "#FFFFFF" }}
+                    style={{ backgroundColor: "var(--bg-surface)" }}
                   >
                     <div
                       className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 border-b"
@@ -1680,7 +1680,7 @@ function ErpUploadSection({
         >
           <div
             className="rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
-            style={{ backgroundColor: "#FFFFFF" }}
+            style={{ backgroundColor: "var(--bg-surface)" }}
           >
             <div
               className="px-5 py-3 border-b"
@@ -1697,7 +1697,7 @@ function ErpUploadSection({
                   {
                     key: "completed",
                     label: "완료",
-                    color: "#16A34A",
+                    color: "var(--status-success)",
                     frozen: true,
                   },
                   {
@@ -1709,7 +1709,7 @@ function ErpUploadSection({
                   {
                     key: "scheduled",
                     label: "스케줄링 완료",
-                    color: "#8B5CF6",
+                    color: "var(--viz-violet)",
                     frozen: true,
                   },
                   {
@@ -1721,7 +1721,7 @@ function ErpUploadSection({
                   {
                     key: "planned",
                     label: "계획",
-                    color: "#D1D5DB",
+                    color: "var(--neutral-300)",
                     frozen: false,
                   },
                 ].map(({ key, label, color, frozen }) => {
@@ -1830,7 +1830,7 @@ export default function PlanRegisterPage() {
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
-      style={{ backgroundColor: "#FAFAFA" }}
+      style={{ backgroundColor: "var(--color-bg-muted)" }}
     >
       {/* 헤더 — KBI 로고 + 페이지 제목 */}
       <header className="h-14 bg-white border-b border-gray-200 flex items-center px-6 sticky top-0 z-50 shrink-0">
@@ -1845,7 +1845,7 @@ export default function PlanRegisterPage() {
           <div className="h-6 w-px bg-gray-200" />
           <h1
             className="text-sm font-semibold"
-            style={{ color: "#4A2C2A", letterSpacing: "-0.02em" }}
+            style={{ color: "var(--kbi-brown)", letterSpacing: "-0.02em" }}
           >
             생산계획등록
           </h1>
@@ -1858,7 +1858,7 @@ export default function PlanRegisterPage() {
         <section className="mb-6">
           <h3
             className="text-sm font-semibold mb-1"
-            style={{ color: "#111827" }}
+            style={{ color: "var(--color-text-primary)" }}
           >
             1. 계획 기준일자
           </h3>
@@ -1883,8 +1883,8 @@ export default function PlanRegisterPage() {
             }}
             className="rounded-md px-3 py-2 text-sm border"
             style={{
-              borderColor: "#D1D5DB",
-              color: "#111827",
+              borderColor: "var(--neutral-300)",
+              color: "var(--color-text-primary)",
               outline: "none",
             }}
           />

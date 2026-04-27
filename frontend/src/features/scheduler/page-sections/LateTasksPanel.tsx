@@ -23,19 +23,19 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
       className="shrink-0 border-b overflow-auto"
       style={{
         maxHeight: 220,
-        backgroundColor: "#FFF7F7",
-        borderColor: "#FECACA",
+        backgroundColor: "var(--kbi-red-tint-5)",
+        borderColor: "var(--kbi-red-tint-20)",
       }}
     >
       <div
         className="flex items-center justify-between px-4 py-2 sticky top-0 border-b"
         style={{
           backgroundColor: "var(--kbi-red-tint-5)",
-          borderColor: "#FECACA",
+          borderColor: "var(--kbi-red-tint-20)",
         }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold" style={{ color: "#991B1B" }}>
+          <span className="text-[11px] font-bold" style={{ color: "var(--status-danger-text-strong)" }}>
             납기 초과 배치
           </span>
           <span
@@ -77,8 +77,8 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                   key={h}
                   className="px-3 py-1.5 text-left font-semibold border-b"
                   style={{
-                    color: "#7F1D1D",
-                    borderColor: "#FECACA",
+                    color: "var(--status-danger-text-deep)",
+                    borderColor: "var(--kbi-red-tint-20)",
                     whiteSpace: "nowrap",
                   }}
                 >
@@ -135,7 +135,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                 </td>
                 <td
                   className="px-3 py-1.5 font-medium"
-                  style={{ color: "#B91C1C", whiteSpace: "nowrap" }}
+                  style={{ color: "var(--status-danger-text)", whiteSpace: "nowrap" }}
                 >
                   {t.delivery_date instanceof Date
                     ? t.delivery_date.toLocaleDateString("ko-KR")

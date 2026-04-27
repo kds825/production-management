@@ -129,7 +129,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                           className="block truncate text-[11px]"
                           style={{
                             textAlign: col.align as "left" | "right",
-                            color: "#78350F",
+                            color: "var(--status-alert-text)",
                           }}
                         >
                           {getCellValue(col, order) || (

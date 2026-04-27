@@ -349,7 +349,7 @@ export function ProductionBatchTable({
 
   function getWipNoteStyle(notes: string): React.CSSProperties {
     if (notes.startsWith("연선재고"))
-      return { backgroundColor: "#ECFDF5", color: "#065F46" }; // 초록
+      return { backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }; // 초록
     if (notes.startsWith("절연재고"))
       return { backgroundColor: "var(--status-info-bg)", color: "var(--status-info-text)" }; // 파랑
     if (notes.startsWith("시스재고"))
@@ -413,7 +413,7 @@ export function ProductionBatchTable({
                 style={{
                   backgroundColor: "var(--kbi-red-tint-5)",
                   color: "var(--color-brand-primary)",
-                  border: "1px solid #FECACA",
+                  border: "1px solid var(--kbi-red-tint-20)",
                 }}
               >
                 필터 {activeFilterCount}개 적용 중 ({filteredBatches.length}/
@@ -495,7 +495,7 @@ export function ProductionBatchTable({
               {hiddenCols.size > 0 && (
                 <>
                   <div
-                    style={{ borderTop: "1px solid #F3F4F6", margin: "4px 0" }}
+                    style={{ borderTop: "1px solid var(--neutral-100)", margin: "4px 0" }}
                   />
                   <button
                     onClick={() => setHiddenCols(new Set())}
@@ -562,7 +562,7 @@ export function ProductionBatchTable({
                           backgroundColor: isOpen
                             ? "var(--kbi-red-tint-5)"
                             : isFiltered
-                              ? "#FFF5F5"
+                              ? "var(--kbi-red-tint-5)"
                               : undefined,
                           position: "relative",
                         }}

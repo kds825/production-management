@@ -390,8 +390,8 @@ export function BatchSplitModal() {
             className="px-6 py-2 text-xs border-t"
             style={{
               borderColor: "var(--color-border-default)",
-              backgroundColor: error ? "var(--kbi-red-tint-5)" : "#F0FDF4",
-              color: error ? "#B91C1C" : "#15803D",
+              backgroundColor: error ? "var(--kbi-red-tint-5)" : "var(--status-success-bg-soft)",
+              color: error ? "var(--status-danger-text)" : "var(--status-success-text)",
             }}
           >
             {error || result}

@@ -156,7 +156,7 @@ function filterBatchesByTab(
   );
 }
 
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 
 export default function SchedulingReviewPage() {
   const {
@@ -365,7 +365,7 @@ export default function SchedulingReviewPage() {
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
-      style={{ backgroundColor: "#FAFAFA" }}
+      style={{ backgroundColor: "var(--color-bg-muted)" }}
     >
       {/* 헤더 */}
       <header className="h-14 bg-white border-b border-gray-200 flex items-center px-6 sticky top-0 z-50 shrink-0 gap-4">
@@ -380,7 +380,7 @@ export default function SchedulingReviewPage() {
           <div className="h-6 w-px bg-gray-200" />
           <h1
             className="text-sm font-semibold"
-            style={{ color: "#4A2C2A", letterSpacing: "-0.02em" }}
+            style={{ color: "var(--kbi-brown)", letterSpacing: "-0.02em" }}
           >
             생산스케줄링 검토
           </h1>
@@ -456,9 +456,9 @@ export default function SchedulingReviewPage() {
           disabled={!selectedRun}
           className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
           style={{
-            backgroundColor: "#FEF2F2",
-            color: "#C41230",
-            border: "1px solid #FECACA",
+            backgroundColor: "var(--kbi-red-tint-5)",
+            color: "var(--color-brand-primary)",
+            border: "1px solid var(--kbi-red-tint-20)",
           }}
           title="선택한 계획 실행 삭제"
         >
@@ -477,7 +477,7 @@ export default function SchedulingReviewPage() {
           onClick={handleExcelDownload}
           disabled={!selectedRun || excelLoading}
           className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium text-white transition-opacity disabled:opacity-40"
-          style={{ backgroundColor: "#16A34A" }}
+          style={{ backgroundColor: "var(--status-success)" }}
           title={
             selectedRun
               ? `${selectedRun} Excel 다운로드`
@@ -508,19 +508,19 @@ export default function SchedulingReviewPage() {
         <div className="flex items-center gap-2">
           <span
             className="text-[11px] font-medium px-2 py-1 rounded"
-            style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
+            style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             연선 {yeonseoGroupCount}배치
           </span>
           <span
             className="text-[11px] font-medium px-2 py-1 rounded"
-            style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
+            style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             절연 {insulationGroupCount}배치
           </span>
           <span
             className="text-[11px] font-medium px-2 py-1 rounded"
-            style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
+            style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             시스 {sheatGroupCount}배치
           </span>
@@ -531,7 +531,7 @@ export default function SchedulingReviewPage() {
         {/* 배치 그룹 수 + 수주 행 수 */}
         <span className="text-[11px] text-gray-500">
           총{" "}
-          <span style={{ color: "#111827", fontWeight: 600 }}>
+          <span style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>
             {yeonseoGroupCount + insulationGroupCount + sheatGroupCount}
           </span>
           배치 ({selectedRunInfo?.batch_count ?? totalBatches}수주)
@@ -591,14 +591,14 @@ export default function SchedulingReviewPage() {
 
         <span
           className="text-[11px] flex items-center gap-1.5"
-          style={{ color: hasWip ? "#16A34A" : "#9CA3AF" }}
+          style={{ color: hasWip ? "var(--status-success)" : "var(--color-text-tertiary)" }}
         >
           <span
             className="inline-block rounded-full"
             style={{
               width: 6,
               height: 6,
-              backgroundColor: hasWip ? "#16A34A" : "#D1D5DB",
+              backgroundColor: hasWip ? "var(--status-success)" : "var(--neutral-300)",
             }}
           />
           WIP {hasWip ? "반영됨" : "없음"}
@@ -608,7 +608,7 @@ export default function SchedulingReviewPage() {
 
         <span className="text-[11px] text-gray-500">
           계획일{" "}
-          <span style={{ color: "#111827", fontWeight: 500 }}>{planDate}</span>
+          <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{planDate}</span>
         </span>
       </div>
 
@@ -626,7 +626,7 @@ export default function SchedulingReviewPage() {
             style={{
               borderBottomColor:
                 activeProcessTab === tab ? PRIMARY : "transparent",
-              color: activeProcessTab === tab ? PRIMARY : "#6B7280",
+              color: activeProcessTab === tab ? PRIMARY : "var(--color-text-secondary)",
             }}
           >
             {tab}
@@ -784,7 +784,7 @@ export default function SchedulingReviewPage() {
               <div className="mb-6">
                 <h3
                   className="text-sm font-semibold mb-3"
-                  style={{ color: "#111827" }}
+                  style={{ color: "var(--color-text-primary)" }}
                 >
                   4. 생산 스케줄링 검토
                 </h3>
@@ -816,7 +816,7 @@ export default function SchedulingReviewPage() {
               <div>
                 <h2
                   className="text-sm font-semibold"
-                  style={{ color: "#111827" }}
+                  style={{ color: "var(--color-text-primary)" }}
                 >
                   버전 비교
                 </h2>
@@ -846,9 +846,9 @@ export default function SchedulingReviewPage() {
                 <div
                   className="text-[12px] p-3 rounded"
                   style={{
-                    backgroundColor: "#FEE2E2",
-                    color: "#991B1B",
-                    border: "1px solid #FECACA",
+                    backgroundColor: "var(--kbi-red-tint-12)",
+                    color: "var(--status-danger-text-strong)",
+                    border: "1px solid var(--kbi-red-tint-20)",
                   }}
                 >
                   {compareError}
@@ -860,7 +860,7 @@ export default function SchedulingReviewPage() {
                   <div className="grid grid-cols-4 gap-2 mb-4">
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "#ECFDF5", color: "#065F46" }}
+                      style={{ backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }}
                     >
                       <div className="text-[10px] font-medium">추가됨</div>
                       <div className="text-2xl font-bold">
@@ -878,7 +878,7 @@ export default function SchedulingReviewPage() {
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                      style={{ backgroundColor: "var(--kbi-red-tint-12)", color: "var(--status-danger-text-strong)" }}
                     >
                       <div className="text-[10px] font-medium">삭제됨</div>
                       <div className="text-2xl font-bold">
@@ -887,7 +887,7 @@ export default function SchedulingReviewPage() {
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "#F3F4F6", color: "#374151" }}
+                      style={{ backgroundColor: "var(--neutral-100)", color: "var(--neutral-text-primary)" }}
                     >
                       <div className="text-[10px] font-medium">변경 없음</div>
                       <div className="text-2xl font-bold">
@@ -910,7 +910,7 @@ export default function SchedulingReviewPage() {
                           >
                             <span
                               className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: "#059669" }}
+                              style={{ backgroundColor: "var(--status-success-text)" }}
                             />
                             <span className="font-medium">
                               {t.sales_order_id || "-"}
@@ -948,7 +948,7 @@ export default function SchedulingReviewPage() {
                           >
                             <span
                               className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ backgroundColor: "#DC2626" }}
+                              style={{ backgroundColor: "var(--color-danger)" }}
                             />
                             <span className="font-medium">
                               {t.sales_order_id || "-"}
@@ -1004,8 +1004,8 @@ export default function SchedulingReviewPage() {
                                   style={{
                                     color:
                                       t.start_delta_hours > 0
-                                        ? "#DC2626"
-                                        : "#059669",
+                                        ? "var(--color-danger)"
+                                        : "var(--status-success-text)",
                                   }}
                                 >
                                   {t.start_delta_hours > 0 ? "+" : ""}
