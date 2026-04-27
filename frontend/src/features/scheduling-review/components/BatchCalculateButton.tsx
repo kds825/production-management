@@ -11,10 +11,10 @@ interface BatchCalculateButtonProps {
   disabled?: boolean;
 }
 
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 const PRIMARY_HOVER = "#9E0E27";
-const SUCCESS = "#16A34A";
-const ERROR_BG = "#DC2626";
+const SUCCESS = "var(--status-success)";
+const ERROR_BG = "var(--color-danger)";
 const ERROR_HOVER = "#B91C1C";
 const PENDING_BG = "#6366F1";
 const PENDING_HOVER = "#4F46E5";
@@ -33,7 +33,7 @@ export function BatchCalculateButton({
   let bgColor = PRIMARY;
   let hoverColor = PRIMARY_HOVER;
   let label = isCalculated ? "AI 재분석" : "AI 배치 분석";
-  let textColor = "#FFFFFF";
+  let textColor = "var(--color-text-inverse)";
   let cursor = "pointer";
   let clickable = true;
 
@@ -57,9 +57,9 @@ export function BatchCalculateButton({
     label = "AI 분석 완료 - 재분석";
     clickable = true;
   } else if (isDisabled) {
-    bgColor = "#E5E7EB";
-    hoverColor = "#E5E7EB";
-    textColor = "#9CA3AF";
+    bgColor = "var(--color-border-default)";
+    hoverColor = "var(--color-border-default)";
+    textColor = "var(--color-text-tertiary)";
     cursor = "not-allowed";
     clickable = false;
   }

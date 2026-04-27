@@ -354,7 +354,10 @@ export function ProductionBatchTable({
       return { backgroundColor: "#EFF6FF", color: "#1D4ED8" }; // 파랑
     if (notes.startsWith("시스재고"))
       return { backgroundColor: "#F5F3FF", color: "#6D28D9" }; // 보라
-    return { backgroundColor: "#FEF2F2", color: "#C41230" }; // 기본 빨강
+    return {
+      backgroundColor: "var(--kbi-red-tint-5)",
+      color: "var(--color-brand-primary)",
+    }; // 기본 빨강
   }
 
   function getBatchLabel(b: SchedulingBatch) {
@@ -379,7 +382,10 @@ export function ProductionBatchTable({
                 backgroundColor: PROCESS_STATUS_COLORS["진행"],
               }}
             />
-            <span className="text-[10px]" style={{ color: "#6B7280" }}>
+            <span
+              className="text-[10px]"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
               진행
             </span>
           </div>
@@ -392,7 +398,10 @@ export function ProductionBatchTable({
                 backgroundColor: PROCESS_STATUS_COLORS["대기"],
               }}
             />
-            <span className="text-[10px]" style={{ color: "#6B7280" }}>
+            <span
+              className="text-[10px]"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
               대기
             </span>
           </div>
@@ -402,8 +411,8 @@ export function ProductionBatchTable({
               <span
                 className="text-[10px] px-2 py-0.5 rounded-full font-medium"
                 style={{
-                  backgroundColor: "#FEF2F2",
-                  color: "#C41230",
+                  backgroundColor: "var(--kbi-red-tint-5)",
+                  color: "var(--color-brand-primary)",
                   border: "1px solid #FECACA",
                 }}
               >
@@ -413,7 +422,10 @@ export function ProductionBatchTable({
               <button
                 onClick={() => setColFilters({})}
                 className="text-[10px] px-2 py-0.5 rounded"
-                style={{ color: "#6B7280", border: "1px solid #E5E7EB" }}
+                style={{
+                  color: "var(--color-text-secondary)",
+                  border: "1px solid var(--color-border-default)",
+                }}
               >
                 전체 해제
               </button>
@@ -427,9 +439,15 @@ export function ProductionBatchTable({
             onClick={() => setColMenuOpen((v) => !v)}
             className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border transition-colors"
             style={{
-              borderColor: colMenuOpen ? "#C41230" : "#E5E7EB",
-              color: colMenuOpen ? "#C41230" : "#6B7280",
-              backgroundColor: colMenuOpen ? "#FEF2F2" : "#FFFFFF",
+              borderColor: colMenuOpen
+                ? "var(--color-brand-primary)"
+                : "var(--color-border-default)",
+              color: colMenuOpen
+                ? "var(--color-brand-primary)"
+                : "var(--color-text-secondary)",
+              backgroundColor: colMenuOpen
+                ? "var(--kbi-red-tint-5)"
+                : "var(--bg-surface)",
             }}
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
@@ -439,7 +457,7 @@ export function ProductionBatchTable({
             {hiddenCols.size > 0 && (
               <span
                 className="ml-0.5 text-[9px] font-bold"
-                style={{ color: "#C41230" }}
+                style={{ color: "var(--color-brand-primary)" }}
               >
                 -{hiddenCols.size}
               </span>
@@ -449,8 +467,8 @@ export function ProductionBatchTable({
             <div
               className="absolute right-0 mt-1 rounded-lg shadow-lg z-50 py-1"
               style={{
-                backgroundColor: "#FFFFFF",
-                border: "1px solid #E5E7EB",
+                backgroundColor: "var(--bg-surface)",
+                border: "1px solid var(--color-border-default)",
                 minWidth: 160,
                 top: "100%",
               }}
@@ -466,7 +484,10 @@ export function ProductionBatchTable({
                     onChange={() => toggleCol(col.key)}
                     className="w-3 h-3 accent-red-700"
                   />
-                  <span className="text-[11px]" style={{ color: "#374151" }}>
+                  <span
+                    className="text-[11px]"
+                    style={{ color: "var(--neutral-text-primary)" }}
+                  >
                     {col.label}
                   </span>
                 </label>
@@ -479,7 +500,7 @@ export function ProductionBatchTable({
                   <button
                     onClick={() => setHiddenCols(new Set())}
                     className="w-full text-left px-3 py-1 text-[10px]"
-                    style={{ color: "#6B7280" }}
+                    style={{ color: "var(--color-text-secondary)" }}
                   >
                     모두 표시
                   </button>
@@ -491,11 +512,14 @@ export function ProductionBatchTable({
       </div>
 
       {/* Table */}
-      <div className="overflow-hidden" style={{ border: "1px solid #D1D5DB" }}>
+      <div
+        className="overflow-hidden"
+        style={{ border: "1px solid var(--neutral-300)" }}
+      >
         {sortedBatches.length === 0 ? (
           <div
             className="flex items-center justify-center py-12 text-xs text-gray-400"
-            style={{ backgroundColor: "#FAFAFA" }}
+            style={{ backgroundColor: "var(--color-bg-muted)" }}
           >
             배치 데이터가 없습니다
           </div>
@@ -524,9 +548,11 @@ export function ProductionBatchTable({
                         key={col.key}
                         className="text-[10px] font-semibold px-3 py-2 select-none"
                         style={{
-                          color: isFiltered ? "#C41230" : "#64748B",
+                          color: isFiltered
+                            ? "var(--color-brand-primary)"
+                            : "#64748B",
                           textAlign: col.align as "left" | "right",
-                          borderBottom: "2px solid #D1D5DB",
+                          borderBottom: "2px solid var(--neutral-300)",
                           borderRight:
                             i < visibleCols.length - 1
                               ? "1px solid #E2E8F0"
@@ -534,7 +560,7 @@ export function ProductionBatchTable({
                           whiteSpace: "nowrap",
                           cursor: "pointer",
                           backgroundColor: isOpen
-                            ? "#FEF2F2"
+                            ? "var(--kbi-red-tint-5)"
                             : isFiltered
                               ? "#FFF5F5"
                               : undefined,
@@ -559,7 +585,9 @@ export function ProductionBatchTable({
                             viewBox="0 0 16 16"
                             fill="currentColor"
                             style={{
-                              color: isFiltered ? "#C41230" : "#D1D5DB",
+                              color: isFiltered
+                                ? "var(--color-brand-primary)"
+                                : "var(--neutral-300)",
                               flexShrink: 0,
                             }}
                           >
@@ -574,8 +602,8 @@ export function ProductionBatchTable({
                             className="absolute left-0 mt-1 rounded-lg shadow-xl z-50"
                             style={{
                               top: "100%",
-                              backgroundColor: "#FFFFFF",
-                              border: "1px solid #E5E7EB",
+                              backgroundColor: "var(--bg-surface)",
+                              border: "1px solid var(--color-border-default)",
                               minWidth: 180,
                               maxHeight: 280,
                               display: "flex",
@@ -586,7 +614,7 @@ export function ProductionBatchTable({
                             {/* 검색 */}
                             <div
                               className="p-2 border-b"
-                              style={{ borderColor: "#F3F4F6" }}
+                              style={{ borderColor: "var(--neutral-100)" }}
                             >
                               <input
                                 type="text"
@@ -598,7 +626,7 @@ export function ProductionBatchTable({
                                 autoFocus
                                 className="w-full text-[11px] px-2 py-1 rounded"
                                 style={{
-                                  border: "1px solid #D1D5DB",
+                                  border: "1px solid var(--neutral-300)",
                                   outline: "none",
                                 }}
                               />
@@ -606,7 +634,7 @@ export function ProductionBatchTable({
                             {/* 전체선택 */}
                             <div
                               className="flex items-center justify-between px-3 py-1.5 border-b"
-                              style={{ borderColor: "#F3F4F6" }}
+                              style={{ borderColor: "var(--neutral-100)" }}
                             >
                               <label className="flex items-center gap-2 cursor-pointer">
                                 <input
@@ -622,7 +650,9 @@ export function ProductionBatchTable({
                                 />
                                 <span
                                   className="text-[11px] font-medium"
-                                  style={{ color: "#374151" }}
+                                  style={{
+                                    color: "var(--neutral-text-primary)",
+                                  }}
                                 >
                                   전체
                                 </span>
@@ -631,7 +661,9 @@ export function ProductionBatchTable({
                                 <button
                                   onClick={() => clearColFilter(col.key)}
                                   className="text-[10px]"
-                                  style={{ color: "#C41230" }}
+                                  style={{
+                                    color: "var(--color-brand-primary)",
+                                  }}
                                 >
                                   초기화
                                 </button>
@@ -661,7 +693,9 @@ export function ProductionBatchTable({
                                     />
                                     <span
                                       className="text-[11px] truncate"
-                                      style={{ color: "#374151" }}
+                                      style={{
+                                        color: "var(--neutral-text-primary)",
+                                      }}
                                     >
                                       {val || "(빈 값)"}
                                     </span>
@@ -671,7 +705,9 @@ export function ProductionBatchTable({
                               {filteredUniqueValues.length === 0 && (
                                 <div
                                   className="px-3 py-3 text-[10px]"
-                                  style={{ color: "#9CA3AF" }}
+                                  style={{
+                                    color: "var(--color-text-tertiary)",
+                                  }}
                                 >
                                   결과 없음
                                 </div>
@@ -690,7 +726,7 @@ export function ProductionBatchTable({
                     <td
                       colSpan={visibleCols.length}
                       className="py-8 text-center text-[11px]"
-                      style={{ color: "#9CA3AF" }}
+                      style={{ color: "var(--color-text-tertiary)" }}
                     >
                       필터 결과 없음
                     </td>
@@ -721,7 +757,7 @@ export function ProductionBatchTable({
                               paddingTop: 5,
                               paddingBottom: 5,
                               borderTop: "2px solid #CBD5E1",
-                              borderBottom: "1px solid #D1D5DB",
+                              borderBottom: "1px solid var(--neutral-300)",
                               color: "#334155",
                             }}
                           >
@@ -760,18 +796,18 @@ export function ProductionBatchTable({
                           const rowBg = isHighlighted
                             ? "#EFF6FF"
                             : isWipSkipped
-                              ? "#F3F4F6"
-                              : "#FFFFFF";
+                              ? "var(--neutral-100)"
+                              : "var(--bg-surface)";
                           const hoverBg = isHighlighted
                             ? "#DBEAFE"
                             : isWipSkipped
-                              ? "#E5E7EB"
+                              ? "var(--color-border-default)"
                               : ROW_HOVER_BG;
                           const statusColor =
                             PROCESS_STATUS_COLORS[batch.processStatus] ??
-                            "#E5E7EB";
+                            "var(--color-border-default)";
                           const textColor = isWipSkipped
-                            ? "#9CA3AF"
+                            ? "var(--color-text-tertiary)"
                             : undefined;
 
                           return (
@@ -794,8 +830,8 @@ export function ProductionBatchTable({
                                 ).style.backgroundColor = isHighlighted
                                   ? "#EFF6FF"
                                   : isWipSkipped
-                                    ? "#F3F4F6"
-                                    : "#FFFFFF";
+                                    ? "var(--neutral-100)"
+                                    : "var(--bg-surface)";
                               }}
                             >
                               {visibleCols.map((col, colIdx) => {
@@ -867,7 +903,9 @@ export function ProductionBatchTable({
                                     ) : col.key === "batch_label" ? (
                                       <span
                                         className="block truncate text-[10px] font-medium"
-                                        style={{ color: "#9CA3AF" }}
+                                        style={{
+                                          color: "var(--color-text-tertiary)",
+                                        }}
                                       >
                                         {getBatchLabel(batch)}
                                       </span>
@@ -920,7 +958,7 @@ export function ProductionBatchTable({
                                 key={col.key}
                                 className="px-3 py-1"
                                 style={{
-                                  borderBottom: "2px solid #D1D5DB",
+                                  borderBottom: "2px solid var(--neutral-300)",
                                   borderRight:
                                     colIdx < visibleCols.length - 1
                                       ? "1px solid #E2E8F0"

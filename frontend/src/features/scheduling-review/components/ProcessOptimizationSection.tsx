@@ -138,7 +138,10 @@ export function ProcessOptimizationSection({
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold" style={{ color: "#111827" }}>
+        <h3
+          className="text-sm font-semibold"
+          style={{ color: "var(--color-text-primary)" }}
+        >
           {sectionNumber}. {title}
         </h3>
         {hasWip && (
@@ -146,9 +149,9 @@ export function ProcessOptimizationSection({
             onClick={() => setWipExpanded((v) => !v)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
             style={{
-              backgroundColor: wipExpanded ? "#EFF6FF" : "#F3F4F6",
-              color: wipExpanded ? "#2563EB" : "#6B7280",
-              border: `1px solid ${wipExpanded ? "#BFDBFE" : "#E5E7EB"}`,
+              backgroundColor: wipExpanded ? "#EFF6FF" : "var(--neutral-100)",
+              color: wipExpanded ? "#2563EB" : "var(--color-text-secondary)",
+              border: `1px solid ${wipExpanded ? "#BFDBFE" : "var(--color-border-default)"}`,
             }}
           >
             <span
@@ -157,7 +160,9 @@ export function ProcessOptimizationSection({
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                backgroundColor: wipExpanded ? "#2563EB" : "#9CA3AF",
+                backgroundColor: wipExpanded
+                  ? "#2563EB"
+                  : "var(--color-text-tertiary)",
               }}
             />
             SM 재고 {wipItems!.length}건
@@ -185,7 +190,7 @@ export function ProcessOptimizationSection({
               <div
                 className="flex mb-2"
                 style={{
-                  borderBottom: "1px solid #E5E7EB",
+                  borderBottom: "1px solid var(--color-border-default)",
                 }}
               >
                 {(
@@ -209,8 +214,10 @@ export function ProcessOptimizationSection({
                       onClick={() => setWipTab(t.key)}
                       className="flex-1 text-[11px] font-semibold py-1.5 transition-colors"
                       style={{
-                        color: active ? "#C41230" : "#6B7280",
-                        borderBottom: `2px solid ${active ? "#C41230" : "transparent"}`,
+                        color: active
+                          ? "var(--color-brand-primary)"
+                          : "var(--color-text-secondary)",
+                        borderBottom: `2px solid ${active ? "var(--color-brand-primary)" : "transparent"}`,
                         backgroundColor: "transparent",
                       }}
                     >
@@ -248,8 +255,8 @@ export function ProcessOptimizationSection({
             onClick={handleBackToWip}
             className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
             style={{
-              backgroundColor: "#FEF2F2",
-              color: "#C41230",
+              backgroundColor: "var(--kbi-red-tint-5)",
+              color: "var(--color-brand-primary)",
               border: "1px solid #FECACA",
             }}
           >

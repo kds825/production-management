@@ -26,7 +26,7 @@ interface SchedulingResultTableProps {
   activeTab: ProcessGroup;
 }
 
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 
 const COL_DEFS = [
   { key: "batch_label", label: "배치", align: "left", width: 64 },
@@ -338,7 +338,7 @@ export function SchedulingResultTable({
       {/* CRUD 버튼 — 내부 탭 제거, 공정 탭은 페이지 상단 탭으로만 제어 */}
       <div
         className="flex items-center justify-end mb-0"
-        style={{ borderBottom: "1px solid #E5E7EB" }}
+        style={{ borderBottom: "1px solid var(--color-border-default)" }}
       >
         {/* CRUD 버튼 */}
         <div className="flex items-center gap-1 pr-1">
@@ -371,14 +371,14 @@ export function SchedulingResultTable({
       <div
         className="overflow-hidden"
         style={{
-          border: "1px solid #D1D5DB",
+          border: "1px solid var(--neutral-300)",
           borderTop: "none",
         }}
       >
         {displayBatches.length === 0 ? (
           <div
             className="flex items-center justify-center py-12 text-xs text-gray-400"
-            style={{ backgroundColor: "#FAFAFA" }}
+            style={{ backgroundColor: "var(--color-bg-muted)" }}
           >
             해당 공정의 배치 데이터가 없습니다
           </div>
@@ -407,7 +407,7 @@ export function SchedulingResultTable({
                       className="text-[10px] font-semibold px-1 py-2"
                       style={{
                         color: "#64748B",
-                        borderBottom: "2px solid #D1D5DB",
+                        borderBottom: "2px solid var(--neutral-300)",
                         borderRight: "1px solid #E2E8F0",
                         textAlign: "center",
                         whiteSpace: "nowrap",
@@ -423,7 +423,7 @@ export function SchedulingResultTable({
                       style={{
                         color: "#64748B",
                         textAlign: col.align as "left" | "right",
-                        borderBottom: "2px solid #D1D5DB",
+                        borderBottom: "2px solid var(--neutral-300)",
                         borderRight:
                           i < COL_DEFS.length - 1
                             ? "1px solid #E2E8F0"
@@ -467,7 +467,7 @@ export function SchedulingResultTable({
                             paddingTop: 5,
                             paddingBottom: 5,
                             borderTop: "2px solid #CBD5E1",
-                            borderBottom: "1px solid #D1D5DB",
+                            borderBottom: "1px solid var(--neutral-300)",
                             color: "#334155",
                           }}
                         >
@@ -505,17 +505,19 @@ export function SchedulingResultTable({
                         const rowBg = isNewRow
                           ? "#FFFBEB"
                           : isWipSkipped
-                            ? "#F3F4F6"
-                            : "#FFFFFF";
+                            ? "var(--neutral-100)"
+                            : "var(--bg-surface)";
                         const hoverBg = isNewRow
                           ? "#FEF3C7"
                           : isWipSkipped
-                            ? "#E5E7EB"
+                            ? "var(--color-border-default)"
                             : ROW_HOVER_BG;
                         const statusColor =
                           PROCESS_STATUS_COLORS[batch.processStatus] ??
-                          "#E5E7EB";
-                        const textColor = isWipSkipped ? "#9CA3AF" : undefined;
+                          "var(--color-border-default)";
+                        const textColor = isWipSkipped
+                          ? "var(--color-text-tertiary)"
+                          : undefined;
                         const isSelected = selectedForDelete.has(batch.id);
 
                         return (
@@ -539,8 +541,8 @@ export function SchedulingResultTable({
                                 : isNewRow
                                   ? "#FFFBEB"
                                   : isWipSkipped
-                                    ? "#F3F4F6"
-                                    : "#FFFFFF";
+                                    ? "var(--neutral-100)"
+                                    : "var(--bg-surface)";
                             }}
                           >
                             {crudMode === "delete" && (
@@ -651,7 +653,9 @@ export function SchedulingResultTable({
                                   ) : col.key === "batch_label" ? (
                                     <span
                                       className="block truncate text-[10px] font-medium"
-                                      style={{ color: "#9CA3AF" }}
+                                      style={{
+                                        color: "var(--color-text-tertiary)",
+                                      }}
                                     >
                                       {isNewRow ? "신규" : getBatchLabel(batch)}
                                     </span>
@@ -694,7 +698,7 @@ export function SchedulingResultTable({
                           colSpan={leftSpan}
                           className="px-3 py-1 text-[10px] font-medium text-right"
                           style={{
-                            borderBottom: "2px solid #D1D5DB",
+                            borderBottom: "2px solid var(--neutral-300)",
                             color: "#64748B",
                           }}
                         >
@@ -703,7 +707,7 @@ export function SchedulingResultTable({
                         <td
                           className="px-3 py-1 text-[10px] font-semibold text-right"
                           style={{
-                            borderBottom: "2px solid #D1D5DB",
+                            borderBottom: "2px solid var(--neutral-300)",
                             color: "#1E293B",
                           }}
                         >
@@ -713,7 +717,7 @@ export function SchedulingResultTable({
                           colSpan={2}
                           className="px-2 py-1 text-[10px]"
                           style={{
-                            borderBottom: "2px solid #D1D5DB",
+                            borderBottom: "2px solid var(--neutral-300)",
                             color: "#2563EB",
                           }}
                         >
@@ -745,7 +749,7 @@ export function SchedulingResultTable({
                         <td
                           className="px-3 py-1 text-[10px] font-semibold text-right"
                           style={{
-                            borderBottom: "2px solid #D1D5DB",
+                            borderBottom: "2px solid var(--neutral-300)",
                             color: "#1E293B",
                           }}
                         >
@@ -771,7 +775,7 @@ export function SchedulingResultTable({
             className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
             style={{
               backgroundColor: PRIMARY,
-              color: "#FFFFFF",
+              color: "var(--color-text-inverse)",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = "#9E0E27";
@@ -800,7 +804,7 @@ export function SchedulingResultTable({
           className="text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
           style={{
             backgroundColor: PRIMARY,
-            color: "#FFFFFF",
+            color: "var(--color-text-inverse)",
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = "#9E0E27";
@@ -832,15 +836,19 @@ function CrudButton({
   confirm?: boolean;
 }) {
   const activeStyle = {
-    backgroundColor: confirm ? PRIMARY : isActive ? PRIMARY : "#FFFFFF",
-    color: confirm
-      ? "#FFFFFF"
+    backgroundColor: confirm
+      ? PRIMARY
       : isActive
-        ? "#FFFFFF"
+        ? PRIMARY
+        : "var(--bg-surface)",
+    color: confirm
+      ? "var(--bg-surface)"
+      : isActive
+        ? "var(--bg-surface)"
         : disabled
-          ? "#D1D5DB"
-          : "#374151",
-    border: `1px solid ${isActive || confirm ? PRIMARY : "#E5E7EB"}`,
+          ? "var(--neutral-300)"
+          : "var(--neutral-text-primary)",
+    border: `1px solid ${isActive || confirm ? PRIMARY : "var(--color-border-default)"}`,
     opacity: disabled ? 0.5 : 1,
     cursor: disabled ? "not-allowed" : "pointer",
   } as const;
@@ -860,8 +868,8 @@ function CrudButton({
       onMouseLeave={(e) => {
         if (disabled) return;
         if (!isActive && !confirm) {
-          e.currentTarget.style.borderColor = "#E5E7EB";
-          e.currentTarget.style.color = "#374151";
+          e.currentTarget.style.borderColor = "var(--color-border-default)";
+          e.currentTarget.style.color = "var(--neutral-text-primary)";
         }
       }}
     >

@@ -39,7 +39,10 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
     <div>
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
-        <h3 className="text-sm font-semibold" style={{ color: "#111827" }}>
+        <h3
+          className="text-sm font-semibold"
+          style={{ color: "var(--color-text-primary)" }}
+        >
           외주 생산 ({orders.length}건)
         </h3>
         <span className="text-[11px]" style={{ color: "#92400E" }}>
@@ -129,7 +132,9 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                             color: "#78350F",
                           }}
                         >
-                          {getCellValue(col, order) || <span style={{ color: "#CBD5E1" }}>–</span>}
+                          {getCellValue(col, order) || (
+                            <span style={{ color: "#CBD5E1" }}>–</span>
+                          )}
                         </span>
                       </td>
                     ))}

@@ -45,16 +45,22 @@ export function WipInventoryTable({
     <div>
       <h4
         className="text-[11px] font-semibold mb-2"
-        style={{ color: "#111827" }}
+        style={{ color: "var(--color-text-primary)" }}
       >
         {title}
       </h4>
 
-      <div className="overflow-hidden" style={{ border: "1px solid #D1D5DB" }}>
+      <div
+        className="overflow-hidden"
+        style={{ border: "1px solid var(--neutral-300)" }}
+      >
         {items.length === 0 ? (
           <div
             className="flex items-center justify-center py-8 text-[11px]"
-            style={{ backgroundColor: "#FAFAFA", color: "#9CA3AF" }}
+            style={{
+              backgroundColor: "var(--color-bg-muted)",
+              color: "var(--color-text-tertiary)",
+            }}
           >
             재공 데이터가 없습니다
           </div>
@@ -82,7 +88,7 @@ export function WipInventoryTable({
                       style={{
                         color: "#64748B",
                         textAlign: col.align as "left" | "right",
-                        borderBottom: "2px solid #D1D5DB",
+                        borderBottom: "2px solid var(--neutral-300)",
                         borderRight:
                           i < COL_DEFS.length - 1
                             ? "1px solid #E2E8F0"
@@ -114,7 +120,9 @@ export function WipInventoryTable({
                         }
                       }}
                       style={{
-                        backgroundColor: isActive ? "#FEF2F2" : "#FFFFFF",
+                        backgroundColor: isActive
+                          ? "var(--kbi-red-tint-5)"
+                          : "var(--bg-surface)",
                         cursor: hasMatch ? "pointer" : "default",
                         transition: "background-color 150ms",
                       }}
@@ -122,12 +130,13 @@ export function WipInventoryTable({
                         if (!isActive) {
                           e.currentTarget.style.backgroundColor = hasMatch
                             ? "#FEF9F9"
-                            : "#FAFAFA";
+                            : "var(--color-bg-muted)";
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (!isActive) {
-                          e.currentTarget.style.backgroundColor = "#FFFFFF";
+                          e.currentTarget.style.backgroundColor =
+                            "var(--bg-surface)";
                         }
                       }}
                     >
@@ -206,7 +215,9 @@ export function WipInventoryTable({
                                 className="text-[11px] font-medium"
                                 style={{
                                   color:
-                                    item.used_m > 0 ? "#B91C1C" : "#9CA3AF",
+                                    item.used_m > 0
+                                      ? "#B91C1C"
+                                      : "var(--color-text-tertiary)",
                                 }}
                               >
                                 {display}
@@ -218,7 +229,7 @@ export function WipInventoryTable({
                                   color:
                                     item.total_length_m - item.used_m > 0
                                       ? "#15803D"
-                                      : "#9CA3AF",
+                                      : "var(--color-text-tertiary)",
                                 }}
                               >
                                 {display}
@@ -229,7 +240,9 @@ export function WipInventoryTable({
                                 style={{
                                   textAlign: col.align as "left" | "right",
                                   fontWeight: isActive ? 600 : 400,
-                                  color: isActive ? "#C41230" : undefined,
+                                  color: isActive
+                                    ? "var(--color-brand-primary)"
+                                    : undefined,
                                 }}
                               >
                                 {display || (
