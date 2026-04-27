@@ -52,7 +52,7 @@ const FilterPill: React.FC<FilterPillProps> = ({
       className={[
         "inline-flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border border-gray-200",
         "transition-colors hover:bg-gray-50",
-        "focus:outline-none focus-visible:outline-[#C41230]",
+        "focus:outline-none focus-visible:outline-[var(--color-brand-primary)]",
         active ? "text-gray-900" : "text-gray-400",
       ].join(" ")}
       style={{

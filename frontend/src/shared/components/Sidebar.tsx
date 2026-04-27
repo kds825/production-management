@@ -144,11 +144,11 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
           height="16"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#6B7280"
           strokeWidth="1.5"
           strokeLinecap="round"
           strokeLinejoin="round"
           style={{
+            stroke: "var(--color-text-secondary)",
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
             transition: "transform 150ms ease",
           }}

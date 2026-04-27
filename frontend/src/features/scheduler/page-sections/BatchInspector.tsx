@@ -458,7 +458,12 @@ export function BatchInspector({
               style={{ borderColor: "var(--color-border-muted)" }}
             >
               <div className="flex items-center gap-1.5 mb-1.5">
-                <svg width="10" height="10" viewBox="0 0 16 16" fill="#9CA3AF">
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 16 16"
+                  style={{ fill: "var(--color-text-tertiary)" }}
+                >
                   <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4v4.25l3 1.75.75-1.3-2.5-1.45V5h-1.25z" />
                 </svg>
                 <span className="text-[10px] font-medium text-gray-400">
@@ -511,7 +516,12 @@ export function BatchInspector({
       {/* AI 스케줄링 근거 */}
       <div className="px-4 py-2">
         <div className="flex items-center gap-1.5 mb-1.5">
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="#9CA3AF">
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 16 16"
+            style={{ fill: "var(--color-text-tertiary)" }}
+          >
             <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a1 1 0 110 2 1 1 0 010-2zm-1 4h2v5H7V7z" />
           </svg>
           <span className="text-[10px] font-medium text-gray-400">
