@@ -30,13 +30,27 @@ const STATUS_CYCLE: Record<string, string> = {
   in_progress: "completed",
   completed: "planned",
 };
+// PR3 Task 2.4 — 토큰 참조로 재배선.
+// completed 색은 #059669 → var(--status-success) (#16a34a) — 미세 hue 변경 (시각 회귀 spec 검증).
 const STATUS_CONFIG: Record<
   string,
   { label: string; bg: string; text: string }
 > = {
-  planned: { label: "계획", bg: "#6B7280", text: "#fff" },
-  in_progress: { label: "진행", bg: "#2563EB", text: "#fff" },
-  completed: { label: "완료", bg: "#059669", text: "#fff" },
+  planned: {
+    label: "계획",
+    bg: "var(--status-idle)",
+    text: "var(--color-text-inverse)",
+  },
+  in_progress: {
+    label: "진행",
+    bg: "var(--status-info)",
+    text: "var(--color-text-inverse)",
+  },
+  completed: {
+    label: "완료",
+    bg: "var(--status-success)",
+    text: "var(--color-text-inverse)",
+  },
 };
 
 interface BatchInspectorProps {

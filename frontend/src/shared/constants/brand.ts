@@ -1,17 +1,21 @@
+// PR3 Task 2.1 — KBI_BRAND.colors.* 토큰 참조로 재배선.
+// 사용처는 inline style backgroundColor/color/border 등 CSS context (var() 해석됨).
+// SVG attribute 직접 참조 (fill="..." stroke="...") 는 PR3 Task 3에서 별도 처리.
+// 변경 시 globals.css 토큰 정의와 동기화.
 export const KBI_BRAND = {
   colors: {
-    primary: "#C41230",
-    primaryDark: "#9E0E27",
-    secondary: "#4A2C2A",
-    accent: "#D4A574",
-    background: "#FAFAFA",
-    surface: "#FFFFFF",
-    text: "#1A1A1A",
-    textMuted: "#6B7280",
-    border: "#E5E7EB",
-    success: "#16A34A",
-    warning: "#F59E0B",
-    error: "#DC2626",
+    primary: "var(--color-brand-primary)",
+    primaryDark: "var(--accent-primary-hover)",
+    secondary: "var(--kbi-brown)",
+    accent: "#D4A574", // (KBI 보조 — 토큰 미정의, 그대로 hex)
+    background: "var(--color-bg-muted)",
+    surface: "var(--bg-surface)",
+    text: "var(--color-text-primary)",
+    textMuted: "var(--color-text-secondary)",
+    border: "var(--color-border-default)",
+    success: "var(--status-success)",
+    warning: "var(--status-warning)",
+    error: "var(--color-danger)",
     // 간트 diff overlay 전용 팔레트 (compareMode ON 시 사용).
     // 의도: cascade(warning=#F59E0B) 와 diff 는 의미가 다르다 —
     //   cascade 는 "수락하면 발생할 미래 변화",
@@ -41,15 +45,8 @@ export const KBI_BRAND = {
 
 export type ProductGroup = keyof typeof KBI_BRAND.colors.taskColors;
 
-// 알려진 제품 그룹 색상 (best-effort 매핑)
-const KNOWN_TASK_COLORS: Record<string, string> = {
-  "TFR-CV-WB": "#C41230",
-  "TFR-CV": "#E65100",
-  HFCO: "#1565C0",
-  "TFR-8": "#6A1B9A",
-  "TFR-GV": "#2E7D32",
-  "CNCV-W": "#00695C",
-};
+// PR3 Task 2.3 — 기존 KNOWN_TASK_COLORS 제거, KBI_BRAND.colors.taskColors 단일 source.
+// getProductColor 가 KBI_BRAND.colors.taskColors 를 직접 조회하도록 변경.
 
 /**
  * SQ(mm²) → 배경색 매핑
@@ -135,8 +132,10 @@ function hashColor(str: string): string {
  * 3. 알 수 없는 그룹은 해시 기반 색상으로 폴백 — 크래시 없음
  */
 export function getProductColor(productGroup: string): string {
-  if (KNOWN_TASK_COLORS[productGroup]) return KNOWN_TASK_COLORS[productGroup];
-  for (const [key, color] of Object.entries(KNOWN_TASK_COLORS)) {
+  const map = KBI_BRAND.colors.taskColors as Record<string, string>;
+  if (map[productGroup] && productGroup !== "default") return map[productGroup];
+  for (const [key, color] of Object.entries(map)) {
+    if (key === "default") continue;
     if (productGroup.includes(key)) return color;
   }
   return hashColor(productGroup);
