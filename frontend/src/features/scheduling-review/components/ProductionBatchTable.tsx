@@ -349,11 +349,20 @@ export function ProductionBatchTable({
 
   function getWipNoteStyle(notes: string): React.CSSProperties {
     if (notes.startsWith("연선재고"))
-      return { backgroundColor: "var(--status-success-bg-soft)", color: "var(--status-success-text-deep)" }; // 초록
+      return {
+        backgroundColor: "var(--status-success-bg-soft)",
+        color: "var(--status-success-text-deep)",
+      }; // 초록
     if (notes.startsWith("절연재고"))
-      return { backgroundColor: "var(--status-info-bg)", color: "var(--status-info-text)" }; // 파랑
+      return {
+        backgroundColor: "var(--status-info-bg)",
+        color: "var(--status-info-text)",
+      }; // 파랑
     if (notes.startsWith("시스재고"))
-      return { backgroundColor: "#F5F3FF", color: "#6D28D9" }; // 보라
+      return {
+        backgroundColor: "var(--viz-violet-bg)",
+        color: "var(--viz-violet-text)",
+      }; // 보라
     return {
       backgroundColor: "var(--kbi-red-tint-5)",
       color: "var(--color-brand-primary)",
@@ -495,7 +504,10 @@ export function ProductionBatchTable({
               {hiddenCols.size > 0 && (
                 <>
                   <div
-                    style={{ borderTop: "1px solid var(--neutral-100)", margin: "4px 0" }}
+                    style={{
+                      borderTop: "1px solid var(--neutral-100)",
+                      margin: "4px 0",
+                    }}
                   />
                   <button
                     onClick={() => setHiddenCols(new Set())}
@@ -764,19 +776,28 @@ export function ProductionBatchTable({
                             <div className="flex items-center justify-between text-[10px] font-semibold">
                               <div className="flex items-center gap-2">
                                 {batchNum != null && (
-                                  <span style={{ color: "var(--color-text-secondary)" }}>
+                                  <span
+                                    style={{
+                                      color: "var(--color-text-secondary)",
+                                    }}
+                                  >
                                     배치 {batchNum}
                                   </span>
                                 )}
                                 {batchNum != null && (
-                                  <span style={{ color: "var(--neutral-200)" }}>—</span>
+                                  <span style={{ color: "var(--neutral-200)" }}>
+                                    —
+                                  </span>
                                 )}
                                 {group.label}
                               </div>
                               {firstBatch?.batch_remarks && (
                                 <span
                                   className="text-[10px] font-medium truncate ml-4"
-                                  style={{ color: "var(--color-text-secondary)", maxWidth: "60%" }}
+                                  style={{
+                                    color: "var(--color-text-secondary)",
+                                    maxWidth: "60%",
+                                  }}
                                   title={firstBatch.batch_remarks}
                                 >
                                   {firstBatch.batch_remarks}
@@ -846,7 +867,8 @@ export function ProductionBatchTable({
                                     className="px-3"
                                     style={{
                                       height: 36,
-                                      borderBottom: "1px solid var(--neutral-100)",
+                                      borderBottom:
+                                        "1px solid var(--neutral-100)",
                                       borderRight:
                                         colIdx < visibleCols.length - 1
                                           ? "1px solid var(--neutral-100)"
@@ -897,7 +919,8 @@ export function ProductionBatchTable({
                                             | "left"
                                             | "right",
                                           outline: "none",
-                                          border: "1px solid var(--status-info)",
+                                          border:
+                                            "1px solid var(--status-info)",
                                         }}
                                       />
                                     ) : col.key === "batch_label" ? (
@@ -934,7 +957,11 @@ export function ProductionBatchTable({
                                         }}
                                       >
                                         {getCellValue(col, batch) || (
-                                          <span style={{ color: "var(--neutral-200)" }}>
+                                          <span
+                                            style={{
+                                              color: "var(--neutral-200)",
+                                            }}
+                                          >
                                             –
                                           </span>
                                         )}
@@ -975,21 +1002,27 @@ export function ProductionBatchTable({
                                 {isFirst ? (
                                   <span
                                     className="text-[10px] font-medium"
-                                    style={{ color: "var(--color-text-secondary)" }}
+                                    style={{
+                                      color: "var(--color-text-secondary)",
+                                    }}
                                   >
                                     소계 {group.batches.length}건
                                   </span>
                                 ) : isTotalLen ? (
                                   <span
                                     className="text-[10px] font-semibold"
-                                    style={{ color: "var(--color-text-primary)" }}
+                                    style={{
+                                      color: "var(--color-text-primary)",
+                                    }}
                                   >
                                     {groupTotal.toLocaleString()}m
                                   </span>
                                 ) : isConverted ? (
                                   <span
                                     className="text-[10px] font-semibold"
-                                    style={{ color: "var(--color-text-primary)" }}
+                                    style={{
+                                      color: "var(--color-text-primary)",
+                                    }}
                                   >
                                     {groupConvertedTotal > 0
                                       ? groupConvertedTotal.toLocaleString()

@@ -246,8 +246,10 @@
   /* PR4 — Signal weekend (간트 주말 컬럼 마커) */
   --signal-weekend: #e57373;
 
-  /* PR4 — Viz violet (보조 status indicator) */
+  /* PR4 — Viz violet family (보조 status indicator: 시스재고 그룹 등) */
   --viz-violet: #8b5cf6;
+  --viz-violet-bg: #f5f3ff;
+  --viz-violet-text: #6d28d9;
 
   /* PR4 — Viz SQ cluster (wire-diameter dense palette, semantic names) */
   --viz-sq-warm-teal-light: #3d909e;
