@@ -165,12 +165,21 @@
   --status-success-bg: #dcfce7;
   --status-progress: var(--kbi-orange);
   --status-progress-bg: #fff1e5;
-  --status-warning: var(--kbi-champagne-gold);
-  --status-warning-bg: #f5efe9;
+  /* Warning: amber family (PR3 Task 1.2 — champagne-gold 토큰 → amber 변경.
+     코드 사용 빈도가 amber 압도적이고 경고 시각언어로 표준이라 통일.) */
+  --status-warning: #f59e0b;
+  --status-warning-bg: #fffbeb;
+  --status-warning-text: #92400e;
+  --status-warning-border: #fcd34d;
   --status-danger: var(--kbi-sunrise-red);
   --status-danger-bg: var(--kbi-red-tint-12);
   --status-idle: var(--kbi-silver);
   --status-idle-bg: #f3f3f4;
+  /* Info: blue family (PR3 Task 1.1 — foundation gap 보충.
+     in_progress / 정보 banner / 비교 모드에서 사용.) */
+  --status-info: #2563eb;
+  --status-info-bg: #eff6ff;
+  --status-info-text: #1e40af;
 
   /* ============================================================
      TYPE — fonts kept as current stack (Helvetica Neue 라이센스 회피)

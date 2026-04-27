@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+# PR3 visual regression baselines (local-only, regen via --update-snapshots)
+e2e/visual-regression.spec.ts-snapshots/
