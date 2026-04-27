@@ -181,6 +181,73 @@
   --status-info-bg: #eff6ff;
   --status-info-text: #1e40af;
 
+  /* PR4 — Status 깊이 변형 (UI 강조 단계별) */
+  --status-success-text: #15803d;
+  --status-success-text-deep: #065f46;
+  --status-success-bg-soft: #ecfdf5;
+  --status-success-border-soft: #bbf7d0;
+  --status-danger-text: #b91c1c;
+  --status-danger-text-deep: #7f1d1d;
+  --status-danger-text-soft: #fca5a5;
+  --status-danger-text-strong: #991b1b;
+  --status-info-text-deep: #1d4ed8;
+  --status-info-bg-soft: #f0f9ff;
+
+  /* PR4 — Alert (overlap 등 강도 ↑ severity, warning과 다른 시각 언어) */
+  --status-alert-bg: #ffedd5;
+  --status-alert-border: #fb923c;
+  --status-alert-text: #7c2d12;
+  --status-alert-text-soft: #9a3412;
+
+  /* PR4 — Signal/alarm (브랜드 변경 무관, max salience) */
+  --signal-alert: #ff0000;
+  --signal-selected: #fbbf24;
+
+  /* PR4 — Accent warm (KBI 보조 골드/베이지) */
+  --accent-warm: #d4a574;
+
+  /* PR4 — Viz process (공정별 categorical, EquipmentSidebar PROCESS_COLORS) */
+  --viz-process-drawing: #5c6bc0;
+  --viz-process-stranding: #26a69a;
+  --viz-process-hv-insulation: var(--color-brand-primary);
+  --viz-process-lv-insulation: #ef6c00;
+  --viz-process-taping: #7e57c2;
+  --viz-process-cabling: #42a5f5;
+  --viz-process-lv-jacketing: #66bb6a;
+  --viz-process-hv-jacketing: var(--color-brand-primary);
+  --viz-process-neutral-wire: #78909c;
+  --viz-process-default: #78909c;
+
+  /* PR4 — Viz product (제품 그룹 categorical, KBI_BRAND.colors.taskColors) */
+  --viz-product-tfr-cv-wb: var(--color-brand-primary);
+  --viz-product-tfr-cv: #e65100;
+  --viz-product-hfco: #1565c0;
+  --viz-product-tfr-8: #6a1b9a;
+  --viz-product-tfr-gv: #2e7d32;
+  --viz-product-cncv-w: #00695c;
+  --viz-product-default: #78909c;
+
+  /* PR4 — Viz diff (compareMode overlay) */
+  --viz-diff-added: #10b981;
+  --viz-diff-moved: #3b82f6;
+  --viz-diff-removed: #9ca3af;
+
+  /* PR4 — Viz SQ cluster (wire-diameter dense palette, semantic names) */
+  --viz-sq-warm-teal-light: #3d909e;
+  --viz-sq-warm-teal-mid: #2a7282;
+  --viz-sq-warm-teal-dark: #165666;
+  --viz-sq-slate-blue-light: #4d7eb0;
+  --viz-sq-slate-blue-mid: #355e94;
+  --viz-sq-slate-blue-dark: #1e4478;
+  --viz-sq-slate-blue-deep: #122e60;
+  --viz-sq-plum-light: #7a4898;
+  --viz-sq-plum-deep: #562878;
+  --viz-sq-forest-light: #3a8c5c;
+  --viz-sq-forest-deep: #1e6840;
+  --viz-sq-amber: #c07820;
+  --viz-sq-champagne: #937a61;
+  --viz-sq-crimson: #b01e38;
+
   /* ============================================================
      TYPE — fonts kept as current stack (Helvetica Neue 라이센스 회피)
      samildevkit 의 PretendardJP / Helvetica Neue 로컬은 미도입 (P6 결정).
