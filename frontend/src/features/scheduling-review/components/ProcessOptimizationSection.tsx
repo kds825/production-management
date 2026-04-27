@@ -149,9 +149,9 @@ export function ProcessOptimizationSection({
             onClick={() => setWipExpanded((v) => !v)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
             style={{
-              backgroundColor: wipExpanded ? "#EFF6FF" : "var(--neutral-100)",
-              color: wipExpanded ? "#2563EB" : "var(--color-text-secondary)",
-              border: `1px solid ${wipExpanded ? "#BFDBFE" : "var(--color-border-default)"}`,
+              backgroundColor: wipExpanded ? "var(--status-info-bg)" : "var(--neutral-100)",
+              color: wipExpanded ? "var(--status-info)" : "var(--color-text-secondary)",
+              border: `1px solid ${wipExpanded ? "var(--status-info-bg)" : "var(--color-border-default)"}`,
             }}
           >
             <span
@@ -161,7 +161,7 @@ export function ProcessOptimizationSection({
                 height: 6,
                 borderRadius: "50%",
                 backgroundColor: wipExpanded
-                  ? "#2563EB"
+                  ? "var(--status-info)"
                   : "var(--color-text-tertiary)",
               }}
             />

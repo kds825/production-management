@@ -420,9 +420,9 @@ export default function SchedulingReviewPage() {
           }
           className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-40"
           style={{
-            backgroundColor: "#EFF6FF",
-            color: "#1E40AF",
-            border: "1px solid #BFDBFE",
+            backgroundColor: "var(--status-info-bg)",
+            color: "var(--status-info-text)",
+            border: "1px solid var(--status-info-bg)",
           }}
           title={
             runs.find((r) => r.run_label === selectedRun)?.parent_run_label
@@ -555,9 +555,9 @@ export default function SchedulingReviewPage() {
                 }}
                 className="text-[11px] font-medium px-2 py-0.5 rounded cursor-pointer transition-colors hover:bg-blue-100"
                 style={{
-                  backgroundColor: "#EFF6FF",
-                  color: "#2563EB",
-                  border: "1px solid #BFDBFE",
+                  backgroundColor: "var(--status-info-bg)",
+                  color: "var(--status-info)",
+                  border: "1px solid var(--status-info-bg)",
                 }}
               >
                 외주 분류 {selectedRunInfo.outsource_count}건

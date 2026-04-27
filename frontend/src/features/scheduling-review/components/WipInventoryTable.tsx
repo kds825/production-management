@@ -199,8 +199,8 @@ export function WipInventoryTable({
                                     "절연",
                                   )
                                     ? {
-                                        backgroundColor: "#EFF6FF",
-                                        color: "#1D4ED8",
+                                        backgroundColor: "var(--status-info-bg)",
+                                        color: "var(--status-info-text)",
                                       }
                                     : {
                                         backgroundColor: "#ECFDF5",

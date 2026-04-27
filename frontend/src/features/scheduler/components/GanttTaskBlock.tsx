@@ -139,7 +139,7 @@ const SHEATH_COLOR_MAP: Record<string, string> = {
   흑: "#374151",
   갈: "#92400E",
   회: "#6B7280",
-  청: "#1E40AF",
+  청: "var(--status-info-text)",
   녹: "#065F46",
   황: "#B45309",
   "흑/적": "#C41230",

@@ -114,9 +114,9 @@ export function SchedulerToolbar({
           disabled={compareModeLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-60"
           style={{
-            backgroundColor: compareModeEnabled ? "#1E40AF" : "#EFF6FF",
-            color: compareModeEnabled ? "var(--color-text-inverse)" : "#1E40AF",
-            border: "1px solid #BFDBFE",
+            backgroundColor: compareModeEnabled ? "var(--status-info-text)" : "var(--status-info-bg)",
+            color: compareModeEnabled ? "var(--color-text-inverse)" : "var(--status-info-text)",
+            border: "1px solid var(--status-info-bg)",
           }}
           title={
             compareModeEnabled

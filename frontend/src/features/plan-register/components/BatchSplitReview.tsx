@@ -268,7 +268,7 @@ function CandidateCard({
       style={{
         border: c.auto_split_recommended
           ? "1px solid #FCD34D"
-          : "1px solid #BFDBFE",
+          : "1px solid var(--status-info-bg)",
         backgroundColor: c.auto_split_recommended
           ? "#FFFBEB"
           : "var(--bg-surface)",
@@ -302,7 +302,7 @@ function CandidateCard({
         <span
           className="text-[10px] font-medium"
           style={{
-            color: splitCount > 1 ? "#1E40AF" : "var(--color-text-tertiary)",
+            color: splitCount > 1 ? "var(--status-info-text)" : "var(--color-text-tertiary)",
           }}
         >
           {splitCount > 1 ? `${splitCount}개로 분할` : "분할 없음"}

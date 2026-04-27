@@ -547,7 +547,7 @@ function BatchGridWithFrozen({
       case "completed":
         return { label: "완료", bg: "#D1FAE5", fg: "var(--color-success)" };
       case "wip_complete":
-        return { label: "WIP완료", bg: "#DBEAFE", fg: "#1D4ED8" };
+        return { label: "WIP완료", bg: "var(--status-info-bg)", fg: "var(--status-info-text)" };
       case "regenerated":
         return { label: "재생성", bg: "#F3F4F6", fg: "#374151" };
       case "from_file":
@@ -582,7 +582,7 @@ function BatchGridWithFrozen({
             </span>
           )}
           {counts.wip_complete > 0 && (
-            <span style={{ color: "#1D4ED8" }}>
+            <span style={{ color: "var(--status-info-text)" }}>
               WIP완료 {counts.wip_complete}
             </span>
           )}
@@ -1584,16 +1584,16 @@ function ErpUploadSection({
                 onClick={() => setSplitModalOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors"
                 style={{
-                  border: "1px solid #BFDBFE",
+                  border: "1px solid var(--status-info-bg)",
                   backgroundColor: "#F0F7FF",
-                  color: "#1E40AF",
+                  color: "var(--status-info-text)",
                 }}
               >
                 <span>✂️</span>
                 배치 분할 검토
                 <span
                   className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
-                  style={{ backgroundColor: "#DBEAFE", color: "#1E40AF" }}
+                  style={{ backgroundColor: "var(--status-info-bg)", color: "var(--status-info-text)" }}
                 >
                   {result.split_candidates.length}
                 </span>
@@ -1703,7 +1703,7 @@ function ErpUploadSection({
                   {
                     key: "in_progress",
                     label: "진행중",
-                    color: "#2563EB",
+                    color: "var(--status-info)",
                     frozen: true,
                   },
                   {

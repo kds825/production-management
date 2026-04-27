@@ -351,7 +351,7 @@ export function ProductionBatchTable({
     if (notes.startsWith("연선재고"))
       return { backgroundColor: "#ECFDF5", color: "#065F46" }; // 초록
     if (notes.startsWith("절연재고"))
-      return { backgroundColor: "#EFF6FF", color: "#1D4ED8" }; // 파랑
+      return { backgroundColor: "var(--status-info-bg)", color: "var(--status-info-text)" }; // 파랑
     if (notes.startsWith("시스재고"))
       return { backgroundColor: "#F5F3FF", color: "#6D28D9" }; // 보라
     return {
@@ -794,12 +794,12 @@ export function ProductionBatchTable({
                             !!batch.wip_matched_id ||
                             batch.notes.includes("재고");
                           const rowBg = isHighlighted
-                            ? "#EFF6FF"
+                            ? "var(--status-info-bg)"
                             : isWipSkipped
                               ? "var(--neutral-100)"
                               : "var(--bg-surface)";
                           const hoverBg = isHighlighted
-                            ? "#DBEAFE"
+                            ? "var(--status-info-bg)"
                             : isWipSkipped
                               ? "var(--color-border-default)"
                               : ROW_HOVER_BG;
@@ -828,7 +828,7 @@ export function ProductionBatchTable({
                                 (
                                   e.currentTarget as HTMLElement
                                 ).style.backgroundColor = isHighlighted
-                                  ? "#EFF6FF"
+                                  ? "var(--status-info-bg)"
                                   : isWipSkipped
                                     ? "var(--neutral-100)"
                                     : "var(--bg-surface)";
@@ -858,7 +858,7 @@ export function ProductionBatchTable({
                                       verticalAlign: "middle",
                                       overflow: "hidden",
                                       outline: currentlyEditing
-                                        ? "2px solid #3B82F6"
+                                        ? "2px solid var(--status-info)"
                                         : "none",
                                       outlineOffset: -2,
                                       cursor: editable ? "text" : "default",
@@ -897,7 +897,7 @@ export function ProductionBatchTable({
                                             | "left"
                                             | "right",
                                           outline: "none",
-                                          border: "1px solid #3B82F6",
+                                          border: "1px solid var(--status-info)",
                                         }}
                                       />
                                     ) : col.key === "batch_label" ? (
@@ -998,7 +998,7 @@ export function ProductionBatchTable({
                                 ) : col.key === "notes" ? (
                                   <span
                                     className="text-[10px]"
-                                    style={{ color: "#2563EB" }}
+                                    style={{ color: "var(--status-info)" }}
                                   >
                                     {(() => {
                                       const wipM: Record<string, number> = {};

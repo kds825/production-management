@@ -604,7 +604,7 @@ export function SchedulingResultTable({
                                     verticalAlign: "middle",
                                     overflow: "hidden",
                                     outline: currentlyEditing
-                                      ? "2px solid #3B82F6"
+                                      ? "2px solid var(--status-info)"
                                       : "none",
                                     outlineOffset: -2,
                                     cursor: canEdit ? "text" : "default",
@@ -647,7 +647,7 @@ export function SchedulingResultTable({
                                           | "left"
                                           | "right",
                                         outline: "none",
-                                        border: "1px solid #3B82F6",
+                                        border: "1px solid var(--status-info)",
                                       }}
                                     />
                                   ) : col.key === "batch_label" ? (
@@ -663,8 +663,8 @@ export function SchedulingResultTable({
                                     <span
                                       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
                                       style={{
-                                        backgroundColor: "#DBEAFE",
-                                        color: "#1D4ED8",
+                                        backgroundColor: "var(--status-info-bg)",
+                                        color: "var(--status-info-text)",
                                       }}
                                     >
                                       {batch.notes}
@@ -718,7 +718,7 @@ export function SchedulingResultTable({
                           className="px-2 py-1 text-[10px]"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
-                            color: "#2563EB",
+                            color: "var(--status-info)",
                           }}
                         >
                           {(() => {
