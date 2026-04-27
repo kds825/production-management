@@ -54,16 +54,18 @@ export function VoltageFilter() {
                 onMouseLeave={() => setShowHighVoltageTooltip(false)}
                 className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
                 style={{
-                  backgroundColor: isActiveTab ? "#4A2C2A" : "transparent",
+                  backgroundColor: isActiveTab
+                    ? "var(--kbi-brown)"
+                    : "transparent",
                   color: isDisabled
-                    ? "#D1D5DB"
+                    ? "var(--neutral-300)"
                     : isActiveTab
-                      ? "#FFFFFF"
-                      : "#6B7280",
+                      ? "var(--color-text-inverse)"
+                      : "var(--color-text-secondary)",
                   cursor: isDisabled ? "not-allowed" : "pointer",
                   border: isActiveTab
-                    ? "1px solid #4A2C2A"
-                    : "1px solid #E5E7EB",
+                    ? "1px solid var(--kbi-brown)"
+                    : "1px solid var(--color-border-default)",
                 }}
               >
                 {tab}
@@ -73,7 +75,7 @@ export function VoltageFilter() {
               {isDisabled && showHighVoltageTooltip && (
                 <div
                   className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded text-[10px] text-white whitespace-nowrap z-50"
-                  style={{ backgroundColor: "#374151" }}
+                  style={{ backgroundColor: "var(--neutral-text-primary)" }}
                 >
                   준비 중
                   <div
@@ -81,7 +83,7 @@ export function VoltageFilter() {
                     style={{
                       borderLeft: "4px solid transparent",
                       borderRight: "4px solid transparent",
-                      borderTop: "4px solid #374151",
+                      borderTop: "4px solid var(--neutral-text-primary)",
                     }}
                   />
                 </div>
@@ -95,7 +97,7 @@ export function VoltageFilter() {
       {voltageFilter === "저압" && (
         <div
           className="flex items-center gap-0.5 pl-3"
-          style={{ borderLeft: "1px solid #E5E7EB" }}
+          style={{ borderLeft: "1px solid var(--color-border-default)" }}
         >
           {EQUIPMENT_GROUPS.map((group) => {
             const isActive = equipmentFilter === group;
@@ -105,8 +107,12 @@ export function VoltageFilter() {
                 onClick={() => setEquipmentFilter(group)}
                 className="text-[11px] font-medium px-2.5 py-1 rounded transition-colors"
                 style={{
-                  backgroundColor: isActive ? "#FEF2F2" : "transparent",
-                  color: isActive ? "#C41230" : "#6B7280",
+                  backgroundColor: isActive
+                    ? "var(--kbi-red-tint-5)"
+                    : "transparent",
+                  color: isActive
+                    ? "var(--color-brand-primary)"
+                    : "var(--color-text-secondary)",
                   border: isActive
                     ? "1px solid #FECACA"
                     : "1px solid transparent",

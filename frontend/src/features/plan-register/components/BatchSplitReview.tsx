@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-const PRIMARY = "#C41230";
+const PRIMARY = "var(--color-brand-primary)";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /* ── Types ────────────────────────────────────────────── */
@@ -192,7 +192,7 @@ export function BatchSplitReview({
         <div
           className="rounded-md p-2 text-xs"
           style={{
-            backgroundColor: "#FEF2F2",
+            backgroundColor: "var(--kbi-red-tint-5)",
             color: "#991B1B",
             border: "1px solid #FECACA",
           }}
@@ -204,7 +204,7 @@ export function BatchSplitReview({
       {/* Footer */}
       <div
         className="flex items-center justify-between pt-3"
-        style={{ borderTop: "1px solid #E5E7EB" }}
+        style={{ borderTop: "1px solid var(--color-border-default)" }}
       >
         <div className="text-[11px] text-gray-500">
           {splitSummary.length > 0 ? (
@@ -222,7 +222,10 @@ export function BatchSplitReview({
           <button
             onClick={onClose}
             className="text-[11px] font-medium px-4 py-2 rounded-md transition-colors"
-            style={{ border: "1px solid #D1D5DB", color: "#6B7280" }}
+            style={{
+              border: "1px solid var(--neutral-300)",
+              color: "var(--color-text-secondary)",
+            }}
           >
             취소
           </button>
@@ -263,8 +266,12 @@ function CandidateCard({
     <div
       className="rounded-md p-3 space-y-3"
       style={{
-        border: c.auto_split_recommended ? "1px solid #FCD34D" : "1px solid #BFDBFE",
-        backgroundColor: c.auto_split_recommended ? "#FFFBEB" : "#FFFFFF",
+        border: c.auto_split_recommended
+          ? "1px solid #FCD34D"
+          : "1px solid #BFDBFE",
+        backgroundColor: c.auto_split_recommended
+          ? "#FFFBEB"
+          : "var(--bg-surface)",
       }}
     >
       {/* Title row */}
@@ -272,7 +279,7 @@ function CandidateCard({
         <div className="flex items-center gap-2">
           <span
             className="text-[10px] font-bold rounded px-1.5 py-0.5"
-            style={{ backgroundColor: "#FEF2F2", color: PRIMARY }}
+            style={{ backgroundColor: "var(--kbi-red-tint-5)", color: PRIMARY }}
           >
             {index + 1}
           </span>
@@ -294,7 +301,9 @@ function CandidateCard({
         </div>
         <span
           className="text-[10px] font-medium"
-          style={{ color: splitCount > 1 ? "#1E40AF" : "#9CA3AF" }}
+          style={{
+            color: splitCount > 1 ? "#1E40AF" : "var(--color-text-tertiary)",
+          }}
         >
           {splitCount > 1 ? `${splitCount}개로 분할` : "분할 없음"}
         </span>
@@ -307,13 +316,14 @@ function CandidateCard({
             <div
               className="rounded px-2 py-1.5 text-center min-w-[80px]"
               style={{
-                backgroundColor:
-                  chunk.has_urgent
-                    ? "#FEF3C7"
-                    : i % 2 === 0
-                      ? "#F3F4F6"
-                      : "#E5E7EB",
-                border: chunk.has_urgent ? "1px solid #FCD34D" : "1px solid #D1D5DB",
+                backgroundColor: chunk.has_urgent
+                  ? "#FEF3C7"
+                  : i % 2 === 0
+                    ? "var(--neutral-100)"
+                    : "var(--color-border-default)",
+                border: chunk.has_urgent
+                  ? "1px solid #FCD34D"
+                  : "1px solid var(--neutral-300)",
               }}
             >
               <div className="text-[10px] font-medium text-gray-700">
@@ -331,15 +341,17 @@ function CandidateCard({
                 className="text-[9px]"
                 style={{
                   color:
-                    chunk.days_until_due !== undefined && chunk.days_until_due <= 7
-                      ? "#DC2626"
-                      : "#9CA3AF",
+                    chunk.days_until_due !== undefined &&
+                    chunk.days_until_due <= 7
+                      ? "var(--color-danger)"
+                      : "var(--color-text-tertiary)",
                 }}
               >
                 ~{chunk.max_due?.slice(5)}
-                {chunk.days_until_due !== undefined && chunk.days_until_due <= 14 && (
-                  <span className="ml-0.5">({chunk.days_until_due}일)</span>
-                )}
+                {chunk.days_until_due !== undefined &&
+                  chunk.days_until_due <= 14 && (
+                    <span className="ml-0.5">({chunk.days_until_due}일)</span>
+                  )}
               </div>
             </div>
 
@@ -351,16 +363,20 @@ function CandidateCard({
               >
                 <span
                   className="text-[9px] font-medium"
-                  style={{ color: cuts[i] ? PRIMARY : "#9CA3AF" }}
+                  style={{
+                    color: cuts[i] ? PRIMARY : "var(--color-text-tertiary)",
+                  }}
                 >
                   {c.gaps_days[i]}일
                 </span>
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] transition-colors"
                   style={{
-                    backgroundColor: cuts[i] ? "#FEF2F2" : "#F9FAFB",
-                    border: `1.5px solid ${cuts[i] ? PRIMARY : "#D1D5DB"}`,
-                    color: cuts[i] ? PRIMARY : "#9CA3AF",
+                    backgroundColor: cuts[i]
+                      ? "var(--kbi-red-tint-5)"
+                      : "var(--bg-surface-alt)",
+                    border: `1.5px solid ${cuts[i] ? PRIMARY : "var(--neutral-300)"}`,
+                    color: cuts[i] ? PRIMARY : "var(--color-text-tertiary)",
                   }}
                 >
                   {cuts[i] ? "✂️" : "·"}

@@ -115,11 +115,14 @@ export function FileUploadSection() {
     setValidationError(null);
   }, [setUploadedFile, setBatches, setIsAnalyzing, setIsAnalyzed]);
 
-  const uploadAreaBorderColor = isDragOver ? PRIMARY : "#D1D5DB";
+  const uploadAreaBorderColor = isDragOver ? PRIMARY : "var(--neutral-300)";
 
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold mb-1" style={{ color: "#111827" }}>
+      <h3
+        className="text-sm font-semibold mb-1"
+        style={{ color: "var(--color-text-primary)" }}
+      >
         1. 생산계획등록 파일 업로드
       </h3>
       <p className="text-xs text-gray-500 mb-3">
@@ -132,7 +135,9 @@ export function FileUploadSection() {
           className="rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors"
           style={{
             border: `1.5px dashed ${uploadAreaBorderColor}`,
-            backgroundColor: isDragOver ? "#FEF2F2" : "#FFFFFF",
+            backgroundColor: isDragOver
+              ? "var(--kbi-red-tint-5)"
+              : "var(--bg-surface)",
             minHeight: 120,
             transition: "border-color 150ms ease, background-color 150ms ease",
           }}
@@ -184,14 +189,21 @@ export function FileUploadSection() {
         /* 파일 카드 */
         <div
           className="rounded-lg p-3 flex items-center justify-between gap-3"
-          style={{ border: "1px solid #E5E7EB", backgroundColor: "#FFFFFF" }}
+          style={{
+            border: "1px solid var(--color-border-default)",
+            backgroundColor: "var(--bg-surface)",
+          }}
           onMouseEnter={() => setShowDeleteHover(true)}
           onMouseLeave={() => setShowDeleteHover(false)}
         >
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="flex-shrink-0 rounded flex items-center justify-center"
-              style={{ width: 36, height: 36, backgroundColor: "#FEF2F2" }}
+              style={{
+                width: 36,
+                height: 36,
+                backgroundColor: "var(--kbi-red-tint-5)",
+              }}
             >
               <svg
                 width="18"
@@ -210,7 +222,7 @@ export function FileUploadSection() {
             <div className="min-w-0">
               <p
                 className="text-xs font-medium truncate"
-                style={{ color: "#111827" }}
+                style={{ color: "var(--color-text-primary)" }}
               >
                 {uploadedFile.name}
               </p>
@@ -227,17 +239,19 @@ export function FileUploadSection() {
                 onClick={handleDelete}
                 className="text-[11px] font-medium px-2.5 py-1.5 rounded-md transition-colors"
                 style={{
-                  border: "1px solid #E5E7EB",
-                  color: "#6B7280",
+                  border: "1px solid var(--color-border-default)",
+                  color: "var(--color-text-secondary)",
                   backgroundColor: "transparent",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "#C41230";
-                  e.currentTarget.style.color = "#C41230";
+                  e.currentTarget.style.borderColor =
+                    "var(--color-brand-primary)";
+                  e.currentTarget.style.color = "var(--color-brand-primary)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#E5E7EB";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.borderColor =
+                    "var(--color-border-default)";
+                  e.currentTarget.style.color = "var(--color-text-secondary)";
                 }}
               >
                 삭제하기
@@ -249,8 +263,13 @@ export function FileUploadSection() {
               className="text-[11px] font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors"
               style={{
                 backgroundColor:
-                  isAnalyzing || isAnalyzed ? "#E5E7EB" : PRIMARY,
-                color: isAnalyzing || isAnalyzed ? "#9CA3AF" : "#FFFFFF",
+                  isAnalyzing || isAnalyzed
+                    ? "var(--color-border-default)"
+                    : PRIMARY,
+                color:
+                  isAnalyzing || isAnalyzed
+                    ? "var(--color-text-tertiary)"
+                    : "var(--color-text-inverse)",
                 cursor: isAnalyzing || isAnalyzed ? "not-allowed" : "pointer",
               }}
             >
@@ -285,7 +304,10 @@ export function FileUploadSection() {
 
       {/* 유효성 오류 메시지 */}
       {validationError && (
-        <p className="text-[11px] mt-1.5" style={{ color: "#C41230" }}>
+        <p
+          className="text-[11px] mt-1.5"
+          style={{ color: "var(--color-brand-primary)" }}
+        >
           {validationError}
         </p>
       )}
