@@ -89,7 +89,7 @@ export function CompareDetailsModal({
                 </div>
                 <div
                   className="rounded p-3 text-center"
-                  style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+                  style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
                 >
                   <div className="text-[10px] font-medium">이동됨</div>
                   <div className="text-2xl font-bold">
@@ -218,7 +218,7 @@ export function CompareDetailsModal({
                         >
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: "#D97706" }}
+                            style={{ backgroundColor: "var(--status-warning)" }}
                           />
                           <span className="font-medium">
                             {t.sales_order_id || "-"}

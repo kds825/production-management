@@ -26,11 +26,11 @@ const SEVERITY_STYLES: Record<
     badgeBg: "var(--color-danger)",
   },
   warning: {
-    bg: "#FFFBEB",
-    border: "#FDE68A",
-    text: "#92400E",
+    bg: "var(--status-warning-bg)",
+    border: "var(--status-warning-border)",
+    text: "var(--status-warning-text)",
     icon: "⚠️",
-    badgeBg: "#F59E0B",
+    badgeBg: "var(--status-warning)",
   },
 };
 

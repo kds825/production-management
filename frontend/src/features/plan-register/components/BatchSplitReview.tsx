@@ -150,7 +150,7 @@ export function BatchSplitReview({
           {candidates.some((c) => c.auto_split_recommended) && (
             <span
               className="ml-2 rounded px-1 py-0.5 font-semibold"
-              style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+              style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
             >
               ⚡ 긴급 포함
             </span>
@@ -267,10 +267,10 @@ function CandidateCard({
       className="rounded-md p-3 space-y-3"
       style={{
         border: c.auto_split_recommended
-          ? "1px solid #FCD34D"
+          ? "1px solid var(--status-warning-border)"
           : "1px solid var(--status-info-bg)",
         backgroundColor: c.auto_split_recommended
-          ? "#FFFBEB"
+          ? "var(--status-warning-bg)"
           : "var(--bg-surface)",
       }}
     >
@@ -292,7 +292,7 @@ function CandidateCard({
           {c.auto_split_recommended && (
             <span
               className="text-[9px] font-semibold rounded px-1 py-0.5"
-              style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+              style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
               title={c.urgency_reason}
             >
               ⚡ 자동분할 권고
@@ -317,19 +317,19 @@ function CandidateCard({
               className="rounded px-2 py-1.5 text-center min-w-[80px]"
               style={{
                 backgroundColor: chunk.has_urgent
-                  ? "#FEF3C7"
+                  ? "var(--status-warning-bg)"
                   : i % 2 === 0
                     ? "var(--neutral-100)"
                     : "var(--color-border-default)",
                 border: chunk.has_urgent
-                  ? "1px solid #FCD34D"
+                  ? "1px solid var(--status-warning-border)"
                   : "1px solid var(--neutral-300)",
               }}
             >
               <div className="text-[10px] font-medium text-gray-700">
                 {chunk.order_count}수주
                 {chunk.has_urgent && (
-                  <span className="ml-0.5" style={{ color: "#D97706" }}>
+                  <span className="ml-0.5" style={{ color: "var(--status-warning)" }}>
                     ⚡
                   </span>
                 )}

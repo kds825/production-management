@@ -45,7 +45,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
         >
           외주 생산 ({orders.length}건)
         </h3>
-        <span className="text-[11px]" style={{ color: "#92400E" }}>
+        <span className="text-[11px]" style={{ color: "var(--status-warning-text)" }}>
           외주 업체에 발주되는 항목입니다
         </span>
       </div>
@@ -54,8 +54,8 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
       <div
         className="rounded-lg overflow-hidden"
         style={{
-          border: "1px solid #F59E0B",
-          backgroundColor: "#FFFBEB",
+          border: "1px solid var(--status-warning)",
+          backgroundColor: "var(--status-warning-bg)",
         }}
       >
         <div className="overflow-x-auto">
@@ -73,17 +73,17 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
               ))}
             </colgroup>
             <thead>
-              <tr style={{ backgroundColor: "#FEF3C7" }}>
+              <tr style={{ backgroundColor: "var(--status-warning-bg)" }}>
                 {COL_DEFS.map((col, i) => (
                   <th
                     key={col.key}
                     className="text-[10px] font-semibold px-3 py-2"
                     style={{
-                      color: "#92400E",
+                      color: "var(--status-warning-text)",
                       textAlign: col.align as "left" | "right",
-                      borderBottom: "1px solid #FCD34D",
+                      borderBottom: "1px solid var(--status-warning-border)",
                       borderRight:
-                        i < COL_DEFS.length - 1 ? "1px solid #FCD34D" : "none",
+                        i < COL_DEFS.length - 1 ? "1px solid var(--status-warning-border)" : "none",
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -94,14 +94,14 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
             </thead>
             <tbody>
               {orders.map((order, rowIdx) => {
-                const rowBg = rowIdx % 2 === 0 ? "#FFFBEB" : "#FEF3C7";
+                const rowBg = rowIdx % 2 === 0 ? "var(--status-warning-bg)" : "var(--status-warning-bg)";
                 return (
                   <tr
                     key={`${order.order_id}-${order.order_line}`}
                     style={{ backgroundColor: rowBg }}
                     onMouseEnter={(e) => {
                       (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "#FDE68A";
+                        "var(--status-warning-border)";
                     }}
                     onMouseLeave={(e) => {
                       (e.currentTarget as HTMLElement).style.backgroundColor =
@@ -114,13 +114,13 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                         className="px-3"
                         style={{
                           height: 36,
-                          borderBottom: "1px solid #FCD34D",
+                          borderBottom: "1px solid var(--status-warning-border)",
                           borderRight:
                             colIdx < COL_DEFS.length - 1
-                              ? "1px solid #FEF3C7"
+                              ? "1px solid var(--status-warning-bg)"
                               : "none",
                           borderLeft:
-                            colIdx === 0 ? "3px solid #F59E0B" : "none",
+                            colIdx === 0 ? "3px solid var(--status-warning)" : "none",
                           verticalAlign: "middle",
                           overflow: "hidden",
                         }}

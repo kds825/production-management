@@ -216,9 +216,9 @@ function DiffSummaryPanel({
       label: "이동",
       value: moved,
       Icon: ArrowsRightLeftIcon,
-      bg: "#FEF3C7", // warning-subtle (주황/노랑 계열 — 일정 이동)
+      bg: "var(--status-warning-bg)", // warning-subtle (주황/노랑 계열 — 일정 이동)
       fg: "var(--color-warning)",
-      border: "#FDE68A",
+      border: "var(--status-warning-border)",
     },
     {
       key: "added",
@@ -452,7 +452,7 @@ function OrderDiffSummaryPanel({ diff }: { diff: OrderDiffSummary }) {
       key: "updated",
       label: "수정",
       value: diff.updated,
-      bg: "#FEF3C7",
+      bg: "var(--status-warning-bg)",
       fg: "var(--color-warning)",
     },
     {
@@ -543,7 +543,7 @@ function BatchGridWithFrozen({
   ): { label: string; bg: string; fg: string } => {
     switch (status) {
       case "in_progress":
-        return { label: "진행중", bg: "#FEF3C7", fg: "var(--color-warning)" };
+        return { label: "진행중", bg: "var(--status-warning-bg)", fg: "var(--color-warning)" };
       case "completed":
         return { label: "완료", bg: "#D1FAE5", fg: "var(--color-success)" };
       case "wip_complete":
@@ -1507,8 +1507,8 @@ function ErpUploadSection({
             <div
               className="rounded-lg p-3 text-xs space-y-1"
               style={{
-                backgroundColor: "#FFFBEB",
-                border: "1px solid #FDE68A",
+                backgroundColor: "var(--status-warning-bg)",
+                border: "1px solid var(--status-warning-border)",
               }}
             >
               <p className="font-semibold text-yellow-800">경고</p>
@@ -1715,7 +1715,7 @@ function ErpUploadSection({
                   {
                     key: "wip_complete",
                     label: "WIP 매칭 완료",
-                    color: "#F59E0B",
+                    color: "var(--status-warning)",
                     frozen: true,
                   },
                   {

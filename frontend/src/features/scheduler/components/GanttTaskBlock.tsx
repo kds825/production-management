@@ -137,7 +137,7 @@ function splitByWeekends(
 /** 시스 공정(SH-*) 설비의 sheath_color → 블록 배경색 매핑 */
 const SHEATH_COLOR_MAP: Record<string, string> = {
   흑: "#374151",
-  갈: "#92400E",
+  갈: "var(--status-warning-text)",
   회: "#6B7280",
   청: "var(--status-info-text)",
   녹: "#065F46",
@@ -1002,7 +1002,7 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
             )}
             {lotLabel && (
               <div
-                style={{ marginBottom: 4, color: "#FCD34D", fontWeight: 600 }}
+                style={{ marginBottom: 4, color: "var(--status-warning-border)", fontWeight: 600 }}
               >
                 작업지시: {lotLabel} ({task.volume_m.toLocaleString()}m)
               </div>

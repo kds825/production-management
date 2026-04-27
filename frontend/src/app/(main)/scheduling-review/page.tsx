@@ -572,7 +572,7 @@ export default function SchedulingReviewPage() {
               <div className="h-4 w-px bg-gray-200" />
               <span
                 className="text-[11px] font-medium flex items-center gap-1"
-                style={{ color: "#D97706" }}
+                style={{ color: "var(--status-warning)" }}
               >
                 <svg
                   width="12"
@@ -869,7 +869,7 @@ export default function SchedulingReviewPage() {
                     </div>
                     <div
                       className="rounded p-3 text-center"
-                      style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+                      style={{ backgroundColor: "var(--status-warning-bg)", color: "var(--status-warning-text)" }}
                     >
                       <div className="text-[10px] font-medium">이동됨</div>
                       <div className="text-2xl font-bold">
@@ -990,7 +990,7 @@ export default function SchedulingReviewPage() {
                             >
                               <span
                                 className="inline-block w-1.5 h-1.5 rounded-full"
-                                style={{ backgroundColor: "#D97706" }}
+                                style={{ backgroundColor: "var(--status-warning)" }}
                               />
                               <span className="font-medium">
                                 {t.sales_order_id || "-"}

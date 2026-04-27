@@ -122,9 +122,9 @@ export function SchedulerBanners({
         <div
           className="fixed bottom-6 left-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium"
           style={{
-            backgroundColor: "#FFFBEB",
-            color: "#92400E",
-            border: "1px solid #FCD34D",
+            backgroundColor: "var(--status-warning-bg)",
+            color: "var(--status-warning-text)",
+            border: "1px solid var(--status-warning-border)",
             transform: "translateX(-50%)",
           }}
         >
@@ -133,7 +133,7 @@ export function SchedulerBanners({
             height="14"
             viewBox="0 0 16 16"
             fill="currentColor"
-            style={{ color: "#D97706", flexShrink: 0 }}
+            style={{ color: "var(--status-warning)", flexShrink: 0 }}
           >
             <path d="M8 1L1 14h14L8 1zm0 2.5l5.5 9.5h-11L8 3.5zM7.25 7v3.5h1.5V7h-1.5zm0 4.5v1.5h1.5v-1.5h-1.5z" />
           </svg>

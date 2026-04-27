@@ -113,7 +113,7 @@ export function OrderCard({ order, disableDrag = false }: OrderCardProps) {
     연선: "#A5B4FC",
     B100: "#67E8F9",
     A100: "#6EE7B7",
-    A120: "#FCD34D",
+    A120: "var(--status-warning-border)",
   };
 
   return (

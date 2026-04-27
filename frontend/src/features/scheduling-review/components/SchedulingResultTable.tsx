@@ -503,12 +503,12 @@ export function SchedulingResultTable({
                           !!batch.wip_matched_id ||
                           batch.notes.includes("재고");
                         const rowBg = isNewRow
-                          ? "#FFFBEB"
+                          ? "var(--status-warning-bg)"
                           : isWipSkipped
                             ? "var(--neutral-100)"
                             : "var(--bg-surface)";
                         const hoverBg = isNewRow
-                          ? "#FEF3C7"
+                          ? "var(--status-warning-bg)"
                           : isWipSkipped
                             ? "var(--color-border-default)"
                             : ROW_HOVER_BG;
@@ -539,7 +539,7 @@ export function SchedulingResultTable({
                               ).style.backgroundColor = isSelected
                                 ? "#FEE2E2"
                                 : isNewRow
-                                  ? "#FFFBEB"
+                                  ? "var(--status-warning-bg)"
                                   : isWipSkipped
                                     ? "var(--neutral-100)"
                                     : "var(--bg-surface)";
