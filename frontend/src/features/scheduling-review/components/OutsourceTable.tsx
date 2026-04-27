@@ -133,7 +133,7 @@ export function OutsourceTable({ orders }: OutsourceTableProps) {
                           }}
                         >
                           {getCellValue(col, order) || (
-                            <span style={{ color: "#CBD5E1" }}>–</span>
+                            <span style={{ color: "var(--neutral-200)" }}>–</span>
                           )}
                         </span>
                       </td>

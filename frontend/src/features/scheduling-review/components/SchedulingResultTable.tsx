@@ -43,7 +43,7 @@ const COL_DEFS = [
   { key: "convertedQty", label: "환산수량", align: "right", width: 80 },
 ] as const;
 
-const ROW_HOVER_BG = "#F8F9FA";
+const ROW_HOVER_BG = "var(--neutral-100)";
 
 /** 인라인 편집 가능한 컬럼 키 */
 const EDITABLE_KEYS = new Set([
@@ -401,14 +401,14 @@ export function SchedulingResultTable({
                 ))}
               </colgroup>
               <thead>
-                <tr style={{ backgroundColor: "#F5F7FA" }}>
+                <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                   {crudMode === "delete" && (
                     <th
                       className="text-[10px] font-semibold px-1 py-2"
                       style={{
-                        color: "#64748B",
+                        color: "var(--color-text-secondary)",
                         borderBottom: "2px solid var(--neutral-300)",
-                        borderRight: "1px solid #E2E8F0",
+                        borderRight: "1px solid var(--neutral-200)",
                         textAlign: "center",
                         whiteSpace: "nowrap",
                       }}
@@ -421,12 +421,12 @@ export function SchedulingResultTable({
                       key={col.key}
                       className="text-[10px] font-semibold px-3 py-2"
                       style={{
-                        color: "#64748B",
+                        color: "var(--color-text-secondary)",
                         textAlign: col.align as "left" | "right",
                         borderBottom: "2px solid var(--neutral-300)",
                         borderRight:
                           i < COL_DEFS.length - 1
-                            ? "1px solid #E2E8F0"
+                            ? "1px solid var(--neutral-200)"
                             : "none",
                         whiteSpace: "nowrap",
                       }}
@@ -459,34 +459,34 @@ export function SchedulingResultTable({
                   return (
                     <React.Fragment key={group.key}>
                       {/* 규격 그룹 헤더 행 */}
-                      <tr style={{ backgroundColor: "#EEF2F7" }}>
+                      <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                         <td
                           colSpan={colSpan}
                           className="px-3"
                           style={{
                             paddingTop: 5,
                             paddingBottom: 5,
-                            borderTop: "2px solid #CBD5E1",
+                            borderTop: "2px solid var(--neutral-200)",
                             borderBottom: "1px solid var(--neutral-300)",
-                            color: "#334155",
+                            color: "var(--color-text-primary)",
                           }}
                         >
                           <div className="flex items-center justify-between text-[10px] font-semibold">
                             <div className="flex items-center gap-2">
                               {batchNum != null && (
-                                <span style={{ color: "#64748B" }}>
+                                <span style={{ color: "var(--color-text-secondary)" }}>
                                   배치 {batchNum}
                                 </span>
                               )}
                               {batchNum != null && (
-                                <span style={{ color: "#CBD5E1" }}>—</span>
+                                <span style={{ color: "var(--neutral-200)" }}>—</span>
                               )}
                               {group.label}
                             </div>
                             {firstBatch?.batch_remarks && (
                               <span
                                 className="text-[10px] font-medium truncate ml-4"
-                                style={{ color: "#475569", maxWidth: "60%" }}
+                                style={{ color: "var(--color-text-secondary)", maxWidth: "60%" }}
                                 title={firstBatch.batch_remarks}
                               >
                                 {firstBatch.batch_remarks}
@@ -550,8 +550,8 @@ export function SchedulingResultTable({
                                 className="px-1"
                                 style={{
                                   height: 36,
-                                  borderBottom: "1px solid #F0F2F5",
-                                  borderRight: "1px solid #F0F2F5",
+                                  borderBottom: "1px solid var(--neutral-100)",
+                                  borderRight: "1px solid var(--neutral-100)",
                                   textAlign: "center",
                                   verticalAlign: "middle",
                                 }}
@@ -592,10 +592,10 @@ export function SchedulingResultTable({
                                   className="px-3"
                                   style={{
                                     height: 36,
-                                    borderBottom: "1px solid #F0F2F5",
+                                    borderBottom: "1px solid var(--neutral-100)",
                                     borderRight:
                                       colIdx < COL_DEFS.length - 1
-                                        ? "1px solid #F0F2F5"
+                                        ? "1px solid var(--neutral-100)"
                                         : "none",
                                     borderLeft:
                                       colIdx === 0
@@ -679,7 +679,7 @@ export function SchedulingResultTable({
                                       }}
                                     >
                                       {getCellValue(col, batch) || (
-                                        <span style={{ color: "#CBD5E1" }}>
+                                        <span style={{ color: "var(--neutral-200)" }}>
                                           –
                                         </span>
                                       )}
@@ -693,13 +693,13 @@ export function SchedulingResultTable({
                       })}
 
                       {/* 규격 합계 행 — leftSpan: 소계 레이블, col8: 수량(M), col9~10: 빈칸, col11: 환산수량 */}
-                      <tr style={{ backgroundColor: "#F8FAFC" }}>
+                      <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                         <td
                           colSpan={leftSpan}
                           className="px-3 py-1 text-[10px] font-medium text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
-                            color: "#64748B",
+                            color: "var(--color-text-secondary)",
                           }}
                         >
                           소계 {group.batches.length}건
@@ -708,7 +708,7 @@ export function SchedulingResultTable({
                           className="px-3 py-1 text-[10px] font-semibold text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
-                            color: "#1E293B",
+                            color: "var(--color-text-primary)",
                           }}
                         >
                           {groupTotal.toLocaleString()}m
@@ -750,7 +750,7 @@ export function SchedulingResultTable({
                           className="px-3 py-1 text-[10px] font-semibold text-right"
                           style={{
                             borderBottom: "2px solid var(--neutral-300)",
-                            color: "#1E293B",
+                            color: "var(--color-text-primary)",
                           }}
                         >
                           {groupConvertedTotal > 0

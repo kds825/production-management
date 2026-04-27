@@ -1614,7 +1614,7 @@ function ErpUploadSection({
                   >
                     <div
                       className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 border-b"
-                      style={{ backgroundColor: "#F8FAFC" }}
+                      style={{ backgroundColor: "var(--neutral-100)" }}
                     >
                       <span className="text-sm font-semibold text-gray-800">
                         ✂️ 배치 분할 검토
@@ -1684,7 +1684,7 @@ function ErpUploadSection({
           >
             <div
               className="px-5 py-3 border-b"
-              style={{ backgroundColor: "#F8FAFC" }}
+              style={{ backgroundColor: "var(--neutral-100)" }}
             >
               <span className="text-sm font-semibold text-gray-800">
                 현재 생산 현황 확인

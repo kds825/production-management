@@ -80,18 +80,18 @@ export function WipInventoryTable({
                 ))}
               </colgroup>
               <thead>
-                <tr style={{ backgroundColor: "#F5F7FA" }}>
+                <tr style={{ backgroundColor: "var(--neutral-100)" }}>
                   {COL_DEFS.map((col, i) => (
                     <th
                       key={col.key}
                       className="text-[10px] font-semibold px-2 py-2"
                       style={{
-                        color: "#64748B",
+                        color: "var(--color-text-secondary)",
                         textAlign: col.align as "left" | "right",
                         borderBottom: "2px solid var(--neutral-300)",
                         borderRight:
                           i < COL_DEFS.length - 1
-                            ? "1px solid #E2E8F0"
+                            ? "1px solid var(--neutral-200)"
                             : "none",
                         whiteSpace: "nowrap",
                       }}
@@ -178,10 +178,10 @@ export function WipInventoryTable({
                             className="px-2"
                             style={{
                               height: 34,
-                              borderBottom: "1px solid #F0F2F5",
+                              borderBottom: "1px solid var(--neutral-100)",
                               borderRight:
                                 colIdx < COL_DEFS.length - 1
-                                  ? "1px solid #F0F2F5"
+                                  ? "1px solid var(--neutral-100)"
                                   : "none",
                               verticalAlign: "middle",
                               overflow: "hidden",
@@ -246,7 +246,7 @@ export function WipInventoryTable({
                                 }}
                               >
                                 {display || (
-                                  <span style={{ color: "#CBD5E1" }}>–</span>
+                                  <span style={{ color: "var(--neutral-200)" }}>–</span>
                                 )}
                               </span>
                             )}
