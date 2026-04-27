@@ -60,13 +60,16 @@ export function CollapsiblePanel({
         onClick={toggle}
       >
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold" style={{ color: "#4A2C2A" }}>
+          <span
+            className="text-xs font-semibold"
+            style={{ color: "var(--kbi-brown)" }}
+          >
             {title}
           </span>
           {count != null && count > 0 && (
             <span
               className="text-[10px] font-medium text-white px-1.5 py-0.5 rounded-full"
-              style={{ backgroundColor: "#C41230" }}
+              style={{ backgroundColor: "var(--color-brand-primary)" }}
             >
               {count}
             </span>
@@ -81,7 +84,7 @@ export function CollapsiblePanel({
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
           style={{
-            stroke: "#6B7280",
+            stroke: "var(--color-text-secondary)",
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
             transition: "transform 200ms ease-out",
           }}

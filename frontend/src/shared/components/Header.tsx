@@ -30,7 +30,7 @@ export function Header({
         <div className="h-6 w-px bg-gray-200" />
         <h1
           className="text-sm font-semibold tracking-tight"
-          style={{ color: "#4A2C2A", letterSpacing: "-0.02em" }}
+          style={{ color: "var(--kbi-brown)", letterSpacing: "-0.02em" }}
         >
           생산계획 스케줄러
         </h1>
@@ -42,8 +42,12 @@ export function Header({
           disabled={!isEditMode}
           className="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
           style={{
-            backgroundColor: isEditMode ? "#C41230" : "#E5E7EB",
-            color: isEditMode ? "#FFFFFF" : "#9CA3AF",
+            backgroundColor: isEditMode
+              ? "var(--color-brand-primary)"
+              : "var(--color-border-default)",
+            color: isEditMode
+              ? "var(--color-text-inverse)"
+              : "var(--color-text-tertiary)",
             cursor: isEditMode ? "pointer" : "not-allowed",
           }}
           title={isEditMode ? "작업 추가" : "수정 모드에서 사용 가능합니다"}
@@ -58,15 +62,15 @@ export function Header({
           style={
             isEditMode
               ? {
-                  backgroundColor: "#C41230",
-                  color: "#FFFFFF",
-                  borderColor: "#C41230",
+                  backgroundColor: "var(--color-brand-primary)",
+                  color: "var(--color-text-inverse)",
+                  borderColor: "var(--color-brand-primary)",
                   cursor: "pointer",
                 }
               : {
-                  backgroundColor: "#FFFFFF",
-                  color: "#4A2C2A",
-                  borderColor: "#4A2C2A",
+                  backgroundColor: "var(--bg-surface)",
+                  color: "var(--kbi-brown)",
+                  borderColor: "var(--kbi-brown)",
                   cursor: "pointer",
                 }
           }
@@ -80,9 +84,9 @@ export function Header({
             onClick={onDiscardEdits}
             className="px-3 py-1.5 text-xs font-medium rounded-md transition-all border"
             style={{
-              backgroundColor: "#FFFFFF",
-              color: "#6B7280",
-              borderColor: "#D1D5DB",
+              backgroundColor: "var(--bg-surface)",
+              color: "var(--color-text-secondary)",
+              borderColor: "var(--neutral-300)",
               cursor: "pointer",
             }}
             title="변경 사항을 저장하지 않고 수정 모드를 종료합니다"

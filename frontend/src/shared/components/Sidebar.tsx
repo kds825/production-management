@@ -171,8 +171,12 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
               style={{
                 padding: expanded ? "8px 12px" : "8px 0",
                 justifyContent: expanded ? "flex-start" : "center",
-                backgroundColor: isActive ? "#FEF2F2" : "transparent",
-                color: isActive ? "#C41230" : "#374151",
+                backgroundColor: isActive
+                  ? "var(--kbi-red-tint-5)"
+                  : "transparent",
+                color: isActive
+                  ? "var(--color-brand-primary)"
+                  : "var(--neutral-text-primary)",
               }}
               title={!expanded ? item.label : undefined}
             >
@@ -180,19 +184,30 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
               {isActive && (
                 <div
                   className="absolute left-0 top-1 bottom-1 rounded-r"
-                  style={{ width: 3, backgroundColor: "#C41230" }}
+                  style={{
+                    width: 3,
+                    backgroundColor: "var(--color-brand-primary)",
+                  }}
                 />
               )}
               <span
                 className="shrink-0"
-                style={{ color: isActive ? "#C41230" : "#6B7280" }}
+                style={{
+                  color: isActive
+                    ? "var(--color-brand-primary)"
+                    : "var(--color-text-secondary)",
+                }}
               >
                 {item.icon}
               </span>
               {expanded && (
                 <span
                   className="text-xs font-medium truncate"
-                  style={{ color: isActive ? "#C41230" : "#374151" }}
+                  style={{
+                    color: isActive
+                      ? "var(--color-brand-primary)"
+                      : "var(--neutral-text-primary)",
+                  }}
                 >
                   {item.label}
                 </span>
