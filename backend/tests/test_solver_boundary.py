@@ -46,6 +46,10 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # ProductionBatch / EquipmentMaster / SpeedMaster / DrumLotMaster 를
     # DB 에서 읽기 때문에 boundary crosser. parity 보장이 핵심 invariant.
     "_load_inputs.py",
+    # Phase 2 Task 2.7 (B-3.2): `_trace_writer.py` 는 cp_sat_schedule §10
+    # (solver_run + solver_decision trace write) 를 추출한 observability
+    # helper. ScheduleTask 조회 + write_trace DB write 라 boundary crosser.
+    "_trace_writer.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM
