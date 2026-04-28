@@ -1,4 +1,12 @@
-"""28개 제약조건 검증 엔진 — 스케줄링 결과 사후 검증"""
+"""28개 제약조건 검증 엔진 — 스케줄링 결과 사후 검증 (orchestrator).
+
+체커 함수 본문은 카테고리별 sub-module(`_checks_hard/_checks_due/_checks_setup/
+_checks_calendar/_checks_material/_checks_misc`) 에 분산. 본 파일은 외부 진입점
+(`validate_all`, `validate_overlap_only`, `has_overlap`) 과 dispatch 만 담당.
+
+외부 import path 호환성을 위해 모든 `_check_*` 함수는 본 모듈에서도 re-export
+한다 (테스트 / monkeypatch 호환).
+"""
 
 from sqlalchemy.orm import Session
 
