@@ -32,22 +32,16 @@ from app.domain.constants import (
     PREDECESSOR_PROCESS,
     PROCESS_ORDER,
     _CHAIN_WEIGHT,  # re-export until Week 9 (D7-C)
-    _DEFAULT_WELDING_MIN,
     _DUE_HARD_WEIGHT,  # re-export until Week 9 (D7-C)
     _TRANSITION_WEIGHT,  # re-export until Week 9 (D7-C)
-    _WIP_SKIP_PROCESSES,
     _WORK_MIN_PER_DAY,  # re-export until Week 9 (D7-C)
 )
-from app.infrastructure.models.drum_lot_master import DrumLotMaster
-from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.infrastructure.models.speed_master import SpeedMaster
 from app.application._shared.audit_logger import log_decision
 from app.infrastructure.calendar_engine import (
     calculate_end_datetime,
 )
-from app.application._shared.constraint_params import ConstraintParams
 from app.domain.constraint_rules import resolve_color_change_min
 
 # Week 3 Task 3A.2 wiring (sub-commit D):
@@ -78,6 +72,7 @@ from app.application.scheduling.cp_sat.model_builder import (
 )
 from app.application.scheduling.cp_sat.objective import compose_objective
 from app.application.scheduling.cp_sat.snapshot import write_snapshot
+from app.application.scheduling.cp_sat._load_inputs import load_solver_inputs
 
 # Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
 # builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
@@ -342,137 +337,35 @@ def cp_sat_schedule(
     _ctx_token = _set_run_id(_run_id)
 
     # ── 1-3. DB 로드 또는 override rebind ────────────────────────────────
-    # Task 1.1 (Rev 3): `solver_input_override` 가 None 이면 기존 DB 로드 블록을
-    # 한 바이트도 바꾸지 않고 그대로 수행 (parity 안전). override 가 주어지면
-    # 같은 변수 이름으로 필드를 rebind 하여 아래 §4 이후 코드를 그대로 재사용.
-    if solver_input_override is None:
-        # ── 1. 배치 로드 ──────────────────────────────────────────────────────
-        batches = (
-            db.query(ProductionBatch)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.status == "planned",
-            )
-            .order_by(
-                ProductionBatch.due_date.asc(),
-                ProductionBatch.customer_priority.asc(),
-                ProductionBatch.batch_seq.asc(),
-            )
-            .all()
-        )
-        batches.sort(
-            key=lambda b: (
-                PROCESS_ORDER.get(b.process_name, 50),
-                b.batch_seq or 0,
-                b.due_date or date.max,
-                b.customer_priority or 99,
-                -(float(b.sq_mm2 or 0)),
-            )
-        )
+    # Phase 2 Task 2.6 (B-3.1): 본 블록은 ``_load_inputs.load_solver_inputs``
+    # 로 추출됐다. parity 보장을 위해 본문 변경 0, 단순 함수 호출 위임.
+    load_out = load_solver_inputs(
+        run_label,
+        db,
+        base_date=base_date,
+        solver_input_override=solver_input_override,
+    )
+    if load_out.early_return is not None:
+        # "배치 없음" 조기 반환 — 원본의 두 분기 메시지/wip_skipped 전파를
+        # 그대로 재현. DB-load 분기는 wip_skipped 카운트를 result 에 싣지
+        # 않은 채 반환, override 분기는 wip_skipped 비제로면 result 에 싣고
+        # 반환 (load_inputs 가 분기별로 다른 dict 를 만들어 둔 차이를 보존).
+        for w in load_out.early_return.get("warnings", []):
+            result["warnings"].append(w)
+        if "wip_skipped" in load_out.early_return:
+            result["wip_skipped"] = load_out.early_return["wip_skipped"]
+        return result
 
-        if not batches:
-            result["warnings"].append("배치 없음 — Stage 1을 먼저 실행하세요")
-            return result
-
-        # WIP 스킵
-        wip_ids = {b.wip_matched_id for b in batches if b.wip_matched_id}
-        wip_stage_map: dict[int, str] = {}
-        if wip_ids:
-            from app.infrastructure.models.wip_inventory import WipInventory
-
-            wips = db.query(WipInventory).filter(WipInventory.wip_id.in_(wip_ids)).all()
-            wip_stage_map = {w.wip_id: w.process_stage or "" for w in wips}
-
-        schedulable: list[ProductionBatch] = []
-        wip_skipped = 0
-        for b in batches:
-            if b.wip_matched_id and b.wip_matched_id in wip_stage_map:
-                skip_set = _WIP_SKIP_PROCESSES.get(
-                    wip_stage_map[b.wip_matched_id], set()
-                )
-                if b.process_name in skip_set:
-                    b.status = "wip_complete"
-                    wip_skipped += 1
-                    continue
-            schedulable.append(b)
-        batches = schedulable
-        if wip_skipped:
-            result["wip_skipped"] = wip_skipped
-
-        # ── 2. 기준일시 ───────────────────────────────────────────────────────
-        if base_date is None:
-            try:
-                dp = run_label.split("_")[0]
-                base_date = datetime(int(dp[:4]), int(dp[4:6]), int(dp[6:8]), 8, 0, 0)
-            except Exception:
-                from zoneinfo import ZoneInfo
-
-                kst = datetime.now(ZoneInfo("Asia/Seoul"))
-                base_date = kst.replace(
-                    hour=8, minute=0, second=0, microsecond=0
-                ).replace(tzinfo=None)
-
-        # ── 3. 마스터 데이터 로드 ─────────────────────────────────────────────
-        equipment_list = db.query(EquipmentMaster).all()
-        equipment_by_process: dict[str, list[EquipmentMaster]] = {}
-        for eq in equipment_list:
-            equipment_by_process.setdefault(eq.process_name, []).append(eq)
-
-        # SpeedMaster 한 번 로드. speed_map 은 (eq, sq) lookup, color_setup_map 은
-        # "색상 교체 시간은 설비 파라미터" 라서 sq 와 무관한 equipment_code → setup_color_min
-        # 인덱스. 기존 코드는 색상 교체가 발생할 때마다 SpeedMaster 를 재조회(N+1)
-        # 하여 원격 Supabase 왕복이 누적됐음 — 한 번의 메모리 조회로 대체.
-        _speed_rows = db.query(SpeedMaster).all()
-        speed_map: dict[tuple, SpeedMaster] = {
-            (sr.equipment_code, float(sr.cross_section or 0)): sr for sr in _speed_rows
-        }
-        # 동일 설비에 여러 sq row 가 있으면 setup_color_min 은 첫 non-null 을 채택
-        # (현 DB 스키마상 설비별로 일정하다는 전제 — 과거 조회 로직 `.first()` 와 동치).
-        color_setup_map: dict[str, float | None] = {}
-        for sr in _speed_rows:
-            code = sr.equipment_code
-            if code not in color_setup_map:
-                color_setup_map[code] = sr.setup_color_min
-            elif color_setup_map[code] is None and sr.setup_color_min is not None:
-                color_setup_map[code] = sr.setup_color_min
-
-        # ConstraintConfig 프리페치 (4-2 색상교체 fallback 등에서 재사용)
-        constraint_params = ConstraintParams.load(db)
-
-        # 용접 시간 (4-4): ConstraintParams 통합 경로로 조회 (하위 호환 default 유지)
-        welding_min = constraint_params.get(
-            "4-4", "welding_min", default=_DEFAULT_WELDING_MIN
-        )
-
-        # SQ → 소선경 매핑 (연선 셋업 3-tier 계산용)
-        sq_to_wire_d: dict[int, float] = {
-            int(d.cross_section): float(d.wire_diameter)
-            for d in db.query(DrumLotMaster).all()
-            if d.wire_diameter is not None
-        }
-    else:
-        # Override 경로 — 필드 이름을 로컬 변수로 rebind. `batches` 만 list()
-        # 로 사본화 (§4 이후 로직이 in-place 로 섞일 여지 방어). 나머지 dict 도
-        # 얕은 복사 — ORM 값(ConstraintParams/EquipmentMaster 등) 자체는 공유.
-        batches = list(solver_input_override.batches)
-        wip_skipped = solver_input_override.wip_skipped
-        if wip_skipped:
-            result["wip_skipped"] = wip_skipped
-        # "배치 없음" 게이트 — 원본 L1098 과 동일 메시지. override 의 batches 가
-        # 비면 여기서 조기 반환해 parity 유지.
-        if not batches:
-            result["warnings"].append("배치 없음 — Stage 1을 먼저 실행하세요")
-            return result
-        # `base_date` 는 SolverInput 이 이미 확정값을 담고 있음 (run_label
-        # 파생 또는 명시). 호출측 base_date kwarg 는 무시 — override 가 진실.
-        base_date = solver_input_override.base_date
-        equipment_list = solver_input_override.equipment_list
-        equipment_by_process = dict(solver_input_override.equipment_by_process)
-        speed_map = dict(solver_input_override.speed_map)
-        color_setup_map = dict(solver_input_override.color_setup_map)
-        constraint_params = solver_input_override.constraint_params
-        welding_min = solver_input_override.welding_min
-        sq_to_wire_d = dict(solver_input_override.sq_to_wire_d)
+    base_date = load_out.base_date
+    batches = load_out.batches
+    equipment_by_process = load_out.equipment_by_process
+    speed_map = load_out.speed_map
+    color_setup_map = load_out.color_setup_map
+    constraint_params = load_out.constraint_params
+    welding_min = load_out.welding_min
+    sq_to_wire_d = load_out.sq_to_wire_d
+    if load_out.wip_skipped:
+        result["wip_skipped"] = load_out.wip_skipped
 
     # ── 4-5. 그루핑 + 그룹별 메타 계산 ─────────────────────────────────────
     # Phase 3 step 2: §4 (그루핑) + §5 (group_meta) 는 helpers._build_group_meta

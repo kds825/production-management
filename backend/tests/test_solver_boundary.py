@@ -41,6 +41,11 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # entry-point 는 본질적으로 use-case orchestrator 라 DB I/O 가
     # 정당. 본 파일 ≤200 LOC 분해는 Phase 3 의 책임.
     "orchestrator.py",
+    # Phase 2 Task 2.6 (B-3.1): `_load_inputs.py` 는 cp_sat_schedule §1-3
+    # (DB 배치/마스터데이터 로드) 를 추출한 use-case helper. 본질적으로
+    # ProductionBatch / EquipmentMaster / SpeedMaster / DrumLotMaster 를
+    # DB 에서 읽기 때문에 boundary crosser. parity 보장이 핵심 invariant.
+    "_load_inputs.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM
