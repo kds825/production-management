@@ -172,12 +172,9 @@ export default function SchedulingReviewPage() {
     isLoaded,
     calcError,
     aiAnalysisStatus,
-    aiInsights,
     aiSummary,
     activeTab,
     loadBatchesFromApi,
-    isLoading: batchesLoading,
-    loadError,
     calculateBatches,
   } = useSchedulingReviewStore();
 

@@ -9,7 +9,14 @@ interface SidebarProps {
   onToggle: () => void;
 }
 
-const NAV_ITEMS = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  matchPrefix?: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
   {
     href: "/master/constraints",
     label: "마스터 데이터",
@@ -160,8 +167,8 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
       {/* 네비게이션 메뉴 */}
       <nav className="flex-1 py-2">
         {NAV_ITEMS.map((item) => {
-          const isActive = (item as any).matchPrefix
-            ? pathname.startsWith((item as any).matchPrefix)
+          const isActive = item.matchPrefix
+            ? pathname.startsWith(item.matchPrefix)
             : pathname === item.href;
           return (
             <Link

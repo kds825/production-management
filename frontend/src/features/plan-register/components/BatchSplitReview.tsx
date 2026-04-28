@@ -46,7 +46,7 @@ interface Props {
 
 export function BatchSplitReview({
   candidates,
-  runLabel,
+  runLabel: _runLabel,
   gapDays,
   onGapDaysChange,
   onApplied,

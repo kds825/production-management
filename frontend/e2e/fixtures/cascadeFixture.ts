@@ -1,3 +1,6 @@
+/* eslint-disable react-hooks/rules-of-hooks */
+// ↑ Playwright fixture 의 `use()` 콜백을 eslint 가 React.use() hook 으로 오인.
+// 본 파일은 React 컴포넌트가 아닌 Playwright test fixture (`base.extend({...})`).
 /**
  * Cascade E2E 공용 fixture (Task 24).
  *

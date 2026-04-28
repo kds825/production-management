@@ -421,7 +421,6 @@ export function useSchedulerDnd({
     },
     [
       isEditMode,
-      tasks,
       range,
       equipment,
       assignOrder,

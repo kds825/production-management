@@ -4,8 +4,20 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface CalendarRule {
+  calendar_id?: string | number;
+  rule_code: string;
+  rule_name: string;
+  day_of_week: string;
+  working_hours: number;
+  start_time?: string;
+  end_time?: string;
+  deduction_hours: number;
+  notes?: string;
+}
+
 export default function CalendarPage() {
-  const [rules, setRules] = useState<any[]>([]);
+  const [rules, setRules] = useState<CalendarRule[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,7 +36,7 @@ export default function CalendarPage() {
     <div>
       <h1 className="mb-4 text-xl font-bold">가동 캘린더</h1>
       <div className="grid gap-4 md:grid-cols-2">
-        {rules.map((r: any) => (
+        {rules.map((r) => (
           <div
             key={r.calendar_id || r.rule_code}
             className="rounded-lg border p-4"

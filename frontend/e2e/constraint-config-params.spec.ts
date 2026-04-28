@@ -10,9 +10,15 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
  */
 let preSnapshot: Record<string, Record<string, number>> = {};
 
-async function captureSnapshot(request: any) {
+type APIRequestContext = import("@playwright/test").APIRequestContext;
+interface ConstraintRow {
+  constraint_id: string;
+  params_json?: Record<string, number>;
+}
+
+async function captureSnapshot(request: APIRequestContext) {
   const resp = await request.get(`${API}/constraints`);
-  const data = await resp.json();
+  const data = (await resp.json()) as { constraints?: ConstraintRow[] };
   const snap: Record<string, Record<string, number>> = {};
   for (const c of data.constraints || []) {
     snap[c.constraint_id] = { ...(c.params_json || {}) };
@@ -21,7 +27,7 @@ async function captureSnapshot(request: any) {
 }
 
 async function restoreSnapshot(
-  request: any,
+  request: APIRequestContext,
   snap: Record<string, Record<string, number>>,
 ) {
   for (const [id, params] of Object.entries(snap)) {

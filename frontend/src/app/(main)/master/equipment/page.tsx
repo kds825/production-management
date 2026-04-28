@@ -4,8 +4,20 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface EquipmentRow {
+  equipment_code: string;
+  equipment_name: string;
+  process_name: string;
+  material_limit?: string | null;
+  range_min?: number | null;
+  range_max?: number | null;
+  range_unit?: string;
+  color_group?: string | null;
+  shift_type: string;
+}
+
 export default function EquipmentPage() {
-  const [equipment, setEquipment] = useState<any[]>([]);
+  const [equipment, setEquipment] = useState<EquipmentRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,7 +51,7 @@ export default function EquipmentPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {equipment.map((eq: any) => (
+            {equipment.map((eq) => (
               <tr key={eq.equipment_code} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono text-xs">
                   {eq.equipment_code}

@@ -119,8 +119,8 @@ export function UnassignConfirmModal({
         </fieldset>
 
         <p className="text-xs mb-3 text-[color:var(--color-text-secondary)]">
-          미배정으로 이동 후 "계획으로 복원" 버튼으로 언제든 원래 자리로 돌릴 수
-          있습니다.
+          미배정으로 이동 후 &ldquo;계획으로 복원&rdquo; 버튼으로 언제든 원래
+          자리로 돌릴 수 있습니다.
         </p>
 
         <label className="flex items-center gap-2 text-xs mb-4 cursor-pointer">

@@ -116,6 +116,10 @@ export function BatchGroupOrderTable({
                 style={{
                   color:
                     order.due_date &&
+                    // TODO(react19-migration): "오늘 기준 past-due" 색상 — 렌더 시점의
+                    // wall clock 의도. 자동 새로고침 필요 시 useState + setInterval 로
+                    // 변경 가능. 현재는 렌더 단위로 충분 (페이지 navigate / refetch 시 갱신).
+                    // eslint-disable-next-line react-hooks/purity
                     new Date(order.due_date).getTime() < Date.now()
                       ? "var(--color-danger)"
                       : "var(--neutral-600)",

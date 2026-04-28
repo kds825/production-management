@@ -43,7 +43,6 @@ vi.mock("../useScheduleChangeWithCascade", () => ({
 
 import { useBatchGroupDrag } from "../useBatchGroupDrag";
 import * as cascadeApi from "../../api/cascade";
-import { useScheduleStore } from "../../store/scheduleStore";
 
 beforeEach(() => {
   vi.clearAllMocks();

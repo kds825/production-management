@@ -117,6 +117,9 @@ export function SchedulingResultTable({
   const [crudMode, setCrudMode] = useState<CrudMode>("view");
   const [hasChanges, setHasChanges] = useState(false);
 
+  // ── 추가 모드 (commitEdit 이전에 선언 — react-hooks/immutability) ──
+  const [addedRows, setAddedRows] = useState<SchedulingBatch[]>([]);
+
   // ── 수정 모드: 인라인 편집 ──
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -204,8 +207,7 @@ export function SchedulingResultTable({
     [editingCell],
   );
 
-  // ── 추가 모드 ──
-  const [addedRows, setAddedRows] = useState<SchedulingBatch[]>([]);
+  // ── 추가 모드 (state 선언은 commitEdit 이전 — line 119 — 으로 이동) ──
 
   const handleAdd = useCallback(() => {
     const newRow: SchedulingBatch = {
@@ -474,19 +476,28 @@ export function SchedulingResultTable({
                           <div className="flex items-center justify-between text-tiny font-semibold">
                             <div className="flex items-center gap-2">
                               {batchNum != null && (
-                                <span style={{ color: "var(--color-text-secondary)" }}>
+                                <span
+                                  style={{
+                                    color: "var(--color-text-secondary)",
+                                  }}
+                                >
                                   배치 {batchNum}
                                 </span>
                               )}
                               {batchNum != null && (
-                                <span style={{ color: "var(--neutral-200)" }}>—</span>
+                                <span style={{ color: "var(--neutral-200)" }}>
+                                  —
+                                </span>
                               )}
                               {group.label}
                             </div>
                             {firstBatch?.batch_remarks && (
                               <span
                                 className="text-tiny font-medium truncate ml-4"
-                                style={{ color: "var(--color-text-secondary)", maxWidth: "60%" }}
+                                style={{
+                                  color: "var(--color-text-secondary)",
+                                  maxWidth: "60%",
+                                }}
                                 title={firstBatch.batch_remarks}
                               >
                                 {firstBatch.batch_remarks}
@@ -524,7 +535,9 @@ export function SchedulingResultTable({
                           <tr
                             key={batch.id}
                             style={{
-                              backgroundColor: isSelected ? "var(--kbi-red-tint-12)" : rowBg,
+                              backgroundColor: isSelected
+                                ? "var(--kbi-red-tint-12)"
+                                : rowBg,
                               color: textColor,
                             }}
                             onMouseEnter={(e) => {
@@ -592,7 +605,8 @@ export function SchedulingResultTable({
                                   className="px-3"
                                   style={{
                                     height: 36,
-                                    borderBottom: "1px solid var(--neutral-100)",
+                                    borderBottom:
+                                      "1px solid var(--neutral-100)",
                                     borderRight:
                                       colIdx < COL_DEFS.length - 1
                                         ? "1px solid var(--neutral-100)"
@@ -663,7 +677,8 @@ export function SchedulingResultTable({
                                     <span
                                       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-tiny font-semibold"
                                       style={{
-                                        backgroundColor: "var(--status-info-bg)",
+                                        backgroundColor:
+                                          "var(--status-info-bg)",
                                         color: "var(--status-info-text)",
                                       }}
                                     >
@@ -679,7 +694,11 @@ export function SchedulingResultTable({
                                       }}
                                     >
                                       {getCellValue(col, batch) || (
-                                        <span style={{ color: "var(--neutral-200)" }}>
+                                        <span
+                                          style={{
+                                            color: "var(--neutral-200)",
+                                          }}
+                                        >
                                           –
                                         </span>
                                       )}
@@ -778,7 +797,8 @@ export function SchedulingResultTable({
               color: "var(--color-text-inverse)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = "var(--accent-primary-hover)";
+              e.currentTarget.style.backgroundColor =
+                "var(--accent-primary-hover)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = PRIMARY;
@@ -807,7 +827,8 @@ export function SchedulingResultTable({
             color: "var(--color-text-inverse)",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "var(--accent-primary-hover)";
+            e.currentTarget.style.backgroundColor =
+              "var(--accent-primary-hover)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = PRIMARY;

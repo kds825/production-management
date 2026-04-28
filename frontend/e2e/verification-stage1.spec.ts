@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -82,8 +82,15 @@ test("Stage1 수동 검증 라운드 — 업로드 + 기준일자 + 300SQ만 분
 
   const stage1Res = await stage1ResponsePromise;
   expect(stage1Res.ok(), `stage1 status=${stage1Res.status()}`).toBeTruthy();
-  const stage1Json: any = await stage1Res.json();
-  const runLabel = stage1Json.run_label as string;
+  interface SplitCandidate {
+    sq_mm2: number;
+    [key: string]: unknown;
+  }
+  const stage1Json = (await stage1Res.json()) as {
+    run_label: string;
+    split_candidates?: SplitCandidate[];
+  };
+  const runLabel = stage1Json.run_label;
 
   fs.writeFileSync(
     path.join(ARTIFACTS, "stage1-raw.json"),
@@ -91,7 +98,7 @@ test("Stage1 수동 검증 라운드 — 업로드 + 기준일자 + 300SQ만 분
   );
 
   // 7) 분할 후보 확인
-  const candidates: any[] = stage1Json.split_candidates || [];
+  const candidates: SplitCandidate[] = stage1Json.split_candidates || [];
   fs.writeFileSync(
     path.join(ARTIFACTS, "stage1-split-candidates.json"),
     JSON.stringify(candidates, null, 2),

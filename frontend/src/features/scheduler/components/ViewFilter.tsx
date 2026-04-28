@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
-import type { ViewFilterType } from "../types";
 
 /** 저압 설비 — 저압 연선/절연/시스/연합/T·P */
 const LV_EQUIPMENT: string[] = [
@@ -89,7 +88,7 @@ export function ViewFilter() {
     setViewFilter({ filterType: "process", filterValue: next });
   }
 
-  const btn = (active: boolean, color?: string) =>
+  const btn = (active: boolean) =>
     [
       "px-3 py-1.5 text-xs font-medium rounded-md transition-colors border",
       active

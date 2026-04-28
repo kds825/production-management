@@ -4,8 +4,20 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface DrumLotRow {
+  drum_id: string | number;
+  cross_section: number;
+  wire_diameter?: number | null;
+  wire_count?: number | null;
+  lot_wire_drawing?: number;
+  lot_stranding?: number;
+  daily_production?: number;
+  setup_time_min: number;
+  drum_weight_ton: number;
+}
+
 export default function DrumLotsPage() {
-  const [lots, setLots] = useState<any[]>([]);
+  const [lots, setLots] = useState<DrumLotRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,7 +50,7 @@ export default function DrumLotsPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {lots.map((l: any) => (
+            {lots.map((l) => (
               <tr
                 key={l.drum_id}
                 className={`hover:bg-gray-50 ${!l.wire_count ? "bg-yellow-50" : ""}`}

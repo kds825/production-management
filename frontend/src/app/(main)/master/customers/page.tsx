@@ -4,8 +4,18 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface CustomerRow {
+  customer_code: string;
+  customer_name: string;
+  priority: number;
+  due_type: string;
+  due_strictness: string;
+  urgency_frequency: string;
+  require_sample: boolean;
+}
+
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,7 +34,7 @@ export default function CustomersPage() {
     <div>
       <h1 className="mb-4 text-xl font-bold">거래처 관리</h1>
       <div className="grid gap-4">
-        {customers.map((c: any) => (
+        {customers.map((c) => (
           <div
             key={c.customer_code}
             className="flex items-center gap-4 rounded-lg border p-4"

@@ -18,7 +18,6 @@ export function ZoomControl() {
   const setZoomLevel = useScheduleStore((s) => s.setZoomLevel);
   const range = useScheduleStore((s) => s.range);
   const setRange = useScheduleStore((s) => s.setRange);
-  const dayWidthScale = useScheduleStore((s) => s.dayWidthScale);
   const setDayWidthScale = useScheduleStore((s) => s.setDayWidthScale);
   const dateInputRef = useRef<HTMLInputElement>(null);
 

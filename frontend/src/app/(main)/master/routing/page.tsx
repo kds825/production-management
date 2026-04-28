@@ -4,8 +4,19 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface RoutingRow {
+  routing_code: string;
+  routing_name: string;
+  process_1?: string | null;
+  process_2?: string | null;
+  process_3?: string | null;
+  process_4?: string | null;
+  process_5?: string | null;
+  process_6?: string | null;
+}
+
 export default function RoutingPage() {
-  const [routings, setRoutings] = useState<any[]>([]);
+  const [routings, setRoutings] = useState<RoutingRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,15 +35,15 @@ export default function RoutingPage() {
     <div>
       <h1 className="mb-4 text-xl font-bold">공정 라우팅</h1>
       <div className="space-y-4">
-        {routings.map((r: any) => {
-          const processes = [
+        {routings.map((r) => {
+          const processes: string[] = [
             r.process_1,
             r.process_2,
             r.process_3,
             r.process_4,
             r.process_5,
             r.process_6,
-          ].filter(Boolean);
+          ].filter((p): p is string => Boolean(p));
           return (
             <div key={r.routing_code} className="rounded-lg border p-4">
               <div className="mb-2 flex items-center gap-2">

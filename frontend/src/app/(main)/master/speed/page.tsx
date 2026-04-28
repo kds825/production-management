@@ -80,6 +80,9 @@ export default function SpeedPage() {
     setSpeeds((prev) =>
       prev.map((s) => (s.speed_id === speed_id ? { ...s, ...updated } : s)),
     );
+    // TODO(react19-migration): saveCell 을 useCallback 으로 감싸면 룰 통과.
+    // saveCell 은 handler 에서 호출되므로 Date.now() 가 render 중 실행되지 않음 (false-positive).
+    // eslint-disable-next-line react-hooks/purity
     setDriftRefresh(Date.now());
   };
 

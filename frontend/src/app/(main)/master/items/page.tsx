@@ -4,8 +4,18 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+interface ItemRow {
+  item_code: string;
+  product_group: string;
+  voltage: string;
+  conductor_material: string;
+  cross_section: number;
+  routing_code: string;
+  is_outsourced: boolean;
+}
+
 export default function ItemsPage() {
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<ItemRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,7 +58,7 @@ export default function ItemsPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {items.map((item: any) => (
+            {items.map((item) => (
               <tr
                 key={item.item_code}
                 className={`hover:bg-gray-50 ${item.is_outsourced ? "bg-gray-50 opacity-60" : ""}`}

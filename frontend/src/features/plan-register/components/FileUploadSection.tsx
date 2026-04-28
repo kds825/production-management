@@ -101,7 +101,7 @@ export function FileUploadSection() {
       setIsAnalyzing(false);
       setIsAnalyzed(true);
     }, 1500);
-  }, [uploadedFile, isAnalyzing, setIsAnalyzing, setBatches, setIsAnalyzed]);
+  }, [uploadedFile, isAnalyzing, setIsAnalyzing, setIsAnalyzed]);
 
   const handleDelete = useCallback(() => {
     if (analyzeTimerRef.current) {
@@ -126,7 +126,8 @@ export function FileUploadSection() {
         1. 생산계획등록 파일 업로드
       </h3>
       <p className="text-xs text-gray-500 mb-3">
-        진행상태가 '진행' 또는 '대기'인 파일을 업로드해주세요
+        진행상태가 &lsquo;진행&rsquo; 또는 &lsquo;대기&rsquo;인 파일을
+        업로드해주세요
       </p>
 
       {/* 업로드 영역 */}

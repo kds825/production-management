@@ -383,9 +383,7 @@ test.describe("batch_group 미배정 & 복원 (Phase 6)", () => {
     await expect(page.getByText(/자재지연/).first()).toBeVisible();
   });
 
-  test("S6: BatchGroupCard 드래그 → 원위치 즉시 복원 — isOrigin 자동 판정 v2b 이전엔 skip", async ({
-    page,
-  }) => {
+  test("S6: BatchGroupCard 드래그 → 원위치 즉시 복원 — isOrigin 자동 판정 v2b 이전엔 skip", async () => {
     test.skip(true, "isOrigin 자동 판정은 v2b milestone 전까지 false 고정");
   });
 

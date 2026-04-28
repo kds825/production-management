@@ -42,10 +42,13 @@ test.describe("1. 간트 설비 정렬 — 공정 순서대로 정렬", () => {
     request,
   }) => {
     const res = await request.get(`${API}/equipment`);
-    const data = await res.json();
+    const data = (await res.json()) as Array<{
+      range_min?: number | null;
+      range_max?: number | null;
+    }>;
     // 적어도 일부 설비에 range 정보가 있어야 함
     const withRange = data.filter(
-      (eq: any) => eq.range_min != null && eq.range_max != null,
+      (eq) => eq.range_min != null && eq.range_max != null,
     );
     expect(withRange.length).toBeGreaterThan(0);
   });
@@ -300,17 +303,21 @@ test.describe("CRITICAL: 61연선 분할", () => {
           `${API}/pipeline/stage1/${runLabel}/batches`,
         );
         if (batchRes.ok()) {
-          const batches = await batchRes.json();
+          const batches = (await batchRes.json()) as Array<{
+            process_name?: string;
+            sq_mm2?: number | null;
+            conductor_material?: string;
+            stranding_type?: string;
+            batch_seq?: number;
+          }>;
           // 300SQ 이상 CU 연선 배치 찾기
           const strand300 = batches.filter(
-            (b: any) =>
+            (b) =>
               b.process_name === "연선" &&
               (b.sq_mm2 || 0) >= 300 &&
               b.conductor_material === "CU",
           );
-          const cores = batches.filter(
-            (b: any) => b.stranding_type === "7연선코어",
-          );
+          const cores = batches.filter((b) => b.stranding_type === "7연선코어");
           console.log(
             `61-strand: ${strand300.length} main batches, ${cores.length} core batches`,
           );

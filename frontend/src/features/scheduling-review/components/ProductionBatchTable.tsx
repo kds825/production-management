@@ -148,6 +148,9 @@ export function ProductionBatchTable({
 
   // 드롭다운 열릴 때 검색어 초기화
   useEffect(() => {
+    // TODO(react19-migration): openFilterCol 변경 시 reset effect.
+    // 입력을 openFilterCol-keyed 컴포넌트로 분리하면 자연스럽게 reset.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFilterSearch("");
   }, [openFilterCol]);
 

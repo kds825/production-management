@@ -139,7 +139,7 @@ export function useScheduleData() {
     return () => {
       cancelled = true;
     };
-  }, [setEquipment, setTasks, setLineSpeedData]);
+  }, [setEquipment, setTasks, setLineSpeedData, setRange]);
 
   return { isLoading, error };
 }

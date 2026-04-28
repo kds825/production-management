@@ -57,6 +57,9 @@ export default function KpiDashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // TODO(react19-migration): fetch-start sync setState. discriminated-union
+    // FetchState 로 재구성하면 룰 통과. 기능적 회귀 없음, 별도 PR 추적.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     apiFetch<KpiSummary>(`/admin/kpi/decision-card?days=${days}`)

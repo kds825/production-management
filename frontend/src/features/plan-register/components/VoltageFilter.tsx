@@ -24,9 +24,6 @@ export function VoltageFilter() {
           const isDisabled = tab === "고압";
           const filterValue =
             tab === "전체보기" ? "전체" : (tab as "고압" | "저압");
-          const isActive =
-            voltageFilter === filterValue ||
-            (tab === "전체보기" && voltageFilter === "전체");
           const isActiveTab =
             tab === "전체보기"
               ? voltageFilter === "전체"
