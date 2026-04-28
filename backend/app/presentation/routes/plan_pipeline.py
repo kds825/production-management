@@ -48,33 +48,15 @@ router = APIRouter(prefix="/pipeline", tags=["파이프라인"])
 
 
 # ---------------------------------------------------------------------------
-# AI 분석 결과 인메모리 캐시 — PoC 단계용 단순 dict
-# key: run_label, value: {"status": "pending"|"done"|"error", "summary": {...}}
+# AI 분석 결과 인메모리 캐시 — _pipeline_shared 모듈로 이동 (Task 1.1)
+# 외부 import path 보존: from app.presentation.routes.plan_pipeline import _ai_cache
 # ---------------------------------------------------------------------------
-_ai_cache: dict[str, dict] = {}
-_ai_cache_lock = threading.Lock()
-
-
-def _run_ai_background(run_label: str) -> None:
-    """백그라운드 스레드에서 AI 배치 요약을 생성하여 캐시에 저장한다.
-
-    FastAPI BackgroundTasks는 응답 전송 후 실행되므로, request-scoped DB 세션이
-    이미 닫혀 있다. 따라서 SessionLocal()로 독립 세션을 생성한다.
-    """
-    db = SessionLocal()
-    try:
-        from app.application.decisions.summarize_run import generate_batch_summary_sync
-
-        result = generate_batch_summary_sync(run_label, db)
-        with _ai_cache_lock:
-            _ai_cache[run_label] = {"status": "done", "summary": result}
-        logger.info("[AI Background] run_label=%s 분석 완료", run_label)
-    except Exception as exc:
-        with _ai_cache_lock:
-            _ai_cache[run_label] = {"status": "error", "error": str(exc)}
-        logger.warning("[AI Background] run_label=%s 분석 실패: %s", run_label, exc)
-    finally:
-        db.close()
+from app.presentation.routes._pipeline_shared import (  # noqa: E402, F401
+    _ai_cache,
+    _ai_cache_lock,
+    _run_ai_background,
+    _start_ai_background,
+)
 
 
 @router.post("/stage1", summary="ERP 업로드 → 작업지시서 생성")
@@ -949,19 +931,7 @@ def _parse_stage2_body(body: dict) -> tuple[str, datetime | None, str]:
     return run_label, base_date_dt, optimizer
 
 
-def _start_ai_background(run_label: str) -> None:
-    """AI 백그라운드 분석을 큐잉하는 어댑터.
-
-    Why an adapter: orchestrator.execute_stage2 는 in-memory _ai_cache /
-    _ai_cache_lock 를 직접 만지지 않도록 의도적으로 cache 소유권을 본 라우트
-    모듈에 남겼다 (GET /stage2/{run_label}/ai-status 가 같은 dict 를 읽기
-    때문). 이 어댑터가 cache mutation + thread.start 를 하나로 묶어
-    orchestrator 가 단일 콜만 하면 되도록 한다.
-    """
-    with _ai_cache_lock:
-        _ai_cache[run_label] = {"status": "pending"}
-    thread = threading.Thread(target=_run_ai_background, args=(run_label,), daemon=True)
-    thread.start()
+# _start_ai_background 는 _pipeline_shared 로 이동 (Task 1.1) — 위 import 가 re-export.
 
 
 def _execute_stage2_core(
@@ -1049,7 +1019,6 @@ def run_stage2_async(body: dict) -> dict:
     Returns:
         { "job_id": str, "status": "running", "run_label": str }
     """
-    from app.infrastructure.database import SessionLocal
     from app.application.stage2_job_queue import Stage2JobRequest, submit_job
 
     run_label, base_date_dt, optimizer = _parse_stage2_body(body)
