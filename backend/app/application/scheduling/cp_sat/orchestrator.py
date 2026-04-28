@@ -981,8 +981,6 @@ def cp_sat_schedule(
             # split 실패 시 단일설비로 폴백 (아래 로직 계속)
 
         # ── 단일설비 배치 ─────────────────────────────────────────────────
-        eligible = meta["eligible"]
-
         # 연선 셋업 3-tier / 그 외 동일SQ 스킵
         actual_setup = meta["setup_min"]
         prev_batch = last_batch_on_equip.get(chosen_eq_code)

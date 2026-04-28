@@ -20,7 +20,6 @@ def parse_tobe_stranding(wb):
     sh = wb.sheet_by_name("연선 계획(1차)")
     groups = []
     current_group = None
-    header_row = 4  # Row 4 is column headers
 
     for r in range(5, sh.nrows):
         c0 = str(sh.cell(r, 0).value).strip()

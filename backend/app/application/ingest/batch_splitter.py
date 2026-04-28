@@ -401,7 +401,6 @@ def _apply_auto_split(
         return {"skipped": True, "reason": "이동 대상 배치 없음"}
 
     orig_dur = float(header.estimated_duration_min or 0)
-    orig_len = float(header.total_length_m or 0)
     lot_size = float(header.drum_length_m or 0)
     core_mul = int(header.core_count or 1)
 

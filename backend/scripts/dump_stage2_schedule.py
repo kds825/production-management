@@ -5,6 +5,8 @@ Usage:
     python scripts/dump_stage2_schedule.py <run_label> <out_json_path>
 """
 
+# ruff: noqa: E402  — sys.path 셋업 후 import 하는 standalone CLI 스크립트.
+
 from __future__ import annotations
 import sys
 import json

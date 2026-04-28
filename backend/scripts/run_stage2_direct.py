@@ -1,3 +1,4 @@
+# ruff: noqa: E402  — sys.path 셋업 후 import 하는 standalone CLI 스크립트.
 """
 Stage2 직접 실행 스크립트 — Supabase pooler의 2분 statement_timeout 회피.
 

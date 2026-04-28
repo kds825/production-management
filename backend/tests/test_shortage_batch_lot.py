@@ -118,7 +118,7 @@ def test_no_drum_lot_master_falls_back(db):
     _seed_shortage_wip(db, sq=9999, shortage=100)
     db.commit()
 
-    r = create_shortage_batches(_RUN_LABEL, db)
+    create_shortage_batches(_RUN_LABEL, db)
     db.flush()
 
     b = db.query(ProductionBatch).filter_by(run_label=_RUN_LABEL).first()

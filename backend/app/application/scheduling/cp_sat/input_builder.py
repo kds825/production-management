@@ -29,6 +29,7 @@ from app.infrastructure.models.drum_lot_master import DrumLotMaster
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.speed_master import SpeedMaster
+from app.application._shared.audit_logger import log_filter_out
 from app.application._shared.constraint_params import ConstraintParams
 from app.domain.constants import _DEFAULT_WELDING_MIN, _WIP_SKIP_PROCESSES
 

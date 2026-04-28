@@ -575,7 +575,6 @@ def _check_procurement_lead_time(tasks, batches, equipment, config) -> list[dict
 
     for t in tasks:
         if t.start_datetime.date() < earliest_ok:
-            batch = batches.get(t.batch_id)
             violations.append(
                 {
                     "constraint_id": "8-2",

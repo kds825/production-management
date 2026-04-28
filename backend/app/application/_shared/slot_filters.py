@@ -189,8 +189,10 @@ def align_start_to_predecessor_end(
 
         _self._find_available_slot = _slot_impl
     _find_available_slot = _self._find_available_slot
-    calculate_start_datetime = _self.calculate_start_datetime
-    calculate_end_datetime = _self.calculate_end_datetime
+    # 모듈-수준 import (line 26-29) 와 의도적 shadow — _self 캐시본은 monkeypatch
+    # 가능하지만 모듈 import 는 그렇지 않음. 함수 내부에서만 _self 본을 우선 사용.
+    calculate_start_datetime = _self.calculate_start_datetime  # noqa: F811
+    calculate_end_datetime = _self.calculate_end_datetime  # noqa: F811
 
     pipeline_procs: list[str] = []
     if pred_proc:

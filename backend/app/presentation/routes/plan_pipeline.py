@@ -38,9 +38,9 @@ from app.application.ingest.stage2 import run_greedy_stage  # noqa: F401
 # without going through services.pipeline). Aliased above to avoid colliding
 # with the local variable named ``new_run_label`` inside run_stage1_update().
 new_run_label = _alloc_run_label  # noqa: F811 — intentional re-export alias
-from app.application.scheduling.greedy.auto_schedule import auto_schedule  # noqa: F401 — used in stage2
-from app.application.ingest.wip_matching import match_wip
-from app.application.ingest.wip_promotion import _promote_expected_to_estimated
+from app.application.scheduling.greedy.auto_schedule import auto_schedule  # noqa: F401, E402 — alias 후 import
+from app.application.ingest.wip_matching import match_wip  # noqa: E402
+from app.application.ingest.wip_promotion import _promote_expected_to_estimated  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -1366,9 +1366,6 @@ def split_batch_group(
     split_off = [b for b in all_individual if b.batch_id in batch_id_set]
     remaining = [b for b in all_individual if b.batch_id not in batch_id_set]
 
-    total_drums = max(sum(int(b.drum_count or 1) for b in all_individual), 1)
-    split_drums = sum(int(b.drum_count or 1) for b in split_off)
-    remain_drums = total_drums - split_drums
     remain_lots: int = -1  # -1 = 미계산 (Phase 2 그룹 또는 헤더 없는 경우)
 
     # ── 헤더 배치 분할 처리 ──────────────────────────────────────────────────
@@ -1377,7 +1374,6 @@ def split_batch_group(
         from app.infrastructure.models.wip_inventory import WipInventory as WipModel
 
         orig_dur = float(header.estimated_duration_min or 0)
-        orig_len = float(header.total_length_m or 0)
         lot_size = float(header.drum_length_m or 0)  # 틀단위 (m)
         core_mul = int(header.core_count or 1)
 
@@ -2440,8 +2436,8 @@ def restore_batch_group_endpoint(
 # ---------------------------------------------------------------------------
 
 
-from app.presentation.schemas.restore_at import RestoreAtRequest, RestoreAtResponse
-from app.application.validation.batch_group_lifecycle import (
+from app.presentation.schemas.restore_at import RestoreAtRequest, RestoreAtResponse  # noqa: E402
+from app.application.validation.batch_group_lifecycle import (  # noqa: E402
     BatchGroupNotFoundError,
     BatchGroupStatusError,
     compute_restore_at_plan,

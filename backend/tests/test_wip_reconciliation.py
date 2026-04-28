@@ -168,7 +168,7 @@ def test_reconciliation_single_match_auto_update(db):
     rows = [{"공정": "연선재고", "규격": "185SQ", "전압": "저압", "길이": 275}]
     from app.infrastructure.parsers.wip_parser import parse_wip_excel
 
-    result = parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
+    parse_wip_excel(_make_excel(rows), db, run_label=_RUN_LABEL)
     db.flush()
     db.expire_all()
 

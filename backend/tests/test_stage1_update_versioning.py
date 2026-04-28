@@ -182,13 +182,13 @@ def test_compare_runs_basic(db: Session) -> None:
     # before: S001, S002 있음. after: S002 이동, S003 신규, S001 삭제.
     _seed_sales_order(db, before_rl, "S001")
     _seed_sales_order(db, before_rl, "S002", order_line=1)
-    b1 = _seed_production_batch(db, before_rl, "S001", process_name="저압절연")
+    _seed_production_batch(db, before_rl, "S001", process_name="저압절연")
     b2 = _seed_production_batch(db, before_rl, "S002", process_name="저압절연")
 
     _seed_sales_order(db, after_rl, "S002", order_line=2)  # 다른 order 로 pk 회피
     _seed_sales_order(db, after_rl, "S003")
     b2_new = _seed_production_batch(db, after_rl, "S002", process_name="저압절연")
-    b3 = _seed_production_batch(db, after_rl, "S003", process_name="저압절연")
+    _seed_production_batch(db, after_rl, "S003", process_name="저압절연")
     db.flush()
 
     # b2(before): (S002, 1, 저압절연, 1) 에 task 추가
@@ -229,6 +229,7 @@ def test_compare_runs_basic(db: Session) -> None:
 def test_purge_preserves_frozen_task(db: Session) -> None:
     """_purge_run_tasks 가 frozen 배치의 ScheduleTask 를 보존하는지 확인."""
     from app.application.scheduling.greedy.auto_schedule import _purge_run_tasks
+
     run_label = "20260420_120000"
     _seed_sales_order(db, run_label, "S200")
 
