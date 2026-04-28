@@ -7,7 +7,7 @@ import type { SchedulingBatch } from "@/features/scheduling-review/types";
 import { assignBatchNumbers } from "@/shared/utils/batchGrouping";
 import { ProcessOptimizationSection } from "@/features/scheduling-review/components/ProcessOptimizationSection";
 import { BatchCalculateButton } from "@/features/scheduling-review/components/BatchCalculateButton";
-import { SchedulingResultTable } from "@/features/scheduling-review/components/SchedulingResultTable";
+import { SchedulingResultTable } from "@/features/scheduling-review/components/scheduling-result-table/SchedulingResultTable";
 import { AiInsightCard } from "@/features/scheduling-review/components/AiInsightCard";
 import { OutsourceTable } from "@/features/scheduling-review/components/OutsourceTable";
 import { useUrlRunLabel } from "@/features/scheduling-review/hooks/useUrlRunLabel";

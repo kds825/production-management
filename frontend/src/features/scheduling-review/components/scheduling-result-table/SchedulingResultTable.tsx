@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-import type { SchedulingBatch } from "../types";
+import type { SchedulingBatch } from "../../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
 import {
@@ -17,12 +17,8 @@ import {
   formatDeliveryDate,
   sortBatchesByBatchNumber,
 } from "@/shared/utils/batchGrouping";
-import { useSchedulingReviewStore } from "../store/schedulingReviewStore";
-import {
-  type CrudMode,
-  generateTempId,
-  CrudButton,
-} from "./SchedulingResultTable.crud";
+import { useSchedulingReviewStore } from "../../store/schedulingReviewStore";
+import { type CrudMode, generateTempId, CrudButton } from "./crud";
 
 interface SchedulingResultTableProps {
   yeonseoBatches: SchedulingBatch[];
