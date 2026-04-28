@@ -250,12 +250,13 @@ Stage 2 스케줄링 알고리즘:
 
 ### 제약조건 동적 제어 (`constraint_config` 테이블)
 
-프론트 `/master/constraints` 페이지에서 ON/OFF 토글 가능. 제어 수준이 2단계:
+프론트 `/master/constraints` 페이지에서 ON/OFF 토글 가능. 제어 수준이 3단계:
 
-| 제어 수준       | 설명                                            | 예시                                         | 토글 효과                                           |
-| --------------- | ----------------------------------------------- | -------------------------------------------- | --------------------------------------------------- |
-| **DB 파라미터** | `is_enabled` + `params_json` 모두 코드에서 읽음 | 3-1 여척(7m), 3-4 흑색소진, 7-1 불량버퍼(5%) | ✅ OFF 시 완전 비활성화, 파라미터 값 변경 즉시 반영 |
-| **코드 로직**   | 로직은 코드에 하드코딩, `is_enabled`는 미참조   | 2-2 외주, 2-4 61연선, 5-5 TFR-GV             | ⚠️ 토글해도 동작 변화 없음 (코드 수정 필요)         |
+| 제어 수준                       | 설명                                                                   | 예시                                                                         | 토글 효과                                              |
+| ------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **DB 파라미터**                 | `is_enabled` + `params_json` 모두 코드에서 읽음                        | 3-1 여척(7m), 3-4 흑색소진, 7-1 불량버퍼(5%)                                 | ✅ OFF 시 완전 비활성화, 파라미터 값 변경 즉시 반영    |
+| **DB 게이트 + 코드 로직**       | 룰 본문은 코드, `is_enabled` 게이트 통과 시에만 적용 (2026-04-28 도입) | **2-2 외주**, **2-4 61연선**, **5-5 TFR-GV**                                 | ✅ OFF 시 룰 비활성. 본문 변경은 여전히 코드 수정 필요 |
+| **코드 로직 (코어, 토글 불가)** | routing/scheduling 코어 — 토글 시 solver 붕괴 (의도적 토글 불가)       | 5-1 SQ→설비, 4-_ 시간/속도, 6-_ 가동시간, 9-1 선행공정, 10-2/3/4 재질·라우팅 | ⚠️ 변경 시 반드시 코드 수정 (`is_enabled` 무시)        |
 
 > Stage 1 또는 Stage 2를 재실행하면 변경된 설정이 반영됩니다.
 
@@ -286,12 +287,12 @@ Stage 2 스케줄링 알고리즘:
 
 ### SM수량/재고 (4건)
 
-| ID  | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                           |
-| --- | ----------------------------- | --------- | ---- | --------------------------------------------------- |
-| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | 코드 | application/ingest/wip_matching, batch_grouper      |
-| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | 코드 | application/ingest/batch_grouper (sq<=10 or 고내화) |
-| 2-3 | 틀단위 기준 생산              | Stage 1   | 코드 | batch_group으로 대체                                |
-| 2-4 | 61연선 분리                   | Stage 1   | 코드 | application/ingest/batch_grouper (is_61strand)      |
+| ID  | 제약조건                      | 적용 단계 | 제어          | 코드 위치                                                           |
+| --- | ----------------------------- | --------- | ------------- | ------------------------------------------------------------------- |
+| 2-1 | 재공 활용(연선/절연 재고우선) | Stage 1   | 코드          | application/ingest/wip_matching, batch_grouper                      |
+| 2-2 | 외주 조건(SQ<=10, 고내화16)   | Stage 1   | **DB-toggle** | application/ingest/batch_grouper (`_is_outsource_rule_with_toggle`) |
+| 2-3 | 틀단위 기준 생산              | Stage 1   | 코드          | batch_group으로 대체                                                |
+| 2-4 | 61연선 분리                   | Stage 1   | **DB-toggle** | application/ingest/batch_grouper (`_is_61strand_rule`)              |
 
 ### 색상관리 (3건)
 
@@ -313,14 +314,14 @@ Stage 2 스케줄링 알고리즘:
 
 ### 설비배정 (6건)
 
-| ID   | 제약조건                      | 적용 단계 | 제어 | 코드 위치                                                     |
-| ---- | ----------------------------- | --------- | ---- | ------------------------------------------------------------- |
-| 5-1  | SQ 기준 설비 배정             | Stage 2   | 코드 | application/scheduling/greedy (\_SQ_TO_WIRE_DIAMETER)         |
-| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | 코드 | application/ingest/batch_grouper (\_sort_key: stranding_type) |
-| 5-3  | 다심 우선배치                 | Stage 1   | 코드 | application/ingest/batch_grouper (multi_core_penalty)         |
-| 5-5  | TFR-GV 절연 생략              | Stage 1   | 코드 | application/ingest/batch_grouper (skip_stranding, sq<=25)     |
-| 10-3 | 시스 재질 라우팅              | Stage 2   | 코드 | application/scheduling/greedy (\_filter_by_sheath_routing)    |
-| 10-4 | 전압별 드럼 분류              | Stage 1   | 코드 | application/ingest/batch_grouper (\_sort_key: voltage)        |
+| ID   | 제약조건                      | 적용 단계 | 제어          | 코드 위치                                                     |
+| ---- | ----------------------------- | --------- | ------------- | ------------------------------------------------------------- |
+| 5-1  | SQ 기준 설비 배정             | Stage 2   | 코드          | application/scheduling/greedy (\_SQ_TO_WIRE_DIAMETER)         |
+| 5-2  | 연선방식 구분(압축/원형/수밀) | Stage 1   | 코드          | application/ingest/batch_grouper (\_sort_key: stranding_type) |
+| 5-3  | 다심 우선배치                 | Stage 1   | 코드          | application/ingest/batch_grouper (multi_core_penalty)         |
+| 5-5  | TFR-GV 절연 생략              | Stage 1   | **DB-toggle** | application/ingest/batch_grouper (`_should_skip_stranding`)   |
+| 10-3 | 시스 재질 라우팅              | Stage 2   | 코드          | application/scheduling/greedy (\_filter_by_sheath_routing)    |
+| 10-4 | 전압별 드럼 분류              | Stage 1   | 코드          | application/ingest/batch_grouper (\_sort_key: voltage)        |
 
 ### 가동시간 (4건)
 
