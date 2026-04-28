@@ -71,6 +71,7 @@ from app.application.scheduling.cp_sat._diagnostic_snapshot import (
 )
 from app.application.scheduling.cp_sat._calendar_apply import (
     apply_sheath_color_sort,
+    preload_existing_timeline,
     resolve_first_due_by_strand_cluster,
 )
 
@@ -484,23 +485,9 @@ def cp_sat_schedule(
     process_first_output_by_sq: dict[tuple[str, int], datetime] = {}
     core_first_drum_by_main_sq: dict[int, datetime] = {}
 
-    # ── 기존 scheduled 태스크를 timeline에 pre-load ───────────────────────
-    # 긴급수주 추가 후 재스케줄링 시 이미 확정된 블록과의 겹침을 방지한다.
-    timeline: dict[str, list] = {}
-    existing_tasks = (
-        db.query(ScheduleTask)
-        .filter(
-            ScheduleTask.run_label == run_label,
-            ScheduleTask.equipment_code.isnot(None),
-            ScheduleTask.start_datetime.isnot(None),
-            ScheduleTask.end_datetime.isnot(None),
-        )
-        .all()
-    )
-    for et in existing_tasks:
-        timeline.setdefault(et.equipment_code, []).append(
-            (et.start_datetime, et.end_datetime)
-        )
+    # Phase 2 Task 2.10d: 기존 scheduled 태스크의 timeline pre-load 는
+    # ``_calendar_apply.preload_existing_timeline`` 으로 추출.
+    timeline = preload_existing_timeline(db=db, run_label=run_label)
     first_insul_output: datetime | None = None
     preempted_remainder: list[ProductionBatch] = []  # 선점 분할된 잔여 배치
 

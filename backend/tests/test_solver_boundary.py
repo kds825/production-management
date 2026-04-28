@@ -58,6 +58,11 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # (frozen_tasks_snapshot 빌드 + lex/weighted solve) 추출. ScheduleTask
     # join 쿼리 + load_active_constraints DB 호출이라 boundary crosser.
     "_solver_runner.py",
+    # Phase 2 Task 2.10b~e (B-3.5): `_calendar_apply.py` 는 cp_sat_schedule §8
+    # (CP-SAT 결과를 캘린더 그리디로 실제 배치) 추출. preload_existing_timeline
+    # 이 ScheduleTask 조회 + apply_calendar_greedy 가 ScheduleTask insert 라
+    # boundary crosser.
+    "_calendar_apply.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM

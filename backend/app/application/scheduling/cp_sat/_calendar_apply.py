@@ -223,3 +223,36 @@ def apply_sheath_color_sort(
         gk_to_cluster_id=gk_to_cluster_id,
         sorted_clusters=_sorted_clusters,
     )
+
+
+def preload_existing_timeline(
+    *,
+    db,
+    run_label: str,
+) -> dict[str, list]:
+    """기존 scheduled 태스크를 timeline 에 pre-load.
+
+    원본: orchestrator.py:487-503. 긴급수주 추가 후 재스케줄링 시 이미
+    확정된 블록과의 겹침을 방지한다.
+    """
+    # ── 기존 scheduled 태스크를 timeline에 pre-load ───────────────────────
+    # 긴급수주 추가 후 재스케줄링 시 이미 확정된 블록과의 겹침을 방지한다.
+    # Inline import — boundary crossing module dependency 명시.
+    from app.infrastructure.models.schedule_task import ScheduleTask
+
+    timeline: dict[str, list] = {}
+    existing_tasks = (
+        db.query(ScheduleTask)
+        .filter(
+            ScheduleTask.run_label == run_label,
+            ScheduleTask.equipment_code.isnot(None),
+            ScheduleTask.start_datetime.isnot(None),
+            ScheduleTask.end_datetime.isnot(None),
+        )
+        .all()
+    )
+    for et in existing_tasks:
+        timeline.setdefault(et.equipment_code, []).append(
+            (et.start_datetime, et.end_datetime)
+        )
+    return timeline
