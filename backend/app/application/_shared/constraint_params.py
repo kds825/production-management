@@ -24,12 +24,15 @@ class ConstraintParams:
     """create_batches / auto_schedule 1회 실행 동안 재사용되는 스냅샷."""
 
     by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Track A (2026-04-28): 하드코딩 룰의 DB-toggle 활성화. is_rule_enabled() 가 조회.
+    enabled_by_id: dict[str, bool] = field(default_factory=dict)
 
     @classmethod
     def load(cls, db: Session) -> "ConstraintParams":
         rows = db.query(ConstraintConfig).all()
         return cls(
             by_id={r.constraint_id: dict(r.params_json or {}) for r in rows},
+            enabled_by_id={r.constraint_id: bool(r.is_enabled) for r in rows},
         )
 
     def get(
@@ -54,3 +57,14 @@ class ConstraintParams:
                 f"ConstraintConfig '{constraint_id}' params_json key '{key}' missing."
             )
         return float(row[key])
+
+    def is_rule_enabled(self, constraint_id: str, default: bool = True) -> bool:
+        """ConstraintConfig.is_enabled 조회 — toggle 게이트 helper.
+
+        2-2 외주 / 2-4 61연선 / 5-5 TFR-GV 등 batch_grouper 의 하드코딩 룰 wrapper
+        가 본 메서드로 게이트 통과 여부 결정. row 미존재 시 default 반환 (보수적
+        — legacy DB 에서 룰 본문 동작은 유지).
+        """
+        if constraint_id not in self.enabled_by_id:
+            return default
+        return self.enabled_by_id[constraint_id]
