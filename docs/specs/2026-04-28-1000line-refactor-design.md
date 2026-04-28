@@ -55,16 +55,16 @@ typecheck/lint + e2e smoke 회귀 0 으로 강제 검증.
 (`app.presentation.routes.plan_pipeline.<name>`) 는 보존 — sub-module 의 router
 와 helper 를 main 모듈에서 re-include / re-export.
 
-| 새 파일 | 책임 | 추정 LOC |
-|---|---|---|
-| `routes/plan_pipeline.py` | `APIRouter` + sub-router include + 공유 helpers (`_run_ai_background`, `_ai_cache`) | ~100 |
-| `routes/plan_pipeline_stage1.py` | `/stage1` POST + `/stage1/update` POST + `/stage1/{run_label}/*` GET (batches, wip-inventory, outsourced, ai-summary, export) + apply_urgent_order | ~900 |
-| `routes/plan_pipeline_stage2.py` | `/stage2` (sync/async/status) + `/stage2/{run_label}/ai-status` + trigger-reanalysis | ~180 |
-| `routes/plan_pipeline_batch_group.py` | `/batch-group/{name}/orders` + `/process-flow` + `/split` + `/batch-group-snapshots` + unassign / restore / restore-at | ~700 |
-| `routes/_batch_group_split.py` | `split_batch_group` 본체 (410 줄) — endpoint 는 batch_group 모듈 에 남고 비즈니스 로직만 추출 | ~410 |
-| `routes/plan_pipeline_batch.py` | `/batch/{id}` PATCH + `/batch/{id}/status` PATCH + `/batch-group/{name}/status` PATCH + `/batch-status-summary` | ~250 |
-| `routes/plan_pipeline_runs.py` | `/runs` GET + `/runs/compare` GET + `/runs/{run_label}` DELETE | ~410 |
-| `routes/_pipeline_shared.py` (선택) | `_run_ai_background`, `_start_ai_background`, `_execute_stage2_core`, `_parse_stage2_body` 등 | ~150 |
+| 새 파일                               | 책임                                                                                                                                               | 추정 LOC |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `routes/plan_pipeline.py`             | `APIRouter` + sub-router include + 공유 helpers (`_run_ai_background`, `_ai_cache`)                                                                | ~100     |
+| `routes/plan_pipeline_stage1.py`      | `/stage1` POST + `/stage1/update` POST + `/stage1/{run_label}/*` GET (batches, wip-inventory, outsourced, ai-summary, export) + apply_urgent_order | ~900     |
+| `routes/plan_pipeline_stage2.py`      | `/stage2` (sync/async/status) + `/stage2/{run_label}/ai-status` + trigger-reanalysis                                                               | ~180     |
+| `routes/plan_pipeline_batch_group.py` | `/batch-group/{name}/orders` + `/process-flow` + `/split` + `/batch-group-snapshots` + unassign / restore / restore-at                             | ~700     |
+| `routes/_batch_group_split.py`        | `split_batch_group` 본체 (410 줄) — endpoint 는 batch_group 모듈 에 남고 비즈니스 로직만 추출                                                      | ~410     |
+| `routes/plan_pipeline_batch.py`       | `/batch/{id}` PATCH + `/batch/{id}/status` PATCH + `/batch-group/{name}/status` PATCH + `/batch-status-summary`                                    | ~250     |
+| `routes/plan_pipeline_runs.py`        | `/runs` GET + `/runs/compare` GET + `/runs/{run_label}` DELETE                                                                                     | ~410     |
+| `routes/_pipeline_shared.py` (선택)   | `_run_ai_background`, `_start_ai_background`, `_execute_stage2_core`, `_parse_stage2_body` 등                                                      | ~150     |
 
 `_ai_cache` (in-memory dict + threading.Lock) 는 `_pipeline_shared.py` 의 모듈
 레벨 변수로 이동. 모든 sub-router 가 이 모듈을 import — singleton 의미 유지.
@@ -87,16 +87,16 @@ monkeypatch 표적 (`auto_schedule`) 은 sub-router 모듈 안에 import + alias
 이미 5 개 sub-component 가 같은 파일에 정의돼 있다 — 별도 파일로 분리하면
 mechanical. `ErpUploadSection` 단독 877 줄은 추가 sub-component 로 분할.
 
-| 새 파일 | 추출 대상 | LOC |
-|---|---|---|
-| `features/plan-register/components/DiffSummaryPanel.tsx` | `DiffSummaryPanel` (line 184~436) | ~250 |
-| `features/plan-register/components/OrderDiffSummaryPanel.tsx` | `OrderDiffSummaryPanel` (line 436~518) | ~80 |
-| `features/plan-register/components/BatchGridWithFrozen.tsx` | `BatchGridWithFrozen` (line 518~696) | ~180 |
-| `features/plan-register/components/WipUploadSection.tsx` | `WipUploadSection` (line 696~917) | ~220 |
-| `features/plan-register/components/ErpUploadSection.tsx` | `ErpUploadSection` (line 917~1794) — 추가 분할 후보 (split-review, batch-grid, file-input 등) | ~600 |
-| `features/plan-register/components/ErpUploadSection.{SplitReview,BatchGridDisplay,FileInput}.tsx` | ErpUploadSection 내부 sub-component (선택, 위험 평가 후) — depth ≤ 3 위해 평탄 prefix 패턴 | ~300 |
-| `features/plan-register/types.ts` | `WipFile`, `ParsedOrder`, `BatchSummary`, `Stage1Result` 등 interface 12 개 | ~150 |
-| `app/(main)/plan-register/page.tsx` | `PlanRegisterPage` 본체 + getKstToday + import | ~400 |
+| 새 파일                                                                                           | 추출 대상                                                                                     | LOC  |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---- |
+| `features/plan-register/components/DiffSummaryPanel.tsx`                                          | `DiffSummaryPanel` (line 184~436)                                                             | ~250 |
+| `features/plan-register/components/OrderDiffSummaryPanel.tsx`                                     | `OrderDiffSummaryPanel` (line 436~518)                                                        | ~80  |
+| `features/plan-register/components/BatchGridWithFrozen.tsx`                                       | `BatchGridWithFrozen` (line 518~696)                                                          | ~180 |
+| `features/plan-register/components/WipUploadSection.tsx`                                          | `WipUploadSection` (line 696~917)                                                             | ~220 |
+| `features/plan-register/components/ErpUploadSection.tsx`                                          | `ErpUploadSection` (line 917~1794) — 추가 분할 후보 (split-review, batch-grid, file-input 등) | ~600 |
+| `features/plan-register/components/ErpUploadSection.{SplitReview,BatchGridDisplay,FileInput}.tsx` | ErpUploadSection 내부 sub-component (선택, 위험 평가 후) — depth ≤ 3 위해 평탄 prefix 패턴    | ~300 |
+| `features/plan-register/types.ts`                                                                 | `WipFile`, `ParsedOrder`, `BatchSummary`, `Stage1Result` 등 interface 12 개                   | ~150 |
+| `app/(main)/plan-register/page.tsx`                                                               | `PlanRegisterPage` 본체 + getKstToday + import                                                | ~400 |
 
 **주의:** Next 16 (frontend/AGENTS.md). `next/navigation` `useSearchParams` 가 build
 실패 — 현재는 `useEffect + window.location.search` 직접 읽기 패턴. 분할 시
@@ -115,14 +115,14 @@ mechanical. `ErpUploadSection` 단독 877 줄은 추가 sub-component 로 분할
 
 단일 컴포넌트. fetch hook 책임 추출.
 
-| 새 파일 | 추출 대상 |
-|---|---|
-| `features/scheduling-review/hooks/useRunsList.ts` | runs 로드 + selectedRun resolution (URL > prev > 최신) |
-| `features/scheduling-review/hooks/useRunCompare.ts` | compare 모달 + diff fetch |
-| `features/scheduling-review/hooks/useExcelDownload.ts` | Excel 다운로드 + loading |
-| `features/scheduling-review/hooks/useUrlRunLabel.ts` | URL 쿼리스트링 → run_label 추출 (Next 16 안전 패턴) |
-| `features/scheduling-review/components/RunsHeader.tsx` | run 목록 + 비교 버튼 + Excel 버튼 (가능 시) |
-| `app/(main)/scheduling-review/page.tsx` | SchedulingReviewPage 본체 |
+| 새 파일                                                | 추출 대상                                              |
+| ------------------------------------------------------ | ------------------------------------------------------ |
+| `features/scheduling-review/hooks/useRunsList.ts`      | runs 로드 + selectedRun resolution (URL > prev > 최신) |
+| `features/scheduling-review/hooks/useRunCompare.ts`    | compare 모달 + diff fetch                              |
+| `features/scheduling-review/hooks/useExcelDownload.ts` | Excel 다운로드 + loading                               |
+| `features/scheduling-review/hooks/useUrlRunLabel.ts`   | URL 쿼리스트링 → run_label 추출 (Next 16 안전 패턴)    |
+| `features/scheduling-review/components/RunsHeader.tsx` | run 목록 + 비교 버튼 + Excel 버튼 (가능 시)            |
+| `app/(main)/scheduling-review/page.tsx`                | SchedulingReviewPage 본체                              |
 
 **Atomic commit 단위 (2 commits):**
 
@@ -133,12 +133,12 @@ mechanical. `ErpUploadSection` 단독 877 줄은 추가 sub-component 로 분할
 
 단일 컴포넌트. column 정의 + 셀 렌더 + 필터 책임 분리.
 
-| 새 파일 | 추출 대상 |
-|---|---|
-| `features/scheduling-review/components/production-batch-table/columnDefs.ts` | `COL_DEFS`, `ColKey`, getter 함수 |
-| `features/scheduling-review/components/production-batch-table/cellRenderers.tsx` | 각 컬럼 셀 렌더 함수 (read + edit mode) |
-| `features/scheduling-review/components/production-batch-table/filters.ts` | `ColFilters`, 필터 로직, getCellValueStatic |
-| `features/scheduling-review/components/ProductionBatchTable.tsx` | 메인 컴포넌트 (table 본체 + state) |
+| 새 파일                                                                          | 추출 대상                                   |
+| -------------------------------------------------------------------------------- | ------------------------------------------- |
+| `features/scheduling-review/components/production-batch-table/columnDefs.ts`     | `COL_DEFS`, `ColKey`, getter 함수           |
+| `features/scheduling-review/components/production-batch-table/cellRenderers.tsx` | 각 컬럼 셀 렌더 함수 (read + edit mode)     |
+| `features/scheduling-review/components/production-batch-table/filters.ts`        | `ColFilters`, 필터 로직, getCellValueStatic |
+| `features/scheduling-review/components/ProductionBatchTable.tsx`                 | 메인 컴포넌트 (table 본체 + state)          |
 
 depth ≤ 3 제약 — `production-batch-table/` 디렉토리는 components/ 하위라 4 단계.
 대안: 평탄 명명 `productionBatchTable_columnDefs.ts` 등. **이 spec 에서는 평탄
@@ -159,10 +159,10 @@ features/scheduling-review/components/ProductionBatchTable.filters.ts           
 
 메인 컴포넌트 + 4 개 pure helper. helper 만 분리하면 ~360 줄 감소.
 
-| 새 파일 | 추출 대상 |
-|---|---|
+| 새 파일                                             | 추출 대상                                                                                |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `features/scheduler/utils/ganttTaskBlockHelpers.ts` | `splitByWeekends`, `isSheathEquipment`, `getSheathColor`, `snapToHour`, `isFrozenStatus` |
-| `features/scheduler/components/GanttTaskBlock.tsx` | 메인 컴포넌트 |
+| `features/scheduler/components/GanttTaskBlock.tsx`  | 메인 컴포넌트                                                                            |
 
 **Atomic commit 단위 (1 commit):**
 
@@ -172,15 +172,15 @@ features/scheduling-review/components/ProductionBatchTable.filters.ts           
 
 22 개 `_check_*` 함수 (각 30~50 줄). 카테고리별 모듈 분리.
 
-| 새 파일 | 추출 함수 |
-|---|---|
-| `validation/constraint_checker.py` | `validate_all`, `validate_overlap_only`, `has_overlap` (orchestrator + 공개 API) |
-| `validation/_checks_hard.py` | `_check_overlap`, `_check_precedence`, `_check_sq_range` |
-| `validation/_checks_due.py` | `_check_delivery`, `_check_due_type`, `_check_priority_order` |
-| `validation/_checks_setup.py` | `_check_color_group`, `_check_setup_time` |
-| `validation/_checks_calendar.py` | `_check_friday_hours`, `_check_holiday`, `_check_absence_hours` |
-| `validation/_checks_material.py` | `_check_material_separation`, `_check_defect_buffer`, `_check_material_availability`, `_check_raw_material_availability`, `_check_procurement_lead_time` |
-| `validation/_checks_misc.py` | `_check_safety_education`, `_check_equipment_utilization`, `_check_gc_routing` |
+| 새 파일                            | 추출 함수                                                                                                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validation/constraint_checker.py` | `validate_all`, `validate_overlap_only`, `has_overlap` (orchestrator + 공개 API)                                                                         |
+| `validation/_checks_hard.py`       | `_check_overlap`, `_check_precedence`, `_check_sq_range`                                                                                                 |
+| `validation/_checks_due.py`        | `_check_delivery`, `_check_due_type`, `_check_priority_order`                                                                                            |
+| `validation/_checks_setup.py`      | `_check_color_group`, `_check_setup_time`                                                                                                                |
+| `validation/_checks_calendar.py`   | `_check_friday_hours`, `_check_holiday`, `_check_absence_hours`                                                                                          |
+| `validation/_checks_material.py`   | `_check_material_separation`, `_check_defect_buffer`, `_check_material_availability`, `_check_raw_material_availability`, `_check_procurement_lead_time` |
+| `validation/_checks_misc.py`       | `_check_safety_education`, `_check_equipment_utilization`, `_check_gc_routing`                                                                           |
 
 depth ≤ 3 OK (`application/validation/_checks_X.py`).
 
@@ -194,12 +194,12 @@ depth ≤ 3 OK (`application/validation/_checks_X.py`).
 
 22 개 함수. 책임별 그룹핑.
 
-| 새 파일 | 추출 함수 |
-|---|---|
-| `decisions/build_card.py` | `build_decision_card` (메인 orchestrator) + small util |
-| `decisions/_card_why.py` | `_build_why_lines`, `_scenario_key_hint`, `_safe_verdict_summary`, `_collect_audit_metrics`, `_extract_metric` |
-| `decisions/_card_impact.py` | `_build_impact_block`, `_build_equipment_day`, `_post_hoc_bundle_metrics`, `_build_alternatives`, `_build_placement_calc`, `__dict_for_bundle` |
-| `decisions/_card_helpers.py` | `_load_context`, `_empty_card`, `_process_label`, `_sub_chip`, `_format_placement_text`, `_task_view`, `_build_debug_block` |
+| 새 파일                      | 추출 함수                                                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `decisions/build_card.py`    | `build_decision_card` (메인 orchestrator) + small util                                                                                         |
+| `decisions/_card_why.py`     | `_build_why_lines`, `_scenario_key_hint`, `_safe_verdict_summary`, `_collect_audit_metrics`, `_extract_metric`                                 |
+| `decisions/_card_impact.py`  | `_build_impact_block`, `_build_equipment_day`, `_post_hoc_bundle_metrics`, `_build_alternatives`, `_build_placement_calc`, `__dict_for_bundle` |
+| `decisions/_card_helpers.py` | `_load_context`, `_empty_card`, `_process_label`, `_sub_chip`, `_format_placement_text`, `_task_view`, `_build_debug_block`                    |
 
 **Atomic commit 단위 (3 commits):**
 
@@ -211,10 +211,10 @@ depth ≤ 3 OK (`application/validation/_checks_X.py`).
 
 `_write_sheet` 230 줄 단독 + 8 개 helper.
 
-| 새 파일 | 추출 함수 |
-|---|---|
-| `exporters/excel_exporter.py` | `export_plan` (orchestrator) |
-| `exporters/excel_exporter_sheet.py` | `_write_sheet` 단일 함수 (230줄) — 추가 분해 후보 |
+| 새 파일                               | 추출 함수                                                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exporters/excel_exporter.py`         | `export_plan` (orchestrator)                                                                                                                 |
+| `exporters/excel_exporter_sheet.py`   | `_write_sheet` 단일 함수 (230줄) — 추가 분해 후보                                                                                            |
 | `exporters/excel_exporter_helpers.py` | `_merge_lot_splits`, `_resolve_sheet_name`, `_build_remarks`, `_write_data_row`, `_write_subtotal`, `_write_annotation`, `_apply_col_widths` |
 
 depth ≤ 3 OK (`infrastructure/exporters/excel_exporter_*.py`).
@@ -230,11 +230,11 @@ depth ≤ 3 OK (`infrastructure/exporters/excel_exporter_*.py`).
 
 ProductionBatchTable과 같은 평탄 prefix 패턴.
 
-| 새 파일 | 추출 대상 |
-|---|---|
-| `features/scheduling-review/components/SchedulingResultTable.crud.tsx` | `CrudMode`, `CrudButton`, edit handlers |
-| `features/scheduling-review/components/SchedulingResultTable.cellRenderers.tsx` | 셀 렌더링 함수 |
-| `features/scheduling-review/components/SchedulingResultTable.tsx` | 메인 컴포넌트 (table 본체 + state) |
+| 새 파일                                                                         | 추출 대상                               |
+| ------------------------------------------------------------------------------- | --------------------------------------- |
+| `features/scheduling-review/components/SchedulingResultTable.crud.tsx`          | `CrudMode`, `CrudButton`, edit handlers |
+| `features/scheduling-review/components/SchedulingResultTable.cellRenderers.tsx` | 셀 렌더링 함수                          |
+| `features/scheduling-review/components/SchedulingResultTable.tsx`               | 메인 컴포넌트 (table 본체 + state)      |
 
 **Atomic commit 단위 (1 commit):**
 
@@ -427,22 +427,22 @@ application/scheduling/greedy/_assign_group.py         ← `_assign_group` 569�
 
 ### 4.1 Per-commit 게이트 (모든 commit 직후 실행)
 
-| 게이트 | 명령 | 기대 시간 |
-|---|---|---|
-| Backend unit + integration | `cd backend && pytest tests/ -q` | ~30초 |
-| Parity (11 fixtures) | `cd backend && pytest tests/test_parity_harness.py -m parity` | ~3~5분 |
-| Main parity (27) | `cd backend && pytest tests/main_parity/ -m parity` | ~5분 |
-| Frontend type | `cd frontend && npm run typecheck` | ~10초 |
-| Frontend lint | `cd frontend && npm run lint` | ~5초 |
+| 게이트                     | 명령                                                          | 기대 시간 |
+| -------------------------- | ------------------------------------------------------------- | --------- |
+| Backend unit + integration | `cd backend && pytest tests/ -q`                              | ~30초     |
+| Parity (11 fixtures)       | `cd backend && pytest tests/test_parity_harness.py -m parity` | ~3~5분    |
+| Main parity (27)           | `cd backend && pytest tests/main_parity/ -m parity`           | ~5분      |
+| Frontend type              | `cd frontend && npm run typecheck`                            | ~10초     |
+| Frontend lint              | `cd frontend && npm run lint`                                 | ~5초      |
 
 Backend commit 은 backend 게이트 4 개. Frontend commit 은 frontend 게이트 2 개.
 
 ### 4.2 PR 종료 게이트
 
-| 게이트 | 명령 |
-|---|---|
-| E2E smoke | `cd frontend && npx playwright test sprint-feedback.spec.ts verification-stage1.spec.ts` |
-| Manual smoke | `docs/qa-manual-smoke-2-2-5-5-2-4.md` 따라 1 회 (Phase 2 종료 시) |
+| 게이트       | 명령                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| E2E smoke    | `cd frontend && npx playwright test sprint-feedback.spec.ts verification-stage1.spec.ts` |
+| Manual smoke | `docs/qa-manual-smoke-2-2-5-5-2-4.md` 따라 1 회 (Phase 2 종료 시)                        |
 
 ### 4.3 회귀 발생 시 절차
 
@@ -501,18 +501,31 @@ Phase 2 (Yellow) — 같은 refactoring 브랜치 위에 누적
 
 ## 6. 위험 평가
 
-| 위험 | 확률 | 영향 | 완화 |
-|---|---|---|---|
-| `cp_sat_schedule()` §8 분해 시 parity hash 변경 | 중 | 높음 | commit ≤ 200 줄, 직후 parity 게이트, 변경 시 즉시 revert |
-| `split_batch_group` 410 줄 추출 시 monkeypatch path 변경 | 중 | 중 | `_batch_group_split.py` 의 `split_batch_group` 을 `plan_pipeline_batch_group.py` 에서 import + endpoint 본체에서 호출. 외부 import path 보존 |
-| `_ai_cache` (in-memory dict) 분리 시 race condition | 낮 | 중 | `_pipeline_shared.py` 의 모듈-레벨 singleton + Lock 유지. 다중 import 가 동일 dict 참조 |
-| Frontend Next 16 SSR boundary 위반 | 낮 | 높음 | `useEffect + window.location` 패턴 보존. `useSearchParams` 도입 금지 |
-| `auto_schedule` monkeypatch 깨짐 (test_*.py) | 중 | 낮 | `routes/plan_pipeline.py` 가 `auto_schedule` re-export. 기존 patch path 보존 |
-| ErpUploadSection (877 줄) 추가 분할 시 prop drilling | 낮 | 낮 | 내부 분할은 commit 1.15 로 선택사항. 위험 평가 후 진행 또는 skip |
-| Phase 2 Stage 2b/3b/7b dataclass 도입 시 hash 변경 | 중 | 중 | Stage 2a/3a/7a 검증 통과 후에만 진행. parity 회귀 발견 시 skip 가능 |
-| `_assign_group` 569 줄 추출 시 그리디 본체 hash 변경 | 중 | 높음 | orchestrator 동급 위험. commit 단독, 직후 parity + main_parity 강제 |
-| `constraint_checker.py` 카테고리 분리 시 `validate_all` import path 변경 | 낮 | 중 | `validate_all` 은 `constraint_checker.py` 에 남고 helper 만 sub-module 로. 외부 import path 보존 |
-| `excel_exporter._write_sheet` 230 줄 단독 추출 시 export_plan 호출 깨짐 | 낮 | 낮 | 모듈 레벨 함수 추출, 시그니처 그대로. unit test 로 검증 |
+| 위험                                                                     | 확률 | 영향 | 완화                                                                                                                                         |
+| ------------------------------------------------------------------------ | ---- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cp_sat_schedule()` §8 분해 시 parity hash 변경                          | 중   | 높음 | commit ≤ 200 줄, 직후 parity 게이트, 변경 시 즉시 revert                                                                                     |
+| `split_batch_group` 410 줄 추출 시 monkeypatch path 변경                 | 중   | 중   | `_batch_group_split.py` 의 `split_batch_group` 을 `plan_pipeline_batch_group.py` 에서 import + endpoint 본체에서 호출. 외부 import path 보존 |
+| `_ai_cache` (in-memory dict) 분리 시 race condition                      | 낮   | 중   | `_pipeline_shared.py` 의 모듈-레벨 singleton + Lock 유지. 다중 import 가 동일 dict 참조                                                      |
+| Frontend Next 16 SSR boundary 위반                                       | 낮   | 높음 | `useEffect + window.location` 패턴 보존. `useSearchParams` 도입 금지                                                                         |
+| `auto_schedule` monkeypatch 깨짐 (test\_\*.py)                           | 중   | 낮   | `routes/plan_pipeline.py` 가 `auto_schedule` re-export. 기존 patch path 보존                                                                 |
+| ErpUploadSection (877 줄) 추가 분할 시 prop drilling                     | 낮   | 낮   | 내부 분할은 commit 1.15 로 선택사항. 위험 평가 후 진행 또는 skip                                                                             |
+| Phase 2 Stage 2b/3b/7b dataclass 도입 시 hash 변경                       | 중   | 중   | Stage 2a/3a/7a 검증 통과 후에만 진행. parity 회귀 발견 시 skip 가능                                                                          |
+| `_assign_group` 569 줄 추출 시 그리디 본체 hash 변경                     | 중   | 높음 | orchestrator 동급 위험. commit 단독, 직후 parity + main_parity 강제                                                                          |
+| `constraint_checker.py` 카테고리 분리 시 `validate_all` import path 변경 | 낮   | 중   | `validate_all` 은 `constraint_checker.py` 에 남고 helper 만 sub-module 로. 외부 import path 보존                                             |
+| `excel_exporter._write_sheet` 230 줄 단독 추출 시 export_plan 호출 깨짐  | 낮   | 낮   | 모듈 레벨 함수 추출, 시그니처 그대로. unit test 로 검증                                                                                      |
+
+### 6.1 두 review 반영 추가 위험 (2026-04-28)
+
+| 위험                                                                                                                                                   | 확률     | 영향 | 완화                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_execute_stage2_core` / `_parse_stage2_body` sub-module 이동 시 `monkeypatch.setattr(plan_pipeline, ...)` 깨짐                                        | **확정** | 높   | **두 함수는 `plan_pipeline.py` 에 그대로 둠** — `_pipeline_shared.py` 추출 대상에서 제외. `_ai_cache` / `_run_ai_background` / `_start_ai_background` 만 이동. (plan Appendix A.1) |
+| `compare_runs` / `list_runs` / `delete_run` sub-router 이동 시 `from ...plan_pipeline import compare_runs` 깨짐 (test_stage1_update_versioning.py:177) | **확정** | 높   | `plan_pipeline.py` 에서 `from .plan_pipeline_runs import compare_runs, list_runs, delete_run` 명시적 re-export. (plan Appendix A.2)                                                |
+| sub-router 가 `from plan_pipeline import _execute_stage2_core` 패턴 사용 시 monkeypatch 무효                                                           | **확정** | 높   | sub-router 는 `import plan_pipeline; plan_pipeline._execute_stage2_core(...)` 패턴 강제 — attribute lookup 으로 patch 적용. (plan Appendix A.3)                                    |
+| parity 게이트가 endpoint 측 DB 부작용 (db.commit, audit_log delete, wip_matched_id 변경) 못 감지                                                       | 높       | 높   | `split_batch_group` 회귀 테스트 신규 작성 + `decisions` / `excel_exporter` byte-diff 게이트 추가. (plan Appendix A.4, A.5)                                                         |
+| Stage 2a helper 12+ 인자 positional 전달 시 dict/float/list 타입 혼선                                                                                  | 중       | 중   | `_GrouperInputs` dataclass 를 Stage 2a 부터 **필수** 도입 (선택 → 강제 승격). frozen=True 로 mutate 차단. (plan Appendix A.6)                                                      |
+| Task 2.10 `_calendar_apply` 550줄 단일 commit 추출 시 회귀 bisect 범위 과대                                                                            | 중       | 높   | Task 2.10 → 5 sub-step (a~e) 으로 분할. 각 sub-step 직후 parity 강제. bisect 범위 550 → ~190줄. (plan Appendix A.7)                                                                |
+| Stage X-b "선택" sunk-cost fallacy 로 무리 진행                                                                                                        | 중       | 중   | 정량 skip 기준 3 조건 (Stage Xa 무회귀 + 12+ args + ctx 요구 후속 작업 명시) 모두 만족 시에만 진행. (plan Appendix A.9)                                                            |
+| `_ai_cache` singleton 보장 — multiple worker 환경 (uvicorn `--workers >1`) 미지원                                                                      | 낮       | 중   | **본 PoC 는 단일 worker 가정.** future production 전환 시 Redis / shared memory 로 cache 외부화 필요 — known-debt 등록.                                                            |
 
 ---
 
@@ -527,13 +540,13 @@ Phase 2 (Yellow) — 같은 refactoring 브랜치 위에 누적
 
 ## 8. 작업 시간 추정
 
-| Phase | 추정 |
-|---|---|
-| Phase 1 (Green) — backend 12 commits + frontend 7 commits | 2~3 일 |
-| Phase 2 Stage 2a/3a/7a (Yellow β) — 11 commits | 3~4 일 |
-| Phase 2 Stage 2b/3b/7b (Yellow α, 선택) — 3 commits | 1~2 일 |
-| 검증 + 문서 갱신 | 0.5 일 |
-| **총** | **6~10 일** |
+| Phase                                                     | 추정        |
+| --------------------------------------------------------- | ----------- |
+| Phase 1 (Green) — backend 12 commits + frontend 7 commits | 2~3 일      |
+| Phase 2 Stage 2a/3a/7a (Yellow β) — 11 commits            | 3~4 일      |
+| Phase 2 Stage 2b/3b/7b (Yellow α, 선택) — 3 commits       | 1~2 일      |
+| 검증 + 문서 갱신                                          | 0.5 일      |
+| **총**                                                    | **6~10 일** |
 
 각 commit 의 parity 게이트 시간 (~10분/commit × 18 backend commits ≈ 3 시간)
 이 누적 — 실제 코드 작성 시간 외 검증 시간을 별도 계산.
