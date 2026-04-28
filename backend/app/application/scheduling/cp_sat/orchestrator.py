@@ -72,6 +72,9 @@ from app.application.scheduling.cp_sat._solver_runner import (
 from app.application.scheduling.cp_sat._diagnostic_snapshot import (
     write_diagnostic_snapshot,
 )
+from app.application.scheduling.cp_sat._calendar_apply import (
+    resolve_first_due_by_strand_cluster,
+)
 
 # Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
 # builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
@@ -449,15 +452,13 @@ def cp_sat_schedule(
     #   → 납기 빠른 그룹이 앞에 오도록 솔버가 결정한 순서
     # 처리 순서: 공정 선후관계 → 납기일 오름차순(EDD) → 고객 우선순위
     # ── 소선경 클러스터별 최초 납기 계산 (ST- 연선 그룹 연속 배치용) ─────────
-    # schedule_optimizer의 wire_d_earliest와 동일한 로직
-    wire_d_earliest: dict[float, date] = {}
-    for gk in groups:
-        if gk.startswith("ST-"):
-            wd = sq_to_wire_d.get(_st_sq(gk), 0.0)
-            if wd > 0:
-                ed = group_meta[gk]["earliest_due"]
-                if ed and (wd not in wire_d_earliest or ed < wire_d_earliest[wd]):
-                    wire_d_earliest[wd] = ed
+    # Phase 2 Task 2.10b: ``_calendar_apply.resolve_first_due_by_strand_cluster``
+    # 로 추출. schedule_optimizer 의 wire_d_earliest 와 동일한 로직.
+    wire_d_earliest = resolve_first_due_by_strand_cluster(
+        groups=groups,
+        group_meta=group_meta,
+        sq_to_wire_d=sq_to_wire_d,
+    )
 
     # 처리 순서 결정:
     #   CORE/AL-CORE: 공정순 최우선 (ST- 선행)
