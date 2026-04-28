@@ -129,6 +129,9 @@ export function useBatchInspector(): UseBatchInspectorResult {
   // selectedTaskId 변경 시 감사 패널 자동 열기
   useEffect(() => {
     if (!selectedTaskId) {
+      // TODO(react19-migration): selectedTaskId=null 시 reset effect.
+      // panel 을 selectedTaskId 기반 derived state 로 만들면 룰 통과.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAuditPanel((prev) => ({ ...prev, open: false }));
       return;
     }
@@ -138,6 +141,8 @@ export function useBatchInspector(): UseBatchInspectorResult {
   // selectedTaskId 변경 시 batch_group 수주 목록 + 공정 흐름 조회
   useEffect(() => {
     if (!selectedTaskId) {
+      // TODO(react19-migration): reset effect (위와 동일 패턴).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBatchGroupOrders([]);
       setProcessFlow([]);
       return;

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, memo } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  memo,
+} from "react";
 import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
 import type { ScheduleTask } from "../types";
@@ -81,6 +88,7 @@ interface GanttTaskBlockProps {
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const NEW_BATCH_WINDOW_MS = 5 * 60 * 1000; // 5분 이내 생성된 배치는 "신규"로 간주
 
 /**
@@ -224,7 +232,6 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
       : new Date(task.end).getTime();
 
   // preview offset 적용: 드래그 중 밀려야 하는 만큼 시각적으로 이동
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const previewOffsetPx =
     previewOffsetMs !== 0
       ? timeToXAdj(startTs + previewOffsetMs, rangeStart, dayWidth, ww) -
@@ -448,6 +455,10 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   const [isNew, setIsNew] = useState(false);
   useEffect(() => {
     if (!task.created_at) return;
+    // TODO(react19-migration): hydration-safe 시각 비교. created_at 기준 윈도우는
+    // 서버-클라이언트 시각 동기 가정 — 별도 useEffectEvent 또는 isClient flag 로
+    // 더 깔끔한 패턴 가능. 현재 동작은 정확.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsNew(
       Date.now() - new Date(task.created_at).getTime() < NEW_BATCH_WINDOW_MS,
     );
@@ -456,6 +467,19 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
   // --- 시간 구성 팝오버 (호버) ---
   const [showTimePopover, setShowTimePopover] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
+  // popover 위치 — render 중 ref 접근 금지 (react-hooks/refs).
+  // showTimePopover 가 열릴 때 useLayoutEffect 로 rect 측정 후 state 에 캐시.
+  const [popoverPos, setPopoverPos] = useState<{ left: number; top: number }>({
+    left: 0,
+    top: 0,
+  });
+  useLayoutEffect(() => {
+    if (!showTimePopover) return;
+    const el = blockRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPopoverPos({ left: rect.left, top: rect.bottom + 4 });
+  }, [showTimePopover]);
 
   const totalDurationHrs = ((endTs - startTs) / MS_PER_HOUR).toFixed(1);
   const setupMin = task.setup_time_min ?? task.changeover_min ?? 0;
@@ -960,12 +984,8 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
           <div
             style={{
               position: "fixed",
-              left: blockRef.current
-                ? blockRef.current.getBoundingClientRect().left
-                : 0,
-              top: blockRef.current
-                ? blockRef.current.getBoundingClientRect().bottom + 4
-                : 0,
+              left: popoverPos.left,
+              top: popoverPos.top,
               zIndex: 9999,
               background: "var(--color-text-primary)",
               color: "var(--fg-on-dark)",
