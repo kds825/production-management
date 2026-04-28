@@ -11,7 +11,7 @@
 
 import React from "react";
 import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
-import { COL_DEFS, type ColKey } from "./ProductionBatchTable.columnDefs";
+import { COL_DEFS, type ColKey } from "./columnDefs";
 
 interface Props {
   hasActiveFilter: boolean;

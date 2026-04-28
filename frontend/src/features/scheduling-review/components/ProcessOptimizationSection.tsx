@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useMemo } from "react";
 import type { SchedulingBatch, WipItem } from "../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
-import { ProductionBatchTable } from "./ProductionBatchTable";
+import { ProductionBatchTable } from "./production-batch-table/ProductionBatchTable";
 import { WipInventoryTable } from "./WipInventoryTable";
 
 interface ProcessOptimizationSectionProps {

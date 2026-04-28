@@ -7,7 +7,7 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import type { SchedulingBatch } from "../types";
+import type { SchedulingBatch } from "../../types";
 import type { ProcessGroup } from "@/shared/constants/processGroups";
 import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
 import {
@@ -15,18 +15,15 @@ import {
   getBatchGroupKey,
   sortBatchesByBatchNumber,
 } from "@/shared/utils/batchGrouping";
-import { useSchedulingReviewStore } from "../store/schedulingReviewStore";
+import { useSchedulingReviewStore } from "../../store/schedulingReviewStore";
 import {
   COL_DEFS,
   type ColKey,
   DEFAULT_HIDDEN_COLS,
   EDITABLE_KEYS,
-} from "./ProductionBatchTable.columnDefs";
-import {
-  type ColFilters,
-  getCellValueStatic,
-} from "./ProductionBatchTable.filters";
-import { ProductionBatchTableToolbar } from "./ProductionBatchTable.toolbar";
+} from "./columnDefs";
+import { type ColFilters, getCellValueStatic } from "./filters";
+import { ProductionBatchTableToolbar } from "./toolbar";
 
 interface ProductionBatchTableProps {
   title: string;

@@ -6,12 +6,12 @@
  * - getCellValueStatic
  */
 
-import type { SchedulingBatch } from "../types";
+import type { SchedulingBatch } from "../../types";
 import {
   getBatchGroupKey,
   formatDeliveryDate,
 } from "@/shared/utils/batchGrouping";
-import type { COL_DEFS, ColKey } from "./ProductionBatchTable.columnDefs";
+import type { COL_DEFS, ColKey } from "./columnDefs";
 
 /** 컬럼별 선택된 값 집합 — undefined면 필터 없음(전체) */
 export type ColFilters = Partial<Record<ColKey, Set<string>>>;
