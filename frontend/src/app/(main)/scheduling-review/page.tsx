@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import Image from "next/image";
 import { useSchedulingReviewStore } from "@/features/scheduling-review/store/schedulingReviewStore";
 import type { SchedulingBatch } from "@/features/scheduling-review/types";
@@ -10,81 +10,12 @@ import { BatchCalculateButton } from "@/features/scheduling-review/components/Ba
 import { SchedulingResultTable } from "@/features/scheduling-review/components/SchedulingResultTable";
 import { AiInsightCard } from "@/features/scheduling-review/components/AiInsightCard";
 import { OutsourceTable } from "@/features/scheduling-review/components/OutsourceTable";
+import { useUrlRunLabel } from "@/features/scheduling-review/hooks/useUrlRunLabel";
+import { useRunsList } from "@/features/scheduling-review/hooks/useRunsList";
+import { useRunCompare } from "@/features/scheduling-review/hooks/useRunCompare";
+import { useExcelDownload } from "@/features/scheduling-review/hooks/useExcelDownload";
 
 const API_BASE = "http://localhost:8000/api";
-
-/** 파이프라인 실행 레코드 (GET /api/pipeline/runs) */
-interface PipelineRun {
-  run_label: string;
-  created_at?: string;
-  status?: string;
-  warning_count?: number;
-  batch_count?: number;
-  outsource_count?: number;
-  /** stage1/update 로 파생된 경우 이전 run_label — 두 버전 비교의 기본 before 값 */
-  parent_run_label?: string | null;
-}
-
-/** GET /api/pipeline/runs/compare 응답 (ScheduleDiffResponse 호환) */
-interface RunCompareResponse {
-  run_label_before: string;
-  run_label_after: string;
-  kind: string;
-  created_at: string;
-  summary: {
-    moved: number;
-    added: number;
-    removed: number;
-    unchanged: number;
-    total_before: number;
-    total_after: number;
-  };
-  moved_tasks: Array<{
-    task_id: string;
-    old_start: string | null;
-    old_end: string | null;
-    old_equipment: string | null;
-    new_start: string | null;
-    new_end: string | null;
-    new_equipment: string | null;
-    start_delta_hours: number | null;
-    end_delta_hours: number | null;
-    equipment_changed: boolean;
-    batch_group?: string | null;
-    process_name?: string | null;
-    sales_order_id?: string | null;
-    customer_name?: string | null;
-    sheath_color?: string | null;
-    cross_section?: number | null;
-  }>;
-  added_tasks: Array<{
-    task_id: string;
-    start: string | null;
-    end: string | null;
-    equipment: string | null;
-    batch_group?: string | null;
-    process_name?: string | null;
-    sales_order_id?: string | null;
-    customer_name?: string | null;
-    sheath_color?: string | null;
-    cross_section?: number | null;
-    due_date?: string | null;
-  }>;
-  removed_tasks: Array<{
-    task_id: string;
-    start: string | null;
-    end: string | null;
-    equipment: string | null;
-    batch_group?: string | null;
-    process_name?: string | null;
-    sales_order_id?: string | null;
-    customer_name?: string | null;
-    sheath_color?: string | null;
-    cross_section?: number | null;
-    due_date?: string | null;
-  }>;
-  unchanged_task_ids: string[];
-}
 
 const PROCESS_TABS = [
   "저압연선",
@@ -178,157 +109,37 @@ export default function SchedulingReviewPage() {
     calculateBatches,
   } = useSchedulingReviewStore();
 
-  // ── 파이프라인 런 목록 ──
-  const [runs, setRuns] = useState<PipelineRun[]>([]);
-  const [selectedRun, setSelectedRun] = useState<string>("");
-  const [runsLoading, setRunsLoading] = useState(false);
+  // ── 파이프라인 런 목록 + URL 깊은-링크 + 비교 모달 + Excel 다운로드 ──
+  // 모든 useState/useCallback/useEffect 로직은 features/scheduling-review/hooks/
+  // 하위 4개 훅으로 분리. 외부 시그니처는 page.tsx 가 사용하던 것과 동일.
+  const urlRunLabel = useUrlRunLabel();
+  const { runs, selectedRun, setSelectedRun, runsLoading, selectedRunInfo } =
+    useRunsList(urlRunLabel);
+  const {
+    compareOpen,
+    setCompareOpen,
+    compareData,
+    compareLoading,
+    compareError,
+    handleCompareWithParent,
+  } = useRunCompare(selectedRun, runs);
+  const { excelLoading, handleExcelDownload } = useExcelDownload(selectedRun);
 
-  // ── 버전 비교 모달 ── selected run 과 그 parent_run_label 을 비교
-  const [compareOpen, setCompareOpen] = useState(false);
-  const [compareData, setCompareData] = useState<RunCompareResponse | null>(
-    null,
-  );
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareError, setCompareError] = useState<string | null>(null);
   const [activeProcessTab, setActiveProcessTab] =
     useState<ProcessTab>("저압연선");
-  const [excelLoading, setExcelLoading] = useState(false);
   const outsourceRef = useRef<HTMLDivElement>(null);
   const batchTabRef = useRef<HTMLDivElement>(null);
-  const [planDate, setPlanDate] = useState<string>("");
-
-  useEffect(() => {
-    const stored = localStorage.getItem("plan_base_date");
+  // planDate: localStorage 값을 lazy-init 으로 1회 결정. SSR 단계에서는
+  // typeof window 체크로 빈 문자열을 유지하다가 첫 클라이언트 렌더에서
+  // 값이 채워진다. (set-state-in-effect 룰 회피용)
+  const [planDate] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    const stored = window.localStorage.getItem("plan_base_date");
     if (stored && stored.length === 8) {
-      setPlanDate(
-        `${stored.slice(0, 4)}.${stored.slice(4, 6)}.${stored.slice(6, 8)}`,
-      );
-    } else {
-      setPlanDate(new Date().toISOString().slice(0, 10).replace(/-/g, "."));
+      return `${stored.slice(0, 4)}.${stored.slice(4, 6)}.${stored.slice(6, 8)}`;
     }
-  }, []);
-
-  // URL 쿼리스트링에서 run_label 우선 — 운영자가 외부에서 깊은-링크로 전달했을 때
-  // 페이지가 임의의 최신 run 으로 폴백하지 않도록 한다.
-  // Next 16 의 next/navigation `useSearchParams` 는 SSR Suspense boundary 를
-  // 요구해 build 가 실패한다. client-only 페이지이므로 mount 시 한 번 직접
-  // window.location 을 읽는 편이 단순하고 안전하다.
-  const [urlRunLabel, setUrlRunLabel] = useState<string | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    setUrlRunLabel(params.get("run_label"));
-  }, []);
-
-  // 런 목록 로드
-  const loadRuns = useCallback(async () => {
-    setRunsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/pipeline/runs`);
-      if (res.ok) {
-        const data: PipelineRun[] = await res.json();
-        setRuns(data);
-        if (data.length > 0) {
-          setSelectedRun((prev) => {
-            // 1순위: URL 쿼리에 run_label 이 있고 응답 목록에도 있으면 그걸로.
-            if (urlRunLabel && data.some((r) => r.run_label === urlRunLabel)) {
-              return urlRunLabel;
-            }
-            // 2순위: 이미 선택돼 있고 목록에 살아 있으면 유지.
-            if (prev && data.some((r) => r.run_label === prev)) {
-              return prev;
-            }
-            // 3순위: 최신 (응답 첫 번째).
-            return data[0].run_label;
-          });
-        }
-      }
-    } catch {
-      // 연결 실패 시 조용히 처리 — 기존 기능에 영향 없음
-    } finally {
-      setRunsLoading(false);
-    }
-  }, [urlRunLabel]);
-
-  // Excel 다운로드
-  const handleExcelDownload = useCallback(async () => {
-    if (!selectedRun) return;
-    setExcelLoading(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/pipeline/stage1/${encodeURIComponent(selectedRun)}/export`,
-      );
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        // Content-Disposition 헤더에서 파일명을 추출하거나 기본값 사용
-        const disposition = res.headers.get("content-disposition");
-        const match = disposition?.match(
-          /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
-        );
-        a.download =
-          match?.[1]?.replace(/['"]/g, "") ?? `schedule_${selectedRun}.xlsx`;
-        a.click();
-        URL.revokeObjectURL(url);
-      } else {
-        const body = await res
-          .json()
-          .catch(() => ({ detail: `HTTP ${res.status}` }));
-        alert(`Excel 다운로드 실패: ${body.detail ?? res.statusText}`);
-      }
-    } catch (err) {
-      alert(
-        `Excel 다운로드 오류: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      setExcelLoading(false);
-    }
-  }, [selectedRun]);
-
-  // 이전 버전과 비교 — 선택된 run 과 그 parent_run_label 을 /runs/compare 로 조회
-  const handleCompareWithParent = useCallback(async () => {
-    if (!selectedRun) return;
-    const current = runs.find((r) => r.run_label === selectedRun);
-    const parent = current?.parent_run_label;
-    if (!parent) {
-      setCompareError(
-        "비교 대상(parent)이 없습니다. 최초 계획 실행은 비교할 이전 버전이 없습니다.",
-      );
-      setCompareOpen(true);
-      setCompareData(null);
-      return;
-    }
-    setCompareLoading(true);
-    setCompareError(null);
-    setCompareData(null);
-    setCompareOpen(true);
-    try {
-      const url = `${API_BASE}/pipeline/runs/compare?before=${encodeURIComponent(
-        parent,
-      )}&after=${encodeURIComponent(selectedRun)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const body = await res
-          .json()
-          .catch(() => ({ detail: `HTTP ${res.status}` }));
-        setCompareError(body.detail ?? `비교 실패 (${res.status})`);
-        return;
-      }
-      const data: RunCompareResponse = await res.json();
-      setCompareData(data);
-    } catch (err) {
-      setCompareError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCompareLoading(false);
-    }
-  }, [selectedRun, runs]);
-
-  // 런 목록 초기 로드
-  useEffect(() => {
-    loadRuns();
-  }, [loadRuns]);
+    return new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+  });
 
   // 선택된 런이 바뀌면 배치 API 호출
   useEffect(() => {
@@ -336,12 +147,6 @@ export default function SchedulingReviewPage() {
       loadBatchesFromApi(selectedRun);
     }
   }, [selectedRun, loadBatchesFromApi]);
-
-  // 선택된 런의 요약 정보
-  const selectedRunInfo = useMemo(
-    () => runs.find((r) => r.run_label === selectedRun),
-    [runs, selectedRun],
-  );
 
   const yeonseoGroupCount = useMemo(
     () => assignBatchNumbers(yeonseoBatches).size,
