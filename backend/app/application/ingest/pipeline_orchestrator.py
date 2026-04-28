@@ -62,6 +62,9 @@ def _purge_run_data(db: Session) -> None:
     db.query(func.count(ST.task_id)).scalar()  # warm up
     db.execute(text("DELETE FROM audit_log"))
     db.execute(text("DELETE FROM schedule_task"))
+    # decision_feedback.batch_id → production_batch.batch_id (NO ACTION).
+    # Phase 6 신설 테이블이 purge 순서에 빠져 있어 fresh-run 시 FK 위반이 났다.
+    db.execute(text("DELETE FROM decision_feedback"))
     # Why: wip_inventory ↔ production_batch 가 양방향 FK 로 잡혀 있다.
     #   - wip_inventory.source_batch_id → production_batch.batch_id
     #   - production_batch.wip_matched_id → wip_inventory.wip_id
