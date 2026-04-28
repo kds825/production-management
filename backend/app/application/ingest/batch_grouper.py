@@ -77,12 +77,70 @@ def is_outsource_batch(batch: ProductionBatch) -> bool:
     decision_card phrasing._resolve_key 가 "outsource" 키로 dispatch 할 때 사용.
     동일 룰을 SalesOrder 단계 (`create_batches`/`build_strand_batches`) 와
     공유하기 위해 `_is_outsource_rule` 에 위임.
+
+    Note: is_enabled 토글은 이미 분류된 batch 를 재해석하는 게 아니므로 무시.
+    분류 시점의 토글이 SalesOrder 단계 wrapper (`_is_outsource_rule_with_toggle`)
+    에서 적용된다.
     """
     return _is_outsource_rule(
         sq=float(batch.sq_mm2 or 0),
         product_group=batch.product_group,
         customer_name=batch.customer_name,
     )
+
+
+# ─── Track A (2026-04-28): 하드코딩 룰 → DB-toggle wrapper helper ─────────
+# 2-2 외주 / 2-4 61연선 / 5-5 TFR-GV. ConstraintParams.is_rule_enabled 게이트.
+# 룰 본문은 변경 X — wrapper 가 게이트 통과 시에만 본문 위임 (DRY).
+
+
+def _is_outsource_rule_with_toggle(
+    sq: float,
+    product_group: str | None,
+    customer_name: str | None,
+    *,
+    params: ConstraintParams,
+) -> bool:
+    """`_is_outsource_rule` + 2-2 is_enabled 게이트.
+
+    is_enabled=False → 항상 False (외주 분류 미적용 → 사내 routing 폴백).
+    행 미존재 (legacy DB) → True 폴백 → 기존 동작 유지.
+    """
+    if not params.is_rule_enabled("2-2", default=True):
+        return False
+    return _is_outsource_rule(sq, product_group, customer_name)
+
+
+def _should_skip_stranding(
+    product_group: str | None,
+    sq: float,
+    *,
+    params: ConstraintParams,
+) -> bool:
+    """5-5 TFR-GV 절연 생략 룰 + is_enabled 게이트.
+
+    Default rule: TFR-GV 제품군 + sq <= 25 → stranding 공정 생략 (단선 접지선).
+    is_enabled=False → 항상 False (모든 TFR-GV sq<=25 가 normal stranding 수행).
+    """
+    if not params.is_rule_enabled("5-5", default=True):
+        return False
+    return "TFR-GV" in (product_group or "").upper() and sq <= 25
+
+
+def _is_61strand_rule(
+    sq: float,
+    conductor_material: str | None,
+    *,
+    params: ConstraintParams,
+) -> bool:
+    """2-4 61연선 분리 룰 + is_enabled 게이트.
+
+    Default rule: sq >= 300 + conductor_material == "CU" → 61연선 2단계 (T6B0 → 54BO).
+    is_enabled=False → 항상 False (sq>=300 CU 도 normal 단일 stranding).
+    """
+    if not params.is_rule_enabled("2-4", default=True):
+        return False
+    return sq >= 300 and conductor_material == "CU"
 
 
 def create_batches(
@@ -245,8 +303,10 @@ def create_batches(
         if sq is None:
             continue
 
-        # 외주 분류 조건 — Phase 2와 동일 (룰은 _is_outsource_rule helper)
-        if _is_outsource_rule(sq, order.product_group, order.customer_name):
+        # 외주 분류 조건 — 2-2 is_enabled 게이트 통과 후 룰 본문 적용
+        if _is_outsource_rule_with_toggle(
+            sq, order.product_group, order.customer_name, params=constraint_params
+        ):
             continue
 
         item_o = _find_item(order, items)
@@ -265,8 +325,8 @@ def create_batches(
         if "연선" not in processes_o:
             continue
 
-        # TFR-GV 소단면 연선 스킵
-        if "TFR-GV" in (order.product_group or "").upper() and sq <= 25:
+        # TFR-GV 소단면 연선 스킵 — 5-5 is_enabled 게이트
+        if _should_skip_stranding(order.product_group, sq, params=constraint_params):
             continue
 
         stranding_type_raw = (
@@ -339,7 +399,11 @@ def create_batches(
             work_qty_g = lot_size_g
 
         routing_code_g = grp["routing_code"]
-        is_61strand_g = sq >= 300
+        # 2-4 is_enabled 게이트 + sq>=300 사전 조건. CU 재질 체크는 use site
+        # (line 563/624) 에서 conductor_material_o 와 함께 수행.
+        is_61strand_g = (sq >= 300) and constraint_params.is_rule_enabled(
+            "2-4", default=True
+        )
 
         # ── 연선 그룹 공통 정보 ──────────────────────────────────────────────
         strand_batch_group = f"ST-{int(sq)}-{voltage_g}-{stranding_type_g}"
@@ -631,8 +695,10 @@ def create_batches(
             )
             continue
 
-        # ── 외주 자동분류 (2-2) — 룰은 _is_outsource_rule helper ───────────
-        if _is_outsource_rule(sq, order.product_group, order.customer_name):
+        # ── 외주 자동분류 (2-2) — 2-2 is_enabled 게이트 통과 후 룰 본문 ──
+        if _is_outsource_rule_with_toggle(
+            sq, order.product_group, order.customer_name, params=constraint_params
+        ):
             result["outsource_count"] += 1
             result["warnings"].append(
                 f"수주 {order_ref}: 외주 자동분류 "
@@ -710,17 +776,25 @@ def create_batches(
 
         # TFR-GV 소단면(SQ ≤ 25): 단선 접지선 → 연선(stranding) 불필요
         # 원본 계획서에서 16SQ/25SQ TFR-GV는 연선 시트에 미표시, 시스만 표시
-        skip_stranding = "TFR-GV" in (order.product_group or "").upper() and sq <= 25
+        # 5-5 is_enabled 게이트는 _should_skip_stranding 안에서 처리.
+        skip_stranding = _should_skip_stranding(
+            order.product_group, sq, params=constraint_params
+        )
 
         # ── 61연선(300SQ+) 2단계 분할 (Task #7 조사) ─────────────────────
         # 61연선 = 7연선 코어(batch_seq=0, 35SQ, T6B0 설비) + 본 배치(batch_seq=1, 원래 SQ, 54BO 설비)
         # batch_seq=0이 schedule_optimizer에서 먼저 정렬되어 간트에서 코어가 선행 배치된다.
         # 7연선 코어를 T6B0에서 먼저 제작 후 54BO에서 외층 추가
-        is_61strand = sq >= 300 and conductor_material == "CU"
+        # 2-4 is_enabled 게이트는 _is_61strand_rule 안에서 처리.
+        is_61strand = _is_61strand_rule(
+            sq, conductor_material, params=constraint_params
+        )
 
         # 61연선(300SQ+) 여부 감지 — Phase 1에서 그룹 단위 코어 배치 생성 시 참조됨
         # (Phase 2에서는 연선 배치를 생성하지 않으므로 직접 사용되지 않음)
-        is_61strand = sq >= 300 and conductor_material == "CU"  # noqa: F841
+        is_61strand = _is_61strand_rule(  # noqa: F841
+            sq, conductor_material, params=constraint_params
+        )
 
         # WIP process_stage 조회 — Phase 2 배치 생략 판단에 사용
         wip_stage: str = ""
