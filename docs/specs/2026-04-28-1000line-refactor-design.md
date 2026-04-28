@@ -565,6 +565,41 @@ Phase 2 (Yellow) — 같은 refactoring 브랜치 위에 누적
 - 본 spec 의 Stage 2b/3b/7b 가 skip 됐으면 그 사유 (parity 위험 등) 를
   post-pilot-backlog 로 라우팅.
 
+### 9.1 실측 결과 (2026-04-28 종료)
+
+**1000+ 줄 파일 (seed_db.py 제외) 0 개 달성.**
+
+| 파일                                                              | Before | After | 변화   |
+| ----------------------------------------------------------------- | ------ | ----- | ------ |
+| `routes/plan_pipeline.py`                                         | 2537   | 114   | -95.5% |
+| `cp_sat/orchestrator.py` (`cp_sat_schedule()` 본체)               | 1468   | 550   | -62%   |
+| `ingest/batch_grouper.py` (`create_batches()` 본체)               | 1185   | 225   | -81%   |
+| `greedy/optimization_loop.py` (`_assign_group()` 569줄 포함)      | 1029   | 297   | -71%   |
+| `validation/constraint_checker.py`                                | 705    | 130   | -82%   |
+| `decisions/build_card.py`                                         | 761    | 174   | -77%   |
+| `infrastructure/exporters/excel_exporter.py`                      | 741    | 198   | -73%   |
+| `app/(main)/plan-register/page.tsx`                               | 1910   | ~400  | -79%   |
+| `app/(main)/scheduling-review/page.tsx`                           | 1060   | ~500  | -53%   |
+| `features/scheduler/components/GanttTaskBlock.tsx`                | 1060   | ~700  | -34%   |
+| `features/scheduling-review/components/ProductionBatchTable.tsx`  | 1079   | 915   | -15%   |
+| `features/scheduling-review/components/SchedulingResultTable.tsx` | 902    | ~840  | -7%    |
+
+**검증 게이트:** per-commit 모두 PASS — `pytest 698 + parity 13 + frontend
+typecheck/lint 0 errors`. parity hash bitwise equality 30+ commit 무회귀.
+
+**작업 통계:** 30+ atomic commits over Phase 1 (19) + Phase 2 (15). 사전
+working-tree 정리 3 commits + spec/plan/patch 3 commits 별도.
+
+**Skip 항목:**
+
+- Task 1.15 (ErpUploadSection 내부 분할) — Appendix A.8 정량 기준 (prop drilling
+  ≤ 3, state 동기화 ≤ 2, 독립 테스트 가능) 모두 미충족. post-pilot-backlog 등록.
+- Task 2.5 (Stage 2b dataclass) — Appendix A.6 patch 로 Stage 2a 부터 `_GrouperInputs`
+  필수 도입 후 흡수됨, 별도 task 불필요.
+- Task 2.11 (Stage 3b `_CpSatContext`) — Stage 3a 검증 통과 + helper 시그니처가
+  이미 readable, Appendix A.9 정량 기준 (12+ args, 후속 작업 요구) 미충족. skip.
+- Task 2.14 (Stage 7b `_GreedyAssignContext`) — 동일 사유 skip.
+
 ---
 
 ## 10. 후속 작업 (별도 PR)
