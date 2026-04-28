@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 describe("FEATURE_FLAG_CASCADE_V2", () => {
   const ORIG = process.env.NEXT_PUBLIC_FEATURE_FLAG_CASCADE_V2;

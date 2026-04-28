@@ -77,13 +77,15 @@ export function SchedulingResultTable({
   const router = useRouter();
   const updateBatch = useSchedulingReviewStore((s) => s.updateBatch);
 
-  const batchMap: Partial<Record<ProcessGroup, SchedulingBatch[]>> = {
-    연선: yeonseoBatches,
-    절연: insulationBatches,
-    시스: sheatBatches,
-  };
-
-  const activeBatches = batchMap[activeTab] ?? [];
+  // 매번 새 array reference 가 만들어지면 useMemo deps 가 매 렌더 변함 → useMemo 로 안정화
+  const activeBatches = useMemo<SchedulingBatch[]>(() => {
+    const batchMap: Partial<Record<ProcessGroup, SchedulingBatch[]>> = {
+      연선: yeonseoBatches,
+      절연: insulationBatches,
+      시스: sheatBatches,
+    };
+    return batchMap[activeTab] ?? [];
+  }, [activeTab, yeonseoBatches, insulationBatches, sheatBatches]);
 
   const batchNumbers = useMemo(
     () => assignBatchNumbers(activeBatches),

@@ -22,8 +22,6 @@ export function VoltageFilter() {
       <div className="flex items-center gap-0.5">
         {(["전체보기", "고압", "저압"] as const).map((tab) => {
           const isDisabled = tab === "고압";
-          const filterValue =
-            tab === "전체보기" ? "전체" : (tab as "고압" | "저압");
           const isActiveTab =
             tab === "전체보기"
               ? voltageFilter === "전체"

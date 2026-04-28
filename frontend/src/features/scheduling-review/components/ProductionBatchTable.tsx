@@ -116,7 +116,8 @@ export function ProductionBatchTable({
   const toggleCol = useCallback((key: ColKey) => {
     setHiddenCols((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
@@ -239,7 +240,8 @@ export function ProductionBatchTable({
                   )
                 : [],
             );
-        existing.has(value) ? existing.delete(value) : existing.add(value);
+        if (existing.has(value)) existing.delete(value);
+        else existing.add(value);
 
         // 전체 선택 상태면 필터 제거
         const allVals = new Set(
