@@ -108,31 +108,30 @@ def test_sheath_color_chain_across_weeks(db):
 
 
 def test_sheath_chain_key_present_and_applied(db):
-    """create_batches 소스에 `_sheath_chain_key` 2차 정렬이 적용돼 있는지.
+    """create_batches 후처리에 `_sheath_chain_key` 2차 정렬이 적용돼 있는지.
 
-    DB 통합 없이 정적 확인만 — 소스 문자열에 키워드가 존재하고 `_sort_key`
-    이후에 `_sheath_chain_key` 로 추가 정렬이 들어갔는지를 보장한다.
+    DB 통합 없이 정적 확인만 — Phase 2 Task 2.2 추출 이후 소스 위치는
+    `_batch_grouper_finalize.py` 로 이동했고, `batch_grouper.py` 본체는
+    `apply_sheath_secondary_sort()` 호출만 남는다. 두 모듈의 invariant 를
+    함께 검증한다.
     """
     from pathlib import Path
 
-    src_path = (
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "application"
-        / "ingest"
-        / "batch_grouper.py"
+    base = Path(__file__).resolve().parents[1] / "app" / "application" / "ingest"
+    src_grouper = (base / "batch_grouper.py").read_text(encoding="utf-8")
+    src_finalize = (base / "_batch_grouper_finalize.py").read_text(encoding="utf-8")
+
+    # finalize 모듈에 정렬 helper 정의가 있고 batches.sort 호출까지 들어갔는지
+    assert "def _sheath_chain_key" in src_finalize, "_sheath_chain_key 미정의"
+    assert "batches.sort(key=_sheath_chain_key)" in src_finalize, (
+        "_sheath_chain_key 미적용"
     )
-    src = src_path.read_text(encoding="utf-8")
 
-    # 2차 정렬 helper 가 정의됐고 적용됐는지
-    assert "def _sheath_chain_key" in src, "_sheath_chain_key 미정의"
-    assert "batches.sort(key=_sheath_chain_key)" in src, "_sheath_chain_key 미적용"
-
-    # _sort_key 보다 뒤에 위치하는지 (stable sort 로 priority 우선)
-    pos_primary = src.index("batches.sort(key=_sort_key)")
-    pos_chain = src.index("batches.sort(key=_sheath_chain_key)")
+    # batch_grouper.py 본체에서 sort_batches 가 sheath 2차 정렬보다 먼저 호출되는지
+    pos_primary = src_grouper.index("sort_batches(batches)")
+    pos_chain = src_grouper.index("apply_sheath_secondary_sort(batches)")
     assert pos_chain > pos_primary, (
-        "_sheath_chain_key 가 _sort_key 뒤에 와야 stable sort priority 가 동작"
+        "apply_sheath_secondary_sort 가 sort_batches 뒤에 와야 stable sort priority 가 동작"
     )
 
 
@@ -241,6 +240,7 @@ def test_sheath_scheduler_actual_order_forms_color_chain(db):
     색상 체인이 형성됨을 검증한다 (KBI 현장 실제 패턴).
     """
     from app.application.scheduling.greedy.auto_schedule import auto_schedule
+
     rows = [
         {
             "color": "흑",
@@ -318,6 +318,7 @@ def test_sheath_half_week_split_separates_same_week_early_late_due(db):
     효과: EDD H1 그룹이 EDD H2 그룹보다 먼저 스케줄.
     """
     from app.application.scheduling.greedy.auto_schedule import auto_schedule
+
     # 같은 W15 주 내 흑 색상 4건:
     #   월(4/6) H1: 납기 임박
     #   수(4/8) H1
@@ -388,6 +389,7 @@ def test_long_color_chain_not_broken_by_half_week(db):
     타게 함 — batch_grouping 의 새 H1/H2 bucket 포맷과 정합.
     """
     from app.application.scheduling.greedy.auto_schedule import auto_schedule
+
     rows = [
         # (color, sq, due, so, bucket)
         ("흑", 50, date(2026, 4, 6), "SO-CCH-1", "2026W15H1"),  # 월
