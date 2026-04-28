@@ -22,6 +22,16 @@ Backend follows 4-layer Clean Architecture under `backend/app/`:
 - 디렉토리 깊이 ≤ 3 (`domain/X.py`, `application/X/Y.py`, `infrastructure/X/Y.py`).
 - 변경 후 검증 게이트: `pytest backend/tests/ -q` + main-parity 27/27 + parity-quick 11/11. 회귀 0 확인 후 atomic commit.
 
+## Design System
+
+Single source of truth: **[`DESIGN.md`](DESIGN.md)** at project root (Google Stitch / Claude Code 컨벤션).
+
+- UI 코드 작성·수정 전 반드시 통독.
+- 코드 토큰 출처: `frontend/src/app/globals.css` (`@theme` + `:root` CSS 변수, PR1~5 적용 결과).
+- HTML 미리보기·UI kit: `docs/design-system/`.
+- 검증 스킬: `verify-pwc-design` (samildevkit 준수 자동 체크).
+- Hex 하드코딩 / Tailwind arbitrary `[#hex]` / 이탤릭 / `--color-pwc-*` 임의 변경 금지.
+
 ## graphify
 
 This project has a graphify knowledge graph at graphify-out/.

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_base.css">
+<style>
+  /* Industrial / editorial KPI tile — no left-stripe, no colored card chrome.
+     Typographic hierarchy + hairline rules + tabular numerals do the work. */
+  .kpi-grid { display:grid; grid-template-columns: repeat(4, 220px); gap: 0;
+              border: 1px solid var(--pwc-gray-300); background: #fff; }
+  .kpi-grid > div { padding: 18px 18px 16px; border-right: 1px solid var(--pwc-gray-200); }
+  .kpi-grid > div:last-child { border-right: 0; }
+
+  .eyebrow {
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--fg-3); font-weight: 600;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .eyebrow .code { font-family: var(--font-mono); letter-spacing: 0.04em; color: var(--pwc-gray-400); }
+
+  .num {
+    font-family: var(--font-sans);
+    font-size: 36px; line-height: 40px; font-weight: 600;
+    color: var(--fg-1); font-feature-settings: "tnum" 1, "lnum" 1;
+    margin-top: 14px; letter-spacing: -0.01em;
+    display:flex; align-items: baseline; gap: 4px;
+  }
+  .num small { font-size: 14px; font-weight: 500; color: var(--fg-3); letter-spacing: 0; }
+
+  .rule { height: 1px; background: var(--pwc-gray-200); margin: 14px 0 10px; }
+
+  .meta { display:flex; align-items:baseline; justify-content: space-between;
+          font-size: 11px; color: var(--fg-3); font-feature-settings:"tnum"; }
+  .meta .delta { font-weight: 600; font-size: 12px; }
+  .meta .delta.up   { color: #15803D; }
+  .meta .delta.down { color: var(--kbi-sunrise-red); }
+  .meta .delta.flat { color: var(--fg-3); }
+  .meta .delta::before {
+    content: ''; display:inline-block; width: 0; height: 0;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .meta .delta.up::before   { border-bottom: 5px solid #15803D; }
+  .meta .delta.down::before { border-top: 5px solid var(--kbi-sunrise-red); }
+  .meta .delta.flat::before { border: 0; width: 8px; height: 1px; background: var(--fg-3); margin-bottom: 3px; }
+
+  /* Inline 24h sparkline — subtle, monochrome */
+  .spark { display:flex; align-items:flex-end; gap: 2px; height: 22px; margin-top: 12px; }
+  .spark span { flex:1; background: var(--pwc-gray-300); border-radius: 0; }
+  .spark span.hi { background: var(--kbi-warm-gray); }
+  .spark span.now { background: var(--kbi-sunrise-red); }
+
+  /* Target / threshold ticker */
+  .target { display:flex; align-items:center; gap: 8px; margin-top: 12px; }
+  .target .bar { flex:1; height: 4px; background: var(--pwc-gray-200); position: relative; }
+  .target .bar::after { /* threshold tick */
+    content:''; position: absolute; left: 95%; top: -3px; bottom: -3px;
+    width: 1px; background: var(--fg-2);
+  }
+  .target .bar i { display:block; height: 100%; background: var(--kbi-warm-gray); }
+  .target .lbl { font-size: 10px; color: var(--fg-3); font-feature-settings:"tnum"; letter-spacing: 0.04em; }
+
+  .threshold-warn { color: var(--kbi-sunrise-red); }
+</style>
+</head>
+<body>
+
+<div class="kpi-grid">
+
+  <!-- 1. 가동률 — sparkline 24h trend -->
+  <div>
+    <div class="eyebrow"><span>가동률</span><span class="code">24H</span></div>
+    <div class="num">87.4<small>%</small></div>
+    <div class="spark" aria-hidden="true">
+      <span style="height:38%"></span><span style="height:42%"></span>
+      <span style="height:55%"></span><span style="height:60%"></span>
+      <span style="height:48%"></span><span style="height:52%"></span>
+      <span class="hi" style="height:72%"></span><span class="hi" style="height:78%"></span>
+      <span class="hi" style="height:70%"></span><span class="hi" style="height:84%"></span>
+      <span class="hi" style="height:88%"></span><span class="now" style="height:90%"></span>
+    </div>
+    <div class="rule"></div>
+    <div class="meta">
+      <span class="delta up">+2.1pp</span>
+      <span>전일 85.3%</span>
+    </div>
+  </div>
+
+  <!-- 2. 납기율 — threshold gauge -->
+  <div>
+    <div class="eyebrow"><span>납기율</span><span class="code">목표 95.0</span></div>
+    <div class="num">96.2<small>%</small></div>
+    <div class="target" aria-hidden="true">
+      <div class="bar"><i style="width:96.2%"></i></div>
+      <span class="lbl">목표</span>
+    </div>
+    <div class="rule"></div>
+    <div class="meta">
+      <span class="delta down">−0.8pp</span>
+      <span>전일 97.0%</span>
+    </div>
+  </div>
+
+  <!-- 3. 적체량 — flat -->
+  <div>
+    <div class="eyebrow"><span>적체량</span><span class="code">m</span></div>
+    <div class="num">1,284</div>
+    <div class="rule" style="margin-top:30px"></div>
+    <div class="meta">
+      <span class="delta flat">변동 없음</span>
+      <span>전일 1,284</span>
+    </div>
+  </div>
+
+  <!-- 4. 가용 호기 — alert state, no colored card -->
+  <div>
+    <div class="eyebrow"><span>가용 호기</span><span class="code">/ 6</span></div>
+    <div class="num">4<small>대</small></div>
+    <div class="target" aria-hidden="true">
+      <div class="bar" style="background: var(--pwc-gray-200)">
+        <i style="width:66.6%; background: var(--kbi-sunrise-red)"></i>
+      </div>
+      <span class="lbl threshold-warn">임계 2</span>
+    </div>
+    <div class="rule"></div>
+    <div class="meta">
+      <span class="delta down">−1</span>
+      <span>2호기·6호기 부하 임계</span>
+    </div>
+  </div>
+
+</div>
+
+</body></html>

@@ -1,0 +1,203 @@
+/* =============================================================
+   KBI Design System — Colors + Type
+   PwC base layer (consulting-grade neutrals + structure)
+   + KBI Group accent layer (brand identity)
+   ============================================================= */
+
+/* ---------- Fonts ---------- */
+@font-face {
+  font-family: 'HelveticaNeue';
+  src: url('fonts/HelveticaNeue-Roman.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'HelveticaNeue';
+  src: url('fonts/HelveticaNeue-Medium.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'HelveticaNeue';
+  src: url('fonts/HelveticaNeue-Bold.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PretendardJP';
+  src: url('fonts/PretendardJP-Light.otf') format('opentype');
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PretendardJP';
+  src: url('fonts/PretendardJP-Regular.otf') format('opentype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PretendardJP';
+  src: url('fonts/PretendardJP-Medium.otf') format('opentype');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PretendardJP';
+  src: url('fonts/PretendardJP-SemiBold.otf') format('opentype');
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'PretendardJP';
+  src: url('fonts/PretendardJP-Bold.otf') format('opentype');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* ============================================================
+     KBI BRAND COLORS  (Accent Layer — use sparingly, ~5% of UI)
+     ============================================================ */
+  --kbi-sunrise-red: #D71837;       /* Primary CTA, brand mark, critical/danger */
+  --kbi-warm-gray: #3F2825;         /* Dark sections, sidebar, headers */
+  --kbi-light-warm-gray: #60584C;   /* Sub-headers, secondary text */
+  --kbi-orange: #EC6900;            /* In-progress status */
+  --kbi-champagne-gold: #93785F;    /* Premium accent, near-due warnings */
+  --kbi-silver: #909297;            /* Inactive, dividers */
+
+  /* KBI Sunrise Red tints (5% / 8% / 12% / 20%) */
+  --kbi-red-tint-5: #FDF4F5;
+  --kbi-red-tint-8: #FBEDEF;
+  --kbi-red-tint-12: #F8DFE3;
+  --kbi-red-tint-20: #F2C2CA;
+
+  /* KBI Warm Gray tints */
+  --kbi-warm-gray-tint-5: #FAF8F7;
+  --kbi-warm-gray-tint-8: #F4F1EF;
+
+  /* ============================================================
+     PWC BASE — Neutrals + Structure (Primary Foundation)
+     ============================================================ */
+  --pwc-white: #FFFFFF;
+  --pwc-black: #000000;
+
+  --pwc-bg-primary: #FFFFFF;
+  --pwc-bg-secondary: #F7F7F7;
+  --pwc-bg-tertiary: #F9FAFB;
+  --pwc-border: #E5E5E5;
+  --pwc-border-strong: #C6C6C8;
+
+  --pwc-gray-100: #F3F4F6;
+  --pwc-gray-200: #E5E6E9;
+  --pwc-gray-300: #C6C6C8;
+  --pwc-gray-400: #A8A8AA;
+  --pwc-gray-500: #7F7F82;
+  --pwc-gray-600: #5F5F62;
+
+  --pwc-text-primary: #2D2D2D;
+  --pwc-text-secondary: #5F5F62;
+  --pwc-text-tertiary: #7F7F82;
+
+  /* ============================================================
+     SEMANTIC TOKENS (use these in components)
+     ============================================================ */
+  /* Foreground / background */
+  --fg-1: var(--pwc-text-primary);
+  --fg-2: var(--pwc-text-secondary);
+  --fg-3: var(--pwc-text-tertiary);
+  --fg-on-dark: #FFFFFF;
+  --fg-on-dark-muted: rgba(255,255,255,0.72);
+
+  --bg-canvas: var(--pwc-bg-secondary);
+  --bg-surface: var(--pwc-bg-primary);
+  --bg-surface-alt: var(--pwc-bg-tertiary);
+  --bg-dark: var(--kbi-warm-gray);
+  --bg-dark-hover: #4A322F;
+
+  /* Borders */
+  --border-1: var(--pwc-border);
+  --border-2: var(--pwc-border-strong);
+  --border-focus: var(--kbi-sunrise-red);
+
+  /* Accents */
+  --accent-primary: var(--kbi-sunrise-red);
+  --accent-primary-hover: #B81330;
+  --accent-primary-tint: var(--kbi-red-tint-8);
+
+  /* Status */
+  --status-success: #16A34A;        /* Use generic green, not KBI red, for positive */
+  --status-success-bg: #DCFCE7;
+  --status-progress: var(--kbi-orange);
+  --status-progress-bg: #FFF1E5;
+  --status-warning: var(--kbi-champagne-gold);
+  --status-warning-bg: #F5EFE9;
+  --status-danger: var(--kbi-sunrise-red);
+  --status-danger-bg: var(--kbi-red-tint-12);
+  --status-idle: var(--kbi-silver);
+  --status-idle-bg: #F3F3F4;
+
+  /* ============================================================
+     TYPE — PwC scale, fonts unchanged
+     ============================================================ */
+  --font-sans: 'HelveticaNeue', 'PretendardJP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-kr: 'PretendardJP', 'HelveticaNeue', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Display / Title */
+  --text-title-1: 36px;  --lh-title-1: 44px;  --fw-title-1: 700;
+  --text-title-2: 32px;  --lh-title-2: 42px;  --fw-title-2: 700;
+  --text-title-3: 28px;  --lh-title-3: 38px;  --fw-title-3: 600;
+  --text-title-4: 24px;  --lh-title-4: 34px;  --fw-title-4: 600;
+
+  --text-subtitle-1: 18px; --lh-subtitle-1: 28px; --fw-subtitle-1: 600;
+  --text-subtitle-2: 16px; --lh-subtitle-2: 26px; --fw-subtitle-2: 600;
+
+  --text-body: 16px;       --lh-body: 24px;       --fw-body: 400;
+  --text-sub-body: 14px;   --lh-sub-body: 22px;   --fw-sub-body: 400;
+  --text-caption: 12px;    --lh-caption: 18px;    --fw-caption: 400;
+  --text-label: 14px;      --lh-label: 20px;      --fw-label: 500;
+  --text-badge: 12px;      --lh-badge: 16px;      --fw-badge: 500;
+
+  /* ============================================================
+     SPACING + RADII + SHADOWS
+     ============================================================ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;        /* PwC standard for cards/buttons */
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(45,45,45,0.04), 0 1px 1px rgba(45,45,45,0.04);
+  --shadow-2: 0 2px 6px rgba(45,45,45,0.06), 0 1px 2px rgba(45,45,45,0.04);
+  --shadow-3: 0 8px 24px rgba(45,45,45,0.08), 0 2px 4px rgba(45,45,45,0.04);
+  --shadow-focus: 0 0 0 3px rgba(215,24,55,0.18);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+}
+
+/* ============================================================
+   SEMANTIC TYPE CLASSES
+   ============================================================ */
+html { font-family: var(--font-sans); color: var(--fg-1); }
+body { font-family: var(--font-sans); }
+
+.t-title-1   { font-family: var(--font-sans); font-size: var(--text-title-1);   line-height: var(--lh-title-1);   font-weight: var(--fw-title-1); letter-spacing: -0.01em; }
+.t-title-2   { font-family: var(--font-sans); font-size: var(--text-title-2);   line-height: var(--lh-title-2);   font-weight: var(--fw-title-2); letter-spacing: -0.01em; }
+.t-title-3   { font-family: var(--font-sans); font-size: var(--text-title-3);   line-height: var(--lh-title-3);   font-weight: var(--fw-title-3); }
+.t-title-4   { font-family: var(--font-sans); font-size: var(--text-title-4);   line-height: var(--lh-title-4);   font-weight: var(--fw-title-4); }
+.t-subtitle-1{ font-family: var(--font-sans); font-size: var(--text-subtitle-1);line-height: var(--lh-subtitle-1);font-weight: var(--fw-subtitle-1); }
+.t-subtitle-2{ font-family: var(--font-sans); font-size: var(--text-subtitle-2);line-height: var(--lh-subtitle-2);font-weight: var(--fw-subtitle-2); }
+.t-body      { font-family: var(--font-sans); font-size: var(--text-body);      line-height: var(--lh-body);      font-weight: var(--fw-body); }
+.t-sub-body  { font-family: var(--font-sans); font-size: var(--text-sub-body);  line-height: var(--lh-sub-body);  font-weight: var(--fw-sub-body); }
+.t-caption   { font-family: var(--font-sans); font-size: var(--text-caption);   line-height: var(--lh-caption);   font-weight: var(--fw-caption); }
+.t-label     { font-family: var(--font-sans); font-size: var(--text-label);     line-height: var(--lh-label);     font-weight: var(--fw-label); text-transform: none; }
+.t-badge     { font-family: var(--font-sans); font-size: var(--text-badge);     line-height: var(--lh-badge);     font-weight: var(--fw-badge); }
+.t-num-kpi   { font-family: var(--font-sans); font-size: 28px; line-height: 34px; font-weight: 700; color: var(--kbi-warm-gray); font-feature-settings: "tnum"; }
+.t-num-tabular { font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+.t-kr        { font-family: var(--font-kr); }

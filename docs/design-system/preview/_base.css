@@ -1,0 +1,15 @@
+@import url('../colors_and_type.css');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: #FFFFFF;
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+body { padding: 18px 22px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+.swatch { border-radius: var(--radius-sm); border: 1px solid rgba(0,0,0,0.06); }
+.label { font-size: 11px; line-height: 14px; color: var(--fg-3); letter-spacing: 0.02em; }
+.name  { font-size: 12px; line-height: 16px; color: var(--fg-1); font-weight: 600; }
+.hex   { font-size: 11px; line-height: 14px; color: var(--fg-3); font-family: var(--font-mono); }
