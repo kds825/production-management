@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { usePlanRegisterStore } from "../store/planRegisterStore";
-import type { EquipmentGroup } from "../types";
+import { usePlanRegisterStore } from "../../store/planRegisterStore";
+import type { EquipmentGroup } from "../../types";
 
 const EQUIPMENT_GROUPS: EquipmentGroup[] = ["연선", "B100", "A100", "A120"];
 

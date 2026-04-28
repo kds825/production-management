@@ -2,10 +2,10 @@
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { BatchSplitReview } from "@/features/plan-register/components/BatchSplitReview";
-import { DiffSummaryPanel } from "@/features/plan-register/components/DiffSummaryPanel";
-import { OrderDiffSummaryPanel } from "@/features/plan-register/components/OrderDiffSummaryPanel";
-import { BatchGridWithFrozen } from "@/features/plan-register/components/BatchGridWithFrozen";
+import { BatchSplitReview } from "./BatchSplitReview";
+import { DiffSummaryPanel } from "./DiffSummaryPanel";
+import { OrderDiffSummaryPanel } from "./OrderDiffSummaryPanel";
+import { BatchGridWithFrozen } from "./BatchGridWithFrozen";
 import type {
   WipFile,
   Stage1Result,

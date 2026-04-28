@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { WipUploadSection } from "@/features/plan-register/components/WipUploadSection";
-import { ErpUploadSection } from "@/features/plan-register/components/ErpUploadSection";
+import { ErpUploadSection } from "@/features/plan-register/components/erp-upload/ErpUploadSection";
 import type { WipFile, UploadMode } from "@/features/plan-register/types";
 
 function getKstToday(): string {
