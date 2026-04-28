@@ -29,8 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.constants import (
     PREDECESSOR_PROCESS,
-    PROCESS_ORDER,
-    _WORK_MIN_PER_DAY,  # re-export until Week 9 (D7-C)
+    PROCESS_ORDER,  # re-export until Week 9 (D7-C)
 )
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
@@ -61,7 +60,6 @@ from app.application.scheduling.cp_sat.model_builder import (
     BuiltModel,
     build_model,
 )
-from app.application.scheduling.cp_sat.snapshot import write_snapshot
 from app.application.scheduling.cp_sat._load_inputs import load_solver_inputs
 from app.application.scheduling.cp_sat._trace_writer import write_solver_trace
 from app.application.scheduling.cp_sat._preemption_runner import (
@@ -71,13 +69,14 @@ from app.application.scheduling.cp_sat._solver_runner import (
     prepare_model_inputs,
     run_solver,
 )
+from app.application.scheduling.cp_sat._diagnostic_snapshot import (
+    write_diagnostic_snapshot,
+)
 
 # Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
 # builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
 from app.application.scheduling.cp_sat.helpers import (
-    _MAX_HORIZON_MIN,
     _build_group_meta,  # noqa: F401  # used at §4-5 inline (Phase 3 step 2)
-    _build_snapshot_weights,
     _priority_label,
 )
 
@@ -428,29 +427,16 @@ def cp_sat_schedule(
 
     result["objective_value"] = int(solver.objective_value)
 
-    # ── 진단 스냅샷: solver 입력(group_meta) + 출력(start/end/equip/tardiness) +
-    # 주요 objective 항의 실제 기여값을 JSON 한 벌로 저장. 원인 분석 시
-    # "어떤 그룹이 왜 그 위치에 갔는가" 를 사후에 재현할 수 있도록.
-    write_snapshot(
+    # Phase 2 Task 2.10a: 진단 스냅샷 호출은 ``_diagnostic_snapshot`` 으로
+    # 추출. BuiltModel 을 그대로 전달하여 vars/terms unpacking 을 helper 에 위임.
+    write_diagnostic_snapshot(
         run_label=run_label,
         base_date=base_date,
         group_meta=group_meta,
         frozen_group_keys=frozen_group_keys,
         solver=solver,
-        solver_status_name=status_name,
-        start_vars=start_vars,
-        end_vars=end_vars,
-        equip_vars=equip_vars,
-        tardiness_vars=tardiness_vars,
-        edd_pair_vars=_edd_pair_terms,
-        slack_terms_meta=_slack_terms_meta,
-        weights=_build_snapshot_weights(),
-        work_min_per_day=_WORK_MIN_PER_DAY,
-        max_horizon_min=_MAX_HORIZON_MIN,
-        idle_terms=idle_terms,
-        transition_terms=transition_terms,
-        sheath_end_terms=_sheath_end_terms,
-        edd_mixed_pastdue_vars=_edd_mixed_pastdue_terms,
+        status_name=status_name,
+        built=_built,
     )
 
     # ── 8. CP-SAT 순서대로 캘린더 그리디로 실제 배치 ─────────────────────
