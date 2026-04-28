@@ -54,6 +54,10 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # (선점 분할 잔여 배치 후속 스케줄링) 추출. ScheduleTask insert + slot
     # finder DB 호출이라 boundary crosser.
     "_preemption_runner.py",
+    # Phase 2 Task 2.9 (B-3.4): `_solver_runner.py` 는 cp_sat_schedule §6+§7
+    # (frozen_tasks_snapshot 빌드 + lex/weighted solve) 추출. ScheduleTask
+    # join 쿼리 + load_active_constraints DB 호출이라 boundary crosser.
+    "_solver_runner.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM

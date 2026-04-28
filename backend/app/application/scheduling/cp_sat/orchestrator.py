@@ -20,7 +20,6 @@ CP-SAT 시간 단위: 근무 분(working minute), 하루 = 840분(14h×60)
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -31,9 +30,6 @@ from sqlalchemy.orm import Session
 from app.domain.constants import (
     PREDECESSOR_PROCESS,
     PROCESS_ORDER,
-    _CHAIN_WEIGHT,  # re-export until Week 9 (D7-C)
-    _DUE_HARD_WEIGHT,  # re-export until Week 9 (D7-C)
-    _TRANSITION_WEIGHT,  # re-export until Week 9 (D7-C)
     _WORK_MIN_PER_DAY,  # re-export until Week 9 (D7-C)
 )
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -61,38 +57,28 @@ from app.application._shared.slot_filters import (
     align_start_to_predecessor_end,
 )
 from app.application.scheduling.cp_sat import SolverInput
-from app.application.scheduling.cp_sat.constraint_loader import (
-    ConstraintSpec,
-    load_active_constraints,
-)
 from app.application.scheduling.cp_sat.model_builder import (
     BuiltModel,
-    ModelWeights,
     build_model,
 )
-from app.application.scheduling.cp_sat.objective import compose_objective
 from app.application.scheduling.cp_sat.snapshot import write_snapshot
 from app.application.scheduling.cp_sat._load_inputs import load_solver_inputs
 from app.application.scheduling.cp_sat._trace_writer import write_solver_trace
 from app.application.scheduling.cp_sat._preemption_runner import (
     schedule_preempted_remainders,
 )
+from app.application.scheduling.cp_sat._solver_runner import (
+    prepare_model_inputs,
+    run_solver,
+)
 
 # Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
 # builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
 from app.application.scheduling.cp_sat.helpers import (
-    _EDD_MIXED_PASTDUE_WEIGHT,
-    _EDD_PAIR_WEIGHT,
-    _IDLE_WEIGHT,
     _MAX_HORIZON_MIN,
-    _PAST_SEVERITY_K,
-    _SLACK_WEIGHT_BASE,
-    _SOLVER_TIME_LIMIT_SEC,
-    _TARDINESS_WEIGHT,
     _build_group_meta,  # noqa: F401  # used at §4-5 inline (Phase 3 step 2)
     _build_snapshot_weights,
     _priority_label,
-    _resolve_num_workers,
 )
 
 # Logger for non-fatal trace-write failures: observability must not kill
@@ -107,46 +93,13 @@ _logger = logging.getLogger(__name__)
 # 가중치 설계 의도는 helpers.py 의 상수 docstring 참조.
 
 
-def _spec_weight_factory(specs_by_id: dict):
-    """`_spec_weight(cid, fallback)` 클로저를 만들어 반환 — Week 5A.4 wiring.
-
-    Reads `ConstraintSpec.params["weight"]` and **scales by `priority / 50.0`**
-    so the Admin-UI priority slider is causally wired to the solver objective.
-    `priority=50` (DB default for all W-* rows) → factor 1.0 → 기존 11개
-    fixture hash 무회귀 보장 (parity-preserving by construction).
-
-    | priority | factor | 효과                          |
-    |----------|--------|-------------------------------|
-    | 0        | 0.0    | effective off (term 무력화)    |
-    | 50       | 1.0    | baseline (기존 동작)           |
-    | 100      | 2.0    | weight 2배 (강하게 우선)       |
-
-    Falls back to the hardcoded constant when:
-      - spec 자체가 없음 (W-* row 미시드 환경)
-      - params["weight"] 가 숫자가 아님 (스키마 손상)
-      - priority 가 None (이론상 불가 — column NOT NULL DEFAULT 50)
-
-    Why 모듈-수준 factory: closure 가 cp_sat_schedule 안에 있으면 단위 테스트
-    하기 어려움. specs_by_id 만 분리해서 받으면 factory 자체가 pure → unit
-    test 가능. (test_priority_slider_objective.py)
-    """
-
-    def _spec_weight(cid: str, fallback: int) -> int:
-        spec = specs_by_id.get(cid)
-        if spec is None:
-            return fallback
-        w = spec.params.get("weight")
-        if not isinstance(w, (int, float)):
-            return fallback
-        # priority=0 은 명시적 "term off" 의도 → falsy 단축평가 금지.
-        # None 만 fallback (column NOT NULL DEFAULT 50 이라 이론상 불가).
-        priority = getattr(spec, "priority", None)
-        if priority is None:
-            priority = 50
-        # weight × (priority/50) — int round (CP-SAT 는 정수 계수만 안전)
-        return int(round(w * (priority / 50.0)))
-
-    return _spec_weight
+# Phase 2 Task 2.9 (B-3.4): `_spec_weight_factory` 본 정의는 `_solver_runner.py`
+# 로 이동. 단위 테스트(test_priority_slider_objective.py) 가 import path
+# `app.application.scheduling.cp_sat.orchestrator._spec_weight_factory` 를 사용
+# 하므로 본 모듈에서 re-export 유지 (D7-C 호환).
+from app.application.scheduling.cp_sat._solver_runner import (  # noqa: E402, F401
+    _spec_weight_factory,
+)
 
 
 # _work_days_between, _working_minutes_between, _due_work_min 은
@@ -388,72 +341,16 @@ def cp_sat_schedule(
         return result
 
     # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────
-    # Task 2A.2 (Rev 3): §6 블록은 `app.application.scheduling.cp_sat.model_builder.build_model`
-    # 로 이전됐다. DB 접근이 필요한 `frozen_group_keys` 는 여기서 스냅샷 dict 로
-    # 변환하여 pure 함수에 주입한다 (services/solver/ 경계 불변식).
-    frozen_tasks_snapshot: dict[str, dict[str, Any]] | None = None
-    if frozen_group_keys:
-        # run_label 범위 ScheduleTask 를 한번에 로드 (N+1 쿼리 방지)
-        frozen_batches_q = (
-            db.query(ProductionBatch, ScheduleTask)
-            .join(ScheduleTask, ScheduleTask.batch_id == ProductionBatch.batch_id)
-            .filter(
-                ProductionBatch.run_label == run_label,
-                ProductionBatch.batch_group.in_(list(frozen_group_keys)),
-                ScheduleTask.run_label == run_label,
-                ScheduleTask.start_datetime.isnot(None),
-                ScheduleTask.end_datetime.isnot(None),
-                ScheduleTask.equipment_code.isnot(None),
-            )
-            .all()
-        )
-        # batch_group → 대표 ScheduleTask (첫번째 매치). 여러 batch 가 한 group 에
-        # 속해도 group-level start/end/equip 은 대표값으로 고정.
-        frozen_task_by_gk: dict[str, ScheduleTask] = {}
-        for _pb, _tk in frozen_batches_q:
-            _bg = _pb.batch_group
-            if _bg and _bg not in frozen_task_by_gk:
-                frozen_task_by_gk[_bg] = _tk
-        frozen_tasks_snapshot = {
-            _bg: {
-                "start_wmin": _datetime_to_wmin(_tk.start_datetime, base_date),
-                "equipment_code": _tk.equipment_code,
-            }
-            for _bg, _tk in frozen_task_by_gk.items()
-        }
-
-    # Week 5 Task 5A.3: 가중치 source 가 Python 상수 → DB-driven (`ConstraintSpec`
-    # `params_json["weight"]`) 으로 단계적 이전 중. 누락/disable 행은 fallback
-    # 으로 기존 상수 유지 → parity 보존. 하나씩 옮기며 sub-commit 단위로 검증.
-    _specs_by_id: dict[str, ConstraintSpec] = {
-        s.constraint_id: s for s in load_active_constraints(db)
-    }
-
-    # Week 5A.4: priority 슬라이더 wiring. factory 가 weight × (priority/50)
-    # 스케일 적용. 모든 W-* row 의 priority=50 (DB default) → factor 1.0 →
-    # 기존 11/27 fixture hash 무회귀. 자세한 행위는 _spec_weight_factory docstring.
-    _spec_weight = _spec_weight_factory(_specs_by_id)
-
-    # _TARDINESS_WEIGHT 는 dict — 각 urgency tier 를 별도 W-* row 로 매핑 후 재구성.
-    _tardiness_weight_db = {
-        "critical": _spec_weight("W-TCRIT", _TARDINESS_WEIGHT["critical"]),
-        "urgent": _spec_weight("W-TURG", _TARDINESS_WEIGHT["urgent"]),
-        "normal": _spec_weight("W-TNORM", _TARDINESS_WEIGHT["normal"]),
-    }
-
-    _weights = ModelWeights(
-        DUE_HARD_WEIGHT=_spec_weight("W-DHARD", _DUE_HARD_WEIGHT),
-        TARDINESS_WEIGHT=_tardiness_weight_db,
-        CHAIN_WEIGHT=_spec_weight("W-CHAIN", _CHAIN_WEIGHT),
-        IDLE_WEIGHT=_spec_weight("W-IDLE", _IDLE_WEIGHT),
-        SLACK_WEIGHT_BASE=_spec_weight("W-SLACK", _SLACK_WEIGHT_BASE),
-        PAST_SEVERITY_K=_spec_weight("W-PSEV", _PAST_SEVERITY_K),
-        EDD_PAIR_WEIGHT=_spec_weight("W-EDDP", _EDD_PAIR_WEIGHT),
-        EDD_MIXED_PASTDUE_WEIGHT=_spec_weight("W-EDDM", _EDD_MIXED_PASTDUE_WEIGHT),
-        TRANSITION_WEIGHT=_spec_weight("W-TRANS", _TRANSITION_WEIGHT),
-        MAX_HORIZON_MIN=_MAX_HORIZON_MIN,
-        WORK_MIN_PER_DAY=_WORK_MIN_PER_DAY,
+    # Phase 2 Task 2.9 (B-3.4): §6 의 frozen_tasks_snapshot 빌드 + ConstraintSpec
+    # 가중치 계산은 ``_solver_runner.prepare_model_inputs`` 로 추출.
+    _model_inputs = prepare_model_inputs(
+        db=db,
+        run_label=run_label,
+        base_date=base_date,
+        frozen_group_keys=frozen_group_keys,
     )
+    _weights = _model_inputs.weights
+    frozen_tasks_snapshot = _model_inputs.frozen_tasks_snapshot
 
     # build_model 호출을 closure 로 wrap — lex INFEASIBLE 폴백 시 model 재구성
     # 가능 (cp_model 내부 IntAffine 등이 picklable 하지 않아 deepcopy 불가능).
@@ -475,81 +372,30 @@ def cp_sat_schedule(
         )
 
     _built: BuiltModel = _build_solver_model()
-    # ── 7-pre. 솔버 공통 파라미터 (lex / weighted 두 path 공유) ───────────
-    # time_limit_sec override — 증분 경로는 10s, 전역 재최적화는 60s 등 호출자
-    # 시나리오에 따라 조정. None/<=0 이면 기본값 유지 (하위호환).
-    _time_limit = (
-        int(time_limit_sec)
-        if (time_limit_sec and int(time_limit_sec) > 0)
-        else _SOLVER_TIME_LIMIT_SEC
+
+    # ── 7. lex 시도 → 폴백 → weighted-sum 솔버 실행 ────────────────────────
+    # Phase 2 Task 2.9 (B-3.4): §7-pre/7-a/7-b 본문은 ``_solver_runner.run_solver``
+    # 로 추출. closure ``_build_solver_model`` 을 rebuild_fn 으로 주입하여
+    # lex INFEASIBLE 폴백 시 모델을 재구성할 수 있게 한다 (cp_model.IntAffine
+    # 가 deepcopy 불가능한 invariant 보존).
+    _solve_res = run_solver(
+        built=_built,
+        rebuild_fn=_build_solver_model,
+        weights=_weights,
+        group_meta=group_meta,
+        min_time_mode=min_time_mode,
+        tardiness_hard=tardiness_hard,
+        sheath_color_hard=sheath_color_hard,
+        time_limit_sec=time_limit_sec,
+        num_search_workers=num_search_workers,
+        random_seed=int(random_seed),
+        result=result,
     )
-    # 워커 수: 환경변수 기반 해상도. 운영 기본 8, CI/테스트는 1로 강제 (결정론).
-    # Task 1.1 (Rev 3): `num_search_workers` kwarg 가 주어지면 env 해상도를
-    # override — parity harness 가 워커 수를 1 로 고정해 비결정성을 제거.
-    if num_search_workers is not None and int(num_search_workers) > 0:
-        _num_workers = max(1, int(num_search_workers))
-    else:
-        _num_workers = _resolve_num_workers()
-
-    # ── 7-a. min_time_mode: lex 솔버 시도 (Phase 3 step 3) ────────────────
-    # Lex 가 OPTIMAL/FEASIBLE 이면 그 솔버를 그대로 §8 캘린더 그리디에 전달.
-    # INFEASIBLE_A/B/UNKNOWN 이면 weighted-sum 폴백 (원본 _built 유지를 위해
-    # lex 시도 전 deepcopy). compose_objective 는 weighted-sum path 에서만
-    # 호출되도록 분기 안으로 이동.
-    _used_lex = False
-    if min_time_mode:
-        from app.application.scheduling.cp_sat.lex_min_time import (
-            _adapt_lex_to_solve_result,
-            solve_lex_min_time,
-        )
-
-        # lex 가 _built.model 을 mutate 한다 (max_tard 변수 + Phase B 의
-        # max_tard ≤ T* hard constraint). cp_model 내부 IntAffine 객체가
-        # picklable 하지 않아 deepcopy 불가능 → INFEASIBLE 폴백 시 model
-        # 을 _build_solver_model() 로 재구성. 일반 lex 성공 경로는 추가
-        # 비용 0 (1회 build).
-        _lex_t0 = time.perf_counter()
-        _lex_res = solve_lex_min_time(
-            _built,
-            time_limit_phase_a_sec=_time_limit,
-            time_limit_phase_b_sec=_time_limit,
-            num_workers=_num_workers,
-            random_seed=int(random_seed),
-        )
-        _lex_wall_s = time.perf_counter() - _lex_t0
-        if _lex_res.status in ("OPTIMAL", "FEASIBLE"):
-            # adapter (Phase 3 step 4) 가 LexResult → AdaptedSolveResult 변환.
-            # 같은 ScheduleTask insert 경로 사용 — adapted.built 의 vars 와
-            # adapted.solver 가 동일 protobuf 식별자.
-            adapted = _adapt_lex_to_solve_result(_lex_res, _built, _lex_wall_s)
-            _used_lex = True
-            _built = adapted.built
-            solver = adapted.solver
-            status = adapted.status
-            _solve_wall_s = adapted.wall_s
-            result["solver_mode"] = adapted.mode
-            result["lex_t_star"] = adapted.lex_t_star
-            result["lex_makespan_min"] = adapted.lex_makespan_min
-            result["lex_all_due_met"] = adapted.lex_all_due_met
-        else:
-            # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (모델 재구성).
-            # _built 는 lex 시도 중 mutate 되어 사용 불가 → 새로 build.
-            result["warnings"].append(
-                f"lex_min_time {_lex_res.status} → weighted-sum 폴백 (모델 재구성)"
-            )
-            _built = _build_solver_model()
-            result["solver_mode"] = "weighted_sum_fallback_from_lex"
-    else:
-        result["solver_mode"] = "weighted_sum"
-
-    # weighted-sum 경로: lex 미사용 또는 lex INFEASIBLE 폴백 시.
-    if not _used_lex:
-        compose_objective(
-            _built,
-            weights=_weights,
-            group_meta=group_meta,
-            tardiness_hard=tardiness_hard,
-        )
+    _built = _solve_res.built
+    solver = _solve_res.solver
+    status = _solve_res.status
+    _solve_wall_s = _solve_res.solve_wall_s
+    _num_workers = _solve_res.num_workers
 
     # §6 의 로컬 변수를 `cp_sat_schedule` 후속 코드(§7~§9 + 스냅샷 writer)가 쓸
     # 수 있도록 unpack. 이름은 기존 코드와 1:1 호환되도록 유지 (파러티 보존).
@@ -567,39 +413,6 @@ def cp_sat_schedule(
     _slack_terms_meta = _built.slack_terms_meta
     _edd_pair_terms = _built.edd_pair_terms
     _edd_mixed_pastdue_terms = _built.edd_mixed_pastdue_terms
-    result["warm_start_applied"] = _built.warm_start_applied
-    result["warm_start_skipped"] = _built.warm_start_skipped
-
-    # ── 7-b. weighted-sum 솔버 실행 (lex 미사용 또는 폴백 path) ────────────
-    if not _used_lex:
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = _time_limit
-        solver.parameters.num_search_workers = _num_workers
-        solver.parameters.log_search_progress = False
-        # 재시도 시 다른 탐색 경로를 시도하도록 seed 변동 (Fix P0-4B)
-        solver.parameters.random_seed = int(random_seed)
-
-        # ── Phase 1 개선: 수렴 가속 파라미터 ──────────────────────────────
-        # 왜 이 세 파라미터를 추가하는가:
-        #   (1) linearization_level=2 — 정수 스케줄링 문제에서 LP 이완 정확도를
-        #       상승시켜 분기한정(branch-and-bound) 가지치기 효율을 높임. 최적성은
-        #       유지되고 수렴만 빨라진다 (OR-Tools 기본 1 → 2).
-        #   (2) cp_model_probing_level=2 — constraint propagation 을 강하게 돌려
-        #       INFEASIBLE 을 조기에 탐지. Level 2/3 완화 모드 전환을 앞당겨
-        #       재시도 누적 시간을 단축.
-        #   (3) relative_gap_limit — Level 1 (hard 납기 + hard 색상) 에서만 적용.
-        #       이 모드는 FEASIBLE 이면 납기/색상 제약이 100% 만족되므로, 소프트
-        #       목적함수(idle + chain_diff) 를 2% 이내로 근사해도 운영상 동등.
-        #       완화 모드(Level 2/3) 에서는 품질이 중요하므로 gap 미적용.
-        solver.parameters.linearization_level = 2
-        solver.parameters.cp_model_probing_level = 2
-        if tardiness_hard and sheath_color_hard:
-            solver.parameters.relative_gap_limit = 0.02
-
-        # 계측: solve() wall-time. 성능 개선 판정의 baseline 데이터 소스.
-        _solve_t0 = time.perf_counter()
-        status = solver.solve(model)
-        _solve_wall_s = time.perf_counter() - _solve_t0
 
     status_name = solver.status_name(status)
     result["solver_status"] = status_name
