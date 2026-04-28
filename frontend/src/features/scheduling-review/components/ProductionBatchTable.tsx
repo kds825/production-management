@@ -13,10 +13,19 @@ import { PROCESS_STATUS_COLORS } from "@/shared/constants/processGroups";
 import {
   assignBatchNumbers,
   getBatchGroupKey,
-  formatDeliveryDate,
   sortBatchesByBatchNumber,
 } from "@/shared/utils/batchGrouping";
 import { useSchedulingReviewStore } from "../store/schedulingReviewStore";
+import {
+  COL_DEFS,
+  type ColKey,
+  DEFAULT_HIDDEN_COLS,
+  EDITABLE_KEYS,
+} from "./ProductionBatchTable.columnDefs";
+import {
+  type ColFilters,
+  getCellValueStatic,
+} from "./ProductionBatchTable.filters";
 
 interface ProductionBatchTableProps {
   title: string;
@@ -27,59 +36,11 @@ interface ProductionBatchTableProps {
   onBatchWipClick?: (batchId: string) => void;
 }
 
-const COL_DEFS = [
-  { key: "processGroup", label: "구분", align: "left", width: 56 },
-  { key: "batch_label", label: "배치", align: "left", width: 60 },
-  { key: "processStatus", label: "상태", align: "left", width: 58 },
-  { key: "product", label: "품목", align: "left", width: 100 },
-  { key: "spec", label: "규격", align: "left", width: 120 },
-  { key: "color", label: "외피색상", align: "left", width: 80 },
-  { key: "core_colors", label: "선심색상", align: "left", width: 80 },
-  { key: "customer", label: "거래처", align: "left", width: 100 },
-  { key: "delivery_date", label: "납품일", align: "left", width: 82 },
-  { key: "length_per_unit_m", label: "조장(M)", align: "right", width: 72 },
-  { key: "unit_count", label: "개수", align: "right", width: 56 },
-  { key: "total_length_m", label: "수량(M)", align: "right", width: 72 },
-  { key: "convertedQty", label: "환산수량", align: "right", width: 72 },
-  { key: "notes", label: "비고", align: "left", width: 90 },
-] as const;
-
-/** 탭과 중복되어 기본 숨김 처리할 컬럼 */
-const DEFAULT_HIDDEN_COLS: ColKey[] = ["processGroup"];
-
-type ColKey = (typeof COL_DEFS)[number]["key"];
-
 const ROW_HOVER_BG = "var(--neutral-100)";
-
-const EDITABLE_KEYS = new Set([
-  "color",
-  "unit_count",
-  "length_per_unit_m",
-  "notes",
-]);
 
 interface EditingCell {
   batchId: string;
   field: string;
-}
-
-/** 컬럼별 선택된 값 집합 — undefined면 필터 없음(전체) */
-type ColFilters = Partial<Record<ColKey, Set<string>>>;
-
-function getCellValueStatic(
-  col: (typeof COL_DEFS)[number],
-  batch: SchedulingBatch,
-  batchNumbers: Map<string, number>,
-): string {
-  if (col.key === "batch_label") {
-    const num = batchNumbers.get(getBatchGroupKey(batch));
-    return num != null ? `배치 ${num}` : "";
-  }
-  if (col.key === "delivery_date")
-    return formatDeliveryDate(batch.delivery_date);
-  const raw = batch[col.key as keyof SchedulingBatch];
-  if (typeof raw === "number") return raw.toLocaleString();
-  return String(raw ?? "");
 }
 
 export function ProductionBatchTable({
