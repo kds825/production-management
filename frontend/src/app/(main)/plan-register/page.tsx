@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { WipUploadSection } from "@/features/plan-register/components/WipUploadSection";
+import { WipUploadSection } from "@/features/plan-register/components/wip-upload/WipUploadSection";
 import { ErpUploadSection } from "@/features/plan-register/components/erp-upload/ErpUploadSection";
 import type { WipFile, UploadMode } from "@/features/plan-register/types";
 
