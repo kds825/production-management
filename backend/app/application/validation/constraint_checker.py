@@ -10,6 +10,23 @@ from app.infrastructure.models.constraint_config import ConstraintConfig
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.operation_calendar import OperationCalendar
 
+# Phase 1 Task 1.5 (B-4.1) — 카테고리별 sub-module 로 분할.
+# 외부 import path (constraint_checker.validate_all/_check_*) 보존을 위한 re-export.
+from app.application.validation._checks_hard import (
+    _check_overlap,
+    _check_precedence,
+    _check_sq_range,
+)
+from app.application.validation._checks_due import (
+    _check_delivery,
+    _check_due_type,
+    _check_priority_order,
+)
+from app.application.validation._checks_setup import (
+    _check_color_group,
+    _check_setup_time,
+)
+
 
 def has_overlap(violations: list[dict]) -> bool:
     """validate_all 결과에 겹침 위반이 하나라도 있는지.
@@ -96,219 +113,6 @@ def validate_all(run_label: str, db: Session) -> list[dict]:
                     }
                 )
 
-    return violations
-
-
-def _check_overlap(tasks: list) -> list[dict]:
-    """동일 설비에서 시간 겹침 확인"""
-    violations = []
-    by_equip = {}
-    for t in tasks:
-        by_equip.setdefault(t.equipment_code, []).append(t)
-
-    for eq_code, eq_tasks in by_equip.items():
-        sorted_tasks = sorted(eq_tasks, key=lambda x: x.start_datetime)
-        for i in range(len(sorted_tasks) - 1):
-            if sorted_tasks[i].end_datetime > sorted_tasks[i + 1].start_datetime:
-                violations.append(
-                    {
-                        "constraint_id": "overlap",
-                        "task_id": sorted_tasks[i + 1].task_id,
-                        "severity": "error",
-                        "detail": f"설비 {eq_code}: 작업 {sorted_tasks[i].task_id}과 시간 겹침",
-                    }
-                )
-    return violations
-
-
-def _check_delivery(tasks, batches) -> list[dict]:
-    """납기 초과 확인 — 사용자 요구 '납기는 반드시 지켜져야함' → severity=error"""
-    violations = []
-    for t in tasks:
-        batch = batches.get(t.batch_id)
-        if batch and batch.due_date and t.end_datetime.date() > batch.due_date:
-            violations.append(
-                {
-                    "constraint_id": "1-1",
-                    "task_id": t.task_id,
-                    "batch_id": t.batch_id,
-                    # 납기는 하드 제약 — 위반 시 error 로 격상하여 재시도/알림 트리거
-                    "severity": "error",
-                    "detail": f"납기 {batch.due_date} 초과 (완료 예정: {t.end_datetime.date()})",
-                }
-            )
-    return violations
-
-
-def _check_priority_order(tasks, batches, equipment, config) -> list[dict]:
-    """같은 설비에서 우선순위 낮은 주문이 높은 주문보다 먼저 배치되었는지"""
-    violations = []
-    by_equip = {}
-    for t in tasks:
-        by_equip.setdefault(t.equipment_code, []).append(t)
-
-    for eq_code, eq_tasks in by_equip.items():
-        sorted_tasks = sorted(eq_tasks, key=lambda x: x.start_datetime)
-        for i in range(len(sorted_tasks) - 1):
-            b1 = batches.get(sorted_tasks[i].batch_id)
-            b2 = batches.get(sorted_tasks[i + 1].batch_id)
-            if b1 and b2:
-                if (b1.customer_priority or 99) > (b2.customer_priority or 99):
-                    if b1.due_date and b2.due_date and b1.due_date > b2.due_date:
-                        # Lower priority task is scheduled first AND has later due date
-                        violations.append(
-                            {
-                                "constraint_id": "1-1",
-                                "task_id": sorted_tasks[i].task_id,
-                                "severity": "warning",
-                                "detail": (
-                                    f"우선순위 역전: {b1.customer_name}(P{b1.customer_priority})"
-                                    f" before {b2.customer_name}(P{b2.customer_priority})"
-                                ),
-                            }
-                        )
-    return violations
-
-
-def _check_due_type(tasks, batches, equipment, config) -> list[dict]:
-    """도착기준 고객은 운송일 1일 차감하여 실질 납기 체크"""
-
-    violations = []
-    transport_days = 1  # default
-    if config.params_json:
-        transport_days = config.params_json.get("transport_days", 1)
-
-    for t in tasks:
-        batch = batches.get(t.batch_id)
-        if not batch or not batch.due_date:
-            continue
-        # Check if customer is 도착기준 type
-        # For now, check customer_name against known 도착기준 customers
-        if batch.customer_name and "아이마켓" in batch.customer_name:
-            effective_due = batch.due_date - timedelta(days=transport_days)
-            if t.end_datetime.date() > effective_due:
-                violations.append(
-                    {
-                        "constraint_id": "1-2",
-                        "task_id": t.task_id,
-                        "severity": "warning",
-                        "detail": (
-                            f"도착기준 고객 {batch.customer_name}: 실질납기 {effective_due}"
-                            f" 초과 (완료: {t.end_datetime.date()})"
-                        ),
-                    }
-                )
-    return violations
-
-
-def _check_color_group(tasks, batches, equipment, config) -> list[dict]:
-    """설비 색상그룹 제한 확인 (A120: 흑/청만)"""
-    violations = []
-    for t in tasks:
-        batch = batches.get(t.batch_id)
-        eq = equipment.get(t.equipment_code)
-        if batch and eq and eq.color_group == "흑/청":
-            color = (batch.sheath_color or "").strip()
-            if color and color not in (
-                "흑",
-                "청",
-                "흑색",
-                "청색",
-                "BLACK",
-                "BLUE",
-                "BK",
-                "BL",
-            ):
-                violations.append(
-                    {
-                        "constraint_id": "3-3",
-                        "task_id": t.task_id,
-                        "severity": "error",
-                        "detail": f"A120 설비에 {color} 색상 배정 (흑/청만 가능)",
-                    }
-                )
-    return violations
-
-
-def _check_setup_time(tasks, batches, equipment, config) -> list[dict]:
-    """규격교체 시간이 연속 작업 간에 반영되었는지 확인"""
-    violations = []
-    setup_params = config.params_json or {}  # noqa: F841 — reserved for future param lookup
-
-    by_equip = {}
-    for t in tasks:
-        by_equip.setdefault(t.equipment_code, []).append(t)
-
-    for eq_code, eq_tasks in by_equip.items():
-        sorted_tasks = sorted(eq_tasks, key=lambda x: x.start_datetime)
-        for i in range(len(sorted_tasks) - 1):
-            curr = sorted_tasks[i]
-            next_task = sorted_tasks[i + 1]
-            curr_batch = batches.get(curr.batch_id)
-            next_batch = batches.get(next_task.batch_id)
-
-            if not curr_batch or not next_batch:
-                continue
-
-            # SQ 변경 발생 시 규격교체 준비시간 확보 여부 확인
-            if curr_batch.sq_mm2 != next_batch.sq_mm2:
-                gap_min = (
-                    next_task.start_datetime - curr.end_datetime
-                ).total_seconds() / 60
-                # Why:
-                # schedule_optimizer 는 setup 을 task.setup_time_min 내부에 저장하고
-                # eq_total_duration 에 포함(line 1309). single-equipment 경로는 next 에,
-                # multi-equipment 경로는 curr 에 setup 을 기록하는 차이가 있음.
-                # 따라서 "어느 쪽에든 setup 시간이 기록됐는가" 를 gap + curr + next 합으로
-                # 판정해야 false positive (gap만 보는 과거 로직) 가 발생하지 않는다.
-                curr_setup = float(curr.setup_time_min or 0)
-                next_setup = float(next_task.setup_time_min or 0)
-                required_setup = max(curr_setup, next_setup)
-                effective_setup = gap_min + curr_setup + next_setup
-
-                if required_setup > 0 and effective_setup < required_setup * 0.5:
-                    violations.append(
-                        {
-                            "constraint_id": "4-1",
-                            "task_id": next_task.task_id,
-                            "severity": "warning",
-                            "detail": (
-                                f"설비 {eq_code}: SQ {curr_batch.sq_mm2}→{next_batch.sq_mm2}"
-                                f" 교체, 확보된 setup {effective_setup:.0f}분"
-                                f" (gap={gap_min:.0f} + curr.setup={curr_setup:.0f}"
-                                f" + next.setup={next_setup:.0f}, 필요: {required_setup:.0f}분)"
-                            ),
-                        }
-                    )
-    return violations
-
-
-def _check_sq_range(tasks, batches, equipment, config) -> list[dict]:
-    """설비 SQ 범위 확인"""
-    violations = []
-    for t in tasks:
-        batch = batches.get(t.batch_id)
-        eq = equipment.get(t.equipment_code)
-        if batch and eq and batch.sq_mm2:
-            sq = float(batch.sq_mm2)
-            if eq.range_min and sq < float(eq.range_min):
-                violations.append(
-                    {
-                        "constraint_id": "5-1",
-                        "task_id": t.task_id,
-                        "severity": "error",
-                        "detail": f"SQ {sq} < 설비 최소 {eq.range_min}",
-                    }
-                )
-            if eq.range_max and sq > float(eq.range_max):
-                violations.append(
-                    {
-                        "constraint_id": "5-1",
-                        "task_id": t.task_id,
-                        "severity": "error",
-                        "detail": f"SQ {sq} > 설비 최대 {eq.range_max}",
-                    }
-                )
     return violations
 
 
