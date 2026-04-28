@@ -50,6 +50,10 @@ _ALLOWED_BOUNDARY_CROSSERS = {
     # (solver_run + solver_decision trace write) 를 추출한 observability
     # helper. ScheduleTask 조회 + write_trace DB write 라 boundary crosser.
     "_trace_writer.py",
+    # Phase 2 Task 2.8 (B-3.3): `_preemption_runner.py` 는 cp_sat_schedule §9
+    # (선점 분할 잔여 배치 후속 스케줄링) 추출. ScheduleTask insert + slot
+    # finder DB 호출이라 boundary crosser.
+    "_preemption_runner.py",
 }
 
 # Prefixes that count as "crossing the boundary" — SQLAlchemy ORM

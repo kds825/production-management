@@ -74,6 +74,9 @@ from app.application.scheduling.cp_sat.objective import compose_objective
 from app.application.scheduling.cp_sat.snapshot import write_snapshot
 from app.application.scheduling.cp_sat._load_inputs import load_solver_inputs
 from app.application.scheduling.cp_sat._trace_writer import write_solver_trace
+from app.application.scheduling.cp_sat._preemption_runner import (
+    schedule_preempted_remainders,
+)
 
 # Phase 3 step 2: 가중치 상수 + 워커/우선순위/duration helpers + group meta
 # builder 를 helpers.py 에 단일 source 로 이동. orchestrator 는 import 만.
@@ -1187,49 +1190,18 @@ def cp_sat_schedule(
         result["total_tasks"] += 1
 
     # ── 9. 선점 잔여 배치 후속 배치 ───────────────────────────────────────────
-    # 선점 분할로 생성된 잔여 배치들을 같은 설비에서 순서대로 스케줄링한다.
-    # (이미 긴급 배치 슬롯이 timeline에 등록되어 있으므로 겹치지 않는다.)
-    for rem_b in preempted_remainder:
-        eq_code = rem_b.equipment_code
-        if not eq_code:
-            continue
-        # 밀어낸 단드럼 배치는 setup_time을 유지; 분할 잔여는 setup=0 (이미 설정됨)
-        rem_setup = float(rem_b.setup_time_min or 0)
-        work_dur = float(rem_b.estimated_duration_min or 0)
-        total_rem_dur = work_dur + rem_setup
-        slots_rem = timeline.get(eq_code, [])
-        rem_start = _find_available_slot(
-            base_date, total_rem_dur, slots_rem, db, eq_code
-        )
-        rem_end = calculate_end_datetime(rem_start, total_rem_dur, db, eq_code)
-        if rem_end.minute > 0 or rem_end.second > 0:
-            rem_end = rem_end.replace(minute=0, second=0, microsecond=0) + timedelta(
-                hours=1
-            )
-
-        # 체인 하이라이트 — 잔여 배치도 같은 (order, line) 의 predecessor 계보 유지
-        rem_pred_task_id = predecessor_map.get(
-            (rem_b.sales_order_id, rem_b.sales_order_line)
-        )
-
-        rem_task = ScheduleTask(
-            batch_id=rem_b.batch_id,
-            equipment_code=eq_code,
-            start_datetime=rem_start,
-            end_datetime=rem_end,
-            setup_time_min=rem_setup,
-            status="scheduled",
-            run_label=run_label,
-            batch_group=rem_b.batch_group,
-            predecessor_task_id=rem_pred_task_id,
-        )
-        db.add(rem_task)
-        db.flush()
-
-        timeline.setdefault(eq_code, []).append((rem_start, rem_end))
-        rem_b.status = "scheduled"
-        rem_b.equipment_code = eq_code
-        result["total_tasks"] += 1
+    # Phase 2 Task 2.8 (B-3.3): 본 블록은 ``_preemption_runner.schedule_preempted_remainders``
+    # 로 추출. timeline / preempted_remainder / predecessor_map / result
+    # 모두 in-place mutate (원본 동작 그대로).
+    schedule_preempted_remainders(
+        preempted_remainder=preempted_remainder,
+        timeline=timeline,
+        base_date=base_date,
+        run_label=run_label,
+        db=db,
+        predecessor_map=predecessor_map,
+        result=result,
+    )
 
     # ── Task 2A.3: write one solver_run + N solver_decision rows ──────────
     # Phase 2 Task 2.7 (B-3.2): 본 trace write 블록은 ``_trace_writer.write_solver_trace``
