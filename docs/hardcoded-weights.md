@@ -97,6 +97,8 @@ distribution-of-influence shape across all weights.
 ## Status
 
 - [x] Task 5A.1 — inventory complete (this file).
-- [ ] Task 5A.2 — seed script + `seed_db.py` integration.
-- [ ] Task 5A.3 — per-constant migration (a..k).
-- [ ] Task 5A.4 — full parity + admin UI verification.
+- [x] Task 5A.2 — Supabase 에 W-\* 11 rows 직접 시드 (`priority=50` DB default).
+- [x] Task 5A.3 — `_spec_weight_factory` 가 `params_json["weight"]` 를 DB 에서 read (`backend/app/application/scheduling/cp_sat/orchestrator.py`).
+- [x] Task 5A.4 — `_spec_weight_factory` 가 `weight × (priority/50)` 로 슬라이더 wiring (2026-04-28 plan, commit 직후). priority=50 = factor 1.0 → 기존 fixture hash 무회귀. priority=100 → 2× / priority=0 → effective off.
+
+> **2026-04-28 갱신:** 위 "Priority normalisation choice" 섹션의 Option (b) — UX-only compromise — 는 **더 이상 적용 안 됨.** 슬라이더는 이제 objective 에 직접 비례 반영됨. 단위 테스트 `backend/tests/test_priority_slider_objective.py` 7개 (factor 검증 + DB invariant 검증) 가 회귀 가드.

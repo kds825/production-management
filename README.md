@@ -259,6 +259,8 @@ Stage 2 스케줄링 알고리즘:
 
 > Stage 1 또는 Stage 2를 재실행하면 변경된 설정이 반영됩니다.
 
+> **W-\* 가중치 행 (W-TNORM / W-IDLE / W-EDDP / ... 11개)**: `priority` 슬라이더가 `weight × (priority / 50)` 로 솔버 objective 에 직접 반영됩니다. priority=50 (기본) = 1× baseline, priority=100 = 2×, priority=0 = effective off. solver 재실행 시 즉시 반영. 자세한 inventory 는 [docs/hardcoded-weights.md](docs/hardcoded-weights.md).
+
 ### 동적 제어 가능 제약조건 상세
 
 | ID  | 제약조건       | params_json 키                     | 기본값    | 설명                    |

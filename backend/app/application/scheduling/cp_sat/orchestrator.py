@@ -107,6 +107,49 @@ _logger = logging.getLogger(__name__)
 # (Phase 3 step 2). 위 import 블록에서 가져온다.
 # 가중치 설계 의도는 helpers.py 의 상수 docstring 참조.
 
+
+def _spec_weight_factory(specs_by_id: dict):
+    """`_spec_weight(cid, fallback)` 클로저를 만들어 반환 — Week 5A.4 wiring.
+
+    Reads `ConstraintSpec.params["weight"]` and **scales by `priority / 50.0`**
+    so the Admin-UI priority slider is causally wired to the solver objective.
+    `priority=50` (DB default for all W-* rows) → factor 1.0 → 기존 11개
+    fixture hash 무회귀 보장 (parity-preserving by construction).
+
+    | priority | factor | 효과                          |
+    |----------|--------|-------------------------------|
+    | 0        | 0.0    | effective off (term 무력화)    |
+    | 50       | 1.0    | baseline (기존 동작)           |
+    | 100      | 2.0    | weight 2배 (강하게 우선)       |
+
+    Falls back to the hardcoded constant when:
+      - spec 자체가 없음 (W-* row 미시드 환경)
+      - params["weight"] 가 숫자가 아님 (스키마 손상)
+      - priority 가 None (이론상 불가 — column NOT NULL DEFAULT 50)
+
+    Why 모듈-수준 factory: closure 가 cp_sat_schedule 안에 있으면 단위 테스트
+    하기 어려움. specs_by_id 만 분리해서 받으면 factory 자체가 pure → unit
+    test 가능. (test_priority_slider_objective.py)
+    """
+
+    def _spec_weight(cid: str, fallback: int) -> int:
+        spec = specs_by_id.get(cid)
+        if spec is None:
+            return fallback
+        w = spec.params.get("weight")
+        if not isinstance(w, (int, float)):
+            return fallback
+        # priority=0 은 명시적 "term off" 의도 → falsy 단축평가 금지.
+        # None 만 fallback (column NOT NULL DEFAULT 50 이라 이론상 불가).
+        priority = getattr(spec, "priority", None)
+        if priority is None:
+            priority = 50
+        # weight × (priority/50) — int round (CP-SAT 는 정수 계수만 안전)
+        return int(round(w * (priority / 50.0)))
+
+    return _spec_weight
+
+
 # _work_days_between, _working_minutes_between, _due_work_min 은
 # app.application._shared.calendar_ops 로 이동 (Week 3 Task 3A.1, Phase 1 step 3 재배치).
 # 아래 import 가 모듈 namespace 에 re-export 하여 기존 path 가 유지된다 (D7-C).
@@ -489,20 +532,10 @@ def cp_sat_schedule(
         s.constraint_id: s for s in load_active_constraints(db)
     }
 
-    def _spec_weight(cid: str, fallback: int) -> int:
-        """ConstraintSpec.params['weight'] 조회 — 없으면 fallback 반환.
-
-        Why fallback: 운영 DB 에 W-* 행이 아직 시드 안 된 환경(legacy / 테스트 DB)
-        에서도 solver 가 죽지 않도록. Task 5A.2 seed 가 멱등 보장하므로 정상 환경
-        에서는 항상 spec 값이 사용된다.
-        """
-        spec = _specs_by_id.get(cid)
-        if spec is None:
-            return fallback
-        w = spec.params.get("weight")
-        if not isinstance(w, (int, float)):
-            return fallback
-        return int(w)
+    # Week 5A.4: priority 슬라이더 wiring. factory 가 weight × (priority/50)
+    # 스케일 적용. 모든 W-* row 의 priority=50 (DB default) → factor 1.0 →
+    # 기존 11/27 fixture hash 무회귀. 자세한 행위는 _spec_weight_factory docstring.
+    _spec_weight = _spec_weight_factory(_specs_by_id)
 
     # _TARDINESS_WEIGHT 는 dict — 각 urgency tier 를 별도 W-* row 로 매핑 후 재구성.
     _tardiness_weight_db = {
