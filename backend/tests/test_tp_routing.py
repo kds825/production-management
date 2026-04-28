@@ -58,11 +58,12 @@ def test_non_tp_process_unaffected():
 
 
 def test_live_code_has_tp2_preferred_block():
-    """optimization_loop.py 에 실제 TP-2 preferred 블록이 존재하는지 source 확인.
+    """_assign_group.py 에 실제 TP-2 preferred 블록이 존재하는지 source 확인.
 
     Phase 1 step 4a 이후 본 로직은 application/scheduling/greedy/optimization_loop.py
-    의 _run_optimization_once 안에 정의된다 (직전 services/schedule_optimizer.py
-    셸은 Phase 5 §9.4 에서 삭제).
+    의 _run_optimization_once 안에 정의되었으나, Task 2.13 (B-7.2) 추출에 의해
+    _assign_group 본체가 _assign_group.py 로 이동했다. 본 sanity check 도
+    새 위치를 따라간다.
     """
     from pathlib import Path
 
@@ -72,12 +73,12 @@ def test_live_code_has_tp2_preferred_block():
         / "application"
         / "scheduling"
         / "greedy"
-        / "optimization_loop.py"
+        / "_assign_group.py"
     ).read_text(encoding="utf-8")
     # 핵심 블록의 특징 문자열 존재 확인
     assert "T/P 공정 preferred 설비" in src, (
-        "optimization_loop.py 에 T/P preferred 블록 주석이 사라짐 — 회귀 의심"
+        "_assign_group.py 에 T/P preferred 블록 주석이 사라짐 — 회귀 의심"
     )
     assert 'equipment_code == "TP-2"' in src, (
-        "optimization_loop.py 에 TP-2 narrowing 로직 누락"
+        "_assign_group.py 에 TP-2 narrowing 로직 누락"
     )
