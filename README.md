@@ -447,7 +447,9 @@ backend/app/
 
   presentation/                        # FastAPI HTTP layer
     routes/
-      plan_pipeline.py                 # Stage 1/2 API
+      plan_pipeline.py                 # 진입점 (114 LOC, 5 sub-router 합산)
+      plan_pipeline_{stage1,stage2,batch,batch_group,runs}.py
+      _pipeline_shared.py              # AI 캐시 + 공유 helpers
       schedules/                       # 간트 태스크 CRUD (서브패키지)
       audit.py / equipment.py / master_data.py / constraints.py / ...
     schemas/
@@ -461,7 +463,8 @@ frontend/src/
     master/
   features/
     scheduler/components/{SchedulerView,GanttTaskBlock,ViewFilter,BatchSplitModal}.tsx
-    scheduling-review/{store,components}/
+    plan-register/components/{erp-upload,wip-upload}/                  # 2026-04-29 sub-folder 정리
+    scheduling-review/{store,hooks,components/{production-batch-table,scheduling-result-table}}/
 ```
 
 ---
@@ -479,7 +482,7 @@ frontend/src/
 | 4       | `SchedulerState` dataclass + `_run_optimization_once` 분해 (body 824 → **98 LOC**, helper 4개 + GroupingContext)                 | pytest 451 + parity 27/27                                                              |
 | 5       | 실 ERP dual-run (회귀 0) + lex vs weighted-sum 실측 (lex 158× faster) + UI E2E (콘솔 에러 0) + `services/` 셸 디렉토리 삭제      | [docs/lex-mode-comparison.md §6](docs/lex-mode-comparison.md), final main-parity 27/27 |
 
-**검증 게이트** (모든 Phase 통과): `pytest backend/tests/ -q` (450+ tests) + main-parity harness 27/27 + parity-quick 11/11 + frontend Playwright smoke + verification-stage1.
+**검증 게이트** (모든 Phase 통과): `pytest backend/tests/ -q` (현재 698 tests) + `pytest backend/tests/test_parity_harness.py -m parity` (13/13 hash equality, `--parity-quick` 으로 3 시나리오 fast path) + frontend `npm run typecheck && npm run lint` + Playwright smoke + verification-stage1. _Phase 0~5 단계의 main-parity 27/27 baseline 은 Phase 3 fixture 재구성 (13 scenarios) 으로 흡수._
 
 ---
 
