@@ -51,6 +51,14 @@ jobs:
         working-directory: backend
         run: alembic upgrade head
 
+      - name: Seed masterdata (equipment / speed / constraint / drum_lot)
+        # speed_master / constraint_config 미시드 시 test_speedmaster_setup_patch
+        # 와 test_constraints_params 가 "seed required" / StopIteration 으로
+        # FAIL. parity workflow 와 동일 스크립트 (01_nominal.json 기반)
+        # 재사용 — 단일 source of truth.
+        working-directory: backend
+        run: python scripts/seed_masterdata_for_ci.py
+
       - name: Run pytest (parity harness excluded; see Task 1.9)
         working-directory: backend
         run: pytest -q --ignore=tests/test_parity_harness.py

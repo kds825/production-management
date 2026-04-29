@@ -51,9 +51,13 @@ import os
 import sys
 from pathlib import Path
 
-from sqlalchemy.orm import Session
-
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
+# Make `app.*` importable when invoked as `python scripts/seed_masterdata_for_ci.py`
+# from backend/. Python only auto-adds the script directory (scripts/), not cwd.
+sys.path.insert(0, str(_BACKEND_ROOT))
+
+from sqlalchemy.orm import Session  # noqa: E402
+
 _FIXTURE_PATH = _BACKEND_ROOT / "tests" / "fixtures" / "parity" / "01_nominal.json"
 
 
