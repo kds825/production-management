@@ -178,6 +178,7 @@ export default function SchedulingReviewPage() {
             width={72}
             height={36}
             className="object-contain"
+            style={{ width: "auto", height: "auto" }}
           />
           <div className="h-6 w-px bg-gray-200" />
           <h1
@@ -416,7 +417,10 @@ export default function SchedulingReviewPage() {
 
         <span className="text-small text-gray-500">
           계획일{" "}
-          <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>
+          <span
+            suppressHydrationWarning
+            style={{ color: "var(--color-text-primary)", fontWeight: 500 }}
+          >
             {planDate}
           </span>
         </span>
