@@ -22,7 +22,7 @@ router = APIRouter()
 def delete_run(run_label: str, db: Session = Depends(get_db)):
     """특정 run_label의 실행 데이터를 삭제한다.
 
-    - audit_log, schedule_task, production_batch, sales_order: run_label 행 삭제
+    - decision_feedback, audit_log, schedule_task, production_batch, sales_order: run_label 행 삭제
     - wip_inventory: run_label 행 삭제 + 해당 run에서 매칭된 다른 WIP 행 상태 초기화
       (matched_order_id → NULL, status → 사용가능)
     """
@@ -73,7 +73,10 @@ def delete_run(run_label: str, db: Session = Depends(get_db)):
     # (b) 자식 → 부모 순으로 삭제한다.
     #     audit_log / schedule_task / sales_order 는 production_batch·wip_inventory 를 참조하므로 먼저,
     #     그 다음 wip_inventory, 마지막으로 production_batch.
-    for table in ["audit_log", "schedule_task", "sales_order"]:
+    # Why decision_feedback 첫 위치: decision_feedback.batch_id → production_batch,
+    #     decision_feedback.task_id → schedule_task (둘 다 NO ACTION). 따라서 schedule_task /
+    #     production_batch 보다 먼저 비워야 FK 위반이 안 난다 (_purge_run_data 와 동일 컨벤션).
+    for table in ["decision_feedback", "audit_log", "schedule_task", "sales_order"]:
         result = db.execute(
             text(f"DELETE FROM {table} WHERE run_label = :rl"),
             {"rl": run_label},
