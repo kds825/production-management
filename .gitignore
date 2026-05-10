@@ -42,6 +42,24 @@ graphify-out/
 # Playwright test artifacts
 frontend/test-results/
 
-# Solver snapshots (진단 덤프 — 크기가 크고 환경별로 달라지므로 커밋 제외)
-**/04_output/solver_snapshots/
+# Output artifacts (장표 PPT/PDF, 캡처, solver snapshot 등 — 산출물이라 커밋 제외)
+04_output/
+backend/04_output/
+
+# Test caches
+.pytest_cache/
+backend/.benchmarks/
+
+# 일회성 분석/캡처 스크립트 (재사용 시 scripts/oneshot/ 로 옮기고 ignore 해제)
+scripts/capture_overview.cjs
+scripts/capture_overview.ts
+scripts/capture_scheduler_retry.cjs
+scripts/probe2.cjs
+scripts/probe3.cjs
+scripts/probe_scheduler.cjs
+scripts/build_overview_pptx.cjs
+
+# 일회성 분석 메모
+장표용_시스템개요.md
+
 .claude/scheduled_tasks.lock
