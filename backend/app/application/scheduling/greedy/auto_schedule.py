@@ -243,6 +243,33 @@ def auto_schedule(
                 # base_date 도 함께 주입해 solver 축 일관성 보장
                 kwargs.setdefault("base_date", _hint_base)
 
+    # ── Phase 6 step 8 (2026-05): 재호출 회귀 가드 ─────────────────────────
+    # PoC live test 에서 발견 — 동일 run_label 로 auto_schedule 을 두 번째
+    # 호출하면 첫 호출이 production_batch.status 를 'scheduled' 로 마킹한
+    # 상태이고, _load_inputs.py:73 의 filter 가 status=='planned' 만 로드하므로
+    # 두 번째 호출은 0 batch 로 들어가 solver_status='UNKNOWN' → greedy_fallback
+    # 으로 빠진다 (의도와 다른 silent 회귀).
+    #
+    # 처리:
+    #   첫 호출 진입 시점 (boost retry 가 아닌) 이고, caller 가 frozen_group_keys
+    #   를 명시 전달하지 않았으며 (cascade reschedule 같은 의도적 frozen 유지
+    #   경로는 제외) 기존 schedule_task 가 존재하면 _purge_run_tasks 가 frozen
+    #   배치 (in_progress / completed / wip_complete) 를 보존하면서 나머지 task
+    #   삭제 + status='scheduled' → 'planned' 리셋. warm_start_hints 는 위
+    #   블록에서 이미 생성되어 hints 는 살아남아 두 번째 호출이 따뜻한 시작을
+    #   유지한다.
+    #
+    # _retry_depth_initial > 0 (boost retry 의 재귀) 인 경우 호출자가 이미
+    # SAVEPOINT 안에서 _purge_run_tasks 를 호출했으므로 본 블록 skip.
+    if _retry_depth_initial == 0 and not kwargs.get("frozen_group_keys"):
+        _existing_task = (
+            db.query(ScheduleTask.task_id)
+            .filter(ScheduleTask.run_label == run_label)
+            .first()
+        )
+        if _existing_task is not None:
+            _so._purge_run_tasks(db, run_label)
+
     MAX_RETRIES = 2
     result: dict = {}
     violations: list[dict] = []
