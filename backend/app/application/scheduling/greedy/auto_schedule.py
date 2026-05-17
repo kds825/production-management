@@ -141,8 +141,16 @@ def auto_schedule(
     # 패키지 __init__.py 가 `from .auto_schedule import auto_schedule` 로 같은
     # 이름의 함수를 export 해 `from app.application.scheduling.greedy import
     # auto_schedule` 이 함수로 resolve 된다 — 모듈 자체를 참조하려면
-    # sys.modules[__name__] (현재 submodule) 을 직접 lookup.
+    # sys.modules[__name__] (current submodule) 을 직접 lookup.
     _so = _sys.modules[__name__]
+
+    # Pre-existing bug fix (F-3 라이브 측정에서 발견): _tardiness_retry_depth 는
+    # auto_schedule 의 내부 control kwarg 인데 함수 진입부에서 pop 되지 않고
+    # success branch (line 346 부근) 에서만 pop 됐다. _tardiness_boost_retry 의
+    # 재귀 호출에서 이 키워드가 함께 들어오면 attempt loop 의 첫 cp_sat_schedule
+    # 호출 시 ``**_attempt_kwargs`` 로 전달돼 unknown-kwarg error 발생.
+    # 함수 진입 시 즉시 pop 해 control 변수에 보관, kwargs 에는 남기지 않는다.
+    _retry_depth_initial = int(kwargs.pop("_tardiness_retry_depth", 0))
 
     # ── Phase 2 개선: warm_start_hints 자동 생성 ──────────────────────────
     # 왜 자동 생성:
@@ -343,7 +351,9 @@ def auto_schedule(
             # 납기 초과 발견 시 boost retry — tardy 배치의 customer_priority 를
             # 일시적으로 critical 로 상향해 CP-SAT 재실행, 개선되면 채택.
             # SAVEPOINT 로 감싸 악화/동일 시 원본 상태로 완전 복원.
-            _retry_depth = int(kwargs.pop("_tardiness_retry_depth", 0))
+            # _tardiness_retry_depth 는 함수 진입부에서 이미 pop 되어
+            # _retry_depth_initial 에 보관됨 (F-3 발견 버그 fix).
+            _retry_depth = _retry_depth_initial
             _tr = result.get("tardiness_report") or {}
             if use_cpsat and _retry_depth == 0 and _tr.get("total_tardy_count", 0) > 0:
                 result = _so._tardiness_boost_retry(
