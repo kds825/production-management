@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import os
 from collections import OrderedDict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.application._shared.calendar_ops import _due_work_min
 from app.application._shared.group_ops import (
@@ -71,11 +71,77 @@ _WORK_MIN_PER_DAY_DEFAULT = 24 * 60  # 1440분 (창 full)
 
 # CP-SAT 최대 계획 기간(근무 분) — 90 근무일. P9-E: calendar_engine 기반 축으로
 # 확장되어 기존 840*90=75600 보다 큰 값 필요 (공휴일/금요일 때문에 실가용 분은
-# 날마다 달라짐). 여유있게 90*1440 = 129600 으로 horizon 확장.
+# 날마다 달라짐). 여유있게 90*1440 = 129600 으로 horizon 의 절대 상한.
+#
+# Phase 6 step 4 (2026-05): horizon 은 compute_horizon() 으로 동적 산정.
+# _MAX_HORIZON_MIN 은 (a) no-due batch 의 due_wmin sentinel 값 (helpers.py:272
+# 의 `else _MAX_HORIZON_MIN` 경로), (b) compute_horizon 결과의 절대 상한
+# 으로만 사용. CP-SAT IntVar 의 upper bound 는 compute_horizon() 반환값.
 _MAX_HORIZON_MIN = 90 * _WORK_MIN_PER_DAY_DEFAULT
+
+# no-due batch 의 due_wmin sentinel — `_MAX_HORIZON_MIN` 과 같은 값이지만
+# 의미가 분리됨 (sentinel 비교용). compute_horizon 에서 sentinel 그룹은
+# horizon 산정에서 제외.
+_NO_DUE_SENTINEL = _MAX_HORIZON_MIN
 
 # CP-SAT 솔버 시간 제한(초)
 _SOLVER_TIME_LIMIT_SEC = 30
+
+
+def compute_horizon(
+    group_meta: dict[str, Any],
+    frozen_tasks_snapshot: dict[str, dict[str, Any]] | None,
+    *,
+    no_due_sentinel: int = _NO_DUE_SENTINEL,
+    buffer_min: int = 14 * _WORK_MIN_PER_DAY_DEFAULT,
+    min_horizon_min: int = 14 * _WORK_MIN_PER_DAY_DEFAULT,
+    absolute_max: int = _MAX_HORIZON_MIN,
+) -> int:
+    """동적 horizon 산정 (Phase 6 step 4).
+
+    기존 90일 (129,600분) 고정 horizon 은 CP-SAT IntVar 의 upper bound 를
+    실제 납기보다 훨씬 크게 잡아 변수 도메인 폭주 → solve time 증가의 한
+    원인. 실 데이터의 max(납기) + 여유분 만큼만 horizon 을 잡으면 모델
+    크기가 줄어든다.
+
+    공식:
+        horizon = clamp(
+            max(min_horizon_min,
+                max(due_wmin for g in group_meta if due_wmin < sentinel) + buffer,
+                max(frozen_end_wmin) + buffer),
+            upper = absolute_max
+        )
+
+    Edge cases:
+    - 모든 batch 가 no-due → due_wmin 항 제외, frozen / min 만 사용.
+    - frozen 없음 → frozen_end 항 제외.
+    - frozen 이 sentinel 이후를 가리킴 → frozen 항이 dominant, INFEASIBLE 방지.
+    - 결과가 absolute_max(90d) 초과 → clamp (예전 동작과 동일).
+    """
+    candidates: list[int] = [min_horizon_min]
+
+    due_excl_nodue = [
+        int(meta.get("due_wmin", no_due_sentinel))
+        for meta in group_meta.values()
+        if int(meta.get("due_wmin", no_due_sentinel)) < no_due_sentinel
+    ]
+    if due_excl_nodue:
+        # past-due (due_wmin<0) 인 경우 그대로 더하면 horizon 이 음수가 될 수
+        # 있다. ``max(0, ...)`` 로 clamp 해 past-due 그룹은 "0 시각부터 buffer
+        # 만큼" 의 의미로 처리 (납기는 hard 가 아니라 lex objective 가 흡수).
+        candidates.append(max(0, max(due_excl_nodue)) + buffer_min)
+
+    if frozen_tasks_snapshot:
+        # frozen task 의 "end_wmin" 이 없으면 "start_wmin" 만 보존 (legacy
+        # snapshot 일 수 있음). end_wmin 우선, 없으면 start_wmin 으로 보수적.
+        frozen_ends = [
+            int(t.get("end_wmin", t.get("start_wmin", 0)))
+            for t in frozen_tasks_snapshot.values()
+        ]
+        if frozen_ends:
+            candidates.append(max(0, max(frozen_ends)) + buffer_min)
+
+    return min(max(candidates), absolute_max)
 
 
 # ── 함수 ────────────────────────────────────────────────────────────────────

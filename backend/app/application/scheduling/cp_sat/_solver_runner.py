@@ -44,6 +44,7 @@ from app.application.scheduling.cp_sat.helpers import (
     _SOLVER_TIME_LIMIT_SEC,
     _TARDINESS_WEIGHT,
     _resolve_num_workers,
+    compute_horizon,  # noqa: F401 — Phase 6 step 4; formatter 가 unused 로 오인 방지
 )
 from app.application.scheduling.cp_sat.model_builder import BuiltModel, ModelWeights
 from app.application.scheduling.cp_sat.objective import compose_objective
@@ -98,10 +99,15 @@ def prepare_model_inputs(
     run_label: str,
     base_date: datetime,
     frozen_group_keys: set[str] | None,
+    group_meta: dict[str, Any] | None = None,
 ) -> _ModelInputs:
     """§6 의 frozen_tasks_snapshot + ConstraintSpec weights 빌드.
 
     원본: orchestrator.py:394-456 본문 그대로.
+
+    Phase 6 step 4: ``group_meta`` 를 받으면 ``compute_horizon`` 으로 동적
+    horizon 산정 후 ``ModelWeights.MAX_HORIZON_MIN`` 에 반영. 미전달 시 기존
+    상수 ``_MAX_HORIZON_MIN`` 유지 (기존 caller 호환).
     """
     # ── 6. CP-SAT 모델 구성 (1/2): frozen_tasks_snapshot 빌드 ──────────────
     # Task 2A.2 (Rev 3): §6 블록은 model_builder.build_model 로 이전됐다.
@@ -133,6 +139,7 @@ def prepare_model_inputs(
         frozen_tasks_snapshot = {
             _bg: {
                 "start_wmin": _datetime_to_wmin(_tk.start_datetime, base_date),
+                "end_wmin": _datetime_to_wmin(_tk.end_datetime, base_date),
                 "equipment_code": _tk.equipment_code,
             }
             for _bg, _tk in frozen_task_by_gk.items()
@@ -157,6 +164,13 @@ def prepare_model_inputs(
         "normal": _spec_weight("W-TNORM", _TARDINESS_WEIGHT["normal"]),
     }
 
+    # Phase 6 step 4: 동적 horizon. group_meta 가 None 이면 기존 상수 유지.
+    _horizon = (
+        compute_horizon(group_meta, frozen_tasks_snapshot)
+        if group_meta is not None
+        else _MAX_HORIZON_MIN
+    )
+
     weights = ModelWeights(
         DUE_HARD_WEIGHT=_spec_weight("W-DHARD", _DUE_HARD_WEIGHT),
         TARDINESS_WEIGHT=_tardiness_weight_db,
@@ -167,7 +181,7 @@ def prepare_model_inputs(
         EDD_PAIR_WEIGHT=_spec_weight("W-EDDP", _EDD_PAIR_WEIGHT),
         EDD_MIXED_PASTDUE_WEIGHT=_spec_weight("W-EDDM", _EDD_MIXED_PASTDUE_WEIGHT),
         TRANSITION_WEIGHT=_spec_weight("W-TRANS", _TRANSITION_WEIGHT),
-        MAX_HORIZON_MIN=_MAX_HORIZON_MIN,
+        MAX_HORIZON_MIN=_horizon,
         WORK_MIN_PER_DAY=_WORK_MIN_PER_DAY,
     )
 

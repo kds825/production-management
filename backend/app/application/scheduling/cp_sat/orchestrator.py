@@ -330,6 +330,7 @@ def cp_sat_schedule(
         run_label=run_label,
         base_date=base_date,
         frozen_group_keys=frozen_group_keys,
+        group_meta=group_meta,
     )
     _weights = _model_inputs.weights
     frozen_tasks_snapshot = _model_inputs.frozen_tasks_snapshot
