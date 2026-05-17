@@ -12,7 +12,7 @@ Why module name `_preemption_runner.py`:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,9 @@ from app.application.scheduling.greedy.slot_finder import _find_available_slot
 from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
+
+if TYPE_CHECKING:
+    from app.application.scheduling.cp_sat._calendar_apply import BatchStateBuffer
 
 
 def schedule_preempted_remainders(
@@ -31,6 +34,7 @@ def schedule_preempted_remainders(
     db: Session,
     predecessor_map: dict[tuple, int],
     result: dict[str, Any],
+    state_buffer: "BatchStateBuffer | None" = None,
 ) -> None:
     """원본: orchestrator.py:1189-1232 본문 그대로.
 
@@ -85,6 +89,17 @@ def schedule_preempted_remainders(
         db.flush()
 
         timeline.setdefault(eq_code, []).append((rem_start, rem_end))
-        rem_b.status = "scheduled"
-        rem_b.equipment_code = eq_code
+        # Phase 6 Task 4 (2026-05-17): state_buffer 가 있으면 ORM dirty
+        # marking 회피 — bulk UPDATE 1회로 묶음. 본 단계는 cp_sat_schedule
+        # 의 마지막 mutation site (직후 state_buffer.flush 1회 호출 → end).
+        # 후속 read 없으므로 ORM Python attr 도 안전하게 건너뛸 수 있다.
+        if state_buffer is not None:
+            state_buffer.set(
+                rem_b.batch_id,
+                status="scheduled",
+                equipment_code=eq_code,
+            )
+        else:
+            rem_b.status = "scheduled"
+            rem_b.equipment_code = eq_code
         result["total_tasks"] += 1

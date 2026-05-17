@@ -35,6 +35,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.calendar_engine import calculate_end_datetime
@@ -82,6 +83,7 @@ def try_preempt_for_urgent(
     db: "Session",
     urgent_priority: int = 7,
     predecessor_map: dict[tuple, int] | None = None,
+    state_buffer: "BatchStateBuffer | None" = None,
 ) -> list[ProductionBatch]:
     """Free a slot at ``earliest`` on ``chosen_eq_code`` for an urgent batch.
 
@@ -157,9 +159,23 @@ def try_preempt_for_urgent(
             tl = timeline[chosen_eq_code]
             tl.remove((slot_start, slot_end))
 
-            src_batch.status = "planned"
-            src_batch.equipment_code = chosen_eq_code
-            db.flush()
+            # Phase 6 Task 3 (2026-05-17): state_buffer 가 있으면 ORM dirty
+            # marking 회피 — set_committed_value 로 in-memory 값만 갱신하고
+            # bulk UPDATE 는 state_buffer.flush 가 처리. 후속 _preemption_
+            # runner 가 rem_b.equipment_code 를 읽기 때문에 in-memory 일관성
+            # 은 유지해야 함.
+            if state_buffer is not None:
+                set_committed_value(src_batch, "status", "planned")
+                set_committed_value(src_batch, "equipment_code", chosen_eq_code)
+                state_buffer.set(
+                    src_batch.batch_id,
+                    status="planned",
+                    equipment_code=chosen_eq_code,
+                )
+            else:
+                src_batch.status = "planned"
+                src_batch.equipment_code = chosen_eq_code
+                db.flush()
             remainder_batches.append(src_batch)
             break
 
@@ -184,9 +200,18 @@ def try_preempt_for_urgent(
             db.flush()
             tl = timeline[chosen_eq_code]
             tl.remove((slot_start, slot_end))
-            src_batch.status = "planned"
-            src_batch.equipment_code = chosen_eq_code
-            db.flush()
+            if state_buffer is not None:
+                set_committed_value(src_batch, "status", "planned")
+                set_committed_value(src_batch, "equipment_code", chosen_eq_code)
+                state_buffer.set(
+                    src_batch.batch_id,
+                    status="planned",
+                    equipment_code=chosen_eq_code,
+                )
+            else:
+                src_batch.status = "planned"
+                src_batch.equipment_code = chosen_eq_code
+                db.flush()
             remainder_batches.append(src_batch)
             break
 

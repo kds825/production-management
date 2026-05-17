@@ -563,6 +563,7 @@ def cp_sat_schedule(
         db=db,
         predecessor_map=predecessor_map,
         result=result,
+        state_buffer=state_buffer,
     )
     _stage_logger.info(
         "cp_sat stage[schedule_preempted_remainders]: wall=%.3fs",

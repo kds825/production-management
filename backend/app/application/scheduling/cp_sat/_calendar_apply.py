@@ -628,6 +628,7 @@ def apply_calendar_greedy(
                     db=db,
                     urgent_priority=int(rep.customer_priority or 7),
                     predecessor_map=predecessor_map,
+                    state_buffer=state_buffer,
                 )
                 if rem_list:
                     preempted_remainder.extend(rem_list)
