@@ -208,6 +208,10 @@ CP-SAT 는 group order 를 결정하고, 캘린더 그리디가 실제 시작/�
 | **dev / ad-hoc 빠른 답이 필요한 경우** | `lex_min_time`           | 158× wall-time 우월                                                      |
 | **production batch (현재 default)**    | weighted-sum (변경 없음) | 본 측정만으로 default 변경하기엔 sample 1건 — 추가 시나리오 검증 후 결정 |
 
+> **2026-05 update (Phase 6)**: §7 의 dual-run 결과를 받아 default 를
+> `lex_min_time` (Phase A → B → C 3-phase) 로 전환. W-\* 슬라이더 의미는
+> Phase C 가 보존 (`compose_objective(weights, terms)` 호출).
+
 ### 6.6 Caveats
 
 - **단일 measurement** — `run_label=20260425_225331` (985 batch) 한 set
@@ -221,3 +225,77 @@ CP-SAT 는 group order 를 결정하고, 캘린더 그리디가 실제 시작/�
 - **schedule_optimizer (greedy) idempotency** — production_batch.status
   를 reset 후 호출하므로 idempotent. 단 호출 후 status 가 'scheduled'
   로 mutate 되어 정상 운영 시에는 stage2 가 다시 'planned' 로 전환 필요.
+
+## 7. Phase 6 (2026-05) — lex 3-phase 로 default 승격
+
+### 7.1 동기
+
+Phase 3 측정 (§6) 에서 lex 가 158× 빠르다는 결과가 있었음에도 default 를
+weighted-sum 으로 유지한 이유는 **lex 가 weighted-sum 의 W-IDLE / W-SLACK /
+W-EDDP / W-EDDM / W-TRANS / W-PSEV / color soft chain penalty 를 모두
+silently drop** 했기 때문 (`docs/lex-mode-comparison.md` §6.3 caveat).
+UI 슬라이더 7 개가 inert 가 되는 것은 사용자 메모리 `project_constraint_toggle_2026_04_28.md`
+의 "W-\* priority 슬라이더 → objective 연결" 과 충돌.
+
+Phase 6 의 결정: lex 에 **Phase C 를 추가**해 weighted-sum 의 soft term 을
+lexicographic 최저 우선순위로 흡수. lex 가 weighted-sum 의 의미적
+상위집합이 되어 default 승격해도 슬라이더가 살아남음.
+
+### 7.2 3-phase 구조
+
+```
+Phase A — minimize max_tardiness               (납기, 최우선)
+Phase B — subject to max_tard ≤ T*,            (makespan, 그 다음)
+          minimize makespan
+Phase C — subject to max_tard ≤ T*, ms ≤ M*,   (W-* soft terms, 최저)
+          minimize compose_objective(weights, terms)
+```
+
+`compose_objective` (`backend/app/application/scheduling/cp_sat/objective.py`)
+는 idle_terms / transition_terms / sheath_end_terms / slack_terms /
+edd_pair_terms / edd_mixed_pastdue_terms / tardiness_vars 를 W-\*
+가중치로 합성한다. 호출 시 model 의 objective 가 새로 set 되며 (Phase
+A/B 의 minimize 는 덮어쓰여짐), max_tard·makespan 의 hard constraint 는
+보존되어 lex 우선순위가 유지된다.
+
+Phase C 가 INFEASIBLE / UNKNOWN 시 `minimize(makespan)` 으로 objective
+복원 + 재솔브 → Phase B 해 보장. 복구도 실패할 시 INFEASIBLE_B → caller
+가 weighted-sum 폴백 트리거.
+
+### 7.3 같은 사이클의 다른 단순화
+
+- **3-level fallback (hard → soft color → double soft) 제거** — lex 가
+  hard constraint 없이 호출되므로 INFEASIBLE 거의 0. `auto_schedule` 의
+  Level 1/2/3 분기 삭제, INFEASIBLE 시 즉시 greedy 폴백.
+  Worst-case 솔버 호출 수: **6 → 2** (lex × 2 retry, INFEASIBLE 시에만 greedy 추가).
+- **compute_horizon 동적 산정** — 90일 (129,600분) 고정 → `max(due_excl_nodue, frozen_end) + 14일 buffer`,
+  clamp `[14d, 90d]`. CP-SAT IntVar upper bound 가 줄어 변수 도메인·탐색
+  공간 축소.
+- **slot_finder cache** — `SchedulerState.calendar_end_cache` 에
+  `(equipment_code, candidate_dt, duration_int) → end_dt` 매핑. greedy
+  경로의 `calculate_end_datetime` 재호출 비용 제거.
+
+### 7.4 호환 / opt-in
+
+- `cp_sat_schedule(min_time_mode=False)` 로 호출하면 기존 weighted-sum
+  단일 호출 경로 진입. 비교·롤백·dual-run 용으로 유지.
+- weighted-sum 의 hard 조합 (Level 1) 이 필요한 호출자는 명시적으로
+  `sheath_color_hard=True, tardiness_hard=True` 전달 가능. `auto_schedule`
+  은 default False 로 호출.
+
+### 7.5 검증
+
+- `pytest backend/tests/test_parity_harness.py -m parity` 13/13 통과
+  (baseline 한 번 rebased — 05_sheath_color_chain 만 hash drift, `parity-update:`
+  prefix commit 으로 갱신).
+- `test_greedy_slot_finder_regression.py` 8 invariant (db=None / push /
+  fit / 결정론 / 정렬 / occupied 차이 / cache hit / cache key 분리) 통과.
+- Full test suite baseline 동일 (2 failed pre-existing in `test_due_date_hard`).
+
+### 7.6 미측정 / Caveat
+
+- **End-to-end PoC 시연 데이터로 5분 → ? 측정은 별도 사이클**. 본 commit
+  series 는 코드·테스트만 변경. 실제 wall-time before/after 비교는
+  `stage2_wall_s` (step 1 instrumentation) 로 운영 환경에서 측정 권장.
+- **Phase C 가 길어질 위험**: 기본 `time_limit_phase_c_sec=5`. 더 길게
+  주면 Phase B 의 makespan 보존 하에 soft objective 만 추가 최적화 — 안전.

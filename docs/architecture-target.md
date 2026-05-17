@@ -594,6 +594,16 @@ EXPECTED_DRIFT 외 0 회귀 확인 후 다음 step.
 - [✓] Phase 4 step 2b — SchedulerState wiring (commit ae48041, 9 mutable + 4 master state 를 한 객체 통합. ~50 site rename. \_schedule_multi_equipment 호출 keyword RHS 만 state.X 로, function signature 미변경. first_insul_output scalar 명시 할당. SchedulerState import F401 trap 회피. body 756 → 749 LOC -7. parity 27/27 = /tmp/parity_phase4_step2b.md)
 - [✓] Phase 4 step 2c — \_group_and_sort + GroupingContext 추출 (commit 2849f12, batch_groups 빌드 + ST 소선경 grouping + 시스 색상 묶음 lookup + 정렬 우선순위 통째 helper 로. GroupingContext 5 field (sq_to_wire_d / wire_d_earliest / cluster_rank / gk_to_cluster_id / prev_cluster_on_eq) — prev_cluster_on_eq 만 mutable (시스 묶음 boundary). closure \_group_sort_key 도 helper 안으로 이동. 회귀 fix: outer `for batch in batches:` variable 누설을 audit log reason 이 의존했음 → 본체에 `batch = batches[-1] if batches else None` 명시 binding. body 749 → 640 LOC -109. parity 27/27 = /tmp/parity_phase4_step2c.md)
 - [✓] Phase 4 step 2d — \_assign_group 추출 (commit 83ae5fd, inner per-group loop body ~549 LOC 통째 helper 로. 9 keyword 인자 (state / group_ctx / group_key / group_batches / base_date / run_label / db / result / last_batch_for_audit). early return 으로 outer `continue` 동치. body 640 → **98 LOC** (≤100 orchestrator 목표 달성). 누적 -726 LOC. parity 27/27 = /tmp/parity_phase4_step2d.md)
+- [✓] Phase 6 (2026-05) — Stage 2 latency 단축 + lex 3-phase 승격. PoC 시연 데이터 (수십~수백 batch) 에서 5분+ 걸리던 Stage 2 를 단순화. 7 commit series:
+  - step 1 — `execute_stage2` + `auto_schedule` 에 wall-time instrumentation (`stage2_wall_s` / attempt path logger). 회귀 0.
+  - step 2 — `solve_lex_min_time` 에 Phase C 추가 (`compose_objective(weights, terms)` 호출, W-IDLE/W-SLACK/W-EDDP/W-EDDM/W-TRANS/W-PSEV UI slider 보존). caller 가 weights/group_meta 미전달 시 skip → parity hash 변동 0.
+  - step 3 — `cp_sat_schedule(min_time_mode=False → True)` default 승격, `_solver_runner` 가 lex 호출 시 weights/group_meta 전달, `auto_schedule` 3-level fallback (hard → soft color → double soft → greedy) 을 1-level (lex 단일 호출 + greedy 폴백) 로 단순화. parity baseline rebase owner — `05_sheath_color_chain.json` + `baseline_performance.json` 갱신 (`parity-update:` prefix commit).
+  - step 4 — `compute_horizon(group_meta, frozen_tasks_snapshot)` 동적 산정 (90일 고정 → max(due_excl_nodue, frozen_end) + 14일 buffer, clamp `[14d, 90d]`). past-due 그룹 `max(0, ...)` clamp, no-due sentinel 분리. parity 13/13 동일.
+  - step 5 — `test_greedy_slot_finder_regression.py` 신규, slot_finder 의 6 invariant freeze (db=None/push/fit/결정론/정렬/occupied 차이). parity 가 cp_sat path 만 검증해 greedy path 회귀를 못 잡는 문제 보완.
+  - step 6 — `SchedulerState.calendar_end_cache` 추가, `_find_available_slot` 가 `calculate_end_datetime` 결과 캐싱. key `(equipment_code, candidate_dt, int(duration_min))`, per-call lifetime (retry 마다 fresh state → 자동 invalidation). cache hit/miss + key 분리 invariant 2 test 추가.
+  - step 7 — docs (`docs/lex-mode-comparison.md` §7 + 본 marker).
+  - **검증 가드**: parity 13/13 통과, `test_greedy_slot_finder_regression` 8/8 통과, full suite baseline 동일 (2 failed pre-existing in `test_due_date_hard`). end-to-end wall-time 측정은 별도 운영 환경 사이클로 위임.
+  - 산출물: `/Users/jaewookim/.claude/plans/stage-2-fluffy-waffle.md` (v2 plan + codex/agent 검토 결함 반영).
 
 **문서 작성**: 2026-04-26 Phase 0 종료 시점. 사용자 승인 후 즉시 갱신.
 **다음 업데이트**: 매 phase step 완료 후 §11 marker 갱신.
