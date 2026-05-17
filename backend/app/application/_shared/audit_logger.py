@@ -5,11 +5,78 @@ Phase 6 (decision_card) 추가: `log_wip_match` / `log_filter_out` 두 thin wrap
 - `log_filter_out`: 사전 필터링 단계 탈락 (decision_card ❻ 다른 설비/시간 탈락 사유 출처)
 
 audit_log.stage 컬럼은 NOT NULL 이라 caller 가 항상 "stage1"/"stage2" 명시 (S1).
+
+Phase 6 step 14 (2026-05) 추가: ``AuditLogBuffer`` — apply_calendar_greedy 의
+``log_decision()`` 호출이 매 batch placement 후 ``db.add(AuditLog(...))`` →
+``_calendar_apply.py:605`` 의 explicit ``db.flush()`` 와 함께 ~3s INSERT
+round-trip 누적. buffer 가 끝에서 1회 bulk_insert_mappings 으로 묶음.
 """
+
+from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.audit_log import AuditLog
+
+
+@dataclass
+class AuditLogBuffer:
+    """AuditLog INSERT 의 deferred bulk-insert buffer (Phase 6 step 14).
+
+    Why:
+        ``log_decision()`` 이 매 호출마다 ``db.add(AuditLog(...))`` 호출.
+        apply_calendar_greedy 의 main loop 안에서 호출되므로 ``_calendar_
+        apply.py:605`` 의 explicit ``db.flush()`` 가 같이 INSERT 로 emit
+        → ~3s 누적. 끝에서 한 번에 묶으면 1 round-trip.
+
+    Safety:
+        AuditLog 는 FK 가 ScheduleTask.task_id 로 향한다. ``buffer.append()``
+        는 ``task.task_id`` 가 확정된 _후_ (db.flush() 후 PK return 시점)
+        호출. FK 무결성 유지.
+
+        ``bulk_insert_mappings(AuditLog, ...)`` 는 ``database.py:66-102``
+        의 guard 가 ProductionBatch 한정이라 AuditLog 에는 영향 없음.
+        AuditLog 에 ``after_insert`` listener 도 없음 (grep 검증).
+
+    Caller-managed:
+        ``cp_sat_schedule()`` 가 buffer 생성, ``apply_calendar_greedy`` 에
+        인자로 전달, ``state_buffer.flush`` 직후 ``audit_buffer.flush(db)``
+        1회 호출.
+    """
+
+    entries: list[dict[str, Any]] = field(default_factory=list)
+
+    def append(self, **fields: Any) -> None:
+        """``log_decision`` 시그니처와 1:1 매핑 (run_label, stage, action_type,
+        batch_id, task_id, reason, constraints_applied, alternatives).
+        """
+        self.entries.append(fields)
+
+    def flush(self, db) -> int:
+        """``bulk_insert_mappings`` 으로 1회 commit. 반환: INSERT 된 row 수."""
+        if not self.entries:
+            return 0
+        # log_decision 의 dict → AuditLog column 매핑.
+        # 'reason' → 'decision_reason', 'alternatives' → 'alternatives_considered'.
+        payload = []
+        for e in self.entries:
+            row = {
+                "run_label": e["run_label"],
+                "stage": e["stage"],
+                "action_type": e["action_type"],
+                "batch_id": e.get("batch_id"),
+                "task_id": e.get("task_id"),
+                "constraints_applied": e.get("constraints_applied") or [],
+                "decision_reason": e.get("reason", ""),
+                "alternatives_considered": e.get("alternatives"),
+            }
+            payload.append(row)
+        db.bulk_insert_mappings(AuditLog, payload)
+        db.flush()
+        n = len(payload)
+        self.entries.clear()
+        return n
 
 
 def log_decision(

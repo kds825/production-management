@@ -16,12 +16,63 @@ Phase 2 Task 2.10b~e (B-3.5) 분할 — 5 sub-step 으로 나누어 commit ≤ 2
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
+from typing import Any
 
 from app.application._shared.group_ops import _is_core_group, _is_sheath_group, _st_sq
 from app.domain.constants import PREDECESSOR_PROCESS, PROCESS_ORDER
 from app.domain.sheath_cluster import build_sheath_clusters, cluster_sort_key
+
+
+@dataclass
+class BatchStateBuffer:
+    """ProductionBatch state mutation 의 deferred bulk-update buffer.
+
+    Why:
+        apply_calendar_greedy 의 main loop 가 ScheduleTask insert 의 PK
+        (task_id) 가 다음 batch 의 predecessor_task_id 로 필요해서 매 batch
+        마다 explicit ``db.flush()`` 를 호출 (line 605 부근). 이 flush 는
+        SQLAlchemy session 의 모든 pending state 를 commit — ``b.status =
+        "scheduled"`` / ``b.equipment_code = chosen`` ORM attr mutation 도
+        같이 81회 SQL UPDATE round-trip (= 21s) 으로 emit.
+
+        본 buffer 는 ORM attr 자체를 set 하지 않는다 (dirty marking 회피)
+        → flush 가 ScheduleTask INSERT 만 emit → ProductionBatch 는 끝에서
+        ``bulk_update_mappings`` 1회로 commit (81 → 1 round-trip).
+
+    Safety:
+        ORM 객체의 attribute 는 변경 안 함 → 같은 session 의 다른 코드가
+        ``b.status / b.equipment_code`` 를 read 하면 stale (이전 값). 본 PR
+        범위 (apply_calendar_greedy / _schedule_multi_equipment /
+        try_preempt_for_urgent / schedule_preempted_remainders) 내 read
+        0건 grep 확인 완료. validate_all 등 후속 단계도 ProductionBatch
+        의 state 를 fresh query 로 다시 읽으므로 안전.
+
+    Caller-managed:
+        cp_sat_schedule() (orchestrator) 가 buffer 인스턴스 생성, 모든
+        callsite 에 인자로 전달, §9 (schedule_preempted_remainders) 직후
+        ``buffer.flush(db)`` 1회 호출.
+    """
+
+    updates: dict[int, dict[str, Any]] = field(default_factory=dict)
+
+    def set(self, batch_id: int, **fields: Any) -> None:
+        """동일 batch_id 의 set 누적 (마지막 값 채택)."""
+        self.updates.setdefault(batch_id, {}).update(fields)
+
+    def flush(self, db) -> int:
+        """``bulk_update_mappings`` 으로 1회 commit. 반환: 업데이트된 row 수."""
+        if not self.updates:
+            return 0
+        from app.infrastructure.models.production_batch import ProductionBatch
+
+        payload = [{"batch_id": bid, **f} for bid, f in self.updates.items()]
+        db.bulk_update_mappings(ProductionBatch, payload)
+        db.flush()
+        n = len(payload)
+        self.updates.clear()
+        return n
 
 
 def resolve_first_due_by_strand_cluster(
