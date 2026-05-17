@@ -110,3 +110,91 @@ def test_find_slot_different_occupied_yields_different_result() -> None:
     assert r_a != r_b, (
         f"occupied 변화가 결과에 반영 안 됨: occ_a → {r_a}, occ_b → {r_b}"
     )
+
+
+# ─── Step 6 cache 도입 후 추가 ───────────────────────────────────────────────
+
+
+def test_cache_hit_avoids_calendar_engine_call(monkeypatch) -> None:
+    """같은 (eq, candidate, dur) 로 두 번 호출 시 calendar_engine 은 1회만 호출.
+
+    Step 6 의 핵심 효과 — slot_finder 가 매 슬롯마다 calculate_end_datetime
+    를 재호출하던 비효율을 cache 로 제거. cache key 일치 시 호출 1회.
+    """
+    call_count = [0]
+
+    def fake_calc(start_dt, dur, _db, _eq):
+        call_count[0] += 1
+        return start_dt + timedelta(minutes=dur)
+
+    monkeypatch.setattr(
+        "app.infrastructure.calendar_engine.calculate_end_datetime", fake_calc
+    )
+
+    start = datetime(2026, 4, 21, 8, 0)
+    occupied = [(datetime(2026, 4, 21, 9, 0), datetime(2026, 4, 21, 10, 0))]
+    cache: dict = {}
+    _find_available_slot(
+        start,
+        60,
+        occupied,
+        db="dummy",
+        equipment_code="EX-B100",
+        calendar_end_cache=cache,
+    )
+    first_call_count = call_count[0]
+    _find_available_slot(
+        start,
+        60,
+        occupied,
+        db="dummy",
+        equipment_code="EX-B100",
+        calendar_end_cache=cache,
+    )
+    assert call_count[0] == first_call_count, (
+        f"cache hit 안 됨: 1차 {first_call_count}회 → 2차 {call_count[0]}회"
+    )
+    assert len(cache) >= 1, "cache 엔트리가 생성되지 않음"
+
+
+def test_cache_different_equipment_does_not_collide(monkeypatch) -> None:
+    """같은 (candidate, dur) 라도 equipment_code 다르면 별도 cache 엔트리.
+
+    cache key 가 equipment_code 를 포함하지 않으면 다른 설비의 결과를
+    잘못 hit 할 위험. 본 test 가 key 안전성을 freeze.
+    """
+
+    def fake_calc(start_dt, dur, _db, eq):
+        # 설비별로 다른 종료 시간 반환 (key 가 eq 구분 못하면 충돌 감지)
+        offset = 60 if eq == "EX-B100" else 120
+        return start_dt + timedelta(minutes=offset)
+
+    monkeypatch.setattr(
+        "app.infrastructure.calendar_engine.calculate_end_datetime", fake_calc
+    )
+
+    start = datetime(2026, 4, 21, 8, 0)
+    occupied = [(datetime(2026, 4, 21, 12, 0), datetime(2026, 4, 21, 14, 0))]
+    cache: dict = {}
+    r_b100 = _find_available_slot(
+        start,
+        60,
+        occupied,
+        db="dummy",
+        equipment_code="EX-B100",
+        calendar_end_cache=cache,
+    )
+    r_b200 = _find_available_slot(
+        start,
+        60,
+        occupied,
+        db="dummy",
+        equipment_code="EX-B200",
+        calendar_end_cache=cache,
+    )
+    # 둘 다 candidate 가 slot 시작 (12h) 전 fit → 같은 start 반환되어야 하지만
+    # cache key 가 eq 구분 못하면 EX-B200 가 EX-B100 결과로 잘못 hit 후 분기 변경.
+    assert r_b100 == start and r_b200 == start, (
+        f"cache 가 equipment_code 를 잘못 공유: b100={r_b100} b200={r_b200}"
+    )
+    assert len(cache) >= 2, f"equipment_code 별 cache 엔트리 분리 실패: cache={cache}"

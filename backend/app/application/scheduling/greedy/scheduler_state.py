@@ -89,3 +89,22 @@ class SchedulerState:
     speed_map: dict = field(default_factory=dict)
     constraint_params: "ConstraintParams | None" = None
     welding_min: float = 30.0
+
+    # ── 3. Phase 6 step 6 (2026-05): calendar lookup cache ─────────────────
+    # ``slot_finder._find_available_slot`` 이 occupied 슬롯마다 호출하는
+    # ``calculate_end_datetime`` 의 결과를 캐싱. 같은 (start, duration, eq)
+    # 조합은 calendar (work_hours table) 가 호출 도중 mutate 되지 않는
+    # 한 결과가 동일하므로 안전.
+    #
+    # Key: (equipment_code, start_datetime, duration_minutes_int) → datetime
+    # - equipment_code: 설비별 캘린더 정책이 다를 수 있으므로 key 에 포함.
+    # - start_datetime: 분 단위 (calculate_end_datetime 의 입력 정밀도와 동일).
+    # - duration_minutes_int: int 로 round 해 float 비교 노이즈 회피.
+    #
+    # Lifetime: ``SchedulerState`` 가 ``_run_optimization_once`` 호출 1회당
+    # fresh 생성되므로 retry 간 자동 무효화 (Phase 4 step 4 invariant).
+    # calendar table 자체가 호출 도중 바뀌지 않는다는 가정 — Stage 2 의
+    # transactional context 에서 보장됨.
+    calendar_end_cache: dict[tuple[str, datetime, int], datetime] = field(
+        default_factory=dict
+    )

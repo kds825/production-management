@@ -16,11 +16,18 @@ def _find_available_slot(
     occupied_slots: list,
     db=None,
     equipment_code: str | None = None,
+    calendar_end_cache: dict[tuple[str, datetime, int], datetime] | None = None,
 ) -> datetime:
     """설비에서 가용한 첫 번째 슬롯 찾기.
 
     근무시간(08~22시) 기반 캘린더를 사용하여 실제 종료 시각을 계산한다.
     단순 timedelta 덧셈은 야간/주말을 무시하여 슬롯 겹침을 유발할 수 있다.
+
+    Phase 6 step 6: ``calendar_end_cache`` 가 전달되면
+    ``calculate_end_datetime`` 호출 결과를 ``(equipment_code, candidate,
+    duration_int)`` 키로 캐싱한다. ``SchedulerState.calendar_end_cache`` 를
+    그대로 넘기면 ``_run_optimization_once`` 호출 1회 동안 calendar lookup
+    이 같은 (eq, start, dur) 조합에서 단 한 번만 발생.
     """
     # 지역 import — calendar_engine 은 schedule_optimizer 가 monkeypatch 가능한
     # 형태로 노출하지 않으므로 직접 import 한다. 모듈 로드 시점 순환 방지 목적도 있음.
@@ -28,13 +35,20 @@ def _find_available_slot(
 
     candidate = earliest
     sorted_slots = sorted(occupied_slots, key=lambda s: s[0])
+    _duration_key = int(duration_min)  # cache key 안정성용 int round
 
     for slot_start, slot_end in sorted_slots:
         # 캘린더 기반 종료 시각으로 슬롯 겹침 판단
         if db is not None:
-            candidate_end = calculate_end_datetime(
-                candidate, duration_min, db, equipment_code
-            )
+            _cache_key = (equipment_code or "", candidate, _duration_key)
+            if calendar_end_cache is not None and _cache_key in calendar_end_cache:
+                candidate_end = calendar_end_cache[_cache_key]
+            else:
+                candidate_end = calculate_end_datetime(
+                    candidate, duration_min, db, equipment_code
+                )
+                if calendar_end_cache is not None:
+                    calendar_end_cache[_cache_key] = candidate_end
         else:
             candidate_end = candidate + timedelta(minutes=duration_min)
         # 올림 일관성: auto_schedule line 922-925 는 end_dt 를 다음 정각으로 올림

@@ -400,7 +400,12 @@ def _assign_group(
                         eq_earliest = append_earliest
 
         slot_start = _find_available_slot(
-            eq_earliest, eq_total_duration, slots, db, eq.equipment_code
+            eq_earliest,
+            eq_total_duration,
+            slots,
+            db,
+            eq.equipment_code,
+            calendar_end_cache=state.calendar_end_cache,
         )
 
         if best_start is None or slot_start < best_start:
