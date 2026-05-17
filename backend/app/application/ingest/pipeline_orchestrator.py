@@ -211,27 +211,45 @@ def execute_stage2(
     # before/after 로 비교 가능하게 한다.
     _stage2_t0 = time.perf_counter()
 
-    _solve_t0 = time.perf_counter()
-    if optimizer == "greedy":
-        schedule_result = run_greedy_stage(
-            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
-        )
-    else:
-        # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
-        # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
-        # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
-        schedule_result = run_solver_stage(
-            run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
-        )
-    _solve_wall_s = time.perf_counter() - _solve_t0
+    # Phase 6 step 10 (2026-05): calendar_engine 휴일 cache prime.
+    # Why:
+    #   profile (987 batch) 에서 ``get_available_hours`` 가 8341회 호출,
+    #   각 호출이 OperationCalendar SQL 쿼리 1회 → 누적 ~100s. stage2 진입부
+    #   에서 한 번 prime 하면 후속 호출은 ContextVar lookup O(1).
+    # Scope:
+    #   solve + validate 둘 다 calendar_engine 을 호출하므로 stage2 전체를
+    #   감싼다. finally 로 reset 보장 — 같은 context 의 후속 단발성 호출이
+    #   stale cache 를 쓰지 않게 한다.
+    from app.infrastructure.calendar_engine import (
+        prime_holiday_cache as _prime_hcache,
+        reset_holiday_cache as _reset_hcache,
+    )
 
-    _validate_t0 = time.perf_counter()
-    violations = validate_all_fn(run_label, db)
-    _validate_wall_s = time.perf_counter() - _validate_t0
+    _prime_hcache(db)
+    try:
+        _solve_t0 = time.perf_counter()
+        if optimizer == "greedy":
+            schedule_result = run_greedy_stage(
+                run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
+            )
+        else:
+            # CP-SAT 경로도 auto_schedule 의 retry+validate 래퍼를 타도록 통합
+            # (Fix P0-4A). CP-SAT 실패/타임아웃 시 내부에서 그리디로 폴백하고,
+            # 겹침 감지 시 random_seed 를 바꿔가며 재시도한다.
+            schedule_result = run_solver_stage(
+                run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
+            )
+        _solve_wall_s = time.perf_counter() - _solve_t0
 
-    _commit_t0 = time.perf_counter()
-    db.commit()
-    _commit_wall_s = time.perf_counter() - _commit_t0
+        _validate_t0 = time.perf_counter()
+        violations = validate_all_fn(run_label, db)
+        _validate_wall_s = time.perf_counter() - _validate_t0
+
+        _commit_t0 = time.perf_counter()
+        db.commit()
+        _commit_wall_s = time.perf_counter() - _commit_t0
+    finally:
+        _reset_hcache()
 
     # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음.
     # ai_background_starter 는 route 의 _run_ai_background 를 트리거하는

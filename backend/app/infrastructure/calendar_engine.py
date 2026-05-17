@@ -29,11 +29,88 @@
 from __future__ import annotations
 
 import calendar as cal_mod
+import contextvars
 from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.operation_calendar import OperationCalendar
+
+# ── Phase 6 step 10 (2026-05): holiday prefetch cache ─────────────────────────
+# Why:
+#   profile (987 batch) 에서 ``get_available_hours`` 가 8341회 호출 →
+#   매 호출이 ``OperationCalendar.rule_code=='CAL-HOL'`` SQL 쿼리 1회.
+#   stage2 wall-time 중 ~100s 가 이 lookup 의 누적 round-trip 이다.
+#   본 cache 가 stage2 entrypoint 에서 prime 1회로 끝낸 뒤 모든 후속
+#   호출은 ContextVar lookup (O(1)) 만 한다.
+#
+# ContextVar 로 가는 이유:
+#   - sync route + async route + 백그라운드 thread (validate / boost retry)
+#     가 동시에 stage2 호출 가능. global 변수는 race 위험.
+#   - contextvars 는 asyncio Task / threading.Thread 양쪽 모두에서 컨텍스트
+#     격리 보장.
+#
+# 시맨틱:
+#   - default None ⇒ cache miss / disabled. ``get_available_hours`` 는
+#     기존 DB 쿼리 경로로 폴백 (회귀 안전).
+#   - frozenset[date] ⇒ primed. set 멤버십이 True 면 휴일, False 면 평일
+#     로 간주 (cache 가 stage2 horizon 전체를 cover 한다는 가정 — prime
+#     함수가 보장).
+_holiday_cache: contextvars.ContextVar[frozenset[date] | None] = contextvars.ContextVar(
+    "calendar_holiday_cache", default=None
+)
+
+
+def prime_holiday_cache(db: Session) -> frozenset[date]:
+    """OperationCalendar 의 휴일 (CAL-HOL) 일자를 한 번에 prefetch.
+
+    Returns:
+        primed frozenset (caller 가 size 검증 등에 사용 가능). cache 자체는
+        ContextVar 에 set 되어 같은 context 안의 후속 ``get_available_hours``
+        호출이 자동으로 hit 한다.
+
+    호출 패턴:
+        execute_stage2 진입부에서 호출, 종료부 finally 에서 ``reset_holiday_cache``.
+    """
+    rows = (
+        db.query(OperationCalendar.specific_date)
+        .filter(OperationCalendar.rule_code == "CAL-HOL")
+        .all()
+    )
+    cache = frozenset(r[0] for r in rows if r[0] is not None)
+    _holiday_cache.set(cache)
+    return cache
+
+
+def reset_holiday_cache() -> None:
+    """ContextVar 의 cache 를 None 으로 되돌려 다음 호출이 DB 경로를 타도록.
+
+    stage2 종료/예외 시 호출. 같은 context 안에서 이후 단발성 calendar
+    호출이 stale cache 를 쓰지 않도록 보장.
+    """
+    _holiday_cache.set(None)
+
+
+def _is_holiday(target_date: date, db: Session | None) -> bool:
+    """휴일 여부 — primed cache 우선, 없으면 DB fallback.
+
+    회귀 안전: cache None 이면 기존 동작과 비트별 동일.
+    """
+    cache = _holiday_cache.get()
+    if cache is not None:
+        return target_date in cache
+    if db is None:
+        return False
+    holiday = (
+        db.query(OperationCalendar)
+        .filter(
+            OperationCalendar.rule_code == "CAL-HOL",
+            OperationCalendar.specific_date == target_date,
+        )
+        .first()
+    )
+    return holiday is not None
+
 
 # ── 공정 카테고리별 일일 유효시간 ─────────────────────────────────────────────
 # key: weekday (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun)
@@ -111,17 +188,10 @@ def get_available_hours(
     """특정 날짜·설비의 유효 가동시간(hr) 반환."""
     weekday = target_date.weekday()
 
-    if db:
-        holiday = (
-            db.query(OperationCalendar)
-            .filter(
-                OperationCalendar.rule_code == "CAL-HOL",
-                OperationCalendar.specific_date == target_date,
-            )
-            .first()
-        )
-        if holiday:
-            return 0.0
+    # Phase 6 step 10 (2026-05): primed cache 우선 → DB round-trip 0.
+    # cache None 이면 기존 DB 경로 (회귀 안전).
+    if _is_holiday(target_date, db):
+        return 0.0
 
     cat = _get_category(equipment_code)
     base_hours = _PROCESS_HOURS.get(cat, _PROCESS_HOURS["default"])[weekday]
