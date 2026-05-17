@@ -275,6 +275,15 @@ def cp_sat_schedule(
 
     _ctx_token = _set_run_id(_run_id)
 
+    # Phase 6 step 12 (2026-05): 17s 의 lex 밖 12s 분해 instrumentation.
+    # 각 후처리 단계의 wall-time 을 logger.info 로 노출해 design 단계의
+    # hotspot 식별 근거 확보. quality 영향 0 (측정 only).
+    import logging as _log
+    import time as _stage_time
+
+    _stage_logger = _log.getLogger(__name__)
+    _stage_t = _stage_time.perf_counter()
+
     # ── 1-3. DB 로드 또는 override rebind ────────────────────────────────
     # Phase 2 Task 2.6 (B-3.1): 본 블록은 ``_load_inputs.load_solver_inputs``
     # 로 추출됐다. parity 보장을 위해 본문 변경 0, 단순 함수 호출 위임.
@@ -305,6 +314,12 @@ def cp_sat_schedule(
     sq_to_wire_d = load_out.sq_to_wire_d
     if load_out.wip_skipped:
         result["wip_skipped"] = load_out.wip_skipped
+    _stage_logger.info(
+        "cp_sat stage[load_solver_inputs]: wall=%.3fs batches=%d",
+        _stage_time.perf_counter() - _stage_t,
+        len(load_out.batches) if load_out.batches else 0,
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # ── 4-5. 그루핑 + 그룹별 메타 계산 ─────────────────────────────────────
     # Phase 3 step 2: §4 (그루핑) + §5 (group_meta) 는 helpers._build_group_meta
@@ -321,6 +336,12 @@ def cp_sat_schedule(
     if not group_meta:
         result["warnings"].append("스케줄링 가능한 배치 그룹 없음")
         return result
+    _stage_logger.info(
+        "cp_sat stage[build_group_meta]: wall=%.3fs n_groups=%d",
+        _stage_time.perf_counter() - _stage_t,
+        len(group_meta),
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # ── 6. CP-SAT 모델 구성 ───────────────────────────────────────────────
     # Phase 2 Task 2.9 (B-3.4): §6 의 frozen_tasks_snapshot 빌드 + ConstraintSpec
@@ -355,6 +376,11 @@ def cp_sat_schedule(
         )
 
     _built: BuiltModel = _build_solver_model()
+    _stage_logger.info(
+        "cp_sat stage[prepare_inputs+build_model]: wall=%.3fs",
+        _stage_time.perf_counter() - _stage_t,
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # ── 7. lex 시도 → 폴백 → weighted-sum 솔버 실행 ────────────────────────
     # Phase 2 Task 2.9 (B-3.4): §7-pre/7-a/7-b 본문은 ``_solver_runner.run_solver``
@@ -410,6 +436,12 @@ def cp_sat_schedule(
         return result
 
     result["objective_value"] = int(solver.objective_value)
+    _stage_logger.info(
+        "cp_sat stage[run_solver_total]: wall=%.3fs status=%s",
+        _stage_time.perf_counter() - _stage_t,
+        status_name,
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # Phase 2 Task 2.10a: 진단 스냅샷 호출은 ``_diagnostic_snapshot`` 으로
     # 추출. BuiltModel 을 그대로 전달하여 vars/terms unpacking 을 helper 에 위임.
@@ -501,6 +533,13 @@ def cp_sat_schedule(
         preempted_remainder=preempted_remainder,
         result=result,
     )
+    _stage_logger.info(
+        "cp_sat stage[apply_calendar_greedy]: wall=%.3fs n_tasks_so_far=%d preempted=%d",
+        _stage_time.perf_counter() - _stage_t,
+        result.get("total_tasks", 0),
+        len(preempted_remainder),
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # ── 9. 선점 잔여 배치 후속 배치 ───────────────────────────────────────────
     # Phase 2 Task 2.8 (B-3.3): 본 블록은 ``_preemption_runner.schedule_preempted_remainders``
@@ -515,6 +554,11 @@ def cp_sat_schedule(
         predecessor_map=predecessor_map,
         result=result,
     )
+    _stage_logger.info(
+        "cp_sat stage[schedule_preempted_remainders]: wall=%.3fs",
+        _stage_time.perf_counter() - _stage_t,
+    )
+    _stage_t = _stage_time.perf_counter()
 
     # ── Task 2A.3: write one solver_run + N solver_decision rows ──────────
     # Phase 2 Task 2.7 (B-3.2): 본 trace write 블록은 ``_trace_writer.write_solver_trace``

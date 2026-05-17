@@ -58,12 +58,16 @@ if result.status in ("OPTIMAL", "FEASIBLE"):
 
 from __future__ import annotations
 
+import logging
+import time as _time  # noqa: F401  formatter 의 unused-import sweep 회피 (Phase A/B/C timing instrumentation)
 from dataclasses import dataclass
 from typing import Literal
 
 from ortools.sat.python import cp_model
 
 from app.application.scheduling.cp_sat.model_builder import BuiltModel
+
+logger = logging.getLogger(__name__)
 
 LexStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE_A", "INFEASIBLE_B", "UNKNOWN"]
 
@@ -157,7 +161,19 @@ def solve_lex_min_time(
     solver.parameters.max_time_in_seconds = float(time_limit_phase_a_sec)
     solver.parameters.num_search_workers = num_workers
     solver.parameters.random_seed = random_seed
+    _ta = _time.perf_counter()
     status_a = solver.solve(model)
+    _phase_a_wall = _time.perf_counter() - _ta
+    logger.info(
+        "lex Phase A: status=%s t_star=%s wall=%.3fs limit=%ds workers=%d",
+        solver.status_name(status_a),
+        solver.value(max_tard)
+        if status_a in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        else "n/a",
+        _phase_a_wall,
+        time_limit_phase_a_sec,
+        num_workers,
+    )
 
     if status_a not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return LexResult(
@@ -187,7 +203,18 @@ def solve_lex_min_time(
 
     model.minimize(makespan)
     solver.parameters.max_time_in_seconds = float(time_limit_phase_b_sec)
+    _tb = _time.perf_counter()
     status_b = solver.solve(model)
+    _phase_b_wall = _time.perf_counter() - _tb
+    logger.info(
+        "lex Phase B: status=%s makespan=%s wall=%.3fs limit=%ds",
+        solver.status_name(status_b),
+        solver.value(makespan)
+        if status_b in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+        else "n/a",
+        _phase_b_wall,
+        time_limit_phase_b_sec,
+    )
 
     if status_b not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         # Phase B 실패 — INFEASIBLE_B 는 이론상 불가능 (Phase A 결과가 valid),
@@ -229,7 +256,15 @@ def solve_lex_min_time(
             tardiness_hard=tardiness_hard,
         )
         solver.parameters.max_time_in_seconds = float(time_limit_phase_c_sec)
+        _tc = _time.perf_counter()
         status_c = solver.solve(model)
+        _phase_c_wall = _time.perf_counter() - _tc
+        logger.info(
+            "lex Phase C: status=%s wall=%.3fs limit=%ds",
+            solver.status_name(status_c),
+            _phase_c_wall,
+            time_limit_phase_c_sec,
+        )
         if status_c in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return LexResult(
                 status=(

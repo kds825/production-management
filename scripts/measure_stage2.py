@@ -88,8 +88,15 @@ def main() -> int:
         n = _purge_for_clean_measurement(db, run_label)
         print(f"== Measurement target == run_label={run_label} planned_batches={n}")
 
-        # 첫 호출
+        # 첫 호출 — cProfile 로 wrap (Phase 6 step 13 hotspot 식별).
+        # CUMULATIVE 정렬, top 40 출력.
+        import cProfile
+        import io
+        import pstats
+
+        _prof = cProfile.Profile()
         t0 = time.perf_counter()
+        _prof.enable()
         result_1 = execute_stage2(
             run_label=run_label,
             base_date_dt=None,
@@ -99,7 +106,12 @@ def main() -> int:
             validate_all_fn=validate_all,
             ai_background_starter=_noop_ai_starter,
         )
+        _prof.disable()
         wall_1 = time.perf_counter() - t0
+        _buf = io.StringIO()
+        pstats.Stats(_prof, stream=_buf).sort_stats("cumulative").print_stats(40)
+        print("\n== cProfile top 40 by cumulative ==")
+        print(_buf.getvalue())
         sched_1 = result_1["schedule"]
         print(
             f"\n== Call 1 == total_wall={wall_1:.2f}s "
