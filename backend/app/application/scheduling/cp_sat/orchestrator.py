@@ -509,9 +509,14 @@ def cp_sat_schedule(
     # state mutation 이 explicit db.flush() 와 함께 81회 SQL UPDATE round-trip
     # (21s) 으로 emit 되던 것을, buffer 에 누적 → 끝에서 1회 bulk_update_
     # mappings 으로 commit (~1-3s). 81 → 1 round-trip.
+    from app.application._shared.audit_logger import AuditLogBuffer
     from app.application.scheduling.cp_sat._calendar_apply import BatchStateBuffer
 
     state_buffer = BatchStateBuffer()
+    # Phase 6 Task 5 (2026-05-17): audit_log INSERT 도 buffer 로 묶음.
+    # log_decision 매 호출이 db.add(AuditLog(...)) 후 explicit db.flush() 와
+    # 같이 emit → ~수 초. bulk_insert_mappings 1회로 압축.
+    audit_buffer = AuditLogBuffer()
 
     # Phase 2 Task 2.10e: §8 main loop 본체는 ``_calendar_apply.apply_calendar_greedy``
     # 로 추출. 모든 상태 dict (timeline / predecessor_map / tasks_created /
@@ -542,6 +547,7 @@ def cp_sat_schedule(
         preempted_remainder=preempted_remainder,
         result=result,
         state_buffer=state_buffer,
+        audit_buffer=audit_buffer,
     )
     _stage_logger.info(
         "cp_sat stage[apply_calendar_greedy]: wall=%.3fs n_tasks_so_far=%d preempted=%d",
@@ -578,6 +584,15 @@ def cp_sat_schedule(
         "cp_sat stage[state_buffer.flush]: wall=%.3fs n=%d",
         _stage_time.perf_counter() - _stage_t,
         n_state,
+    )
+    _stage_t = _stage_time.perf_counter()
+
+    # Phase 6 Task 5: AuditLog INSERT buffer flush — bulk_insert_mappings 1회.
+    n_audit = audit_buffer.flush(db)
+    _stage_logger.info(
+        "cp_sat stage[audit_buffer.flush]: wall=%.3fs n=%d",
+        _stage_time.perf_counter() - _stage_t,
+        n_audit,
     )
     _stage_t = _stage_time.perf_counter()
 

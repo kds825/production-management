@@ -17,8 +17,14 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from app.application._shared.audit_logger import AuditLogBuffer
 
-def _delete_task_safely(db: "Session", task: ScheduleTask) -> int:
+
+def _delete_task_safely(
+    db: "Session",
+    task: ScheduleTask,
+    audit_buffer: "AuditLogBuffer | None" = None,
+) -> int:
     """ScheduleTask 삭제 전에 참조 FK 들을 안전하게 해제한다.
 
     왜: 동일 트랜잭션에서
@@ -37,6 +43,10 @@ def _delete_task_safely(db: "Session", task: ScheduleTask) -> int:
     db.query(AuditLog).filter(AuditLog.task_id == deleted_id).update(
         {"task_id": None}, synchronize_session=False
     )
+    # Phase 6 Task 5 (2026-05-17): audit_buffer 에 아직 flush 안 된 entry 도
+    # task_id 를 끊어준다 — flush 시 FK 위반 회피.
+    if audit_buffer is not None:
+        audit_buffer.discard_task_id(deleted_id)
     db.query(ScheduleTask).filter(
         ScheduleTask.predecessor_task_id == deleted_id
     ).update({"predecessor_task_id": None}, synchronize_session=False)

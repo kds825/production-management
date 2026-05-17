@@ -367,6 +367,7 @@ def apply_calendar_greedy(
     preempted_remainder: list,
     result: dict,
     state_buffer: "BatchStateBuffer",
+    audit_buffer: "AuditLogBuffer | None" = None,
 ) -> None:
     """원본: orchestrator.py:499-853 본문 그대로.
 
@@ -629,6 +630,7 @@ def apply_calendar_greedy(
                     urgent_priority=int(rep.customer_priority or 7),
                     predecessor_map=predecessor_map,
                     state_buffer=state_buffer,
+                    audit_buffer=audit_buffer,
                 )
                 if rem_list:
                     preempted_remainder.extend(rem_list)
@@ -772,13 +774,26 @@ def apply_calendar_greedy(
                 }
             )
 
-        log_decision(
-            db=db,
-            run_label=run_label,
-            stage="stage2",
-            action_type="auto_assign",
-            batch_id=rep.batch_id,
-            task_id=task.task_id,
-            reason=f"CP-SAT 순서 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
-        )
+        # Phase 6 Task 5 (2026-05-17): audit_buffer 가 있으면 bulk insert 로
+        # 묶음 (매 batch placement 마다의 db.flush() emit 회피). None 인 경우
+        # 기존 단발 호출 (테스트 등) 호환.
+        if audit_buffer is not None:
+            audit_buffer.append(
+                run_label=run_label,
+                stage="stage2",
+                action_type="auto_assign",
+                batch_id=rep.batch_id,
+                task_id=task.task_id,
+                reason=f"CP-SAT 순서 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
+            )
+        else:
+            log_decision(
+                db=db,
+                run_label=run_label,
+                stage="stage2",
+                action_type="auto_assign",
+                batch_id=rep.batch_id,
+                task_id=task.task_id,
+                reason=f"CP-SAT 순서 → {chosen_eq_code} @ {best_start:%Y-%m-%d %H:%M}",
+            )
         result["total_tasks"] += 1

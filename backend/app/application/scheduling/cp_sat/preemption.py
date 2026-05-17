@@ -35,14 +35,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy.orm.attributes import set_committed_value
 
+from app.application._shared.db_ops import _delete_task_safely
+from app.infrastructure.calendar_engine import calculate_end_datetime
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
-from app.infrastructure.calendar_engine import calculate_end_datetime
-from app.application._shared.db_ops import _delete_task_safely
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.application._shared.audit_logger import AuditLogBuffer
+    from app.application.scheduling.cp_sat._calendar_apply import BatchStateBuffer
 
 
 def _drums_completable(
@@ -84,6 +88,7 @@ def try_preempt_for_urgent(
     urgent_priority: int = 7,
     predecessor_map: dict[tuple, int] | None = None,
     state_buffer: "BatchStateBuffer | None" = None,
+    audit_buffer: "AuditLogBuffer | None" = None,
 ) -> list[ProductionBatch]:
     """Free a slot at ``earliest`` on ``chosen_eq_code`` for an urgent batch.
 
@@ -148,7 +153,7 @@ def try_preempt_for_urgent(
             # Strategy B — single-drum defer
             if blocking_priority <= urgent_priority:
                 break  # mutual urgency — can't displace
-            deleted_id = _delete_task_safely(db, task)
+            deleted_id = _delete_task_safely(db, task, audit_buffer=audit_buffer)
             if predecessor_map is not None:
                 # Drop predecessor entries pointing at the now-deleted task —
                 # otherwise the next INSERT will FK-violate.
@@ -193,7 +198,7 @@ def try_preempt_for_urgent(
             # Even setup can't finish — fall back to deferral if not urgent
             if blocking_priority <= urgent_priority:
                 break
-            deleted_id = _delete_task_safely(db, task)
+            deleted_id = _delete_task_safely(db, task, audit_buffer=audit_buffer)
             if predecessor_map is not None:
                 for _k in [k2 for k2, v in predecessor_map.items() if v == deleted_id]:
                     predecessor_map.pop(_k, None)

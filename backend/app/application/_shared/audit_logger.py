@@ -53,6 +53,26 @@ class AuditLogBuffer:
         """
         self.entries.append(fields)
 
+    def discard_task_id(self, task_id: int) -> int:
+        """``_delete_task_safely`` 가 ScheduleTask 를 삭제할 때 buffer 안의
+        매칭 entry 의 task_id 를 None 으로 끊는다.
+
+        Why:
+            기존 ``log_decision`` 은 INSERT immediate → audit_log 행이 이미
+            DB 에 존재 → ``_delete_task_safely`` 가 UPDATE 로 task_id NULL.
+            buffer 화 후에는 entry 가 아직 buffer 에만 있으므로 같은 의미의
+            cleanup 을 buffer 안에서 수행. flush 후 FK 위반 회피.
+
+        Returns:
+            끊긴 entry 개수 (관측 목적).
+        """
+        n = 0
+        for e in self.entries:
+            if e.get("task_id") == task_id:
+                e["task_id"] = None
+                n += 1
+        return n
+
     def flush(self, db) -> int:
         """``bulk_insert_mappings`` 으로 1회 commit. 반환: INSERT 된 row 수."""
         if not self.entries:
