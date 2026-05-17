@@ -413,16 +413,37 @@ def auto_schedule(
             # _retry_depth_initial 에 보관됨 (F-3 발견 버그 fix).
             _retry_depth = _retry_depth_initial
             _tr = result.get("tardiness_report") or {}
+            # Phase 6 step 9 (2026-05): lex Phase A 가 OPTIMAL 이면 boost retry skip.
+            # 이유: lex Phase A 가 max_tardiness 를 globally minimize 했고
+            # OPTIMAL 까지 도달했다면 customer_priority 를 boost 해도 같은
+            # Phase A 가 동일 결과를 낸다 (Phase A 는 weight 무관, max_tard 만
+            # 최소화). retry 가 의미를 가지려면 Phase A 가 FEASIBLE (timeout
+            # 으로 suboptimal) 인 경우뿐. 본 게이트로 wasted cp_sat 재실행
+            # 약 38s/run 차단. lex_status 는 _solver_runner 가 lex 성공 경로
+            # 에서만 set 하므로 .get() 으로 안전 lookup.
+            _lex_optimal = (
+                result.get("solver_mode") == "lex_min_time"
+                and result.get("lex_status") == "OPTIMAL"
+            )
             if use_cpsat and _retry_depth == 0 and _tr.get("total_tardy_count", 0) > 0:
-                result = _so._tardiness_boost_retry(
-                    original_result=result,
-                    original_tardiness=_tr,
-                    run_label=run_label,
-                    db=db,
-                    use_cpsat=use_cpsat,
-                    retry_depth=_retry_depth,
-                    **kwargs,
-                )
+                if _lex_optimal:
+                    # lex Phase A 가 globally min max_tardiness 도달 — boost
+                    # 가 동일 결과 보장. 가시성 위해 기록만 남기고 skip.
+                    result["retry_adopted"] = False
+                    result["retry_skipped_reason"] = (
+                        "lex_optimal — Phase A globally min max_tardiness, "
+                        "customer_priority boost 가 같은 결과 산출"
+                    )
+                else:
+                    result = _so._tardiness_boost_retry(
+                        original_result=result,
+                        original_tardiness=_tr,
+                        run_label=run_label,
+                        db=db,
+                        use_cpsat=use_cpsat,
+                        retry_depth=_retry_depth,
+                        **kwargs,
+                    )
             return _normalize_result_shape(result)
 
         overlap_hits = violations

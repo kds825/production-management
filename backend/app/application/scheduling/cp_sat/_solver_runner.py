@@ -286,6 +286,16 @@ def run_solver(
             result["lex_t_star"] = adapted.lex_t_star
             result["lex_makespan_min"] = adapted.lex_makespan_min
             result["lex_all_due_met"] = adapted.lex_all_due_met
+            # Phase 6 step 9 (2026-05): lex 전체 status + Phase C status 노출.
+            # auto_schedule 의 _tardiness_boost_retry 게이트가 lex_status==
+            # 'OPTIMAL' (Phase A + Phase B 모두 OPTIMAL) 인지 확인해 lex 가
+            # globally min max_tardiness 를 발견했음을 검증. boost retry 가
+            # 같은 Phase A 를 재실행해 동일 결과를 내는 wasted retry 를 차단
+            # (~38s/run 절약). LexResult 는 phase 별 status 를 분리 노출하지
+            # 않고 합산 status 만 제공하므로 (lex_min_time.py:78-114) 합산
+            # 값을 그대로 사용.
+            result["lex_status"] = _lex_res.status
+            result["phase_c_status"] = _lex_res.phase_c_status
         else:
             # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (모델 재구성).
             # _built 는 lex 시도 중 mutate 되어 사용 불가 → 새로 build.
