@@ -67,6 +67,12 @@ from app.application.scheduling.cp_sat.model_builder import BuiltModel
 
 LexStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE_A", "INFEASIBLE_B", "UNKNOWN"]
 
+# Phase C (W-* soft objective 최소화) status. ``"SKIPPED"`` 는 caller 가 weights/
+# group_meta 를 전달하지 않은 경우 — phase C 자체를 시도하지 않음 (기존 2-phase
+# 와 동일 동작). ``"FAILED_FALLBACK_TO_B"`` 는 Phase C 가 INFEASIBLE/UNKNOWN 으로
+# 떨어져 Phase B 해로 복원한 케이스 (이론상 매우 드묾).
+LexPhaseCStatus = Literal["SKIPPED", "OPTIMAL", "FEASIBLE", "FAILED_FALLBACK_TO_B"]
+
 
 @dataclass
 class LexResult:
@@ -89,8 +95,15 @@ class LexResult:
     all_due_met :
         ``t_star == 0`` 의 alias (가독성).
     solver :
-        Phase B 의 solver 인스턴스. caller 가 ``solver.Value(var)`` 로 해를 읽음.
-        status 가 INFEASIBLE_* 이면 None.
+        Phase B (또는 Phase C) 의 solver 인스턴스. caller 가 ``solver.Value(var)``
+        로 해를 읽음. status 가 INFEASIBLE_* 이면 None.
+    phase_c_status :
+        Phase C (W-* soft objective 최소화) 의 결과. ``"SKIPPED"`` 면 caller 가
+        weights/group_meta 를 전달하지 않아 Phase C 자체 미실행 (UI 슬라이더 보존
+        의무가 없는 호출자 — 예: parity harness). ``"OPTIMAL"``/``"FEASIBLE"`` 은
+        Phase C 가 성공해 solver 의 해가 lex C-minimal 임을 의미.
+        ``"FAILED_FALLBACK_TO_B"`` 는 Phase C 가 INFEASIBLE/UNKNOWN 으로 떨어져
+        Phase B 해로 복원한 경우.
     """
 
     status: LexStatus
@@ -98,6 +111,7 @@ class LexResult:
     makespan_min: int
     all_due_met: bool
     solver: cp_model.CpSolver | None
+    phase_c_status: LexPhaseCStatus = "SKIPPED"
 
 
 def solve_lex_min_time(
@@ -105,13 +119,23 @@ def solve_lex_min_time(
     *,
     time_limit_phase_a_sec: int = 20,
     time_limit_phase_b_sec: int = 20,
+    time_limit_phase_c_sec: int = 5,
     num_workers: int = 8,
     random_seed: int = 1,
+    weights: ModelWeights | None = None,
+    group_meta: dict[str, Any] | None = None,
+    tardiness_hard: bool = False,
 ) -> LexResult:
-    """납기 충족 우선, 그 안에서 makespan 최소화.
+    """납기 충족 우선, 그 안에서 makespan 최소화, 그 안에서 W-* soft term 최소화.
 
-    ``built.model`` 은 mutate 됨 — Phase B 가 ``max_tard ≤ T*`` constraint 추가.
-    같은 BuiltModel 을 재사용하려면 caller 가 deep-copy 후 호출.
+    ``built.model`` 은 mutate 됨 — Phase B 가 ``max_tard ≤ T*`` constraint,
+    Phase C (옵션) 가 ``makespan ≤ M*`` constraint 추가. 같은 BuiltModel 을
+    재사용하려면 caller 가 deep-copy 후 호출.
+
+    Phase C 는 caller 가 ``weights`` 와 ``group_meta`` 를 함께 전달할 때만 실행
+    된다 (UI 의 W-* priority 슬라이더 → ConstraintSpec.weight × priority/50
+    의미를 lex 경로에서도 보존). 둘 다 ``None`` 이면 기존 2-phase 동작과 동일
+    하며 parity hash 가 흔들리지 않는다.
     """
     model = built.model
 
@@ -165,25 +189,79 @@ def solve_lex_min_time(
     solver.parameters.max_time_in_seconds = float(time_limit_phase_b_sec)
     status_b = solver.solve(model)
 
-    if status_b == cp_model.OPTIMAL:
+    if status_b not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        # Phase B 실패 — INFEASIBLE_B 는 이론상 불가능 (Phase A 결과가 valid),
+        # UNKNOWN 은 time-limit hit. 어느 쪽이든 caller 가 weighted-sum 으로
+        # 폴백하도록 INFEASIBLE_B / UNKNOWN 으로 분기.
+        if status_b == cp_model.INFEASIBLE:
+            return LexResult(
+                status="INFEASIBLE_B",
+                t_star=t_star,
+                makespan_min=0,
+                all_due_met=t_star == 0,
+                solver=None,
+            )
         return LexResult(
-            status="OPTIMAL",
+            status="UNKNOWN",
             t_star=t_star,
-            makespan_min=solver.value(makespan),
+            makespan_min=0,
             all_due_met=t_star == 0,
-            solver=solver,
+            solver=None,
         )
-    if status_b == cp_model.FEASIBLE:
-        return LexResult(
-            status="FEASIBLE",
-            t_star=t_star,
-            makespan_min=solver.value(makespan),
-            all_due_met=t_star == 0,
-            solver=solver,
+
+    m_star = solver.value(makespan)
+    base_status: LexStatus = "OPTIMAL" if status_b == cp_model.OPTIMAL else "FEASIBLE"
+
+    # ── Phase C (옵션): max_tard ≤ T*, makespan ≤ M* 하에서 W-* soft term 최소화 ──
+    # caller 가 weights/group_meta 를 전달한 경우에만 실행. ``compose_objective``
+    # 는 idle/transition/sheath_end/slack/edd_pair/edd_mixed_pastdue/tardiness
+    # term 을 W-* 가중치로 합성해 ``model.minimize(_obj)`` 로 새 objective 를
+    # set 한다 (이전 Phase B 의 minimize(makespan) 은 덮어쓰여진다). Phase B 의
+    # makespan ≤ M* 은 hard constraint 로 박혀 있으므로 lex 우선순위 보존.
+    if weights is not None and group_meta is not None:
+        from app.application.scheduling.cp_sat.objective import compose_objective
+
+        model.add(makespan <= m_star)
+        compose_objective(
+            built,
+            weights=weights,
+            group_meta=group_meta,
+            tardiness_hard=tardiness_hard,
         )
-    if status_b == cp_model.INFEASIBLE:
-        # 이론상 불가능 (Phase A 결과가 valid B-feasible) — solver 버그 또는
-        # max_tard ≤ T* 추가 시 numerical edge. fallback 으로 INFEASIBLE_B 보고.
+        solver.parameters.max_time_in_seconds = float(time_limit_phase_c_sec)
+        status_c = solver.solve(model)
+        if status_c in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return LexResult(
+                status=(
+                    "OPTIMAL"
+                    if base_status == "OPTIMAL" and status_c == cp_model.OPTIMAL
+                    else "FEASIBLE"
+                ),
+                t_star=t_star,
+                makespan_min=m_star,
+                all_due_met=t_star == 0,
+                solver=solver,
+                phase_c_status=(
+                    "OPTIMAL" if status_c == cp_model.OPTIMAL else "FEASIBLE"
+                ),
+            )
+        # Phase C 가 INFEASIBLE/UNKNOWN — 이론상 makespan ≤ M* + 모든 hard 제약
+        # 하에 Phase B 해가 valid 이므로 INFEASIBLE 은 솔버 numerical edge.
+        # 안전 복구: minimize(makespan) 으로 objective 복원 + 재솔브. solver 가
+        # makespan == M* 인 해를 즉시 찾는다 (hard 로 박혀 있으므로 거의 0 cost).
+        model.minimize(makespan)
+        solver.parameters.max_time_in_seconds = float(time_limit_phase_b_sec)
+        status_recover = solver.solve(model)
+        if status_recover in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return LexResult(
+                status="FEASIBLE",
+                t_star=t_star,
+                makespan_min=solver.value(makespan),
+                all_due_met=t_star == 0,
+                solver=solver,
+                phase_c_status="FAILED_FALLBACK_TO_B",
+            )
+        # 복구도 실패 — 매우 이상한 상황. caller 가 weighted-sum 폴백 트리거.
         return LexResult(
             status="INFEASIBLE_B",
             t_star=t_star,
@@ -191,12 +269,14 @@ def solve_lex_min_time(
             all_due_met=t_star == 0,
             solver=None,
         )
+
+    # Phase C skip — 기존 2-phase 결과 그대로.
     return LexResult(
-        status="UNKNOWN",
+        status=base_status,
         t_star=t_star,
-        makespan_min=0,
+        makespan_min=m_star,
         all_due_met=t_star == 0,
-        solver=None,
+        solver=solver,
     )
 
 
