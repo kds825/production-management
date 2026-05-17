@@ -504,6 +504,15 @@ def cp_sat_schedule(
     timeline = preload_existing_timeline(db=db, run_label=run_label)
     preempted_remainder: list[ProductionBatch] = []  # 선점 분할된 잔여 배치
 
+    # Phase 6 step 14 (2026-05): deferred bulk update buffer.
+    # Why: apply_calendar_greedy 의 매 batch placement 마다 ProductionBatch
+    # state mutation 이 explicit db.flush() 와 함께 81회 SQL UPDATE round-trip
+    # (21s) 으로 emit 되던 것을, buffer 에 누적 → 끝에서 1회 bulk_update_
+    # mappings 으로 commit (~1-3s). 81 → 1 round-trip.
+    from app.application.scheduling.cp_sat._calendar_apply import BatchStateBuffer
+
+    state_buffer = BatchStateBuffer()
+
     # Phase 2 Task 2.10e: §8 main loop 본체는 ``_calendar_apply.apply_calendar_greedy``
     # 로 추출. 모든 상태 dict (timeline / predecessor_map / tasks_created /
     # last_batch_on_equip / sq_to_equip / process_end_by_sq /
@@ -532,6 +541,7 @@ def cp_sat_schedule(
         core_first_drum_by_main_sq=core_first_drum_by_main_sq,
         preempted_remainder=preempted_remainder,
         result=result,
+        state_buffer=state_buffer,
     )
     _stage_logger.info(
         "cp_sat stage[apply_calendar_greedy]: wall=%.3fs n_tasks_so_far=%d preempted=%d",
@@ -557,6 +567,16 @@ def cp_sat_schedule(
     _stage_logger.info(
         "cp_sat stage[schedule_preempted_remainders]: wall=%.3fs",
         _stage_time.perf_counter() - _stage_t,
+    )
+    _stage_t = _stage_time.perf_counter()
+
+    # Phase 6 step 14: buffer 누적된 ProductionBatch state mutation 을 1회
+    # bulk_update_mappings 으로 commit. 81 SQL round-trip → 1.
+    n_state = state_buffer.flush(db)
+    _stage_logger.info(
+        "cp_sat stage[state_buffer.flush]: wall=%.3fs n=%d",
+        _stage_time.perf_counter() - _stage_t,
+        n_state,
     )
     _stage_t = _stage_time.perf_counter()
 

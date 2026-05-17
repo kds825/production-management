@@ -62,15 +62,48 @@ class BatchStateBuffer:
         self.updates.setdefault(batch_id, {}).update(fields)
 
     def flush(self, db) -> int:
-        """``bulk_update_mappings`` 으로 1회 commit. 반환: 업데이트된 row 수."""
+        """1회 commit. 반환: 업데이트된 row 수.
+
+        구현 — (status, equipment_code) 쌍별 grouping + IN-clause UPDATE:
+            naive bulk_update_mappings 은 psycopg2.executemany 로 row 별 N
+            statement 를 single round-trip 에 보내지만 server-side 에서
+            statement 당 plan + index lookup 이 누적 (954 batch ≈ 12s).
+
+            본 구현은 같은 (status, equipment_code) 쌍을 갖는 batch_id 들을
+            IN-clause UPDATE 1 statement 로 묶는다. PoC 실 패턴 (status
+            대부분 'scheduled', equipment_code ~10 종) 에서 ~10 statement,
+            각 ~50-100ms = 총 ~1s — naive 대비 ~10× 가속.
+        """
         if not self.updates:
             return 0
+        from sqlalchemy import update
+
         from app.infrastructure.models.production_batch import ProductionBatch
 
-        payload = [{"batch_id": bid, **f} for bid, f in self.updates.items()]
-        db.bulk_update_mappings(ProductionBatch, payload)
+        # (status, equipment_code) 쌍별로 batch_id 묶기
+        by_pair: dict[tuple, list[int]] = {}
+        for bid, fields in self.updates.items():
+            key = (fields.get("status"), fields.get("equipment_code"))
+            by_pair.setdefault(key, []).append(bid)
+
+        for (st, eq), bids in by_pair.items():
+            values_to_set: dict[str, Any] = {}
+            # mutation 에 명시된 column 만 SET — partial set 보존
+            # (e.g. status 만 변경한 경우 equipment_code 는 건드리지 않음)
+            sample_fields = self.updates[bids[0]]
+            if "status" in sample_fields:
+                values_to_set["status"] = st
+            if "equipment_code" in sample_fields:
+                values_to_set["equipment_code"] = eq
+            if not values_to_set:
+                continue
+            db.execute(
+                update(ProductionBatch)
+                .where(ProductionBatch.batch_id.in_(bids))
+                .values(**values_to_set)
+            )
         db.flush()
-        n = len(payload)
+        n = len(self.updates)
         self.updates.clear()
         return n
 
@@ -333,12 +366,19 @@ def apply_calendar_greedy(
     core_first_drum_by_main_sq: dict,
     preempted_remainder: list,
     result: dict,
+    state_buffer: "BatchStateBuffer",
 ) -> None:
     """원본: orchestrator.py:499-853 본문 그대로.
 
     solved_order 순회 → 멀티/단일 설비 분배 → 캘린더 인식 슬롯 탐색 →
     ScheduleTask insert → 상태 dict in-place 갱신 → result["total_tasks"]
     누적.
+
+    Phase 6 step 14 (2026-05): ProductionBatch state mutation 을 직접
+    ORM attr set 으로 하지 않고 ``state_buffer.set(batch_id, ...)`` 으로
+    누적. caller (cp_sat_schedule) 가 ``state_buffer.flush(db)`` 로 끝에서
+    bulk_update_mappings 1회 commit — explicit db.flush() 마다의 81 SQL
+    UPDATE round-trip (~21s) 을 1 round-trip 으로 압축.
     """
     # Inline imports — boundary crossing dependencies.
     from datetime import datetime, timedelta
@@ -408,6 +448,7 @@ def apply_calendar_greedy(
                 result=result,
                 welding_min=welding_min,
                 sq_to_wire_d=sq_to_wire_d,
+                state_buffer=state_buffer,
             )
             if split_ok:
                 result["total_tasks"] += 1
@@ -697,8 +738,13 @@ def apply_calendar_greedy(
 
         for b in gb:
             predecessor_map[(b.sales_order_id, b.sales_order_line)] = task.task_id
-            b.equipment_code = chosen_eq_code
-            b.status = "scheduled"
+            # Phase 6 step 14: deferred bulk update — ORM attr set 회피.
+            # ORM dirty marking 시 다음 db.flush() (다음 ScheduleTask add 후)
+            # 가 매번 UPDATE round-trip 으로 emit. state_buffer 가 끝에서
+            # bulk_update_mappings 1회로 묶는다.
+            state_buffer.set(
+                b.batch_id, status="scheduled", equipment_code=chosen_eq_code
+            )
 
         if rep.process_name == "연선" and not _is_core_group(gk):
             sq_to_equip[sq_key] = chosen_eq_code

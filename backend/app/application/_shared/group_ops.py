@@ -258,6 +258,7 @@ def _schedule_multi_equipment(
     result: dict,
     welding_min: float,
     sq_to_wire_d: dict | None = None,
+    state_buffer=None,
 ) -> bool:
     """연선/고압절연 그룹의 드럼을 eligible 설비에 균등 분배하여 병렬 스케줄링.
 
@@ -266,6 +267,11 @@ def _schedule_multi_equipment(
 
     - 연선: header_batch(seq=-1)의 duration 사용
     - 고압절연: header 없음 → 그룹 내 배치 duration 합산
+
+    Phase 6 step 14 (2026-05): ``state_buffer`` (BatchStateBuffer) 인자 추가.
+    None 인 경우 ORM attr set (기존 동작, 단발성 호출자 호환). caller (apply_
+    calendar_greedy) 가 state_buffer 를 전달하면 mutation 을 deferred buffer
+    에 누적해 끝에서 1회 bulk_update_mappings 으로 commit.
 
     Returns:
         True면 분배 성공 (호출측에서 continue), False면 단일설비 경로로 폴백.
@@ -561,8 +567,18 @@ def _schedule_multi_equipment(
     for b in group_batches:
         pred_key = (b.sales_order_id, b.sales_order_line)
         predecessor_map[pred_key] = split_tasks[0].task_id
-        b.equipment_code = split_tasks[0].equipment_code
-        b.status = "scheduled"
+        # Phase 6 step 14: deferred bulk update. **값은 split_tasks[0].
+        # equipment_code** (chosen_eq_code 가 아닌 분배 결과의 _실제 첫 설비_).
+        # state_buffer None 이면 ORM attr set 으로 폴백 (단발성 호출자 호환).
+        if state_buffer is not None:
+            state_buffer.set(
+                b.batch_id,
+                status="scheduled",
+                equipment_code=split_tasks[0].equipment_code,
+            )
+        else:
+            b.equipment_code = split_tasks[0].equipment_code
+            b.status = "scheduled"
 
     # 규칙 2 매핑은 기록하지 않음 — 분배된 그룹은 여러 설비를 사용하므로
 
