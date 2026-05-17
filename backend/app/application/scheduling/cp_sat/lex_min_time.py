@@ -116,6 +116,10 @@ class LexResult:
     all_due_met: bool
     solver: cp_model.CpSolver | None
     phase_c_status: LexPhaseCStatus = "SKIPPED"
+    # Phase C 가 minimize 한 W-* soft objective 값 (Phase 6 latency 튜닝
+    # 근거 — 5/10/15/20/30s time_limit 비교의 marginal return 평가용).
+    # phase_c_status 가 OPTIMAL/FEASIBLE 일 때만 의미 있음.
+    phase_c_objective: int | None = None
 
 
 def solve_lex_min_time(
@@ -123,7 +127,11 @@ def solve_lex_min_time(
     *,
     time_limit_phase_a_sec: int = 20,
     time_limit_phase_b_sec: int = 20,
-    time_limit_phase_c_sec: int = 5,
+    # Phase C default 15s — Phase 6 step 15 (2026-05-17) sweep 결과.
+    # 5s → 15s 로 늘릴 때 누적 -7.6% objective 개선 (5s→10s -5.22%, 10s→15s
+    # -2.51%). 15s 이후 marginal return < 1.5%. stage2_wall_s ~10s → ~18s
+    # (사용자 한계 30s 이내). 측정 근거: scripts/sweep_phase_c_limit.py.
+    time_limit_phase_c_sec: int = 15,
     num_workers: int = 8,
     random_seed: int = 1,
     weights: ModelWeights | None = None,
@@ -259,9 +267,15 @@ def solve_lex_min_time(
         _tc = _time.perf_counter()
         status_c = solver.solve(model)
         _phase_c_wall = _time.perf_counter() - _tc
+        _obj_c = (
+            int(solver.objective_value)
+            if status_c in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+            else None
+        )
         logger.info(
-            "lex Phase C: status=%s wall=%.3fs limit=%ds",
+            "lex Phase C: status=%s objective=%s wall=%.3fs limit=%ds",
             solver.status_name(status_c),
+            _obj_c if _obj_c is not None else "n/a",
             _phase_c_wall,
             time_limit_phase_c_sec,
         )
@@ -279,6 +293,7 @@ def solve_lex_min_time(
                 phase_c_status=(
                     "OPTIMAL" if status_c == cp_model.OPTIMAL else "FEASIBLE"
                 ),
+                phase_c_objective=_obj_c,
             )
         # Phase C 가 INFEASIBLE/UNKNOWN — 이론상 makespan ≤ M* + 모든 hard 제약
         # 하에 Phase B 해가 valid 이므로 INFEASIBLE 은 솔버 numerical edge.

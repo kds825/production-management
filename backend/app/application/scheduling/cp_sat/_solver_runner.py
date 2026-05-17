@@ -296,6 +296,7 @@ def run_solver(
             # 값을 그대로 사용.
             result["lex_status"] = _lex_res.status
             result["phase_c_status"] = _lex_res.phase_c_status
+            result["lex_phase_c_objective"] = _lex_res.phase_c_objective
         else:
             # INFEASIBLE_A/B/UNKNOWN — weighted-sum 폴백 (모델 재구성).
             # _built 는 lex 시도 중 mutate 되어 사용 불가 → 새로 build.
