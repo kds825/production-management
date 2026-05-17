@@ -413,26 +413,33 @@ def auto_schedule(
             # _retry_depth_initial 에 보관됨 (F-3 발견 버그 fix).
             _retry_depth = _retry_depth_initial
             _tr = result.get("tardiness_report") or {}
-            # Phase 6 step 9 (2026-05): lex Phase A 가 OPTIMAL 이면 boost retry skip.
-            # 이유: lex Phase A 가 max_tardiness 를 globally minimize 했고
-            # OPTIMAL 까지 도달했다면 customer_priority 를 boost 해도 같은
-            # Phase A 가 동일 결과를 낸다 (Phase A 는 weight 무관, max_tard 만
-            # 최소화). retry 가 의미를 가지려면 Phase A 가 FEASIBLE (timeout
-            # 으로 suboptimal) 인 경우뿐. 본 게이트로 wasted cp_sat 재실행
-            # 약 38s/run 차단. lex_status 는 _solver_runner 가 lex 성공 경로
-            # 에서만 set 하므로 .get() 으로 안전 lookup.
-            _lex_optimal = (
-                result.get("solver_mode") == "lex_min_time"
-                and result.get("lex_status") == "OPTIMAL"
-            )
+            # Phase 6 step 9/11 (2026-05): lex 모드 성공 경로면 boost retry skip.
+            #
+            # Why:
+            #   - Phase A OPTIMAL → globally min max_tardiness. boost 가 같은
+            #     결과 17s 낭비하고 재발견.
+            #   - Phase A FEASIBLE (timeout) → boost retry 도 같은 모델·같은
+            #     timeout 으로 동일 결과 반복. live 측정 (954 batch) 결과
+            #     boost adoption rate 0% — wasted 17s/run.
+            #   * 두 경우 모두 Phase A 가 priority weight 와 무관 (max_tard 만
+            #     최소화) — customer_priority boost 가 max_tardiness 줄이지 못함.
+            #     영향이 있다면 Phase C compose_objective 의 W-* term 뿐.
+            #
+            # 게이트 통과 (boost 실행) 경로:
+            #   - weighted_sum / weighted_sum_fallback_from_lex (lex INFEASIBLE)
+            #   - greedy_fallback (cp_sat 가 OPTIMAL/FEASIBLE 안 줘 greedy 전환)
+            _lex_succeeded = result.get("solver_mode") == "lex_min_time" and result.get(
+                "lex_status"
+            ) in ("OPTIMAL", "FEASIBLE")
             if use_cpsat and _retry_depth == 0 and _tr.get("total_tardy_count", 0) > 0:
-                if _lex_optimal:
-                    # lex Phase A 가 globally min max_tardiness 도달 — boost
-                    # 가 동일 결과 보장. 가시성 위해 기록만 남기고 skip.
+                if _lex_succeeded:
+                    # lex 가 시간내 best 발견 — boost 가 더 좋은 max_tardiness
+                    # 못 만듦. 가시성 위해 기록 남기고 skip.
                     result["retry_adopted"] = False
+                    _lex_st = str(result.get("lex_status", "?")).lower()
                     result["retry_skipped_reason"] = (
-                        "lex_optimal — Phase A globally min max_tardiness, "
-                        "customer_priority boost 가 같은 결과 산출"
+                        f"lex_{_lex_st} — Phase A 가 weight 와 무관, "
+                        "customer_priority boost 가 동일 max_tardiness 산출"
                     )
                 else:
                     result = _so._tardiness_boost_retry(
