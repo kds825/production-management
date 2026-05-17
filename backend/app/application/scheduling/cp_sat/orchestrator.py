@@ -146,11 +146,13 @@ def cp_sat_schedule(
     solver_input_override: SolverInput | None = None,
     num_search_workers: int | None = None,
     run_id_override: str | None = None,
-    # ── Phase 3 step 3 (target.md §3 row 5): lex_min_time wiring ──────────
+    # ── Phase 6 step 3 (2026-05): lex_min_time 을 default 로 승격 ──────────
     # 납기 lexicographic 우선 (Phase A: max_tardiness 최소 → Phase B: makespan
-    # 최소). True 시 weighted-sum objective 대신 lex 솔버 호출. INFEASIBLE_A/B
-    # / UNKNOWN 발생 시 자동으로 weighted-sum 폴백 (model 은 deepcopy 로 보호).
-    min_time_mode: bool = False,
+    # 최소 → Phase C: W-* soft term 최소). True 시 lex 3-phase 호출, False 시
+    # 기존 weighted-sum 단일 호출 (opt-in 잔존: 비교·롤백·dual-run 용).
+    # INFEASIBLE_A/B/UNKNOWN 발생 시 자동으로 weighted-sum 폴백 (model 은
+    # deepcopy 가 아니라 rebuild_fn 으로 재구성).
+    min_time_mode: bool = True,
 ) -> dict:
     """
     CP-SAT 기반 자동 배치.

@@ -244,12 +244,18 @@ def run_solver(
         # picklable 하지 않아 deepcopy 불가능 → INFEASIBLE 폴백 시 model
         # 을 rebuild_fn() 로 재구성. 일반 lex 성공 경로는 추가 비용 0.
         _lex_t0 = time.perf_counter()
+        # Phase 6 step 3: weights/group_meta/tardiness_hard 를 전달해 lex Phase C
+        # 가 compose_objective (W-* slider 반영) 를 실행하도록 한다. 둘 다
+        # None 으로 두면 Phase C skip → 기존 2-phase 동작 (parity 보존).
         _lex_res = solve_lex_min_time(
             _built,
             time_limit_phase_a_sec=_time_limit,
             time_limit_phase_b_sec=_time_limit,
             num_workers=_num_workers,
             random_seed=int(random_seed),
+            weights=weights,
+            group_meta=group_meta,
+            tardiness_hard=tardiness_hard,
         )
         _lex_wall_s = time.perf_counter() - _lex_t0
         if _lex_res.status in ("OPTIMAL", "FEASIBLE"):

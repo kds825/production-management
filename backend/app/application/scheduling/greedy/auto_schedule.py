@@ -215,78 +215,40 @@ def auto_schedule(
         _attempt_t0 = time.perf_counter()
         _attempt_path: list[str] = []
         if use_cpsat:
-            # CP-SAT 우선 시도. random_seed 를 시도 번호로 변동 → 동일 해 반복 방지.
-            # P9-B: 3-level fallback (tardiness_hard=True → sheath_color_hard 완화 →
-            # tardiness_hard 완화) 을 greedy 폴백 전에 적용.
+            # Phase 6 step 3 (2026-05): 3-level fallback (hard → soft → softer)
+            # 을 단일 lex 호출 + greedy 폴백 으로 단순화.
+            #
+            # 이전 흐름은 Level 1(둘 다 hard) → Level 2(색상 soft) → Level 3(둘
+            # 다 soft) → greedy 의 4단계였다. cp_sat_schedule 의 default 가
+            # min_time_mode=True 로 승격된 이후 lex 가 납기·makespan 을 hard 가
+            # 아닌 lexicographic objective 로 처리하므로 hard 제약 분기 자체가
+            # redundant. INFEASIBLE 거의 0 — 발생 시 즉시 greedy 로.
             from app.application.scheduling.cp_sat.orchestrator import cp_sat_schedule
 
             # P4-3: attempt==0 에만 warm_start_hints 유지, 1+ 에서는 drop.
-            # 왜: 같은 힌트로 재시도하면 비슷한 해로 수렴 → overlap 이 재발할 위험
-            # (random_seed 변동만으로는 탐색 공간을 충분히 다르게 못 만듦). 힌트도
-            # 함께 drop 해야 retry 가 의미를 갖는다. kwargs 원본 보존을 위해 copy.
+            # 같은 힌트로 재시도하면 비슷한 해로 수렴 → overlap 재발 위험.
             _attempt_kwargs = dict(kwargs)
             if attempt > 0 and "warm_start_hints" in _attempt_kwargs:
                 _attempt_kwargs["warm_start_hints"] = None
+            # hard 제약 두 개를 호출자가 명시 전달했으면 보존, 아니면 False 로
+            # 강제 (lex objective 가 납기·makespan 처리). 보존 경로는 weighted-sum
+            # 호출자 (min_time_mode=False) 가 명시적으로 hard 모드 원할 때만.
+            _attempt_kwargs.setdefault("sheath_color_hard", False)
+            _attempt_kwargs.setdefault("tardiness_hard", False)
 
-            # Level 1: 납기/색상 모두 엄격
-            _l1_t0 = time.perf_counter()
+            _cp_t0 = time.perf_counter()
             result = cp_sat_schedule(
                 run_label, db, random_seed=attempt, **_attempt_kwargs
             )
-            l1_status = result.get("solver_status")
-            _attempt_path.append(f"L1({l1_status},{time.perf_counter() - _l1_t0:.2f}s)")
+            cp_status = result.get("solver_status")
+            _attempt_path.append(
+                f"cpsat({cp_status},{time.perf_counter() - _cp_t0:.2f}s)"
+            )
 
-            # Level 2: 색상만 완화
-            if l1_status == "INFEASIBLE":
-                _so._purge_run_tasks(db, run_label)
-                _l2_t0 = time.perf_counter()
-                result = cp_sat_schedule(
-                    run_label,
-                    db,
-                    random_seed=attempt,
-                    sheath_color_hard=False,
-                    tardiness_hard=True,
-                    **{
-                        k: v
-                        for k, v in _attempt_kwargs.items()
-                        if k not in ("sheath_color_hard", "tardiness_hard")
-                    },
-                )
+            # greedy 폴백 — CP-SAT 가 OPTIMAL/FEASIBLE 이 아니면 즉시 전환.
+            if cp_status not in ("OPTIMAL", "FEASIBLE"):
                 result.setdefault("warnings", []).append(
-                    "납기 hard 유지 + 색상 hard 완화(Level 2) 로 재시도"
-                )
-                _attempt_path.append(
-                    f"L2({result.get('solver_status')},{time.perf_counter() - _l2_t0:.2f}s)"
-                )
-            l2_status = result.get("solver_status")
-
-            # Level 3: 둘 다 완화
-            if l2_status == "INFEASIBLE":
-                _so._purge_run_tasks(db, run_label)
-                _l3_t0 = time.perf_counter()
-                result = cp_sat_schedule(
-                    run_label,
-                    db,
-                    random_seed=attempt,
-                    sheath_color_hard=False,
-                    tardiness_hard=False,
-                    **{
-                        k: v
-                        for k, v in _attempt_kwargs.items()
-                        if k not in ("sheath_color_hard", "tardiness_hard")
-                    },
-                )
-                result.setdefault("warnings", []).append(
-                    "납기+색상 모두 완화(Level 3) 로 재시도 — 납기 초과 가능성 있음"
-                )
-                _attempt_path.append(
-                    f"L3({result.get('solver_status')},{time.perf_counter() - _l3_t0:.2f}s)"
-                )
-
-            # greedy 최종 폴백 — greedy 는 힌트를 모르므로 kwargs 에서 제거.
-            if result.get("solver_status") not in ("OPTIMAL", "FEASIBLE"):
-                result.setdefault("warnings", []).append(
-                    "CP-SAT 3-level 모두 미해결 — 그리디 폴백으로 전환합니다"
+                    f"CP-SAT {cp_status} — 그리디 폴백으로 전환합니다"
                 )
                 _so._purge_run_tasks(db, run_label)
                 _greedy_kwargs = {

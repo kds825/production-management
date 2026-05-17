@@ -8,21 +8,21 @@
     {
       "batch_group": "A120_청_2026W19",
       "equipment_id": "SH-A120",
-      "start_offset_min": 480
+      "start_offset_min": 120
     },
     {
       "batch_group": "A120_흑_2026W18",
       "equipment_id": "SH-A120",
-      "start_offset_min": 120
+      "start_offset_min": 240
     },
     {
       "batch_group": "A120_흑_2026W19",
       "equipment_id": "SH-A120",
-      "start_offset_min": 360
+      "start_offset_min": 480
     }
   ],
-  "expected_objective_value": 25454,
-  "expected_output_hash": "sha256:d744132ce52f26dad9c688389e1ac1e16dd199a05ebe1caecbee1b731133042b",
+  "expected_objective_value": 33340,
+  "expected_output_hash": "sha256:f4887a2fa36fe4f05e323d72fbd4f249168751b0f9da328768e0a610462915c1",
   "expected_solver_status": "OPTIMAL",
   "run_label": "20260421_parity_05_sheath_color_chain",
   "scenario_id": "05_sheath_color_chain",

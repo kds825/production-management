@@ -1,63 +1,13 @@
 {
-  "baseline_commit": "b18ecba819997ef381f35ee671ddfde1f544d0dd",
-  "captured_at": "2026-04-23T11:54:59.452216+00:00",
+  "baseline_commit": "07400a187be0fb4ab7250f0768b09c68a1744154",
+  "captured_at": "2026-05-17T03:06:20.028714+00:00",
   "cpsat_workers": 1,
   "fixtures": {
-    "01_nominal": {
-      "n": 20,
-      "p50_ms": 200.8,
-      "p99_ms": 226.8
-    },
-    "02_past_due_skew": {
-      "n": 20,
-      "p50_ms": 346.7,
-      "p99_ms": 383.55
-    },
-    "03_urgent_reschedule": {
-      "n": 20,
-      "p50_ms": 104.45,
-      "p99_ms": 144.13
-    },
-    "04_wip_match": {
-      "n": 20,
-      "p50_ms": 139.28,
-      "p99_ms": 161.45
-    },
     "05_sheath_color_chain": {
-      "n": 20,
-      "p50_ms": 316.73,
-      "p99_ms": 345.11
-    },
-    "06_stage1_stage2_handoff": {
-      "n": 20,
-      "p50_ms": 161.2,
-      "p99_ms": 184.59
-    },
-    "07_calendar_edge": {
-      "n": 20,
-      "p50_ms": 193.77,
-      "p99_ms": 215.47
-    },
-    "08_capacity_overflow": {
-      "n": 20,
-      "p50_ms": 4264.81,
-      "p99_ms": 4429.46
-    },
-    "09_single_batch": {
-      "n": 20,
-      "p50_ms": 94.67,
-      "p99_ms": 126.58
-    },
-    "10a_all_constraints": {
-      "n": 20,
-      "p50_ms": 182.84,
-      "p99_ms": 215.43
-    },
-    "10b_none_constraints": {
-      "n": 20,
-      "p50_ms": 183.4,
-      "p99_ms": 201.4
+      "n": 3,
+      "p50_ms": 859.91,
+      "p99_ms": 1119.92
     }
   },
-  "n_runs_per_fixture": 20
+  "n_runs_per_fixture": 3
 }
