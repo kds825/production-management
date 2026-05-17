@@ -106,6 +106,37 @@ def _sheath_group_due_week_int(batches: list) -> int:
 # ── 공개 API : auto_schedule ────────────────────────────────────────────────
 
 
+def _normalize_result_shape(result: dict) -> dict:
+    """auto_schedule 의 모든 정상 return 경로가 동일 shape 을 갖도록 보정.
+
+    Why:
+        cp_sat 성공 시 {solver_status, solver_mode, lex_t_star, ...}, greedy /
+        greedy_fallback 시 {engine, total_tasks, ...} 로 result dict shape 가
+        달랐다. downstream (frontend hydration, presentation/decision_card,
+        log 포매터) 가 ``.get()`` 으로 흡수 중이라 현재는 안전하지만, 후속
+        의존성 (예: ``lex_t_star`` 를 직접 읽는 UI badge) 추가 시 KeyError
+        리스크. 본 normalizer 가 두 경로의 shape 을 idempotent 하게 통합한다.
+
+    Idempotent / non-destructive:
+        모두 ``setdefault`` — 이미 값이 있으면 손대지 않음. parity hash 는
+        assignments 만 보므로 (test_parity_harness._stable_hash) 본 normalize
+        는 hash 에 영향 없음. 호출자 (api / frontend) 는 어느 path 든 동일
+        키 셋을 받게 된다.
+    """
+    has_cp_status = result.get("solver_status") in ("OPTIMAL", "FEASIBLE")
+    result.setdefault("solver_status", "N/A")
+    # engine: cp_sat 성공 → "cp_sat", 그 외 (greedy / greedy_fallback) →
+    # 기존 engine 값 보존 후 없으면 "greedy".
+    result.setdefault("engine", "cp_sat" if has_cp_status else "greedy")
+    # solver_mode: cp_sat 가 채웠으면 보존, greedy 경로에선 engine 으로 대체.
+    result.setdefault("solver_mode", result["engine"])
+    result.setdefault("lex_t_star", None)
+    result.setdefault("lex_makespan_min", None)
+    result.setdefault("lex_all_due_met", None)
+    result.setdefault("objective_value", None)
+    return result
+
+
 def auto_schedule(
     run_label: str, db: Session, *, use_cpsat: bool = False, **kwargs
 ) -> dict:
@@ -365,7 +396,7 @@ def auto_schedule(
                     retry_depth=_retry_depth,
                     **kwargs,
                 )
-            return result
+            return _normalize_result_shape(result)
 
         overlap_hits = violations
 
@@ -459,7 +490,7 @@ def _tardiness_boost_retry(
     if not tardy_task_ids:
         original_result["retry_adopted"] = False
         original_result["retry_rejected_reason"] = "worst_tasks 가 비어 boost 대상 없음"
-        return original_result
+        return _normalize_result_shape(original_result)
 
     # Tardy task 의 batch_id 조회 (boost 대상)
     tardy_batch_ids = [
@@ -471,7 +502,7 @@ def _tardiness_boost_retry(
     if not tardy_batch_ids:
         original_result["retry_adopted"] = False
         original_result["retry_rejected_reason"] = "tardy batch_id 조회 결과 비어 있음"
-        return original_result
+        return _normalize_result_shape(original_result)
 
     # monkeypatch 호환 — 기존 테스트 (test_tardiness_boost_retry) 가
     # `schedule_optimizer.auto_schedule = _faulty_auto` 로 mock 한 뒤
@@ -512,7 +543,7 @@ def _tardiness_boost_retry(
                 "count": original_count,
                 "minutes": original_min,
             }
-            return retry_result
+            return _normalize_result_shape(retry_result)
         # 동일 또는 악화 → rollback
         sp.rollback()
         original_result["retry_adopted"] = False
@@ -520,7 +551,7 @@ def _tardiness_boost_retry(
             f"retry ({retry_count}, {retry_min}) ≥ original "
             f"({original_count}, {original_min})"
         )
-        return original_result
+        return _normalize_result_shape(original_result)
     except Exception as e:  # noqa: BLE001
         # 예외 시 원본 상태로 복원. retry 실패가 스케줄 자체를 막지 않음.
         sp.rollback()
@@ -529,7 +560,7 @@ def _tardiness_boost_retry(
         original_result.setdefault("warnings", []).append(
             f"tardiness boost retry 실패 (원본 유지): {e}"
         )
-        return original_result
+        return _normalize_result_shape(original_result)
 
 
 def _purge_run_tasks(db: Session, run_label: str) -> None:
