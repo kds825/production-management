@@ -27,10 +27,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from datetime import date
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.exceptions import SchedulerOverlapError
 from app.infrastructure.models.equipment_master import EquipmentMaster  # noqa: F401
@@ -205,6 +209,11 @@ def auto_schedule(
     violations: list[dict] = []
 
     for attempt in range(MAX_RETRIES + 1):
+        # latency baseline 계측 (Phase 6 step 1). attempt 당 wall-time 과 어떤
+        # level/엔진까지 흘러갔는지를 로그로 남겨 5분 초과 호출의 원인 분해를
+        # 사후에 가능하게 한다.
+        _attempt_t0 = time.perf_counter()
+        _attempt_path: list[str] = []
         if use_cpsat:
             # CP-SAT 우선 시도. random_seed 를 시도 번호로 변동 → 동일 해 반복 방지.
             # P9-B: 3-level fallback (tardiness_hard=True → sheath_color_hard 완화 →
@@ -220,14 +229,17 @@ def auto_schedule(
                 _attempt_kwargs["warm_start_hints"] = None
 
             # Level 1: 납기/색상 모두 엄격
+            _l1_t0 = time.perf_counter()
             result = cp_sat_schedule(
                 run_label, db, random_seed=attempt, **_attempt_kwargs
             )
             l1_status = result.get("solver_status")
+            _attempt_path.append(f"L1({l1_status},{time.perf_counter() - _l1_t0:.2f}s)")
 
             # Level 2: 색상만 완화
             if l1_status == "INFEASIBLE":
                 _so._purge_run_tasks(db, run_label)
+                _l2_t0 = time.perf_counter()
                 result = cp_sat_schedule(
                     run_label,
                     db,
@@ -243,11 +255,15 @@ def auto_schedule(
                 result.setdefault("warnings", []).append(
                     "납기 hard 유지 + 색상 hard 완화(Level 2) 로 재시도"
                 )
+                _attempt_path.append(
+                    f"L2({result.get('solver_status')},{time.perf_counter() - _l2_t0:.2f}s)"
+                )
             l2_status = result.get("solver_status")
 
             # Level 3: 둘 다 완화
             if l2_status == "INFEASIBLE":
                 _so._purge_run_tasks(db, run_label)
+                _l3_t0 = time.perf_counter()
                 result = cp_sat_schedule(
                     run_label,
                     db,
@@ -262,6 +278,9 @@ def auto_schedule(
                 )
                 result.setdefault("warnings", []).append(
                     "납기+색상 모두 완화(Level 3) 로 재시도 — 납기 초과 가능성 있음"
+                )
+                _attempt_path.append(
+                    f"L3({result.get('solver_status')},{time.perf_counter() - _l3_t0:.2f}s)"
                 )
 
             # greedy 최종 폴백 — greedy 는 힌트를 모르므로 kwargs 에서 제거.
@@ -282,7 +301,11 @@ def auto_schedule(
                         "tardiness_hard",
                     )
                 }
+                _gd_t0 = time.perf_counter()
                 result = _so._run_optimization_once(run_label, db, **_greedy_kwargs)
+                _attempt_path.append(
+                    f"greedy_fallback({time.perf_counter() - _gd_t0:.2f}s)"
+                )
         else:
             # greedy 경로도 CP-SAT 전용 kwargs 가 흘러들어오지 않도록 필터.
             _greedy_kwargs = {
@@ -297,7 +320,20 @@ def auto_schedule(
                     "tardiness_hard",
                 )
             }
+            _gd_t0 = time.perf_counter()
             result = _so._run_optimization_once(run_label, db, **_greedy_kwargs)
+            _attempt_path.append(f"greedy({time.perf_counter() - _gd_t0:.2f}s)")
+
+        _attempt_wall_s = time.perf_counter() - _attempt_t0
+        logger.info(
+            "auto_schedule attempt=%d run_label=%s use_cpsat=%s wall=%.3fs path=[%s] final_status=%s",
+            attempt,
+            run_label,
+            use_cpsat,
+            _attempt_wall_s,
+            " → ".join(_attempt_path) if _attempt_path else "(none)",
+            result.get("solver_status") or result.get("engine") or "unknown",
+        )
 
         # 재시도 판단 경량 검증 — overlap 만. 최종 전체 검증은 run_stage2 에서 1회.
         # 왜: 재시도 루프는 "겹침이면 다시 돌린다" 만 필요. 전체 28개 체커를

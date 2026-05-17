@@ -28,6 +28,7 @@ Contract:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime
 from typing import Any, Callable
 
@@ -205,6 +206,12 @@ def execute_stage2(
                                     # SchedulerOverlapError
         }
     """
+    # latency baseline 계측 (Phase 6 step 1). solve / validate / commit 의 합산
+    # wall-time 을 result 와 로그에 노출해 lex 승격·fallback 단순화 효과를
+    # before/after 로 비교 가능하게 한다.
+    _stage2_t0 = time.perf_counter()
+
+    _solve_t0 = time.perf_counter()
     if optimizer == "greedy":
         schedule_result = run_greedy_stage(
             run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
@@ -216,9 +223,15 @@ def execute_stage2(
         schedule_result = run_solver_stage(
             run_label, db, base_date_dt, auto_schedule_fn=auto_schedule_fn
         )
+    _solve_wall_s = time.perf_counter() - _solve_t0
 
+    _validate_t0 = time.perf_counter()
     violations = validate_all_fn(run_label, db)
+    _validate_wall_s = time.perf_counter() - _validate_t0
+
+    _commit_t0 = time.perf_counter()
     db.commit()
+    _commit_wall_s = time.perf_counter() - _commit_t0
 
     # AI 분석을 백그라운드 스레드로 비동기 실행 — 응답을 블로킹하지 않음.
     # ai_background_starter 는 route 의 _run_ai_background 를 트리거하는
@@ -226,10 +239,27 @@ def execute_stage2(
     # cache 가 살아 있으므로 여기서 직접 cache 를 만지지 않는다.
     ai_background_starter(run_label)
 
+    _stage2_wall_s = time.perf_counter() - _stage2_t0
+    logger.info(
+        "stage2 wall-time — run_label=%s optimizer=%s total=%.3fs "
+        "(solve=%.3fs validate=%.3fs commit=%.3fs) violations=%d",
+        run_label,
+        optimizer,
+        _stage2_wall_s,
+        _solve_wall_s,
+        _validate_wall_s,
+        _commit_wall_s,
+        len(violations),
+    )
+
     return {
         "run_label": run_label,
         "schedule": schedule_result,
         "violations": violations,
         "total_violations": len(violations),
         "overlap_alert": False,
+        "stage2_wall_s": round(_stage2_wall_s, 3),
+        "stage2_solve_wall_s": round(_solve_wall_s, 3),
+        "stage2_validate_wall_s": round(_validate_wall_s, 3),
+        "stage2_commit_wall_s": round(_commit_wall_s, 3),
     }
