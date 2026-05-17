@@ -40,6 +40,8 @@ def schedule_preempted_remainders(
     # ── 9. 선점 잔여 배치 후속 배치 ───────────────────────────────────────────
     # 선점 분할로 생성된 잔여 배치들을 같은 설비에서 순서대로 스케줄링한다.
     # (이미 긴급 배치 슬롯이 timeline에 등록되어 있으므로 겹치지 않는다.)
+    # Phase 6 step 6 (F-2): 같은 설비에 여러 잔여 배치가 쌓이는 패턴 → cache hit 잦음.
+    _cal_end_cache: dict[tuple[str, datetime, int], datetime] = {}
     for rem_b in preempted_remainder:
         eq_code = rem_b.equipment_code
         if not eq_code:
@@ -50,7 +52,12 @@ def schedule_preempted_remainders(
         total_rem_dur = work_dur + rem_setup
         slots_rem = timeline.get(eq_code, [])
         rem_start = _find_available_slot(
-            base_date, total_rem_dur, slots_rem, db, eq_code
+            base_date,
+            total_rem_dur,
+            slots_rem,
+            db,
+            eq_code,
+            calendar_end_cache=_cal_end_cache,
         )
         rem_end = calculate_end_datetime(rem_start, total_rem_dur, db, eq_code)
         if rem_end.minute > 0 or rem_end.second > 0:

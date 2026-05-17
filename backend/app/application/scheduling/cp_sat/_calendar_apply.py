@@ -307,6 +307,12 @@ def apply_calendar_greedy(
     from app.infrastructure.calendar_engine import calculate_end_datetime
     from app.infrastructure.models.schedule_task import ScheduleTask
 
+    # Phase 6 step 6 (F-2): apply_calendar_greedy 호출 1회 동안 같은 (eq,
+    # candidate, dur) 조합으로 _find_available_slot 이 재호출돼도 calendar
+    # lookup 은 1회만. apply_calendar_greedy 가 solved_order 를 순회하며
+    # 여러 그룹에 대해 같은 설비 timeline 을 반복 탐색하므로 hit 비율 높음.
+    _cal_end_cache: dict[tuple[str, datetime, int], datetime] = {}
+
     first_insul_output: datetime | None = None
 
     # 시스 묶음 기반 append 정책용 — _gk_to_cluster_id 는 호출자가 이미 빌드.
@@ -512,7 +518,12 @@ def apply_calendar_greedy(
         ):
             slots_sim = timeline.get(chosen_eq_code, [])
             sim_start = _find_available_slot(
-                earliest, total_dur, slots_sim, db, chosen_eq_code
+                earliest,
+                total_dur,
+                slots_sim,
+                db,
+                chosen_eq_code,
+                calendar_end_cache=_cal_end_cache,
             )
             sim_end = calculate_end_datetime(sim_start, total_dur, db, chosen_eq_code)
             if sim_end.date() > meta["earliest_due"] and sim_start > earliest:
@@ -536,7 +547,12 @@ def apply_calendar_greedy(
         # 캘린더 인식 슬롯 탐색 — 겹침 완전 방지
         slots = timeline.get(chosen_eq_code, [])
         best_start = _find_available_slot(
-            earliest, total_dur, slots, db, chosen_eq_code
+            earliest,
+            total_dur,
+            slots,
+            db,
+            chosen_eq_code,
+            calendar_end_cache=_cal_end_cache,
         )
         end_dt = calculate_end_datetime(best_start, total_dur, db, chosen_eq_code)
 
