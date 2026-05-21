@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.domain.constants import PREDECESSOR_PROCESS
+from app.domain.constants import PREDECESSOR_PROCESS, INSULATION_PROCESSES
 from app.infrastructure.models.production_batch import ProductionBatch
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.speed_master import SpeedMaster
@@ -511,8 +511,10 @@ def _assign_group(
             ):
                 state.core_first_drum_by_main_sq[main_sq] = first_output_dt
 
-    # 저압절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준
-    if rep.process_name == "저압절연":
+    # 절연 첫 번째 드럼 출력 시각 — A100/A120 시스 그룹 시작 기준.
+    # S3 #9: "저압절연" hardcode 였던 게 고압케이블의 first-drum overlap 을
+    # 빠뜨렸음. INSULATION_PROCESSES set 으로 양쪽 모두 트리거.
+    if rep.process_name in INSULATION_PROCESSES:
         if (
             state.first_insul_output is None
             or first_output_dt < state.first_insul_output

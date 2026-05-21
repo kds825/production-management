@@ -22,6 +22,12 @@ PROCESS_ORDER: dict[str, int] = {
 }
 
 
+# 절연 공정 묶음 — first-drum overlap 트리거에서 사용 (S3 #9).
+# 이전엔 "저압절연" hardcode 라 고압케이블의 first-drum overlap 이 누락돼
+# 후공정이 절연 전체 완료를 기다리는 회귀가 있었다.
+INSULATION_PROCESSES: frozenset[str] = frozenset({"저압절연", "고압절연"})
+
+
 # WIP 공정 스킵 매핑: process_stage → 간트 미배치 공정 목록
 # batch_grouping._WIP_COVERED_PROCESSES와 동일한 기준 — Phase 2에서 대부분 걸러지지만
 # 증분 업데이트 등으로 잔존 배치가 있을 경우의 안전망으로 유지한다.

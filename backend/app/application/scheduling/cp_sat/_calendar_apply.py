@@ -21,7 +21,11 @@ from datetime import date
 from typing import Any
 
 from app.application._shared.group_ops import _is_core_group, _is_sheath_group, _st_sq
-from app.domain.constants import PREDECESSOR_PROCESS, PROCESS_ORDER
+from app.domain.constants import (
+    INSULATION_PROCESSES,
+    PREDECESSOR_PROCESS,
+    PROCESS_ORDER,
+)
 from app.domain.sheath_cluster import build_sheath_clusters, cluster_sort_key
 
 
@@ -729,7 +733,8 @@ def apply_calendar_greedy(
             ):
                 core_first_drum_by_main_sq[msq] = first_output_dt
 
-        if rep.process_name == "저압절연":
+        # S3 #9: 절연 first-drum overlap — set 으로 양쪽 (저압/고압) 트리거.
+        if rep.process_name in INSULATION_PROCESSES:
             if first_insul_output is None or first_output_dt < first_insul_output:
                 first_insul_output = first_output_dt
 
