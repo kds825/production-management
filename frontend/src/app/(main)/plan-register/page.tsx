@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { WipUploadSection } from "@/features/plan-register/components/wip-upload/WipUploadSection";
 import { ErpUploadSection } from "@/features/plan-register/components/erp-upload/ErpUploadSection";
@@ -17,25 +17,28 @@ function getKstToday(): string {
 }
 
 export default function PlanRegisterPage() {
-  // baseDate 초기값: SSR 은 오늘(결정적), client 는 localStorage 의 사용자
-  // 선택값이 있으면 그것, 없으면 오늘.
-  // - useEffect 로 mount 시점에 today 로 무조건 덮어쓰는 패턴은 쓰지 않는다.
-  //   사용자가 4/1 등 명시적으로 고른 값을 다른 페이지를 거쳐 돌아왔을 때
-  //   reset 시켜 Stage2 자동배열이 today 로 돌아가는 회귀가 있었기 때문.
-  //   (사용자 보고: 2026-05-21, 4/1 선택했는데 스케줄이 today 부터 시작.)
-  // - lazy init 의 SSR↔client 차이는 input[value] 한 칸에 한정되므로
-  //   suppressHydrationWarning 으로 허용.
-  const [baseDate, setBaseDate] = useState<string>(() => {
-    if (typeof window === "undefined") return getKstToday();
-    const stored = window.localStorage.getItem("plan_base_date");
-    if (stored && stored.length === 8) {
-      return `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
-    }
-    return getKstToday();
-  });
+  // baseDate 초기값: 항상 오늘.
+  // - 이 페이지는 "새로운 생산계획 수립" 의 진입점이므로 mount 시점마다
+  //   today 로 리셋하는 것이 사용자 멘탈 모델과 일치한다.
+  // - localStorage 의 plan_base_date 는 cross-page 채널 (scheduling-review,
+  //   useScheduleData, useAutoSchedule 가 읽음) 이므로 mount 시점에 today
+  //   로 동기화해 이전 세션의 stale 값이 다른 페이지로 새지 않게 한다.
+  // - 사용자가 input 으로 변경하면 onChange 가 state + localStorage 둘 다
+  //   업데이트 → 같은 세션의 후속 flow (Stage1/Stage2/간트) 에 그 값이 흐른다.
+  const [baseDate, setBaseDate] = useState<string>(getKstToday);
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
   // incremental 모드 선택 시 WIP 섹션을 흐리게 처리하기 위해 모드를 상위에서 관리
   const [erpUploadMode, setErpUploadMode] = useState<UploadMode>("full");
+
+  // Mount 시점에 localStorage 를 today 로 동기화.
+  // 이전 세션에서 4/1 등을 저장한 채 남아 있을 수 있는데, 새 plan-register
+  // 진입은 새 계획 수립 의미이므로 stale 값이 cross-page 채널을 통해 다른
+  // 페이지로 흘러가지 않도록 명시적으로 덮어쓴다.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("plan_base_date", getKstToday().replace(/-/g, ""));
+    }
+  }, []);
 
   return (
     <div
@@ -78,9 +81,6 @@ export default function PlanRegisterPage() {
           <input
             type="date"
             value={baseDate}
-            // SSR(오늘) ↔ client(localStorage 의 사용자 선택값) 가 다를 수
-            // 있다 — 사용자 선택 복원이 의도된 동작이라 warning 만 숨긴다.
-            suppressHydrationWarning
             onChange={(e) => {
               setBaseDate(e.target.value);
               if (typeof window !== "undefined") {
