@@ -61,6 +61,15 @@ jobs:
         working-directory: backend
         run: python seed_db.py
 
+      - name: Augment SpeedMaster (ST-54BO* / TP / CA-* / SH-B100 보강)
+        # seed_db.py 의 _speed_master() 는 Supabase 의 수동 입력 행을 가정해 일부
+        # 설비 (ST-54BO1/2/3, ST-T6B0, TP-1/GD, CA-*) 의 행을 비워둠. fix_speed_master_option_b.py
+        # 가 멱등 (equipment_code, cross_section) UPSERT 로 누락 행을 보강. 미적용 시
+        # test_speed_master_coverage / test_pipeline_alignment / test_sheath_color_chain
+        # 등이 row missing 으로 FAIL.
+        working-directory: backend
+        run: python scripts/fix_speed_master_option_b.py
+
       - name: Run pytest
         # Exclude tests that assume Supabase-state-specific seed:
         #   - test_constraint_loader: 다 같은 (category,priority) 라 정렬 불변식 깨짐
