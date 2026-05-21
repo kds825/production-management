@@ -12,8 +12,9 @@
  *   2. 메타 summary — 가중치 분포에서 도출한 한 줄. "지배 여부" 즉시 판별.
  *   3. 배정 요약 — 설비/시간/솔버 상태.
  *   4. 활성 제약 — `constraint_id` prefix(`split("-")[0]`) 로 카테고리 grouping.
- *   5. 가중치 기여 — 절대값 대신 % 변환, weight=0 항목은 expandable 로 숨김.
- *   6. 수동 조정 내역 — manual_override 있을 때만.
+ *   5. 이동 대안 — 호환 설비별 충돌/지연. /api/decisions/{id}/alternatives.
+ *   6. 가중치 기여 — 절대값 대신 % 변환, weight=0 숨김 + counterfactual.
+ *   7. 수동 조정 내역 — manual_override 있을 때만.
  *
  * LLM 자연어 요약은 의도적으로 제거됨 — 메타 summary 가 결정적으로 같은 정보를
  * 제공하므로 중복이며, 새 트레이스 시 LLM 호출 자체가 불필요한 비용/지연.
@@ -30,6 +31,7 @@ import {
   type DecisionContribution,
   type DecisionBindingHardConstraint,
 } from "../hooks/useDecisionCard";
+import { useAlternatives, type Alternative } from "../hooks/useAlternatives";
 import type { ScheduleTask } from "../types";
 import {
   categoryPrefix,
@@ -128,6 +130,91 @@ function priorityBadge(priority: string | undefined): string | null {
   return priority;
 }
 
+/** ISO datetime → MM/DD HH:MM. invalid 면 "-". */
+function formatEarliest(iso: string | null): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${m}/${day} ${hh}:${mm}`;
+}
+
+/** 지연일 표시: 0 → "당일", N → "+N일", null → "-". */
+function formatDelay(days: number | null): string {
+  if (days === null) return "-";
+  if (days === 0) return "당일";
+  return `+${days}일`;
+}
+
+/**
+ * Alternatives 테이블 — DecisionConstraintsModal 의 이동 대안 섹션 본문.
+ *
+ * 별도 컴포넌트로 뽑은 이유: 메인 컴포넌트가 이미 700 lines 넘어가 가독성
+ * 회복을 위해 분리. props 1개라 prop drilling 부담 없음. server-rendered
+ * 가 아니라 부모 컴포넌트가 "use client" 이므로 본 helper 도 client.
+ */
+function AlternativesTable({ items }: { items: Alternative[] }) {
+  return (
+    <div className="overflow-hidden rounded border border-gray-200">
+      <table className="w-full text-xs">
+        <thead className="bg-gray-50 text-gray-500">
+          <tr>
+            <th className="text-left font-medium px-3 py-1.5">설비</th>
+            <th className="text-right font-medium px-2 py-1.5">충돌</th>
+            <th className="text-right font-medium px-2 py-1.5">가용 시점</th>
+            <th className="text-right font-medium px-3 py-1.5">지연</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map((a) => {
+            const isDelayed = a.delay_days !== null && a.delay_days > 0;
+            return (
+              <tr
+                key={a.equipment_code}
+                className={a.is_current ? "bg-blue-50/40" : ""}
+              >
+                <td className="px-3 py-1.5">
+                  <span className="font-medium text-gray-800">
+                    {a.equipment_name}
+                  </span>
+                  {a.is_current && (
+                    <span className="ml-1.5 text-tiny font-medium px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                      현재
+                    </span>
+                  )}
+                  <div className="text-tiny text-gray-400 font-mono">
+                    {a.equipment_code}
+                  </div>
+                </td>
+                <td
+                  className={`px-2 py-1.5 text-right font-mono tabular-nums ${
+                    a.conflict_count > 0 ? "text-orange-600" : "text-gray-500"
+                  }`}
+                >
+                  {a.conflict_count}
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">
+                  {formatEarliest(a.earliest_available)}
+                </td>
+                <td
+                  className={`px-3 py-1.5 text-right font-mono tabular-nums ${
+                    isDelayed ? "text-red-600" : "text-gray-500"
+                  }`}
+                >
+                  {formatDelay(a.delay_days)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /**
  * 가중치 분포에서 한 줄 메타 요약을 도출.
  *  - top 1 ≥ 80% : 단일 제약 지배 → 이동 어려움
@@ -177,6 +264,7 @@ function computeMetaSummary(
 export function DecisionConstraintsModal() {
   const batchId = useScheduleStore((s) => s.decisionDetailModal.batchId);
   const closeModal = useScheduleStore((s) => s.closeDecisionDetailModal);
+  const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   // 수주 컨텍스트 source — ScheduleTask 가 store 에 있으면 표시, 없으면 섹션 생략.
   // 같은 batch_id 에 여러 task (다공정) 가 있을 수 있으므로 첫 매치 사용.
   const matchingTask = useScheduleStore((s) =>
@@ -186,9 +274,22 @@ export function DecisionConstraintsModal() {
   );
 
   // batchId 가 number 라 string 변환 후 훅 전달 (useDecisionCard 시그니처 일치).
-  const { data, status, error, refetch } = useDecisionCard(
-    batchId === null ? null : String(batchId),
-  );
+  const decisionBatchId = batchId === null ? null : String(batchId);
+  const { data, status, error, refetch } = useDecisionCard(decisionBatchId);
+  // Alternatives 는 별도 endpoint — modal-open 시점에 lazy fetch.
+  const {
+    data: altData,
+    status: altStatus,
+    refetch: altRefetch,
+  } = useAlternatives(decisionBatchId);
+
+  // 수정하기: ScheduleTask 가 store 에 있을 때만 활성. taskFormModal 은 모달
+  // 라이프사이클 충돌 회피를 위해 본 모달을 먼저 닫은 뒤 연다.
+  const handleEdit = () => {
+    if (!matchingTask) return;
+    closeModal();
+    openTaskFormModal({ mode: "edit", taskId: matchingTask.id });
+  };
 
   if (batchId === null) return null;
 
@@ -414,9 +515,54 @@ export function DecisionConstraintsModal() {
                 )}
               </section>
 
-              {/* 5) 가중치 기여 — % 변환 표시 + weight=0 항목 expandable 숨김.
+              {/* 5) 이동 대안 — 호환 설비별 충돌 카운트 + 가용 시점 + 지연.
+                  Backend on-the-fly 시뮬레이션 (solver 재실행 X). */}
+              <section>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                  이동 대안
+                  {altStatus === "ok" && altData && (
+                    <span className="ml-1 font-normal text-gray-400">
+                      ({altData.alternatives.length}개)
+                    </span>
+                  )}
+                </h3>
+                {altStatus === "loading" && (
+                  <div className="h-12 rounded bg-gray-100 animate-pulse" />
+                )}
+                {altStatus === "no-trace" && (
+                  <p className="text-sm text-gray-400">
+                    배치를 찾을 수 없어 대안 계산 불가
+                  </p>
+                )}
+                {(altStatus === "timeout" || altStatus === "error") && (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-red-600">
+                      대안 조회 실패 — 다시 시도해 주세요
+                    </p>
+                    <button
+                      type="button"
+                      onClick={altRefetch}
+                      className="text-xs font-medium px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50"
+                    >
+                      재시도
+                    </button>
+                  </div>
+                )}
+                {altStatus === "ok" &&
+                  altData &&
+                  (altData.alternatives.length === 0 ? (
+                    <p className="text-sm text-gray-400">
+                      이 공정에 호환 가능한 다른 설비가 없습니다
+                    </p>
+                  ) : (
+                    <AlternativesTable items={altData.alternatives} />
+                  ))}
+              </section>
+
+              {/* 6) 가중치 기여 — % 변환 표시 + weight=0 항목 expandable 숨김.
                   raw 절대값 (111992) 만 봐서는 비중을 모르므로 sum 대비 % 가 1차,
-                  raw 는 보조. */}
+                  raw 는 보조. delta_if_removed (counterfactual) 가 있는 항목은
+                  hover tooltip 으로 "이 제약을 빼면 objective +N 감소" 노출. */}
               <section>
                 <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">
                   가중치 기여 ({data.contributions.length}개)
@@ -456,10 +602,25 @@ export function DecisionConstraintsModal() {
                                 ? (Math.abs(c.weight_applied) / total) * 100
                                 : 0;
                             const widthPct = Math.max(pct, 4);
+                            const desc = constraintDescription(c.constraint_id);
+                            // counterfactual: "이 제약이 없으면 objective +N 감소"
+                            const delta = c.delta_if_removed;
+                            const counterfactual =
+                              delta !== null && delta !== 0
+                                ? `이 제약을 빼면 objective ${delta > 0 ? "+" : ""}${formatWeight(delta)}`
+                                : null;
+                            const tipParts = [
+                              c.korean_name,
+                              desc,
+                              counterfactual,
+                            ]
+                              .filter(Boolean)
+                              .join(" — ");
                             return (
                               <li
                                 key={c.constraint_id}
                                 className="flex items-center gap-2 text-xs"
+                                title={tipParts}
                               >
                                 <span className="w-32 shrink-0 text-gray-600 truncate">
                                   {c.korean_name}
@@ -480,6 +641,14 @@ export function DecisionConstraintsModal() {
                                 <span className="w-16 shrink-0 text-right font-mono text-gray-400 tabular-nums">
                                   {formatWeight(c.weight_applied)}
                                 </span>
+                                {counterfactual && (
+                                  <span
+                                    className="text-tiny font-medium px-1 py-0.5 rounded bg-blue-50 text-blue-700"
+                                    aria-hidden="true"
+                                  >
+                                    Δ
+                                  </span>
+                                )}
                               </li>
                             );
                           })}
@@ -512,7 +681,7 @@ export function DecisionConstraintsModal() {
                 )}
               </section>
 
-              {/* 6) 수동 조정 내역 (manual_override 있을 때만) */}
+              {/* 7) 수동 조정 내역 (manual_override 있을 때만) */}
               {data.is_manually_adjusted && data.manual_override && (
                 <section className="border-t pt-4">
                   <h3 className="text-xs font-semibold text-orange-600 uppercase mb-2">
@@ -543,8 +712,17 @@ export function DecisionConstraintsModal() {
           )}
         </div>
 
-        {/* 푸터 */}
+        {/* 푸터 — 수정하기 는 matchingTask 가 store 에 있을 때만 활성 */}
         <div className="flex justify-end gap-2 border-t px-6 py-3 shrink-0 bg-gray-50">
+          {matchingTask && (
+            <button
+              type="button"
+              onClick={handleEdit}
+              className="text-xs font-medium px-4 py-1.5 rounded border border-gray-300 bg-white hover:bg-gray-50"
+            >
+              수정하기
+            </button>
+          )}
           <button
             type="button"
             onClick={closeModal}
