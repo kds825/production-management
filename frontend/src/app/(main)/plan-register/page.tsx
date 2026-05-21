@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { WipUploadSection } from "@/features/plan-register/components/wip-upload/WipUploadSection";
 import { ErpUploadSection } from "@/features/plan-register/components/erp-upload/ErpUploadSection";
@@ -17,21 +17,25 @@ function getKstToday(): string {
 }
 
 export default function PlanRegisterPage() {
-  // baseDate 초기값은 항상 오늘. 과거 세션의 localStorage 값이 stale 하게
-  // 남아 페이지가 옛 날짜로 진입하는 회귀를 막기 위해 stored 값은 무시한다.
-  // 사용자가 의도적으로 다른 날짜를 고른 경우 onChange 핸들러가 localStorage
-  // 를 갱신하므로 Stage2 등 다른 페이지가 같은 값을 읽는다.
-  const [baseDate, setBaseDate] = useState<string>(getKstToday);
+  // baseDate 초기값: SSR 은 오늘(결정적), client 는 localStorage 의 사용자
+  // 선택값이 있으면 그것, 없으면 오늘.
+  // - useEffect 로 mount 시점에 today 로 무조건 덮어쓰는 패턴은 쓰지 않는다.
+  //   사용자가 4/1 등 명시적으로 고른 값을 다른 페이지를 거쳐 돌아왔을 때
+  //   reset 시켜 Stage2 자동배열이 today 로 돌아가는 회귀가 있었기 때문.
+  //   (사용자 보고: 2026-05-21, 4/1 선택했는데 스케줄이 today 부터 시작.)
+  // - lazy init 의 SSR↔client 차이는 input[value] 한 칸에 한정되므로
+  //   suppressHydrationWarning 으로 허용.
+  const [baseDate, setBaseDate] = useState<string>(() => {
+    if (typeof window === "undefined") return getKstToday();
+    const stored = window.localStorage.getItem("plan_base_date");
+    if (stored && stored.length === 8) {
+      return `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
+    }
+    return getKstToday();
+  });
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
   // incremental 모드 선택 시 WIP 섹션을 흐리게 처리하기 위해 모드를 상위에서 관리
   const [erpUploadMode, setErpUploadMode] = useState<UploadMode>("full");
-
-  // 진입 시점에 localStorage 를 오늘 날짜로 정규화한다 (다른 페이지/탭이
-  // stale 한 값을 읽지 않도록). setState 호출은 없으므로 cascading render
-  // 가 발생하지 않는다.
-  useEffect(() => {
-    localStorage.setItem("plan_base_date", getKstToday().replace(/-/g, ""));
-  }, []);
 
   return (
     <div
@@ -74,6 +78,9 @@ export default function PlanRegisterPage() {
           <input
             type="date"
             value={baseDate}
+            // SSR(오늘) ↔ client(localStorage 의 사용자 선택값) 가 다를 수
+            // 있다 — 사용자 선택 복원이 의도된 동작이라 warning 만 숨긴다.
+            suppressHydrationWarning
             onChange={(e) => {
               setBaseDate(e.target.value);
               if (typeof window !== "undefined") {

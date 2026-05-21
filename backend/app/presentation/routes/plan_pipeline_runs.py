@@ -36,9 +36,22 @@ def delete_run(run_label: str, db: Session = Depends(get_db)):
     #  (a) 삭제 대상 run 바깥에서 들어오는 FK 는 모두 NULL 로 끊어두고,
     #  (b) 자식 → 부모 순서로 삭제한다.
 
-    # (a-1) 이 run 의 production_batch → wip_inventory 참조 해제 (동일 run 내부 순환)
+    # (a-1) 이 run 의 wip_inventory 를 참조하는 **모든** production_batch
+    #       (run 무관) 의 wip_matched_id 를 NULL.
+    # 동일 run 내부 순환뿐 아니라 stage1/update 로 파생된 child run 의 보존 배치
+    # (parent_run_label==이 run) 도 parent 의 frozen WIP 를 cross-run 으로 참조한다.
+    # run_label 필터만 걸면 child 의 wip_matched_id 가 남아 있어 DELETE FROM
+    # wip_inventory 가 ForeignKeyViolation 으로 막힌다. (회귀: 2026-05-21.)
     db.execute(
-        text("UPDATE production_batch SET wip_matched_id = NULL WHERE run_label = :rl"),
+        text(
+            """
+            UPDATE production_batch
+            SET wip_matched_id = NULL
+            WHERE wip_matched_id IN (
+                SELECT wip_id FROM wip_inventory WHERE run_label = :rl
+            )
+            """
+        ),
         {"rl": run_label},
     )
 

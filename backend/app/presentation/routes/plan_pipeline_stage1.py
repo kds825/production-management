@@ -365,7 +365,48 @@ async def run_stage1_update(
 
                 wip_content = await wip_file.read()
                 if wip_content:
-                    # new_run_label 스코프의 기존 WIP 삭제 (frozen 은 parent 라벨에 남아 있음)
+                    # new_run_label 스코프의 기존 WIP 삭제 전에 FK cycle 을 끊는다.
+                    # wip_inventory 는 production_batch.wip_matched_id 와
+                    # sales_order.wip_id 에서 NO ACTION 정책으로 참조되므로,
+                    # 비동결 배치/주문의 FK 를 먼저 NULL 화해야 ForeignKeyViolation
+                    # 없이 DELETE 가 가능하다. (_purge_run_data 와 동일 패턴.)
+                    pb_null_q = db.query(ProductionBatch).filter(
+                        ProductionBatch.run_label == new_run_label,
+                    )
+                    if frozen_batch_ids:
+                        pb_null_q = pb_null_q.filter(
+                            ~ProductionBatch.batch_id.in_(frozen_batch_ids),
+                        )
+                    pb_null_q.update(
+                        {"wip_matched_id": None}, synchronize_session=False
+                    )
+
+                    so_null_q = db.query(SalesOrder).filter(
+                        SalesOrder.run_label == new_run_label,
+                    )
+                    if frozen_order_keys:
+                        frozen_cond_so = or_(
+                            *[
+                                and_(
+                                    SalesOrder.order_id == oid,
+                                    SalesOrder.order_line == oline,
+                                )
+                                for oid, oline in frozen_order_keys
+                            ]
+                        )
+                        so_null_q = so_null_q.filter(~frozen_cond_so)
+                    so_null_q.update(
+                        {
+                            "wip_id": None,
+                            "use_wip": False,
+                            "wip_type": None,
+                            "actual_length_m": None,
+                        },
+                        synchronize_session=False,
+                    )
+                    db.flush()
+
+                    # 이제 안전하게 DELETE — frozen WIP 는 parent 라벨에 남아 있어 영향 없음
                     db.query(WipInventory).filter(
                         WipInventory.run_label == new_run_label,
                     ).delete(synchronize_session=False)
