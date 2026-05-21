@@ -138,6 +138,10 @@ def _group_and_sort(
         proc_order = PROCESS_ORDER.get(gb[0].process_name, 50) if gb else 50
         earliest_due = _group_earliest_due(gb)
         cust_prio = gb[0].customer_priority or 99 if gb else 99
+        # S1 #4: batch_group 이름이 "..._{sq}SQ" 형식이라 stable sort 의 input
+        # 순서가 문자열 ('120SQ' < '300SQ' < '95SQ') 로 결정되어 SQ 역전 발생.
+        # 같은 proc_order/earliest_due 내에서 큰 SQ 우선 정렬을 명시.
+        sq = int(gb[0].sq_mm2 or 0) if gb else 0
 
         # 시스 체인: 묶음 단위 정렬 — CP-SAT _solved_order_key 와 동일 규칙.
         # cluster_rank 는 build_sheath_clusters 로 구성된 lookup 으로,
@@ -152,6 +156,7 @@ def _group_and_sort(
                 rank[0],  # 1차: 묶음 순위 (납기 임박 묶음 먼저)
                 rank[1],  # 2차: 묶음 내 순서
                 earliest_due,  # 3차: 실제 EDD (tiebreak)
+                -sq,  # S1 #4: 같은 EDD 내에서 큰 SQ 먼저 (stable sort tiebreak)
                 cust_prio,
             )
 
@@ -164,6 +169,7 @@ def _group_and_sort(
             sq_to_wire_d.get(_st_sq(gk), 0.0) if gk.startswith("ST-") else 0.0,
             proc_order,
             earliest_due,
+            -sq,  # S1 #4: 같은 EDD 내에서 큰 SQ 먼저 (stable sort tiebreak)
             # 시스 정렬키와 길이를 맞추기 위한 padding
             0,
             date.max,
