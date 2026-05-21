@@ -52,12 +52,14 @@ jobs:
         run: alembic upgrade head
 
       - name: Seed masterdata (equipment / speed / constraint / drum_lot)
-        # speed_master / constraint_config 미시드 시 test_speedmaster_setup_patch
-        # 와 test_constraints_params 가 "seed required" / StopIteration 으로
-        # FAIL. parity workflow 와 동일 스크립트 (01_nominal.json 기반)
-        # 재사용 — 단일 source of truth.
+        # 정식 seed 스크립트 호출 — customer_master / process_routing /
+        # equipment_master / operation_calendar / drum_lot_master /
+        # decision_criteria / speed_master / constraint_config + W-* weight 행.
+        # 멱등성 체크 (customer_master count > 0 이면 skip). 2026-05-21 parity
+        # harness 폐기 후 fixture 01_nominal.json 의존 (구 seed_masterdata_for_ci.py)
+        # 제거.
         working-directory: backend
-        run: python scripts/seed_masterdata_for_ci.py
+        run: python seed_db.py
 
       - name: Run pytest
         # Exclude tests that assume Supabase-state-specific seed:
