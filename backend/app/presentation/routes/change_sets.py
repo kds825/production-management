@@ -31,7 +31,7 @@ Hardcoded reason allow-list:
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -66,6 +66,25 @@ class ReasonPatch(BaseModel):
     """
 
     reason: str | None
+
+
+class BulkReasonUpdate(BaseModel):
+    """Single row in a bulk-reason payload."""
+
+    change_set_id: str
+    reason: str | None
+
+
+class BulkReasonPatch(BaseModel):
+    """Body for PATCH /api/change-sets/bulk-reason.
+
+    Operators batch-attribute reasons via the missing-reasons modal. Each
+    row succeeds or fails independently; the route returns a partial
+    success envelope so the UI can surface per-row errors instead of
+    aborting the whole request.
+    """
+
+    updates: list[BulkReasonUpdate]
 
 
 def _coerce_task_pk(task_id_str: str) -> Any:
@@ -115,15 +134,72 @@ def _run_labels_for_tasks(db: Session, task_pks: set[Any]) -> set[str]:
 
 
 def _today_kst_iso_naive() -> datetime:
-    """Midnight (KST) of today as a naive datetime.
+    """Midnight (KST) of today, expressed as a naive UTC datetime.
 
     Why naive: ScheduleChangeSet.created_at is ``DateTime`` (no tz) and
     server-side default uses ``datetime.utcnow``. To keep the predicate
-    consistent we compare with naive UTC midnight of "today in KST".
-    KST = UTC+9 → today's KST midnight is yesterday 15:00 UTC.
+    consistent we return the UTC instant of "today 00:00 KST".
+    KST = UTC+9 → today's KST midnight = yesterday 15:00 UTC.
+
+    Note: the previous implementation returned ``datetime.now(UTC).date()``
+    midnight, which is UTC midnight (= 09:00 KST). That made the predicate
+    silently skip the 00:00–09:00 KST window each morning and include the
+    prior day's 15:00–24:00 KST window. Fixed by computing the KST date
+    explicitly and converting back to a naive UTC datetime.
     """
-    today_utc = datetime.now(timezone.utc).date()
-    return datetime.combine(today_utc, time.min)
+    now_utc = datetime.now(timezone.utc)
+    kst_today = (now_utc + timedelta(hours=9)).date()
+    kst_midnight_utc = datetime.combine(kst_today, time.min) - timedelta(hours=9)
+    return kst_midnight_utc
+
+
+def _apply_reason_to_change_set(
+    db: Session, cs: ScheduleChangeSet, reason: str | None
+) -> int:
+    """Set ``cs.override_reason`` and propagate to ``solver_decision``.
+
+    Returns the number of solver_decision rows touched. The caller is
+    responsible for (1) allow-list validation on ``reason``, (2) 404
+    handling if ``cs`` is missing, and (3) ``db.commit()``. Splitting
+    these concerns lets the bulk endpoint apply many rows under a single
+    transaction without duplicating logic.
+
+    Propagation rules:
+      - reason is non-null → every solver_decision whose run shares a
+        run_label with this change_set's affected tasks gets its
+        ``manual_override_change_set_id`` pointed at this change_set so
+        the Decision Card surfaces "manually adjusted".
+      - reason is None (clear path) → drop any existing back-links that
+        point AT THIS change_set; the Decision Card stops flagging the run.
+    """
+    cs.override_reason = reason
+
+    if reason is not None:
+        task_pks = _affected_task_ids(cs)
+        labels = _run_labels_for_tasks(db, task_pks)
+        if not labels:
+            return 0
+        run_ids = {
+            rid
+            for (rid,) in db.query(SolverRun.run_id)
+            .filter(SolverRun.run_label.in_(labels))
+            .all()
+        }
+        if not run_ids:
+            return 0
+        rows = db.query(SolverDecision).filter(SolverDecision.run_id.in_(run_ids)).all()
+        for d in rows:
+            d.manual_override_change_set_id = cs.change_set_id
+        return len(rows)
+
+    rows = (
+        db.query(SolverDecision)
+        .filter(SolverDecision.manual_override_change_set_id == cs.change_set_id)
+        .all()
+    )
+    for d in rows:
+        d.manual_override_change_set_id = None
+    return len(rows)
 
 
 @router.patch("/{change_set_id}/reason")
@@ -158,44 +234,7 @@ def patch_reason(
             detail=f"change_set_id '{change_set_id}' not found",
         )
 
-    cs.override_reason = body.reason
-
-    # Find every solver_decision whose run_label intersects with the affected
-    # tasks' run_labels. We only set the FK when the reason is non-null —
-    # clearing the reason also clears the override link so the Decision Card
-    # stops showing "manually adjusted".
-    decisions_updated = 0
-    if body.reason is not None:
-        task_pks = _affected_task_ids(cs)
-        labels = _run_labels_for_tasks(db, task_pks)
-        if labels:
-            run_ids = {
-                rid
-                for (rid,) in db.query(SolverRun.run_id)
-                .filter(SolverRun.run_label.in_(labels))
-                .all()
-            }
-            if run_ids:
-                rows = (
-                    db.query(SolverDecision)
-                    .filter(SolverDecision.run_id.in_(run_ids))
-                    .all()
-                )
-                for d in rows:
-                    d.manual_override_change_set_id = change_set_id
-                decisions_updated = len(rows)
-    else:
-        # Clear path: drop any existing back-links that point at THIS
-        # change_set so the Decision Card no longer flags the run.
-        rows = (
-            db.query(SolverDecision)
-            .filter(SolverDecision.manual_override_change_set_id == change_set_id)
-            .all()
-        )
-        for d in rows:
-            d.manual_override_change_set_id = None
-        decisions_updated = len(rows)
-
+    decisions_updated = _apply_reason_to_change_set(db, cs, body.reason)
     db.commit()
 
     return {
@@ -220,6 +259,13 @@ def missing_reasons(
     ``since`` parsed by FastAPI as ``date`` (YYYY-MM-DD). We convert to a
     naive datetime at midnight to match the DB column type (DateTime,
     no tz). Default is today (KST) midnight.
+
+    Fixture guard: badge must only count *real* operator drag-drops. A
+    legitimate bulk-update always carries ``preview_request_id`` (the
+    cascade-preview correlation id), so rows without one are either test
+    fixtures or hand-inserted data and are excluded. ``applied_by`` is
+    also checked to keep the obvious ``"test-user"`` seed out, since some
+    tests bypass the endpoint entirely.
     """
     if since is None:
         threshold = _today_kst_iso_naive()
@@ -231,8 +277,162 @@ def missing_reasons(
         .filter(
             ScheduleChangeSet.override_reason.is_(None),
             ScheduleChangeSet.created_at >= threshold,
+            ScheduleChangeSet.preview_request_id.isnot(None),
+            ScheduleChangeSet.applied_by.is_distinct_from("test-user"),
         )
         .count()
     )
 
     return {"count": count, "since": threshold.isoformat()}
+
+
+def _missing_reasons_filter(threshold: datetime) -> Any:
+    """Shared WHERE for the count and list endpoints.
+
+    Centralised so the badge count and the modal's list view stay in
+    lockstep — a drift between the two would let operators see rows they
+    can't count, or worse, fix rows that vanish from the count after
+    refresh.
+    """
+    return (
+        ScheduleChangeSet.override_reason.is_(None),
+        ScheduleChangeSet.created_at >= threshold,
+        ScheduleChangeSet.preview_request_id.isnot(None),
+        ScheduleChangeSet.applied_by.is_distinct_from("test-user"),
+    )
+
+
+@router.get("/missing-reasons/list")
+def missing_reasons_list(
+    since: date | None = Query(
+        default=None,
+        description="ISO date (YYYY-MM-DD). Defaults to today (KST).",
+    ),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """List (not just count) un-attributed change sets, with task meta.
+
+    Feeds the missing-reasons modal — the operator clicks the badge,
+    sees one row per change_set with affected task info, and bulk-applies
+    or per-row-overrides a reason.
+
+    Returned task ``batch_group`` / ``equipment_code`` come from the
+    *current* ScheduleTask row (not the snapshot) — operators identify a
+    Gantt block by its batch_group, and the snapshot only holds raw
+    start/end. We tolerate missing tasks (task may have been deleted
+    after the change_set was recorded) by returning nulls for the meta.
+    """
+    if since is None:
+        threshold = _today_kst_iso_naive()
+    else:
+        threshold = datetime.combine(since, time.min)
+
+    rows = (
+        db.query(ScheduleChangeSet)
+        .filter(*_missing_reasons_filter(threshold))
+        .order_by(ScheduleChangeSet.created_at.asc())
+        .all()
+    )
+
+    # Single batched lookup for every task referenced across all rows —
+    # the modal can render dozens of change_sets, and a per-row query
+    # would hit the DB N+1 times.
+    all_task_pks: set[Any] = set()
+    for r in rows:
+        all_task_pks |= _affected_task_ids(r)
+    task_meta: dict[Any, dict[str, Any]] = {}
+    if all_task_pks:
+        for tid, bg, eq in (
+            db.query(
+                ScheduleTask.task_id,
+                ScheduleTask.batch_group,
+                ScheduleTask.equipment_code,
+            )
+            .filter(ScheduleTask.task_id.in_(all_task_pks))
+            .all()
+        ):
+            task_meta[tid] = {"batch_group": bg, "equipment_code": eq}
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        before = r.snapshot_before or {}
+        after = r.snapshot_after or {}
+        task_keys = sorted(set(before.keys()) | set(after.keys()))
+        tasks: list[dict[str, Any]] = []
+        for k in task_keys:
+            pk = _coerce_task_pk(k) if isinstance(k, str) else k
+            meta = task_meta.get(pk, {})
+            tasks.append(
+                {
+                    "task_id": k,
+                    "batch_group": meta.get("batch_group"),
+                    "equipment_code": meta.get("equipment_code"),
+                    "before": before.get(k),
+                    "after": after.get(k),
+                }
+            )
+        items.append(
+            {
+                "change_set_id": r.change_set_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "tasks": tasks,
+            }
+        )
+
+    return {
+        "items": items,
+        "since": threshold.isoformat(),
+        "allowed_reasons": list(ALLOWED_REASONS),
+    }
+
+
+@router.patch("/bulk-reason")
+def patch_bulk_reason(
+    body: BulkReasonPatch,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Apply ``override_reason`` to many change_sets in one transaction.
+
+    Partial-success contract: each row is validated independently and a
+    failure (404 / invalid reason) is reported in ``errors`` without
+    aborting the others. All successful rows commit together so the
+    modal either sees them all reflected or none (operator can retry
+    failures from the errors list).
+
+    ``errors[]`` item shape: ``{change_set_id, error_code, detail}``.
+    ``error_code`` is one of ``"invalid_reason" | "not_found"``.
+    """
+    updated: list[str] = []
+    errors: list[dict[str, Any]] = []
+    total_decisions = 0
+
+    for u in body.updates:
+        if u.reason is not None and u.reason not in ALLOWED_REASONS:
+            errors.append(
+                {
+                    "change_set_id": u.change_set_id,
+                    "error_code": "invalid_reason",
+                    "detail": f"reason '{u.reason}' not in allow-list",
+                }
+            )
+            continue
+        cs = db.get(ScheduleChangeSet, u.change_set_id)
+        if cs is None:
+            errors.append(
+                {
+                    "change_set_id": u.change_set_id,
+                    "error_code": "not_found",
+                    "detail": f"change_set_id '{u.change_set_id}' not found",
+                }
+            )
+            continue
+        total_decisions += _apply_reason_to_change_set(db, cs, u.reason)
+        updated.append(u.change_set_id)
+
+    db.commit()
+
+    return {
+        "updated_change_set_ids": updated,
+        "decisions_updated": total_decisions,
+        "errors": errors,
+    }

@@ -81,12 +81,19 @@ def _seed_change_set(
     snapshot_after: dict | None = None,
     override_reason: str | None = None,
     created_at: datetime | None = None,
+    preview_request_id: str | None = None,
 ) -> ScheduleChangeSet:
+    # preview_request_id 기본값을 unique uuid 로 채우는 이유:
+    #   missing-reasons 카운트 쿼리가 fixture 누수 차단용으로
+    #   ``preview_request_id IS NOT NULL`` 가드를 갖는다. 진짜 bulk-update
+    #   endpoint 는 항상 이 값을 채우므로 fixture 가 그 경로를 정확히
+    #   시뮬레이션하도록 default 를 NULL → uuid 로 변경.
     cs = ScheduleChangeSet(
         change_set_id=str(uuid.uuid4()),
         snapshot_before=snapshot_before or {},
         snapshot_after=snapshot_after or {},
         override_reason=override_reason,
+        preview_request_id=preview_request_id or str(uuid.uuid4()),
     )
     if created_at is not None:
         cs.created_at = created_at
@@ -300,3 +307,184 @@ def test_missing_reasons_counts_unattributed_today(
     # +1: only the fresh-and-null row added one.
     assert after["count"] == baseline + 1
     assert "since" in after
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Test 6: GET /missing-reasons/list — modal feed shape + task meta
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_missing_reasons_list_returns_rows_with_task_meta(
+    db: Session, client: TestClient
+) -> None:
+    """The list endpoint joins ScheduleTask to enrich each row with
+    ``batch_group`` + ``equipment_code`` so the modal can show the
+    operator a recognisable label per change_set."""
+    _, _, task = _seed_batch_run_task(db)
+    task.batch_group = "bg-abc-001"
+    db.flush()
+
+    cs = _seed_change_set(
+        db,
+        snapshot_before={
+            str(task.task_id): {
+                "start": task.start_datetime.isoformat(),
+                "end": task.end_datetime.isoformat(),
+                "equipment_code": task.equipment_code,
+            }
+        },
+        snapshot_after={
+            str(task.task_id): {
+                "start": (task.start_datetime + timedelta(hours=1)).isoformat(),
+                "end": (task.end_datetime + timedelta(hours=1)).isoformat(),
+                "equipment_code": task.equipment_code,
+            }
+        },
+    )
+
+    resp = client.get("/api/change-sets/missing-reasons/list")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "items" in body and "since" in body and "allowed_reasons" in body
+    assert body["allowed_reasons"] == [
+        "납기 변경",
+        "현장 긴급",
+        "설비 고장",
+        "자재 부족",
+    ]
+
+    seeded = next(
+        (it for it in body["items"] if it["change_set_id"] == cs.change_set_id),
+        None,
+    )
+    assert seeded is not None, "seeded change_set must appear in list"
+    assert len(seeded["tasks"]) == 1
+    t = seeded["tasks"][0]
+    assert t["task_id"] == str(task.task_id)
+    assert t["batch_group"] == "bg-abc-001"
+    assert t["equipment_code"] == "EX-B100"
+    assert t["before"]["start"] == task.start_datetime.isoformat()
+    assert t["after"]["start"] == (task.start_datetime + timedelta(hours=1)).isoformat()
+
+
+def test_missing_reasons_list_excludes_fixture_rows(
+    db: Session, client: TestClient
+) -> None:
+    """Same fixture guard as the count endpoint — rows without
+    ``preview_request_id`` or with ``applied_by='test-user'`` must not
+    appear, so the modal never offers operators rows that the count
+    refuses to acknowledge."""
+    baseline_ids = {
+        it["change_set_id"]
+        for it in client.get("/api/change-sets/missing-reasons/list").json()["items"]
+    }
+
+    # No preview_request_id → fixture-like → must be hidden.
+    leaky = ScheduleChangeSet(
+        change_set_id=str(uuid.uuid4()),
+        snapshot_before={},
+        snapshot_after={},
+        override_reason=None,
+        preview_request_id=None,
+    )
+    # applied_by=test-user → fixture seed → must be hidden.
+    seeded_user = ScheduleChangeSet(
+        change_set_id=str(uuid.uuid4()),
+        snapshot_before={},
+        snapshot_after={},
+        override_reason=None,
+        preview_request_id=str(uuid.uuid4()),
+        applied_by="test-user",
+    )
+    db.add_all([leaky, seeded_user])
+    db.flush()
+
+    after_ids = {
+        it["change_set_id"]
+        for it in client.get("/api/change-sets/missing-reasons/list").json()["items"]
+    }
+    assert leaky.change_set_id not in after_ids
+    assert seeded_user.change_set_id not in after_ids
+    assert after_ids == baseline_ids  # no new visible rows
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Test 7: PATCH /bulk-reason — multi-row happy path + per-row failures
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_bulk_reason_applies_to_multiple_change_sets(
+    db: Session, client: TestClient
+) -> None:
+    cs1 = _seed_change_set(db)
+    cs2 = _seed_change_set(db)
+
+    resp = client.patch(
+        "/api/change-sets/bulk-reason",
+        json={
+            "updates": [
+                {"change_set_id": cs1.change_set_id, "reason": "납기 변경"},
+                {"change_set_id": cs2.change_set_id, "reason": "현장 긴급"},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body["updated_change_set_ids"]) == {cs1.change_set_id, cs2.change_set_id}
+    assert body["errors"] == []
+
+    db.expire_all()
+    assert db.get(ScheduleChangeSet, cs1.change_set_id).override_reason == "납기 변경"
+    assert db.get(ScheduleChangeSet, cs2.change_set_id).override_reason == "현장 긴급"
+
+
+def test_bulk_reason_reports_invalid_reason_per_row(
+    db: Session, client: TestClient
+) -> None:
+    """An invalid reason on one row must not block valid rows — the
+    modal needs to know which rows landed and which need a retry."""
+    cs_ok = _seed_change_set(db)
+    cs_bad = _seed_change_set(db)
+
+    resp = client.patch(
+        "/api/change-sets/bulk-reason",
+        json={
+            "updates": [
+                {"change_set_id": cs_ok.change_set_id, "reason": "자재 부족"},
+                {"change_set_id": cs_bad.change_set_id, "reason": "기타"},  # disallowed
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["updated_change_set_ids"] == [cs_ok.change_set_id]
+    assert len(body["errors"]) == 1
+    err = body["errors"][0]
+    assert err["change_set_id"] == cs_bad.change_set_id
+    assert err["error_code"] == "invalid_reason"
+
+    db.expire_all()
+    # Valid row landed, invalid row untouched.
+    assert db.get(ScheduleChangeSet, cs_ok.change_set_id).override_reason == "자재 부족"
+    assert db.get(ScheduleChangeSet, cs_bad.change_set_id).override_reason is None
+
+
+def test_bulk_reason_reports_not_found_per_row(db: Session, client: TestClient) -> None:
+    cs_ok = _seed_change_set(db)
+    missing_id = "does-not-exist-" + uuid.uuid4().hex
+
+    resp = client.patch(
+        "/api/change-sets/bulk-reason",
+        json={
+            "updates": [
+                {"change_set_id": cs_ok.change_set_id, "reason": "설비 고장"},
+                {"change_set_id": missing_id, "reason": "납기 변경"},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["updated_change_set_ids"] == [cs_ok.change_set_id]
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["change_set_id"] == missing_id
+    assert body["errors"][0]["error_code"] == "not_found"

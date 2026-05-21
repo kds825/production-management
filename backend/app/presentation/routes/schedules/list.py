@@ -64,12 +64,19 @@ def list_tasks(
     - 명시적 값: 해당 run 의 task 만 반환
     - 미지정: 가장 최근에 생성된 run 을 자동 선택 (이중 표시 방지)
     """
-    # run_label 자동 해결: 미지정 시 최신 run (MAX(created_at) 기준) 선택
+    # run_label 자동 해결: 미지정 시 최신 run (MAX(created_at) 기준) 선택.
+    # `test-%` 접두어는 conftest 의 savepoint rollback 이 실패했을 때 leak 되는
+    # 테스트 데이터 (2026-05-21 조사: B100EXT 4/25 placeholder 가 1행만 떠서
+    # ERP 업로드 직후 stage2 전에 dummy 블록으로 그려짐). 명시 지정이 아닌
+    # 자동 선택에서는 항상 제외해 사용자 화면을 오염시키지 않는다.
     effective_run_label = run_label
     if not effective_run_label:
         latest_row = (
             db.query(ScheduleTaskModel.run_label)
-            .filter(ScheduleTaskModel.run_label.isnot(None))
+            .filter(
+                ScheduleTaskModel.run_label.isnot(None),
+                ~ScheduleTaskModel.run_label.like("test-%"),
+            )
             .order_by(ScheduleTaskModel.created_at.desc())
             .first()
         )
