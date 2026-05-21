@@ -49,6 +49,14 @@ def match_wip(
     }
     loss_limit = float(criteria.get("Loss 허용 한도", "8")) / 100
     shortage_tolerance = float(criteria.get("조장 부족 허용율", "5")) / 100
+    # S2: 30일+ 묵은 WIP 는 loss tolerance 를 +N%p 상향해 신규 수주에 더 잘 매칭.
+    # pool 단위 적용 — pool 내 최고 age 가 임계 초과 시 effective_loss_limit 상향.
+    aging_threshold_days = int(float(criteria.get("WIP 노화 임계일", "30")))
+    aging_loss_bonus = float(criteria.get("WIP 노화 loss 보너스", "7")) / 100
+
+    from datetime import datetime as _dt
+
+    today_date = _dt.utcnow().date()
 
     # 사용 가능한 WIP 로드 (total_length_m 큰 순 — 큰 재고를 먼저 소진)
     # Cross-run policy: run_label 로 filter 하지 않음 (by design).
@@ -110,16 +118,32 @@ def match_wip(
             # 연선재고: SQ만으로 풀링
             key = (wip_sq, stage, wip.voltage_class or "", "", "")
         if key not in wip_pools:
-            wip_pools[key] = {"wips": [], "pool_total": 0.0, "max_drum": 0.0}
+            wip_pools[key] = {
+                "wips": [],
+                "pool_total": 0.0,
+                "max_drum": 0.0,
+                "max_age_days": 0,
+            }
         wip_pools[key]["wips"].append(wip)
         wip_pools[key]["pool_total"] += wip_total
         wip_pools[key]["max_drum"] = max(wip_pools[key]["max_drum"], wip_drum)
+        # S2: pool 의 최고 age — created_at 없는 row 는 age 0 (신규 가정)
+        wip_age_days = (
+            (today_date - wip.created_at.date()).days if wip.created_at else 0
+        )
+        if wip_age_days > wip_pools[key]["max_age_days"]:
+            wip_pools[key]["max_age_days"] = wip_age_days
 
     for pool_key, pool in wip_pools.items():
         pool_sq, pool_stage, pool_volt = pool_key[0], pool_key[1], pool_key[2]
         pool_wips: list = pool["wips"]
         pool_total: float = pool["pool_total"]
         max_drum: float = pool["max_drum"]
+        pool_max_age_days: int = pool.get("max_age_days", 0)
+        # S2: aging 적용 — 임계 초과 pool 은 loss tolerance 상향
+        effective_loss_limit = loss_limit
+        if pool_max_age_days > aging_threshold_days:
+            effective_loss_limit = loss_limit + aging_loss_bonus
 
         # ── 후보 수주 필터링 (풀 단위) ──────────────────────────
         candidates: list[SalesOrder] = []
@@ -155,7 +179,7 @@ def match_wip(
 
             order_drum_length = float(order.drum_length_m or order.ordered_qty_m or 0)
             if order_drum_length > 0:
-                if max_drum < order_drum_length * (1 - loss_limit):
+                if max_drum < order_drum_length * (1 - effective_loss_limit):
                     continue
 
             order_qty = float(order.ordered_qty_m or 0)
@@ -236,6 +260,10 @@ def match_wip(
                 applied_rule="2-1",
                 params_used={
                     "loss_limit_pct": loss_limit * 100,
+                    "effective_loss_limit_pct": effective_loss_limit * 100,
+                    "pool_max_age_days": pool_max_age_days,
+                    "aging_threshold_days": aging_threshold_days,
+                    "aging_loss_bonus_pct": aging_loss_bonus * 100,
                     "shortage_tolerance_pct": shortage_tolerance * 100,
                     "pool_sq": pool_sq,
                     "pool_stage": pool_stage,

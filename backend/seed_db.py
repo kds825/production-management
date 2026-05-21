@@ -813,6 +813,19 @@ def _decision_criteria():
             criteria_unit="-",
             description="잔량 ~200m → 흑색 시스로 소진",
         ),
+        # S2 #5 — WIP aging 정책: 30일+ 묵은 재공의 loss tolerance 상향
+        DecisionCriteria(
+            criteria_name="WIP 노화 임계일",
+            criteria_value="30",
+            criteria_unit="일",
+            description="이 일수 이상 묵은 WIP 는 loss tolerance 상향 적용",
+        ),
+        DecisionCriteria(
+            criteria_name="WIP 노화 loss 보너스",
+            criteria_value="7",
+            criteria_unit="%",
+            description="aging WIP 매칭 시 loss 허용 한도에 추가되는 폭 (8%+7%=15%)",
+        ),
     ]
 
 
