@@ -20,7 +20,6 @@ import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useScheduleStore } from "../../store/scheduleStore";
 import { TodayMarker } from "../TodayMarker";
 import { ChainHighlightOverlay } from "../ChainHighlightOverlay";
-import { DecisionCard } from "../DecisionCard";
 import { DecisionCardV2 } from "../decision/DecisionCardV2";
 import { isDecisionCardV2Enabled } from "../decision/featureFlag";
 import { useTimelineNavigation } from "../../../../shared/hooks/useTimelineNavigation";
@@ -438,15 +437,19 @@ export function SchedulerView({
                         : []
                     }
                     decisionCardSlot={
-                      showCardHere ? (
-                        useV2Card && runLabel && selectedBatchIdNum != null ? (
-                          <DecisionCardV2
-                            runLabel={runLabel}
-                            batchId={selectedBatchIdNum}
-                          />
-                        ) : (
-                          <DecisionCard batchId={selectedBatchId} />
-                        )
+                      // 인라인 DecisionCard(기본형) 은 표시하지 않는다 — 동일 정보가
+                      // ContextMenu "상세보기" → DecisionConstraintsModal 에 모두
+                      // 포함되어 중복. 사용자 요청 (2026-05-21).
+                      // DecisionCardV2(featureFlag-gated) 는 Bundle/Handoff/
+                      // Provenance 등 추가 정보가 있어 별도 결정 전까지 유지.
+                      showCardHere &&
+                      useV2Card &&
+                      runLabel &&
+                      selectedBatchIdNum != null ? (
+                        <DecisionCardV2
+                          runLabel={runLabel}
+                          batchId={selectedBatchIdNum}
+                        />
                       ) : undefined
                     }
                   />
