@@ -17,29 +17,20 @@ function getKstToday(): string {
 }
 
 export default function PlanRegisterPage() {
-  // baseDate 초기화: SSR 은 오늘 날짜를 반환해 서버 렌더를 결정적으로 유지하고,
-  // client lazy-init 은 localStorage 에 저장된 값을 읽어 사용자 선호를 복원한다.
-  // 잠재적 hydration mismatch 는 input[value] 차원에서만 발생하며
-  // suppressHydrationWarning 으로 허용(사용자 입력 컨트롤이므로 자연스러움).
-  // 이 패턴은 "setState-in-effect" 안티패턴을 피하기 위한 공식 대안.
-  const [baseDate, setBaseDate] = useState<string>(() => {
-    if (typeof window === "undefined") return getKstToday();
-    const stored = window.localStorage.getItem("plan_base_date");
-    if (stored && stored.length === 8) {
-      return `${stored.slice(0, 4)}-${stored.slice(4, 6)}-${stored.slice(6, 8)}`;
-    }
-    return getKstToday();
-  });
+  // baseDate 초기값은 항상 오늘. 과거 세션의 localStorage 값이 stale 하게
+  // 남아 페이지가 옛 날짜로 진입하는 회귀를 막기 위해 stored 값은 무시한다.
+  // 사용자가 의도적으로 다른 날짜를 고른 경우 onChange 핸들러가 localStorage
+  // 를 갱신하므로 Stage2 등 다른 페이지가 같은 값을 읽는다.
+  const [baseDate, setBaseDate] = useState<string>(getKstToday);
   const [wipFile, setWipFile] = useState<WipFile | null>(null);
   // incremental 모드 선택 시 WIP 섹션을 흐리게 처리하기 위해 모드를 상위에서 관리
   const [erpUploadMode, setErpUploadMode] = useState<UploadMode>("full");
 
-  // 최초 방문 시 localStorage 기본값을 오늘 날짜로 채워둔다(외부 시스템 동기화만,
-  // setState 호출 없음 — cascading render 방지).
+  // 진입 시점에 localStorage 를 오늘 날짜로 정규화한다 (다른 페이지/탭이
+  // stale 한 값을 읽지 않도록). setState 호출은 없으므로 cascading render
+  // 가 발생하지 않는다.
   useEffect(() => {
-    if (!localStorage.getItem("plan_base_date")) {
-      localStorage.setItem("plan_base_date", getKstToday().replace(/-/g, ""));
-    }
+    localStorage.setItem("plan_base_date", getKstToday().replace(/-/g, ""));
   }, []);
 
   return (
@@ -83,10 +74,6 @@ export default function PlanRegisterPage() {
           <input
             type="date"
             value={baseDate}
-            // lazy-init 에서 localStorage 값을 읽으므로 SSR(오늘) ↔ client(저장값)
-            // 가 다를 수 있다. 사용자 선호 복원 용도라 첫 페인트에서 잠시 다른
-            // 값이 보이는 것은 의도된 동작이며 hydration warning 만 가린다.
-            suppressHydrationWarning
             onChange={(e) => {
               setBaseDate(e.target.value);
               if (typeof window !== "undefined") {
@@ -117,6 +104,13 @@ export default function PlanRegisterPage() {
         </div>
         <ErpUploadSection
           wipFile={wipFile}
+          baseDate={baseDate}
+          onBaseDateChange={(d) => {
+            setBaseDate(d);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("plan_base_date", d.replace(/-/g, ""));
+            }
+          }}
           onUploadModeChange={setErpUploadMode}
         />
       </div>

@@ -30,11 +30,19 @@ function isValidExtension(filename: string): boolean {
 }
 
 // ERP 업로드 + Stage 1 트리거 섹션
+//
+// baseDate 는 페이지(plan-register/page.tsx)가 single source of truth 로 들고
+// 있으며 prop 으로 내려받는다 — 페이지 상단 "계획 기준일자" 와 ERP 섹션 내부
+// 입력이 항상 동기화되도록 (분리 state 시절의 disconnect 버그 방지).
 export function ErpUploadSection({
   wipFile,
+  baseDate,
+  onBaseDateChange,
   onUploadModeChange,
 }: {
   wipFile: WipFile | null;
+  baseDate: string;
+  onBaseDateChange: (d: string) => void;
   onUploadModeChange?: (mode: UploadMode) => void;
 }) {
   const [erpFile, setErpFile] = useState<File | null>(null);
@@ -48,14 +56,6 @@ export function ErpUploadSection({
   const [apiError, setApiError] = useState<string | null>(null);
   // 업로드 모드: "full" = 전체 교체, "incremental" = 긴급수주 추가
   const [uploadMode, setUploadMode] = useState<UploadMode>("full");
-  // 긴급수주 추가 기준일자 (incremental 모드 전용)
-  const [baseDate, setBaseDate] = useState<string>(() => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, "0");
-    const d = String(today.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  });
   // 확인 모달 (Stage 1 실행 전 현황 확인)
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [batchSummary, setBatchSummary] = useState<BatchStatusSummary | null>(
@@ -163,6 +163,13 @@ export function ErpUploadSection({
           formData.append("wip_file", wipFile.file);
         }
         formData.append("split_gap_days", String(splitGapDays));
+        // base_date 는 모드/엔드포인트와 무관하게 항상 전송한다 — 페이지 상단에서
+        // 사용자가 선택한 "계획 기준일자" 가 Stage1 → Stage2 까지 일관되게
+        // 흐르도록. Stage2 와 동일하게 YYYYMMDD 형식으로 정규화해 보낸다
+        // (백엔드의 parse_base_date_yyyymmdd 가 두 엔드포인트에서 동일 파서를 쓴다).
+        if (baseDate) {
+          formData.append("base_date", baseDate.replace(/-/g, ""));
+        }
 
         let endpoint = `${API}/pipeline/stage1`;
 
@@ -181,10 +188,6 @@ export function ErpUploadSection({
           formData.append("upload_mode", uploadMode);
           if (parentRunLabel) {
             formData.append("parent_run_label", parentRunLabel);
-          }
-          // 기준일자: incremental 모드에서만 전송
-          if (uploadMode === "incremental" && baseDate) {
-            formData.append("base_date", baseDate);
           }
         }
 
@@ -366,7 +369,7 @@ export function ErpUploadSection({
             <input
               type="date"
               value={baseDate}
-              onChange={(e) => setBaseDate(e.target.value)}
+              onChange={(e) => onBaseDateChange(e.target.value)}
               className="text-xs px-2 py-1 rounded-md"
               style={{
                 border: "1px solid var(--neutral-300)",

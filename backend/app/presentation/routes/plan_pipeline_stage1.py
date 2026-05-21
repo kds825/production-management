@@ -42,6 +42,13 @@ async def run_stage1(
     split_gap_days: int = Form(
         3, description="연선 그룹 분할 후보 납기 간격 임계값 (일)"
     ),
+    base_date: str | None = Form(
+        None,
+        description=(
+            "계획 기준일자 (YYYYMMDD). 프론트의 '계획 기준일자' 입력값. "
+            "Stage 1 응답에 echo 되어 Stage 2 호출 시 동일 값이 사용되도록 한다."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     """Stage 1 파이프라인 실행 (HTTP 어댑터 — 파싱·UploadFile.read() 만 담당).
@@ -52,12 +59,13 @@ async def run_stage1(
 
     Returns:
         run_label, 파싱 결과, WIP 매칭 결과, 배치 생성 결과, 통합 경고 목록,
-        split_candidates (분할 후보 연선 그룹 목록)
+        split_candidates (분할 후보 연선 그룹 목록), base_date (echo).
     """
     erp_content = await erp_file.read()
     wip_content = await wip_file.read() if wip_file else None
     parsed_from = parse_date_yyyymmdd(date_from, field_name="date_from")
     parsed_to = parse_date_yyyymmdd(date_to, field_name="date_to")
+    parsed_base_date = parse_base_date_yyyymmdd(base_date)
 
     return execute_stage1_ingest(
         erp_content=erp_content,
@@ -65,6 +73,7 @@ async def run_stage1(
         parsed_from=parsed_from,
         parsed_to=parsed_to,
         split_gap_days=split_gap_days,
+        base_date=parsed_base_date,
         db=db,
     )
 
@@ -83,8 +92,9 @@ async def run_stage1_update(
     base_date: str | None = Form(
         None,
         description=(
-            "기준일자 (YYYY-MM-DD). Stage 1에서는 필터가 아니라 기록/Stage 2 "
-            "자동배열 앵커 용도. frozen 기준은 상태(status)만 사용: "
+            "계획 기준일자 (YYYYMMDD). Stage 1에서는 필터가 아니라 기록/Stage 2 "
+            "자동배열 앵커 용도 — 응답에 echo 되어 Stage 2 호출 시 동일 값이 "
+            "사용되도록 한다. frozen 기준은 상태(status)만 사용: "
             "in_progress / completed / wip_complete 만 보존, 나머지 "
             "planned / scheduled 는 업데이트된 수주로 재생성."
         ),
@@ -542,10 +552,15 @@ async def run_stage1_update(
                 "preserved_frozen": len(_common & frozen_order_ids),
             }
 
+        # base_date 형식 검증 (YYYYMMDD) — 실패하면 400 으로 반환. 값을 직접
+        # 사용하진 않으나 응답에 echo 해 Stage 2 호출 시 동일 값을 쓰도록 한다.
+        parse_base_date_yyyymmdd(base_date)
+
         return {
             "run_label": new_run_label,
             "parent_run_label": parent_run_label,
             "upload_mode": upload_mode,
+            "base_date": base_date,
             "frozen": {
                 "batch_count": len(frozen_batch_ids),
                 "order_count": len(frozen_order_keys),

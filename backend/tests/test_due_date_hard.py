@@ -1,10 +1,11 @@
 """납기 hard constraint 테스트 — 사용자 요구 '납기는 반드시 지켜져야함'.
 
-현재(2026-04-17) 기준 미래 납기만 사용해서 '피지블'한 케이스에서
-스케줄러가 실제로 납기를 지키는지 검증한다.
+납기는 ``date.today()`` 기준 상대 offset 으로 계산해 시간이 흘러도 항상
+'피지블'한 미래 납기가 되도록 한다 (과거에는 2026-04-17 기준 hardcoded 였으나
+시스템 today 가 그 이후로 진행되면 5/11 같은 fixture 가 과거가 되어 깨졌다).
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 
 from app.infrastructure.models.production_batch import ProductionBatch
@@ -13,7 +14,9 @@ from app.infrastructure.models.schedule_task import ScheduleTask
 
 def _seed_feasible_due(db, run_label: str):
     """납기 내 완료 가능한 배치 — 정상 케이스."""
-    # 5/11 (월) 납기, 500m 물량 (짧음) → 여유 (시스템 기준일 2026-04-17)
+    # today + 24일 납기, 500m 물량 (짧음) → 여유. 24일은 과거 hardcoded
+    # 2026-04-17 → 2026-05-11 (24일) spread 를 그대로 보존한 값.
+    due = date.today() + timedelta(days=24)
     db.add(
         ProductionBatch(
             run_label=run_label,
@@ -21,7 +24,7 @@ def _seed_feasible_due(db, run_label: str):
             process_name="저압시스",
             sheath_color="흑",
             sq_mm2=50,
-            due_date=date(2026, 5, 11),
+            due_date=due,
             drum_count=1,
             drum_length_m=500,
             total_length_m=500,
@@ -37,6 +40,7 @@ def _seed_feasible_due(db, run_label: str):
 def test_schedule_meets_due_date_when_feasible(db):
     """피지블한 경우 모든 task 의 end.date() <= batch.due_date 여야."""
     from app.application.scheduling.greedy.auto_schedule import auto_schedule
+
     _seed_feasible_due(db, "test-due-1")
     auto_schedule(run_label="test-due-1", db=db)
 
@@ -57,16 +61,19 @@ def test_schedule_meets_due_date_when_feasible(db):
 def test_color_chain_does_not_violate_due_date(db):
     """장기 색상 체인이 납기 빠른 수주를 뒤로 밀지 않음.
 
-    시나리오 (기준일 2026-04-17):
-      흑 납기 5/11 (여유), 흑 납기 6/30 (먼 납기), 청 납기 5/12 (여유).
-    Color-first 순수 구현이면 흑·흑·청 → 청이 흑(6/30) 뒤로 밀림 → 위반 위험이 있으나
+    시나리오 (today 기준):
+      흑 납기 +24일 (여유), 흑 납기 +74일 (먼 납기), 청 납기 +25일 (여유).
+    Color-first 순수 구현이면 흑·흑·청 → 청이 흑(먼 납기) 뒤로 밀림 → 위반 위험이 있으나
     각 배치가 1일 미만이므로 피지블. 납기 hard 가 동작하면 모두 납기 내 완료.
+    Offset (24/74/25) 는 과거 hardcoded fixture (4/17 → 5/11/6/30/5/12) spread 보존.
     """
     from app.application.scheduling.greedy.auto_schedule import auto_schedule
+
+    today = date.today()
     rows = [
-        ("흑", 50, date(2026, 5, 11), "SO-DUE-A"),
-        ("흑", 50, date(2026, 6, 30), "SO-DUE-B"),
-        ("청", 50, date(2026, 5, 12), "SO-DUE-C"),
+        ("흑", 50, today + timedelta(days=24), "SO-DUE-A"),
+        ("흑", 50, today + timedelta(days=74), "SO-DUE-B"),
+        ("청", 50, today + timedelta(days=25), "SO-DUE-C"),
     ]
     for color, sq, due, so in rows:
         db.add(

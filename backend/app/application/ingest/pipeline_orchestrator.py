@@ -96,6 +96,7 @@ def execute_stage1_ingest(
     parsed_to: date | None,
     split_gap_days: int,
     db: Session,
+    base_date: datetime | None = None,
 ) -> dict[str, Any]:
     """Run the fresh ERP-ingest Stage 1 pipeline (HTTP /pipeline/stage1).
 
@@ -110,6 +111,11 @@ def execute_stage1_ingest(
     Why HTTP-typed exceptions here: the original route inlined every error
     into HTTPException(4xx/5xx) with localised Korean messages used by the
     front-end. Centralising preserves the wire contract verbatim.
+
+    Why base_date is not used by Stage 1 logic: 현재 Stage 1 은 base_date 로
+    필터/배치를 구분하지 않는다 (Stage 2 자동배열의 앵커 용도). 그러나 프론트가
+    페이지 상단 "계획 기준일자" 를 항상 Stage 1 호출에 함께 보내므로, 응답에
+    echo 해 두면 Stage 2 가 같은 값을 일관되게 사용할 수 있다.
     """
     _purge_run_data(db)
     run_label = new_run_label()
@@ -177,6 +183,9 @@ def execute_stage1_ingest(
         "warnings": warnings,
         "outsource_count": batch_result.get("outsource_count", 0),
         "split_candidates": split_candidates,
+        # 프론트가 보낸 계획 기준일자를 그대로 echo — Stage 2 가 동일 값을
+        # 사용하도록 보장. YYYY-MM-DD 형식.
+        "base_date": base_date.strftime("%Y-%m-%d") if base_date else None,
     }
 
 
