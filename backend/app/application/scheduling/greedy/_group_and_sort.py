@@ -88,6 +88,20 @@ def _group_and_sort(
         key = batch.batch_group or f"_single_{batch.batch_id}"
         batch_groups.setdefault(key, []).append(batch)
 
+    # S1 #2: slack 정렬 보너스 — 납기 임박 그룹이 같은 proc_order 내에서 부스트.
+    # threshold 는 DecisionCriteria 에서 운영 조정 가능 (한국어 키).
+    # Local import: 모듈 최상위에 두면 formatter 가 unused 로 제거함.
+    from app.infrastructure.models.decision_criteria import DecisionCriteria
+
+    criteria_rows = {
+        c.criteria_name: c.criteria_value for c in db.query(DecisionCriteria).all()
+    }
+    try:
+        slack_threshold_days = int(float(criteria_rows.get("slack 임계일", "5")))
+    except (TypeError, ValueError):
+        slack_threshold_days = 5
+    today_for_slack = date.today()
+
     # ── drum_lot_master에서 SQ별 소선경(wire_diameter) 로드 ──────────────
     sq_to_wire_d: dict[int, float] = {
         int(d.cross_section): float(d.wire_diameter)
@@ -142,6 +156,14 @@ def _group_and_sort(
         # 순서가 문자열 ('120SQ' < '300SQ' < '95SQ') 로 결정되어 SQ 역전 발생.
         # 같은 proc_order/earliest_due 내에서 큰 SQ 우선 정렬을 명시.
         sq = int(gb[0].sq_mm2 or 0) if gb else 0
+        # S1 #2: slack 정렬 보너스 — 같은 EDD/SQ 안에서 임박한 그룹 우선.
+        # earliest_due 가 이미 1차 기준이라 다른 차원 영향 없음 (cust_prio
+        # tiebreak 만 보강).
+        if earliest_due is not date.max:
+            slack_days = (earliest_due - today_for_slack).days
+            slack_step = 0 if slack_days <= slack_threshold_days else 1
+        else:
+            slack_step = 1
 
         # 시스 체인: 묶음 단위 정렬 — CP-SAT _solved_order_key 와 동일 규칙.
         # cluster_rank 는 build_sheath_clusters 로 구성된 lookup 으로,
@@ -157,6 +179,7 @@ def _group_and_sort(
                 rank[1],  # 2차: 묶음 내 순서
                 earliest_due,  # 3차: 실제 EDD (tiebreak)
                 -sq,  # S1 #4: 같은 EDD 내에서 큰 SQ 먼저 (stable sort tiebreak)
+                slack_step,  # S1 #2: 임박 batch 부스트
                 cust_prio,
             )
 
@@ -170,6 +193,7 @@ def _group_and_sort(
             proc_order,
             earliest_due,
             -sq,  # S1 #4: 같은 EDD 내에서 큰 SQ 먼저 (stable sort tiebreak)
+            slack_step,  # S1 #2: 임박 batch 부스트
             # 시스 정렬키와 길이를 맞추기 위한 padding
             0,
             date.max,

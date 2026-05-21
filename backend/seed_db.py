@@ -826,6 +826,19 @@ def _decision_criteria():
             criteria_unit="%",
             description="aging WIP 매칭 시 loss 허용 한도에 추가되는 폭 (8%+7%=15%)",
         ),
+        # S1 #2 — slack 정렬 보너스: 납기 임박 batch 가 그룹 정렬에서 부스트
+        DecisionCriteria(
+            criteria_name="slack 임계일",
+            criteria_value="5",
+            criteria_unit="일",
+            description="due_date - today <= 이 값이면 그룹 정렬에서 boost 적용",
+        ),
+        DecisionCriteria(
+            criteria_name="slack 우선순위 보너스",
+            criteria_value="1",
+            criteria_unit="-",
+            description="slack 임계 이내 batch 의 customer_priority 가산값 (낮을수록 우선)",
+        ),
     ]
 
 
