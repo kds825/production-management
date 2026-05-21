@@ -6,8 +6,12 @@ Why these four cases:
      schedule_task) returns the expected response shape.
   3. Manual override — confirms the schedule_change_sets join surfaces
      ``is_manually_adjusted`` + the ``manual_override`` block.
-  4. Cached summary reuse — confirms the LLM cache layer skips the
-     provider when ``solver_run.llm_summary_text`` is already populated.
+  4. Cached LLM summary still returned verbatim for backward compat —
+     ``_ensure_summary`` honours pre-populated ``solver_run.llm_summary_text``
+     even though new traces no longer generate one. Modal-side display of
+     LLM tagline was removed (meta summary derives the same signal
+     deterministically on the client), so the route returns an empty
+     string for fresh runs.
 
 All tests use the savepoint TestClient pattern from
 ``tests/api/test_constraints_params.py`` so route ``db.commit()`` calls
@@ -205,10 +209,11 @@ def test_happy_path_returns_full_shape(db: Session, client: TestClient) -> None:
     assert body["is_manually_adjusted"] is False
     assert body["manual_override"] is None
 
-    # The TemplateProvider fallback always produces a non-empty Korean line.
-    assert isinstance(body["llm_summary"], str)
-    assert body["llm_summary"]
-    assert isinstance(body["llm_was_template"], bool)
+    # Fresh runs no longer generate an LLM tagline — modal removed the
+    # section, and the meta summary on the client derives the same signal
+    # deterministically. Empty string + was_template=True is the contract.
+    assert body["llm_summary"] == ""
+    assert body["llm_was_template"] is True
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -254,28 +259,17 @@ def test_manual_override_surfaces_change_set(db: Session, client: TestClient) ->
 # ────────────────────────────────────────────────────────────────────────
 
 
-class _BoomProvider:
-    """Provider that explodes if invoked — proves the cache short-circuit."""
+def test_cached_summary_is_reused(db: Session, client: TestClient) -> None:
+    """Pre-populated ``solver_run.llm_summary_text`` is returned verbatim.
 
-    def explain(self, payload):  # pragma: no cover - never called
-        raise AssertionError(
-            "Provider should not be called when llm_summary_text is cached"
-        )
-
-
-def test_cached_summary_is_reused(
-    db: Session, client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    The provider was removed from the route in favour of the client-side
+    meta summary, but pre-populated rows from older traces must still
+    survive — they remain the legacy data shown to operators who pull up
+    historic runs.
+    """
     cached = "캐시된 한국어 요약 문장"
     batch, run = _seed_batch_and_run(db, pre_summary=cached)
     _seed_decision(db, run_id=run.run_id, constraint_id="4-1")
-
-    # Belt-and-braces: if the route accidentally calls the provider, this
-    # patched ``get_provider`` returns _BoomProvider which raises. The
-    # cache short-circuit must execute before provider resolution.
-    from app.presentation.routes import decisions as route_mod
-
-    monkeypatch.setattr(route_mod, "get_provider", lambda _name: _BoomProvider())
 
     resp = client.get(f"/api/decisions/{batch.batch_id}/latest")
     assert resp.status_code == 200, resp.text

@@ -7,13 +7,15 @@
  *   - DecisionCard zone1 pill 좌클릭
  *   - 간트 task block 또는 DecisionCard 우클릭 → ContextMenu "상세보기"
  *
- * 정보 위계 (P0 reorganize — 의사결정 지원 뷰):
- *   1. LLM 자연어 요약 — 헤더 직후, 큰 글씨. 운영자가 가장 먼저 읽는 한 문단.
- *   2. 메타 summary — 가중치 분포에서 도출한 한 줄. "지배 여부" 즉시 판별.
- *   3. 배정 요약 — 설비/시간/솔버 상태.
- *   4. 활성 제약 — `constraint_id` prefix(`split("-")[0]`) 로 카테고리 grouping.
- *   5. 가중치 기여 — 절대값 대신 % 변환, weight=0 항목은 expandable 로 숨김.
- *   6. 수동 조정 내역 — manual_override 있을 때만.
+ * 정보 위계 (의사결정 지원 뷰):
+ *   1. 메타 summary — 가중치 분포에서 도출한 한 줄. "지배 여부" 즉시 판별.
+ *   2. 배정 요약 — 설비/시간/솔버 상태.
+ *   3. 활성 제약 — `constraint_id` prefix(`split("-")[0]`) 로 카테고리 grouping.
+ *   4. 가중치 기여 — 절대값 대신 % 변환, weight=0 항목은 expandable 로 숨김.
+ *   5. 수동 조정 내역 — manual_override 있을 때만.
+ *
+ * LLM 자연어 요약은 의도적으로 제거됨 — 메타 summary 가 결정적으로 같은 정보를
+ * 제공하므로 중복이며, 새 트레이스 시 LLM 호출 자체가 불필요한 비용/지연.
  *
  * Store 연동:
  *   scheduler/page.tsx 에 전역 마운트. store.decisionDetailModal.batchId 가
@@ -189,7 +191,7 @@ export function DecisionConstraintsModal() {
           <div>
             <h2 className="text-lg font-semibold">결정 상세</h2>
             <p className="text-xs text-gray-500">
-              배치 #{batchId} · 활성 제약 / 가중치 기여 / 자연어 요약
+              배치 #{batchId} · 활성 제약 / 가중치 기여
             </p>
           </div>
           <button
@@ -237,27 +239,7 @@ export function DecisionConstraintsModal() {
 
           {status === "ok" && data && (
             <>
-              {/* 1) LLM 자연어 요약 — 최상단, 운영자가 가장 먼저 보는 한 문단. */}
-              <section>
-                <div className="flex items-center gap-2 mb-2">
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase">
-                    자연어 요약
-                  </h3>
-                  {data.llm_was_template && (
-                    <span
-                      className="text-tiny font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-200"
-                      title="LLM 호출 실패 — 템플릿 기반 요약"
-                    >
-                      템플릿
-                    </span>
-                  )}
-                </div>
-                <p className="text-base text-gray-800 leading-relaxed">
-                  {data.llm_summary || "(요약 없음)"}
-                </p>
-              </section>
-
-              {/* 2) 메타 summary — 가중치 분포 기반 한 줄 판단. 좌측 액센트 바
+              {/* 1) 메타 summary — 가중치 분포 기반 한 줄 판단. 좌측 액센트 바
                   + 회색 배경으로 본문과 분리. (이탤릭 사용 금지 — DESIGN.md) */}
               <section
                 className="border-l-2 border-gray-300 bg-gray-50 px-3 py-2"
@@ -271,7 +253,7 @@ export function DecisionConstraintsModal() {
                 </p>
               </section>
 
-              {/* 3) 배정 요약 — 설비 · 시간 · solver status */}
+              {/* 2) 배정 요약 — 설비 · 시간 · solver status */}
               <section>
                 <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">
                   배정 요약
@@ -297,7 +279,7 @@ export function DecisionConstraintsModal() {
                 </div>
               </section>
 
-              {/* 4) 활성 hard constraints — constraint_id prefix 로 카테고리 grouping.
+              {/* 3) 활성 hard constraints — constraint_id prefix 로 카테고리 grouping.
                   33개를 균등 grid 로 쏟아내던 dump 를 카테고리별 그룹 chip 으로 정리. */}
               <section>
                 <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">
@@ -338,7 +320,7 @@ export function DecisionConstraintsModal() {
                 )}
               </section>
 
-              {/* 5) 가중치 기여 — % 변환 표시 + weight=0 항목 expandable 숨김.
+              {/* 4) 가중치 기여 — % 변환 표시 + weight=0 항목 expandable 숨김.
                   raw 절대값 (111992) 만 봐서는 비중을 모르므로 sum 대비 % 가 1차,
                   raw 는 보조. */}
               <section>
@@ -436,7 +418,7 @@ export function DecisionConstraintsModal() {
                 )}
               </section>
 
-              {/* 6) 수동 조정 내역 (manual_override 있을 때만) */}
+              {/* 5) 수동 조정 내역 (manual_override 있을 때만) */}
               {data.is_manually_adjusted && data.manual_override && (
                 <section className="border-t pt-4">
                   <h3 className="text-xs font-semibold text-orange-600 uppercase mb-2">

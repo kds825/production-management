@@ -25,7 +25,6 @@ whose run_label matches a ProductionBatch with the given batch_id.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -39,12 +38,10 @@ from app.infrastructure.models.schedule_change_set import ScheduleChangeSet
 from app.infrastructure.models.schedule_task import ScheduleTask
 from app.infrastructure.models.solver_decision import SolverDecision
 from app.infrastructure.models.solver_run import SolverRun
-from app.application.decisions.narrator import explain_with_filter
 from app.infrastructure.llm import (
     ConstraintRef,
     Contribution,
     ExplainPayload,
-    get_provider,
 )
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
@@ -206,24 +203,26 @@ def _ensure_summary(
     payload: ExplainPayload,
     name_catalog: set[str],
 ) -> tuple[str, bool]:
-    """Return cached summary if present; otherwise generate, cache, commit.
+    """Return cached LLM summary (legacy) — new traces skip generation.
 
-    Why commit here: the cache is a write-through optimisation — if we
-    only flushed, a parallel reader on a different request session would
-    re-generate. Tests use the savepoint TestClient pattern so this
-    commit becomes a SAVEPOINT release, not a real commit.
+    Why deprecated: the modal now derives a deterministic 1-line meta
+    summary from the contributions distribution on the client. The LLM
+    tagline carries no extra signal but costs an API call (or at minimum
+    a template render + DB write) on every new trace.
+
+    Behavior:
+      - If ``run.llm_summary_text`` was already populated by an older
+        commit, return it as-is for backward compat.
+      - For new runs, return ``("", True)`` without touching the
+        provider or persisting anything. ``was_template=True`` reflects
+        the deterministic-source semantics ("not from a live LLM").
+
+    The ``payload`` / ``name_catalog`` arguments are kept for signature
+    stability so callers (route + future re-enable) remain unchanged.
     """
     if run.llm_summary_text is not None:
         return run.llm_summary_text, bool(run.llm_was_template)
-
-    provider_name = os.environ.get("LLM_PROVIDER", "template")
-    provider = get_provider(provider_name)
-    summary, was_template = explain_with_filter(provider, payload, name_catalog)
-
-    run.llm_summary_text = summary
-    run.llm_was_template = was_template
-    db.commit()
-    return summary, was_template
+    return "", True
 
 
 @router.get("/{batch_id}/latest")
