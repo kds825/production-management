@@ -232,6 +232,22 @@ def build_solver_input(
     for eq in equipment_list:
         equipment_by_process.setdefault(eq.process_name, []).append(eq)
 
+    # S5 #8: 절연 공정의 후보 리스트는 B100 prefix 를 앞에 두어 search heuristic
+    # 의 첫 시도가 B100 가 되도록. greedy 의 _find_eligible_equipment tiebreaker
+    # 와 동일 효과 — A100/A120 으로의 push-out 회피.
+    from app.domain.constants import INSULATION_PROCESSES as _INSUL
+
+    for proc in _INSUL:
+        eqs = equipment_by_process.get(proc)
+        if not eqs:
+            continue
+        eqs.sort(
+            key=lambda e: (
+                0 if (e.equipment_code or "").startswith("B100") else 1,
+                e.equipment_code or "",
+            )
+        )
+
     # ── §4. SpeedMaster lookup 맵 (L1140-1152 미러) ─────────────────────
     _speed_rows = db.query(SpeedMaster).all()
     speed_map: dict[tuple[str, float], SpeedMaster] = {
