@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.domain.constants import INSULATION_PROCESSES
 from app.infrastructure.models.equipment_master import EquipmentMaster
 from app.infrastructure.models.production_batch import ProductionBatch
 
@@ -88,6 +89,17 @@ def _find_eligible_equipment(
                     continue
 
         eligible.append(eq)
+
+    # S5 #8: 절연 batch — B100 prefix 설비를 후보 리스트 앞에 두어
+    # _find_available_slot 의 best_eq 선택 시 B100 가 동률에서 우선되도록.
+    # A100/A120 으로의 push-out 회피 (B100 가 통상 더 높은 가동률).
+    if batch.process_name in INSULATION_PROCESSES:
+        eligible.sort(
+            key=lambda e: (
+                0 if (e.equipment_code or "").startswith("B100") else 1,
+                e.equipment_code or "",
+            )
+        )
 
     return eligible
 
