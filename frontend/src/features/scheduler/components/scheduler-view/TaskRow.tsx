@@ -422,7 +422,10 @@ export const TaskRow = memo(function TaskRow({
             flexShrink: 0,
             position: "sticky",
             left: 0,
-            zIndex: 3,
+            // GanttTaskBlock 의 selected(10)/diffOverlay(12)/focused(15)/dragging(20)
+            // 모두 sticky 사이드바보다 위로 올라오는 z-index 충돌이 있었음.
+            // 가로 스크롤 시 블록이 사이드바 영역으로 비집고 나오던 버그 방지.
+            zIndex: 25,
             backgroundColor: "var(--bg-surface)",
             borderRight: "1px solid var(--color-border-default)",
             height: rowPixelHeight,

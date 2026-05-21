@@ -114,7 +114,8 @@ export function UtilizationRow({
           flexShrink: 0,
           backgroundColor: "var(--neutral-100)",
           borderRight: "1px solid var(--color-border-default)",
-          zIndex: 3,
+          // TaskRow 사이드바와 동일 — 가로 스크롤 시 블록이 사이드바 위로 침범하는 것 방지.
+          zIndex: 25,
           display: "flex",
           alignItems: "center",
           paddingLeft: 6,
