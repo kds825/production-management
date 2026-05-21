@@ -5,6 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { ScheduleTask, Equipment } from "../types";
 import { useScheduleStore } from "../store/scheduleStore";
 import { assignLanes, getLaneCount } from "../utils/laneAssign";
+import { buildAllChains } from "../utils/chainGraph";
 import { timeToXAdj, SIDEBAR_WIDTH, ROW_HEIGHT } from "../utils/ganttUtils";
 // SchedulerView.tsx:41 `const LANE_HEIGHT = ROW_HEIGHT;` — alias. Overlay 도 동일 alias 사용해 Y 누적 일치.
 import { LANE_HEIGHT } from "./SchedulerView";
@@ -41,12 +42,32 @@ export function ChainHighlightOverlay({
   totalWidth,
   totalHeight,
 }: ChainHighlightOverlayProps) {
-  const { chainIds, arrows } = useScheduleStore(
+  const {
+    chainIds: selectedChainIds,
+    arrows: selectedArrows,
+    connectorAlwaysShow,
+  } = useScheduleStore(
     useShallow((s) => ({
       chainIds: s.selectedChainIds,
       arrows: s.selectedArrows,
+      connectorAlwaysShow: s.connectorAlwaysShow,
     })),
   );
+
+  // S7 #13: alwaysShow 면 모든 pred→succ 쌍, 아니면 selection 기반.
+  const { chainIds, arrows } = useMemo(() => {
+    if (connectorAlwaysShow) {
+      const all = buildAllChains(tasks, visibleEquipment);
+      return { chainIds: all.chainIds, arrows: all.arrows };
+    }
+    return { chainIds: selectedChainIds, arrows: selectedArrows };
+  }, [
+    connectorAlwaysShow,
+    tasks,
+    visibleEquipment,
+    selectedChainIds,
+    selectedArrows,
+  ]);
 
   // 조기 리턴 — 선택 없거나 체인 크기 1 이하면 오버레이 자체를 렌더하지 않음
   // chainIds === null 은 "선택 없음 OR orphan (R6)" 두 경우 모두 포함

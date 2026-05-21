@@ -13,6 +13,8 @@
  */
 "use client";
 
+import { useShallow } from "zustand/react/shallow";
+import { useScheduleStore } from "../../store/scheduleStore";
 import type { Equipment } from "../../types";
 
 interface SchedulerToolbarProps {
@@ -34,6 +36,15 @@ export function SchedulerToolbar({
   onToggleHiddenList,
   hiddenEquipment,
 }: SchedulerToolbarProps) {
+  // S7 #13: 연결선 항상 표시 토글 — Overlay 와 store 로 share (다른 toggle 과
+  // 다른 패턴 이유는 batchesSlice 의 주석 참조).
+  const { connectorAlwaysShow, setConnectorAlwaysShow } = useScheduleStore(
+    useShallow((s) => ({
+      connectorAlwaysShow: s.connectorAlwaysShow,
+      setConnectorAlwaysShow: s.setConnectorAlwaysShow,
+    })),
+  );
+
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 mt-1 rounded-md flex-wrap"
@@ -99,6 +110,26 @@ export function SchedulerToolbar({
           ))}
         </div>
       )}
+
+      <span className="text-gray-300 select-none">|</span>
+
+      {/* S7 #13: 연결선 항상 표시 토글 — 기존 버튼 스타일과 동일 패턴 */}
+      <button
+        onClick={() => setConnectorAlwaysShow(!connectorAlwaysShow)}
+        aria-pressed={connectorAlwaysShow}
+        aria-label="연결선 항상 표시"
+        className="flex items-center gap-1.5 text-small font-medium transition-colors"
+        style={{
+          color: connectorAlwaysShow
+            ? "var(--color-brand-primary)"
+            : "var(--color-text-secondary)",
+        }}
+      >
+        <span>{connectorAlwaysShow ? "▼" : "▶"}</span>
+        <span>
+          {connectorAlwaysShow ? "연결선 항상 표시" : "연결선 선택 시만"}
+        </span>
+      </button>
     </div>
   );
 }

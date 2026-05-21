@@ -49,6 +49,15 @@ export interface BatchesSlice {
    */
   selectedArrows: ArrowEdge[];
 
+  /**
+   * S7 #13: 연결선 "항상 표시" 모드 — 선택 무관 모든 pred→succ 쌍에
+   * 화살표. localStorage `scheduler:connector:always_show` 와 동기화 (디폴트 OFF).
+   * 다른 toggle (hideWeekends 등) 은 index.tsx 의 useState 로 lifting 되지만,
+   * 이 값은 SchedulerToolbar 와 ChainHighlightOverlay 가 share 해야 하므로
+   * store 에 둠.
+   */
+  connectorAlwaysShow: boolean;
+
   // 편집 모드 — 기본은 읽기 전용(false)
   isEditMode: boolean;
   // 수정 모드 진입 시 저장된 tasks 스냅샷 — 취소 시 복원용
@@ -128,6 +137,9 @@ export interface BatchesSlice {
   cancelCascade: () => void;
 
   setRunLabel: (runLabel: string | null) => void;
+
+  // S7 #13: 연결선 항상 표시 토글 + localStorage 동기화.
+  setConnectorAlwaysShow: (value: boolean) => void;
 }
 
 export const createBatchesSlice: StateCreator<
@@ -155,6 +167,10 @@ export const createBatchesSlice: StateCreator<
   conflictModalOpen: false,
   cascadeOriginalTask: null,
   runLabel: null,
+  // S7 #13: localStorage hydrate. SSR-safe (typeof window check).
+  connectorAlwaysShow:
+    typeof window !== "undefined" &&
+    window.localStorage.getItem("scheduler:connector:always_show") === "true",
 
   setEquipment: (equipment) => {
     set((state) => {
@@ -542,5 +558,17 @@ export const createBatchesSlice: StateCreator<
     set((state) => {
       state.runLabel = runLabel;
     });
+  },
+
+  setConnectorAlwaysShow: (value) => {
+    set((state) => {
+      state.connectorAlwaysShow = value;
+    });
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        "scheduler:connector:always_show",
+        String(value),
+      );
+    }
   },
 });
