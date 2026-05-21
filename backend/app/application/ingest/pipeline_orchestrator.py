@@ -131,8 +131,12 @@ def execute_stage1_ingest(
         ) from exc
 
     # ── Step 2: WIP 파일 파싱 + 매칭 ──────────────────────────────────────────
+    # 실패해도 후속 단계를 진행해야 하므로 SAVEPOINT 로 감싼다. 그래야 PostgreSQL
+    # 의 InFailedSqlTransaction cascade (swallow → 다음 query 들이 줄줄이 거부)
+    # 가 발생하지 않는다.
     wip_warnings: list[str] = []
     if wip_content:
+        sp = db.begin_nested()
         try:
             from app.infrastructure.parsers.wip_parser import parse_wip_file
 
@@ -140,12 +144,17 @@ def execute_stage1_ingest(
             wip_warnings.extend(wip_parse.get("warnings", []))
             if wip_parse["total"] > 0:
                 wip_warnings.append(f"재공실사 {wip_parse['total']}건 등록 완료.")
+            sp.commit()
         except Exception as exc:
+            sp.rollback()
             wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
 
+    sp = db.begin_nested()
     try:
         wip_result = match_wip(run_label, db)
+        sp.commit()
     except Exception as exc:
+        sp.rollback()
         wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
         wip_result = {"matched": 0, "skipped": 0, "details": []}
 

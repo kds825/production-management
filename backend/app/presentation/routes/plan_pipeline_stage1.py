@@ -20,6 +20,7 @@ from app.application.ingest import (
 from app.application.ingest.pipeline_orchestrator import execute_stage1_ingest
 from app.application.ingest.run_labeler import (
     new_run_label as _alloc_run_label,
+    parse_base_date_yyyymmdd,
     parse_date_yyyymmdd,
 )
 from app.application.ingest.wip_matching import match_wip
@@ -119,12 +120,19 @@ async def run_stage1_update(
       - "incremental": 기존 수주를 유지하고 새 수주만 추가
       - "full": 동결 수주 외 전부 삭제 후 새 파일로 교체
     """
-    # ── 입력 검증 ─────────────────────────────────────────────────────────────
+    # ── 입력 검증 (fail-fast) ────────────────────────────────────────────────
+    # 모든 검증은 DB mutation 이전에 끝낸다 — 이후 단계에서 검증 실패가 raise
+    # 되면 commit/rollback 경계가 어긋나 InFailedSqlTransaction 으로 connection
+    # pool 이 오염될 수 있다. (회귀 사례: parse_base_date_yyyymmdd 호출을
+    # return 직전에 두고 commit 이후 raise 된 NameError 가 후속 요청을
+    # 깨뜨림 — 2026-05-21.)
     if upload_mode not in ("incremental", "full"):
         raise HTTPException(
             status_code=400,
             detail=f"upload_mode는 'incremental' 또는 'full'이어야 합니다: {upload_mode}",
         )
+    # base_date 형식 검증 — 값은 응답에 echo 만 한다 (Stage 1 로직에서 미사용).
+    parse_base_date_yyyymmdd(base_date)
 
     # parent_run_label 자동 감지 — 미지정 시 최신 run_label 사용
     if not parent_run_label:
@@ -344,8 +352,14 @@ async def run_stage1_update(
             parse_result = parse_erp_file_incremental(erp_content, new_run_label, db)
 
         # ── 7. WIP 처리 ──────────────────────────────────────────────────────
+        # WIP 파싱/매칭은 실패 시 경고만 남기고 후속 단계를 계속 진행해야 한다.
+        # PostgreSQL 은 트랜잭션 안에서 한 statement 가 실패하면 이후 모든 statement
+        # 가 InFailedSqlTransaction 으로 거부되므로, swallowed exception 직후
+        # create_batches 가 cascade 실패하는 회귀가 있었다. SAVEPOINT
+        # (db.begin_nested()) 로 감싸 실패해도 부분 rollback 만 일어나도록 한다.
         wip_warnings: list[str] = []
         if wip_file:
+            sp = db.begin_nested()
             try:
                 from app.infrastructure.parsers.wip_parser import parse_wip_file
 
@@ -364,17 +378,22 @@ async def run_stage1_update(
                         wip_warnings.append(
                             f"재공실사 {wip_parse['total']}건 등록 완료."
                         )
+                sp.commit()
             except Exception as exc:
+                sp.rollback()
                 wip_warnings.append(f"재공 파일 파싱 실패: {exc}")
 
         # ── 8. WIP 매칭 — frozen WIP 제외 ─────────────────────────────────────
+        sp = db.begin_nested()
         try:
             wip_result = match_wip(
                 new_run_label,
                 db,
                 exclude_wip_ids=frozen_wip_ids if frozen_wip_ids else None,
             )
+            sp.commit()
         except Exception as exc:
+            sp.rollback()
             wip_warnings.append(f"WIP 매칭 실패 (계속 진행): {exc}")
             wip_result = {"matched": 0, "skipped": 0, "details": []}
 
@@ -551,10 +570,6 @@ async def run_stage1_update(
                 "deleted": len(pre_order_ids_full - post_order_ids),
                 "preserved_frozen": len(_common & frozen_order_ids),
             }
-
-        # base_date 형식 검증 (YYYYMMDD) — 실패하면 400 으로 반환. 값을 직접
-        # 사용하진 않으나 응답에 echo 해 Stage 2 호출 시 동일 값을 쓰도록 한다.
-        parse_base_date_yyyymmdd(base_date)
 
         return {
             "run_label": new_run_label,
