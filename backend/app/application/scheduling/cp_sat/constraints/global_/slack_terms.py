@@ -20,6 +20,11 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
+# S1 #2: 임박 그룹 (≤ 5 working day) 의 slack weight step boost.
+# 5 일 × 14 시간 × 60 분 = 4200 working minutes.
+_SLACK_URGENT_THRESHOLD_WMIN = 5 * 14 * 60
+_SLACK_URGENT_MULTIPLIER = 10
+
 
 def collect_slack_terms(
     *,
@@ -28,7 +33,11 @@ def collect_slack_terms(
     slack_weight_base: int,
     max_horizon_min: int,
 ) -> tuple[list[Any], list[tuple[str, int, cp_model.IntVar]]]:
-    """§6-g-slack. Returns ``(slack_terms, slack_terms_meta)``."""
+    """§6-g-slack. Returns ``(slack_terms, slack_terms_meta)``.
+
+    S1 #2: 임박 (≤ threshold) 그룹은 step boost — greedy 의 slack_step
+    tiebreak 와 동일 정신. 임박 외에는 기존 continuous weight 유지.
+    """
     slack_terms: list[Any] = []
     slack_terms_meta: list[tuple[str, int, cp_model.IntVar]] = []
     for gk, meta in group_meta.items():
@@ -38,7 +47,10 @@ def collect_slack_terms(
         if due < 0:
             continue
         slack_min = max(1, int(due))
-        w = max(1, slack_weight_base // slack_min)
+        if slack_min <= _SLACK_URGENT_THRESHOLD_WMIN:
+            w = max(1, slack_weight_base * _SLACK_URGENT_MULTIPLIER)
+        else:
+            w = max(1, slack_weight_base // slack_min)
         slack_terms.append(w * end_vars[gk])
         slack_terms_meta.append((gk, w, end_vars[gk]))
     return slack_terms, slack_terms_meta
