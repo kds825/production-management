@@ -339,6 +339,23 @@ def _assign_group(
             if state.first_insul_output and state.first_insul_output > earliest:
                 earliest = state.first_insul_output
 
+        # S4 #10: 연합 batch — core_colors 의 모든 색상별 절연 end 완료 후 시작.
+        # first-drum overlap 으론 부족 — 연합은 N 코어의 절연 드럼 N개가 다
+        # 끝나야 시작 가능 (4코어=4색이면 4색 모두 완료).
+        if rep.process_name == "연합":
+            colors = [
+                c.strip() for c in (rep.core_colors or "").split(",") if c.strip()
+            ]
+            color_ends = [
+                t
+                for c in colors
+                if (t := state.insul_last_output_by_color.get((sq_int, c)))
+            ]
+            if color_ends:
+                union_earliest = max(color_ends)
+                if union_earliest > earliest:
+                    earliest = union_earliest
+
         # 61연선 ST- 그룹: 동일 SQ의 CORE/AL-CORE 첫 드럼 출력 후 시작 (overlap)
         # 예: "ST-633-..." 그룹 → core_first_drum_by_main_sq[633] 이후 시작
         if group_key.startswith("ST-") and rep.process_name == "연선":
@@ -477,6 +494,15 @@ def _assign_group(
         or end_dt > state.process_end_by_sq[proc_sq_key]
     ):
         state.process_end_by_sq[proc_sq_key] = end_dt
+
+    # S4 #10: 절연 batch 의 색상별 end 기록 — 연합 batch start 트리거.
+    if rep.process_name in INSULATION_PROCESSES:
+        color = (rep.sheath_color or "").strip()
+        if color:
+            sc_key = (sq_int, color)
+            prev = state.insul_last_output_by_color.get(sc_key)
+            if prev is None or end_dt > prev:
+                state.insul_last_output_by_color[sc_key] = end_dt
 
     # ── 파이프라인 겹침: 첫 번째 드럼 출력 시각 계산 ────────────────────
     # 연선 ST-: 헤더 배치(seq=-1)의 drum_count = 실제 틀 수

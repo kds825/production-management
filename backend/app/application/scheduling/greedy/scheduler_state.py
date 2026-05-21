@@ -82,6 +82,12 @@ class SchedulerState:
     )
     core_first_drum_by_main_sq: dict[int, datetime] = field(default_factory=dict)
     first_insul_output: datetime | None = None
+    # S4 #10: 절연 batch 의 색상별 마지막 출력(end_datetime) 기록.
+    # 연합 batch 시작 = max(절연 색상별 end_datetime for color in core_colors).
+    # constraint 4-2 (시스 인접 색상 교체 120분) 와는 별개 룰.
+    insul_last_output_by_color: dict[tuple[int, str], datetime] = field(
+        default_factory=dict
+    )
     preempted_remainder: list["ProductionBatch"] = field(default_factory=list)
 
     # ── 2. Master data (read-only after construction by convention) ────────
