@@ -20,7 +20,12 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from app.domain.constants import PREDECESSOR_PROCESS
+from app.domain.constants import INSULATION_PROCESSES, PREDECESSOR_PROCESS
+
+# S5 #7: 절연 직후 공정의 idle term 에 곱하는 multiplier.
+# `IDLE_WEIGHT * sum(idle_terms)` 식 그대로 두고, 같은 IntVar 를 list 에
+# multiplier 회 push 해 가중치를 표현 (caller signature 무변경).
+_INSULATION_IDLE_MULTIPLIER = 3
 
 
 def collect_idle_terms(
@@ -34,14 +39,17 @@ def collect_idle_terms(
     """§6-f. ``idle_<pred_gk>_<gk> == end[gk] - end[pred_gk]`` 변수 모음.
 
     objective 합성 단계가 ``IDLE_WEIGHT * sum(idle_terms)`` 로 minimize 한다.
+    절연 직후 idle 은 multiplier 회 list 에 추가해 가중치 증폭.
     """
     idle_terms: list[cp_model.IntVar] = []
     for gk in group_meta.keys():
         pred_proc = PREDECESSOR_PROCESS.get(group_meta[gk]["rep"].process_name)
         if not pred_proc:
             continue
+        weight = _INSULATION_IDLE_MULTIPLIER if pred_proc in INSULATION_PROCESSES else 1
         for pred_gk in proc_groups_by_sq.get((pred_proc, group_meta[gk]["sq"]), []):
             idle = model.new_int_var(0, max_horizon_min, f"idle_{pred_gk}_{gk}")
             model.add(idle == end_vars[gk] - end_vars[pred_gk])
-            idle_terms.append(idle)
+            for _ in range(weight):
+                idle_terms.append(idle)
     return idle_terms
