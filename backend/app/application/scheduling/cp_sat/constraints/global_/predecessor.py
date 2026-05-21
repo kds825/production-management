@@ -24,7 +24,10 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from app.domain.constants import PREDECESSOR_PROCESS
+from app.domain.constants import (
+    INSULATION_PROCESSES,
+    PREDECESSOR_PROCESS,
+)
 from app.application._shared.group_ops import (
     _extract_core_main_sq,
     _is_core_group,
@@ -84,6 +87,27 @@ def add_predecessor_precedence(
             model.add(start_vars[gk] >= start_vars[pred_gk] + first_drum)
             # 파이프라인 유휴 최소 역산: 후공정 끝 ≥ 선행공정 끝
             model.add(end_vars[gk] >= end_vars[pred_gk])
+
+    # S4 #10: 연합 그룹은 core_colors 의 모든 색상별 절연 end 가 끝나야 시작.
+    # greedy 의 insul_last_output_by_color 와 동일 효과 — 동일 sq + 동일
+    # sheath_color 인 절연 그룹의 end_var 가 연합 start_var 의 하한.
+    for gk in group_meta.keys():
+        meta = group_meta[gk]
+        if meta["rep"].process_name != "연합":
+            continue
+        sq = meta["sq"]
+        union_colors = [
+            c.strip() for c in (meta["rep"].core_colors or "").split(",") if c.strip()
+        ]
+        if not union_colors:
+            continue
+        for color in union_colors:
+            for insul_proc in sorted(INSULATION_PROCESSES):
+                for pred_gk in proc_groups_by_sq.get((insul_proc, sq), []):
+                    pred_meta = group_meta[pred_gk]
+                    if (pred_meta["rep"].sheath_color or "").strip() != color:
+                        continue
+                    model.add(start_vars[gk] >= end_vars[pred_gk])
 
 
 def add_core_st_precedence(
