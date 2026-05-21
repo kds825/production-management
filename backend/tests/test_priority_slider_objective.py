@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from app.application.scheduling.cp_sat.constraint_loader import ConstraintSpec
 
@@ -85,13 +84,12 @@ def test_factory_priority_75_scales_proportionally():
     assert fn("X", fallback=999) == 1500
 
 
-@pytest.mark.parity
 def test_seeded_w_rows_all_priority_50():
-    """parity 보존 invariant — 모든 W-* row 가 priority=50 으로 시드되어 있어야
-    factor 1.0 로 기존 11 fixture hash 가 유지된다.
+    """W-* row priority invariant — 모든 W-* row 가 priority=50 으로 시드되어 있어야
+    factor 1.0 로 동작.
 
     이 테스트가 실패하면 누군가 W-* priority 를 직접 갱신했다는 뜻.
-    parity 깨질 가능성이 있으므로 즉시 조사.
+    스케줄링 가중치 의도하지 않은 변경 가능성이 있으므로 즉시 조사.
     """
     from app.application.scheduling.cp_sat.constraint_loader import (
         load_active_constraints,

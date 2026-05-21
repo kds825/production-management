@@ -20,7 +20,7 @@ Backend follows 4-layer Clean Architecture under `backend/app/`:
 - `services/` 디렉토리는 삭제됨 (Phase 5 §9.4-d). 새 모듈 추가 시 절대 부활 금지.
 - 추상화 도입 금지 (Protocol / Registry / ABC / Service base class) — 사용자 simplicity 원칙. dataclass + 함수.
 - 디렉토리 깊이 ≤ 3 (`domain/X.py`, `application/X/Y.py`, `infrastructure/X/Y.py`).
-- 변경 후 검증 게이트: `pytest backend/tests/ -q` (698 PASS) + `pytest backend/tests/test_parity_harness.py -m parity` (13/13 hash equality). `--parity-quick` 플래그로 3 시나리오 빠른 회귀 가능. 회귀 0 확인 후 atomic commit.
+- 변경 후 검증 게이트: `pytest backend/tests/ -q` 통과 후 atomic commit. parity harness 는 2026-05-21 폐기 (신규 개발 모드 — `docs/superpowers/specs/2026-05-21-realdata-feedback-gap-design.md` §12 참조).
 
 ## Design System
 

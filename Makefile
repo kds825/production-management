@@ -2,7 +2,7 @@ SHELL := /bin/bash
 -include .env.worktree
 export
 
-.PHONY: bootstrap doctor verify parity parity-quick parity-fixture \
+.PHONY: bootstrap doctor verify \
         test test-backend test-frontend lint typecheck
 
 bootstrap:
@@ -47,17 +47,7 @@ doctor:
 	   *) echo "  ✓ main worktree ($$BRANCH)" ;; \
 	 esac
 
-verify: lint typecheck test parity
-
-parity:
-	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py -m parity -v
-
-parity-quick:
-	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py -m parity --parity-quick -v
-
-parity-fixture:
-	@test -n "$(FIXTURE)" || { echo "Usage: make parity-fixture FIXTURE=02"; exit 1; }
-	cd backend && source venv/bin/activate && pytest tests/test_parity_harness.py::test_parity -m parity -k "$(FIXTURE)" -v
+verify: lint typecheck test
 
 test: test-backend test-frontend
 
