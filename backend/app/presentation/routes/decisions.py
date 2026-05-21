@@ -43,6 +43,7 @@ from app.infrastructure.llm import (
     Contribution,
     ExplainPayload,
 )
+from app.application.decisions.alternatives import compute_alternatives
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
 
@@ -302,4 +303,46 @@ def get_latest_decision(batch_id: str, db: Session = Depends(get_db)) -> dict[st
         "manual_override": manual_override,
         "llm_summary": summary_text,
         "llm_was_template": was_template,
+    }
+
+
+@router.get("/{batch_id}/alternatives")
+def get_alternatives(batch_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """이 배치를 다른 설비로 옮길 경우의 영향 추정.
+
+    응답: 호환 설비 list + 각 설비의 충돌 수 + 가용 시점 + 지연일.
+    현재 설비가 항상 첫 행 — UI 가 비교 anchor 로 사용.
+
+    on-the-fly compute (solver 미실행) — 자세한 근거는
+    application/decisions/alternatives.py docstring 참조.
+    """
+    try:
+        batch_pk = int(batch_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=404, detail=f"배치 '{batch_id}' 를 찾을 수 없습니다."
+        ) from exc
+
+    report = compute_alternatives(db, batch_pk)
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"배치 '{batch_id}' 를 찾을 수 없습니다."
+        )
+
+    return {
+        "batch_id": str(report.batch_id),
+        "current_equipment_code": report.current_equipment_code,
+        "current_assigned_start": _to_iso(report.current_assigned_start),
+        "current_assigned_end": _to_iso(report.current_assigned_end),
+        "alternatives": [
+            {
+                "equipment_code": a.equipment_code,
+                "equipment_name": a.equipment_name,
+                "is_current": a.is_current,
+                "conflict_count": a.conflict_count,
+                "earliest_available": _to_iso(a.earliest_available),
+                "delay_days": a.delay_days,
+            }
+            for a in report.alternatives
+        ],
     }
