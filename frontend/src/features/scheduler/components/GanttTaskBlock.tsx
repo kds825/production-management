@@ -692,6 +692,20 @@ export const GanttTaskBlock = memo(function GanttTaskBlock({
 
         return (
           <div key={idx} style={segBarStyle}>
+            {/* S6 #12: 매뉴얼 조정된 batch — 대각선 줄무늬 overlay (pointer-events 없음) */}
+            {task.is_manually_adjusted && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  pointerEvents: "none",
+                  borderRadius: radius,
+                  backgroundImage:
+                    "repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0 4px, transparent 4px 8px)",
+                }}
+              />
+            )}
             {/* 좌측 리사이즈 핸들 — 첫 세그먼트만 */}
             {isFirst && isEditMode && (
               <div

@@ -99,6 +99,7 @@ def _db_task_to_response(
     color_change_min: int = 0,
     lot_count: int | None = None,
     spec_list: list[str] | None = None,
+    is_manually_adjusted: bool = False,
 ) -> ScheduleTaskResponse:
     """DB schedule_task + production_batch 레코드를 프론트엔드 응답 형태로 변환.
 
@@ -178,6 +179,8 @@ def _db_task_to_response(
         # WIP 매칭 FK를 그대로 노출 — 프론트 ContextMenu "미배정으로 이동"
         # disabled 판정에 사용 (Task 5.2). None 이면 일반 생산 배치.
         wip_matched_id=batch.wip_matched_id,
+        # S6 #12: 매뉴얼 조정 여부 — caller 가 bulk 조회 결과로 결정.
+        is_manually_adjusted=is_manually_adjusted,
     )
 
 

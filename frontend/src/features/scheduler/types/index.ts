@@ -54,6 +54,8 @@ export interface ScheduleTask {
   batch_id?: number;
   /** production_batch.wip_matched_id — WIP 매칭된 배치는 unassign 불가 (Task 5.2 disabled 판정) */
   wip_matched_id?: number | null;
+  /** S6 #12: 매뉴얼 조정된 batch — GanttTaskBlock 의 diagonal stripes overlay 신호 */
+  is_manually_adjusted?: boolean;
   /** schedule_task 생성 시각 — 증분 업데이트 후 신규 배치 강조 표시에 사용 */
   created_at?: Date;
   /** 도체 단면적 mm² — SQ별 색상 구분용 */

@@ -108,6 +108,10 @@ class ScheduleTaskResponse(BaseModel):
     # 프론트 ContextMenu(Task 5.2) "미배정으로 이동" disabled 판정용 — WIP 매칭된
     # 배치는 재고로 대체된 공정이라 해제 불가. None 이면 일반 생산 배치.
     wip_matched_id: Optional[int] = None
+    # S6 #12: 매뉴얼 조정 여부 — SolverDecision.manual_override_change_set_id 가
+    # link 한 ScheduleChangeSet 의 snapshot 에 task 가 등장하면 True.
+    # 프론트 GanttTaskBlock 의 diagonal stripes overlay 분기 신호.
+    is_manually_adjusted: bool = False
 
 
 class ScheduleTaskCreate(BaseModel):

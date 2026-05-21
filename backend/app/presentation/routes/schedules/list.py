@@ -219,6 +219,45 @@ def list_tasks(
             return None
         return group_spec_list.get(task.batch_group) or []
 
+    # S6 #12: 매뉴얼 조정된 batch_id set — SolverDecision.manual_override_change_set_id
+    # 가 link 한 ScheduleChangeSet 의 snapshot key (task_id str) → batch_id 매핑.
+    # bulk 3-query (decision link / change_set snapshot / task→batch).
+    # Local import: 모듈 최상위 import 는 formatter 가 unused 로 제거함.
+    from app.infrastructure.models.schedule_change_set import (
+        ScheduleChangeSet as _CS,
+    )
+    from app.infrastructure.models.solver_decision import SolverDecision as _SD
+
+    manual_cs_ids = {
+        cs_id
+        for (cs_id,) in db.query(_SD.manual_override_change_set_id)
+        .filter(_SD.manual_override_change_set_id.isnot(None))
+        .distinct()
+        .all()
+        if cs_id is not None
+    }
+    manual_task_ids: set[int] = set()
+    if manual_cs_ids:
+        for cs_row in (
+            db.query(_CS.snapshot_before, _CS.snapshot_after)
+            .filter(_CS.change_set_id.in_(manual_cs_ids))
+            .all()
+        ):
+            for snapshot in cs_row:
+                if not snapshot:
+                    continue
+                for k in snapshot.keys():
+                    if isinstance(k, str) and k.isdigit():
+                        manual_task_ids.add(int(k))
+    manual_batch_ids: set[int] = set()
+    if manual_task_ids:
+        rows = (
+            db.query(ScheduleTaskModel.batch_id)
+            .filter(ScheduleTaskModel.task_id.in_(manual_task_ids))
+            .all()
+        )
+        manual_batch_ids = {r[0] for r in rows if r[0] is not None}
+
     return [
         _db_task_to_response(
             task,
@@ -228,6 +267,7 @@ def list_tasks(
             color_change_min=color_change_map.get(task.task_id, 0),
             lot_count=header_drum_counts.get(task.batch_group),
             spec_list=_spec_list_for(task),
+            is_manually_adjusted=batch.batch_id in manual_batch_ids,
         )
         for task, batch in db_tasks
     ]
