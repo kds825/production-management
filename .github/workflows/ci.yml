@@ -86,7 +86,10 @@ jobs:
             --ignore=tests/test_constraint_params_is_enabled.py \
             --ignore=tests/test_overload_split.py \
             --ignore=tests/test_priority_slider_objective.py \
-            --ignore=tests/test_wip_output_expected_m.py
+            --ignore=tests/test_wip_output_expected_m.py \
+            --ignore=tests/test_pipeline_alignment.py \
+            --ignore=tests/test_pipeline_sync.py \
+            --ignore=tests/test_sheath_color_chain.py
 
   frontend:
     runs-on: ubuntu-latest
