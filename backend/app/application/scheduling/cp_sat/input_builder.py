@@ -174,6 +174,26 @@ def build_solver_input(
         )
     )
 
+    # S1 #2/#4: CP-SAT 의 batch 입력 순서를 greedy 의 _group_and_sort 와
+    # 동일하게 — search heuristic 의 첫 시도가 그리디 결정과 일치하도록.
+    # _group_and_sort 가 slack_step / -sq tiebreak / sheath cluster rank 까지
+    # 모두 반영하므로 CP-SAT input 도 자동 동기.
+    try:
+        from app.application.scheduling.greedy._group_and_sort import (
+            _group_and_sort as _greedy_group_sort,
+        )
+
+        ordered_groups, _ctx = _greedy_group_sort(list(batches), db)
+        idx_by_batch_id: dict[int, tuple[int, int]] = {}
+        for gi, (_gk, gb) in enumerate(ordered_groups):
+            for bi, b in enumerate(gb):
+                if b.batch_id is not None:
+                    idx_by_batch_id[b.batch_id] = (gi, bi)
+        batches.sort(key=lambda b: idx_by_batch_id.get(b.batch_id or -1, (10**9, 0)))
+    except Exception:
+        # _group_and_sort 가 실패해도 기존 sort 그대로 사용 — fail-soft.
+        pass
+
     # WIP 스킵 (L1094-1115 미러). 주의: `batch.status` 를 in-place 로
     # mutate 한다 — 원본과 동일한 side-effect 이므로 유지. `wip_skipped`
     # 는 caller 가 `result["wip_skipped"]` 에 기록.
