@@ -36,7 +36,10 @@ from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.application.ingest import create_batches, detect_split_candidates
+from app.application.ingest import (
+    create_batches,
+    detect_split_candidates,
+)
 from app.infrastructure.parsers.erp_parser import parse_erp_file
 from app.application.ingest.run_labeler import new_run_label
 from app.application.ingest.stage1 import run_solver_stage
@@ -168,11 +171,36 @@ def execute_stage1_ingest(
 
     db.commit()
 
-    # ── Step 4: 연선 그룹 분할 후보 감지 ──────────────────────────────────────
+    # base_date(datetime) → splitter 의 date 형으로 변환. 사용자 정책상
+    # 모든 시점 비교는 frontend 가 보낸 "계획 기준일자" 를 today 로 간주.
+    today_ref_date = base_date.date() if base_date else None
+
+    # ── Step 4a: Overload 자동 분할 (시스템 결정) ─────────────────────────────
+    # 단일 설비 가용시간 < 요구시간 케이스만 ceil(N/2) 균형 분할. 납기 차이가
+    # 큰 일반 케이스는 4b 의견 카드로 노출 (사용자 정책 2026-05-21).
+    auto_split_result: dict = {"auto_split_count": 0, "splits": []}
+    try:
+        auto_split_result = execute_auto_splits(
+            run_label, db, gap_days=split_gap_days, base_date=today_ref_date
+        )
+        if auto_split_result["auto_split_count"] > 0:
+            logger.info(
+                "[Stage1] Overload 자동 분할 %d건 적용",
+                auto_split_result["auto_split_count"],
+            )
+    except Exception as exc:
+        logger.warning("[Stage1] Overload 자동 분할 실패 (계속 진행): %s", exc)
+
+    # ── Step 4b: Split 후보 감지 (overload 제외) ──────────────────────────────
     # commit 이후에 실행해야 flush 된 배치가 쿼리에 반영된다.
+    # include_overload=False — 4a 에서 자동 처리된 케이스는 카드에서 제외.
     try:
         split_candidates = detect_split_candidates(
-            run_label, db, gap_days=split_gap_days
+            run_label,
+            db,
+            gap_days=split_gap_days,
+            base_date=today_ref_date,
+            include_overload=False,
         )
     except Exception as exc:
         logger.warning("[Stage1] 분할 후보 감지 실패 (계속 진행): %s", exc)
@@ -192,6 +220,8 @@ def execute_stage1_ingest(
         "warnings": warnings,
         "outsource_count": batch_result.get("outsource_count", 0),
         "split_candidates": split_candidates,
+        "auto_split": auto_split_result,
+        "auto_split_count": auto_split_result["auto_split_count"],
         # 프론트가 보낸 계획 기준일자를 그대로 echo — Stage 2 가 동일 값을
         # 사용하도록 보장. YYYY-MM-DD 형식.
         "base_date": base_date.strftime("%Y-%m-%d") if base_date else None,

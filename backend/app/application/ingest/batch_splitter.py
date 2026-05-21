@@ -22,6 +22,8 @@ def detect_split_candidates(
     db: Session,
     *,
     gap_days: int = 3,
+    base_date: date | None = None,
+    include_overload: bool = True,
 ) -> list[dict]:
     """연선 배치 그룹 중 납기 간격이 큰 그룹을 분할 후보로 반환한다.
 
@@ -60,6 +62,12 @@ def detect_split_candidates(
             ...
         ]
     """
+    # base_date 가 들어오면 그걸 "오늘"로 간주 (사용자가 frontend 에서 선택한
+    # 계획 기준일자). 모든 시점 비교(overload 가용시간, D-day, has_urgent
+    # 판정)가 today_ref 를 기준으로 동작한다. base_date 미지정 시에만 실제
+    # 오늘로 폴백 — 테스트/legacy 경로 호환용.
+    today_ref = base_date or date.today()
+
     # ── 연선 헤더 배치 로드 ────────────────────────────────────────────────────
     headers = (
         db.query(ProductionBatch)
@@ -214,7 +222,7 @@ def detect_split_candidates(
             _cat = _cal_cat(header.equipment_code)
             _hours_tbl = _CAL_HOURS.get(_cat, _CAL_HOURS["default"])
             _available_hr = 0.0
-            _day = date.today()
+            _day = today_ref
             _due = header.due_date
             if _due > _day:
                 while _day < _due:
@@ -223,7 +231,7 @@ def detect_split_candidates(
                 _required_hr = float(header.estimated_duration_min) / 60.0
                 if _required_hr > _available_hr and _available_hr > 0:
                     is_overload = True
-                    _days_cal = (header.due_date - date.today()).days
+                    _days_cal = (header.due_date - today_ref).days
                     overload_reason = (
                         f"설비 과부하 — {header.equipment_code or _cat} 기준 "
                         f"납기 {header.due_date} 까지 {_days_cal}일 "
@@ -270,7 +278,7 @@ def detect_split_candidates(
                 continue
 
         # ── 분할 제안 구성 ────────────────────────────────────────────────────
-        today = date.today()
+        today = today_ref
         proposed_splits = []
         drum_details = []
         has_urgent_in_later_drum = False
@@ -350,6 +358,12 @@ def detect_split_candidates(
                 "has_urgent_in_later_drum": has_urgent_in_later_drum,
             }
         )
+
+    # include_overload=False → 의견 카드용 호출. overload 케이스는
+    # execute_auto_splits 가 시스템 결정으로 이미 처리하므로 사용자에게
+    # 다시 의견을 묻지 않는다 (사용자 정책: overload=자동, 그 외=의견).
+    if not include_overload:
+        candidates = [c for c in candidates if not c.get("is_overload")]
 
     return candidates
 
@@ -513,14 +527,17 @@ def execute_auto_splits(
     db: Session,
     *,
     gap_days: int = 3,
+    base_date: date | None = None,
     urgency_priority_threshold: int = 7,
     urgency_days_threshold: int = 7,
 ) -> dict:
-    """납기 긴급 수주가 후순위 드럼에 포함된 그룹을 자동으로 분할한다.
+    """overload(설비 가용시간 < 요구시간) 그룹만 시스템 결정으로 자동 분할한다.
 
-    detect_split_candidates 결과 중 auto_split_recommended=True인 항목에 대해
-    proposed_splits[1:] 의 batch_ids를 '{batch_group}_B' 신규 그룹으로 분리한다.
-    Stage 1의 create_batches + db.commit() 직후에 호출한다.
+    정책 (2026-05-21): 사용자가 복수 드럼 분할 결정을 100% 통제하되, 단일
+    설비로 시간 내 완료가 물리적으로 불가능한 overload 케이스만 예외적으로
+    시스템이 ceil(N/2) 균형 분할한다 (여러 설비 병렬 배정 의도).
+    납기 차이가 큰 일반 케이스(has_urgent_in_later_drum)는 자동 분할하지
+    않고 의견 카드(BatchSplitReview)로 노출.
 
     Returns:
         {"auto_split_count": int, "splits": [{"original_group": ..., "new_group": ...}, ...]}
@@ -529,11 +546,13 @@ def execute_auto_splits(
         run_label,
         db,
         gap_days=gap_days,
+        base_date=base_date,
     )
 
     results = []
     for c in candidates:
-        if not c.get("auto_split_recommended"):
+        # 자동 분할 게이트: overload 단독 (사용자 의도)
+        if not c.get("is_overload"):
             continue
         proposed = c.get("proposed_splits", [])
         if len(proposed) < 2:

@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from app.application.ingest import (
     create_batches,
     detect_split_candidates,
-    execute_auto_splits,
     format_spec_display,
 )
 from app.application.ingest.pipeline_orchestrator import execute_stage1_ingest
@@ -131,13 +130,18 @@ async def run_stage1_update(
             status_code=400,
             detail=f"upload_mode는 'incremental' 또는 'full'이어야 합니다: {upload_mode}",
         )
-    # base_date 형식 검증 — 값은 응답에 echo 만 한다 (Stage 1 로직에서 미사용).
-    parse_base_date_yyyymmdd(base_date)
+    # base_date 형식 검증 + 분할 로직의 의사 today 로 사용.
+    # 사용자가 frontend 에서 선택한 "계획 기준일자" 를 splitter 의 overload 가용시간
+    # 계산·D-day·is_urgent 판정에 그대로 적용한다 (date.today() 대체).
+    parsed_base_date = parse_base_date_yyyymmdd(base_date)
 
-    # parent_run_label 자동 감지 — 미지정 시 최신 run_label 사용
+    # parent_run_label 자동 감지 — 미지정 시 최신 run_label 사용.
+    # `test-%` 는 conftest savepoint rollback 누수 가능성이 있어 자동 선택에서
+    # 제외 (schedules/list.py 와 동일 방어).
     if not parent_run_label:
         latest = (
             db.query(ProductionBatch.run_label)
+            .filter(~ProductionBatch.run_label.like("test-%"))
             .order_by(ProductionBatch.created_at.desc())
             .first()
         )
@@ -488,24 +492,42 @@ async def run_stage1_update(
 
         db.commit()
 
-        # ── 10. 자동 분할 (긴급 수주 후순위 드럼 → 자동 분리) ───────────────
+        # parsed_base_date(datetime) → date. splitter 내부 시점 비교는 date 단위.
+        base_date_ref = parsed_base_date.date() if parsed_base_date else None
+
+        # ── 10. Overload 자동 분할 (시스템 결정) ─────────────────────────────
+        # 정책 (2026-05-21): 단일 설비 가용시간 < 요구시간인 overload 그룹만
+        # 자동 ceil(N/2) 균형 분할 → 두 설비 병렬 배정. 일반 납기 차이는 11단계
+        # 의견 카드(BatchSplitReview)로 노출하여 사용자가 직접 결정한다.
         auto_split_result: dict = {"auto_split_count": 0, "splits": []}
         try:
             auto_split_result = execute_auto_splits(
-                new_run_label, db, gap_days=split_gap_days
+                new_run_label,
+                db,
+                gap_days=split_gap_days,
+                base_date=base_date_ref,
             )
             if auto_split_result["auto_split_count"] > 0:
                 logger.info(
-                    "[Stage1 Update] 자동 분할 %d건 적용",
+                    "[Stage1 Update] Overload 자동 분할 %d건 적용",
                     auto_split_result["auto_split_count"],
                 )
         except Exception as exc:
-            logger.warning("[Stage1 Update] 자동 분할 실패 (계속 진행): %s", exc)
+            logger.warning(
+                "[Stage1 Update] Overload 자동 분할 실패 (계속 진행): %s", exc
+            )
 
-        # ── 11. Split 후보 감지 (자동 분할 후 잔여 후보) ─────────────────────
+        # ── 11. Split 후보 감지 → 사용자 의견 카드 (overload 제외) ───────────
+        # include_overload=False — 10단계에서 이미 처리된 overload 후보는
+        # 다시 묻지 않는다. 사용자에게 보이는 카드는 "납기 차이 큼" 케이스만.
+        # 단일 드럼(lot_count==1)은 batch_splitter.py:121 에서 스킵.
         try:
             split_candidates = detect_split_candidates(
-                new_run_label, db, gap_days=split_gap_days
+                new_run_label,
+                db,
+                gap_days=split_gap_days,
+                base_date=base_date_ref,
+                include_overload=False,
             )
         except Exception as exc:
             logger.warning("[Stage1 Update] 분할 후보 감지 실패: %s", exc)

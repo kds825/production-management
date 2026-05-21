@@ -226,11 +226,16 @@ def test_execute_overload_split_uses_balanced_boundary(
     assert drum_counts == [2, 3], f"예상 drum_count [2,3], 실제: {drum_counts}"
 
 
-def test_execute_urgent_only_uses_legacy_boundary(db: Session, urgent_run: str) -> None:
-    """기존 긴급-only 경로는 여전히 1+rest (균형 분할 변경 영향 없음)."""
+def test_execute_urgent_only_skips_auto_split(db: Session, urgent_run: str) -> None:
+    """정책 변경 (2026-05-21): urgent-only 케이스는 자동 분할 안 함 → 의견 카드.
+
+    이전에는 has_urgent_in_later_drum=True 면 execute_auto_splits 가 1+rest 로
+    잘랐으나, 사용자 정책상 "복수 드럼 분할은 100% 사용자 결정" → urgent 만으로는
+    자동 분할 트리거되지 않는다. overload 만 자동 게이트.
+    """
     _make_urgent_only_fixture(db, urgent_run)
 
-    # 먼저 overload 아님을 확인
+    # detect 는 여전히 후보로 노출 (UI 의견 카드용, ⚡ 강조 마크 포함)
     candidates = detect_split_candidates(urgent_run, db)
     assert len(candidates) == 1
     c = candidates[0]
@@ -238,11 +243,15 @@ def test_execute_urgent_only_uses_legacy_boundary(db: Session, urgent_run: str) 
         f"urgent-only 픽스처가 overload 로 잘못 감지됨: {c}"
     )
     assert c["has_urgent_in_later_drum"] is True
-    assert c["auto_split_recommended"] is True
+    assert c["auto_split_recommended"] is True  # UI 강조용 의미는 유지
 
+    # execute_auto_splits 는 is_overload 가 아니므로 스킵
     result = execute_auto_splits(urgent_run, db)
-    assert result["auto_split_count"] == 1
+    assert result["auto_split_count"] == 0, (
+        f"urgent-only 는 자동 분할 대상 아님, 실제: {result}"
+    )
 
+    # 헤더 그대로 — 단일 그룹 유지 (drum_count=3)
     headers = (
         db.query(ProductionBatch)
         .filter(
@@ -251,6 +260,7 @@ def test_execute_urgent_only_uses_legacy_boundary(db: Session, urgent_run: str) 
         )
         .all()
     )
-    # 기존 동작: 앞 1틀 남고 뒤 2틀 이동 (3 drums → 1+2)
-    drum_counts = sorted([h.drum_count or 0 for h in headers])
-    assert drum_counts == [1, 2], f"기존 1+rest 경로 깨짐, drum_counts={drum_counts}"
+    drum_counts = [h.drum_count or 0 for h in headers]
+    assert drum_counts == [3], (
+        f"urgent-only 자동 분할 없이 단일 헤더 유지 기대, drum_counts={drum_counts}"
+    )
