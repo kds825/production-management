@@ -13,6 +13,7 @@ import { ContextMenu } from "@/features/scheduler/components/ContextMenu";
 import { TaskFormModal } from "@/features/scheduler/components/TaskFormModal";
 import { WipUpdateModal } from "@/features/scheduler/components/WipUpdateModal";
 import { BatchSplitModal } from "@/features/scheduler/components/BatchSplitModal";
+import { DecisionConstraintsModal } from "@/features/scheduler/components/DecisionConstraintsModal";
 // Task 21 — cascade v2.
 // Task 19 에서 Task 16/17 기반으로 교체된 ConflictResolutionModal 을 `useScheduleChangeWithCascade`
 // 훅으로 wiring. FEATURE_FLAG off 시 legacyMove 콜백이 store.moveTask 로 fallback.
@@ -321,6 +322,9 @@ export default function SchedulerPage() {
 
       {/* 전역 오버레이 UI */}
       <ContextMenu />
+      {/* 결정 상세 모달 — DecisionCard pill / ContextMenu "상세보기" 가 trigger.
+          store 의 decisionDetailModal.batchId 가 null 이 아닐 때만 자체 렌더. */}
+      <DecisionConstraintsModal />
       {/* Task 21 — TaskFormModal edit 경로에서 cascade 훅 commit 주입. */}
       <TaskFormModal onSubmitWithCascade={cascade.commit} />
 

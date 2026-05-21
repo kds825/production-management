@@ -12,6 +12,7 @@ import {
   ArrowUturnLeftIcon,
   ArrowDownTrayIcon,
   TrashIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useScheduleStore } from "../store/scheduleStore";
 import { UnassignConfirmModal } from "./UnassignConfirmModal";
@@ -25,6 +26,9 @@ export function ContextMenu() {
   const closeContextMenu = useScheduleStore((s) => s.closeContextMenu);
   const openTaskFormModal = useScheduleStore((s) => s.openTaskFormModal);
   const openSplitModal = useScheduleStore((s) => s.openSplitModal);
+  const openDecisionDetailModal = useScheduleStore(
+    (s) => s.openDecisionDetailModal,
+  );
   const deleteTask = useScheduleStore((s) => s.deleteTask);
   const updateTask = useScheduleStore((s) => s.updateTask);
   const tasks = useScheduleStore((s) => s.tasks);
@@ -89,8 +93,8 @@ export function ContextMenu() {
 
   // 뷰포트 경계 보정 (메뉴가 화면 밖으로 나가지 않도록)
   const menuWidth = 160;
-  // task 메뉴: 기본 항목 + 상태 변경 섹션(최대 3항목 × 28px + 구분선 8px)
-  const menuHeight = contextMenu.type === "task" ? 220 : 88;
+  // task 메뉴: 상세보기(28) + 구분선(8) + 기본 항목 + 상태 변경 섹션
+  const menuHeight = contextMenu.type === "task" ? 256 : 88;
   const left = Math.min(contextMenu.x, window.innerWidth - menuWidth - 8);
   const top = Math.min(contextMenu.y, window.innerHeight - menuHeight - 8);
 
@@ -143,6 +147,12 @@ export function ContextMenu() {
     if (!selectedTask?.batch_group) return;
     closeContextMenu();
     openSplitModal(selectedTask.batch_group, selectedTask.id);
+  }
+
+  function handleOpenDecisionDetail() {
+    if (selectedTask?.batch_id == null) return;
+    closeContextMenu();
+    openDecisionDetailModal(selectedTask.batch_id);
   }
 
   // 낙관적 상태 변경: 즉시 로컬 반영 → API 실패 시 롤백
@@ -201,6 +211,19 @@ export function ContextMenu() {
           </>
         ) : (
           <>
+            {/* 상세보기 — batch_id 있는 DB task 만 (manual placement 는 trace 없음) */}
+            {selectedTask?.batch_id != null && (
+              <>
+                <button
+                  className={menuItemClass}
+                  onClick={handleOpenDecisionDetail}
+                >
+                  <InformationCircleIcon width={14} height={14} aria-hidden />
+                  상세보기
+                </button>
+                <div className="border-t border-gray-100 my-1" />
+              </>
+            )}
             <button className={menuItemClass} onClick={handleEditTask}>
               <PencilIcon width={14} height={14} aria-hidden />
               수정

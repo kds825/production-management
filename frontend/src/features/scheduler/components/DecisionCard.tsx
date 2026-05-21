@@ -21,7 +21,9 @@
  *   View 를 분리하면 prop-drive 만으로 SSR HTML 이 생성되어 단위 테스트가 가능.
  */
 
+import { useCallback } from "react";
 import { useDecisionCard, type DecisionData } from "../hooks/useDecisionCard";
+import { useScheduleStore } from "../store/scheduleStore";
 
 // ============================================================================
 // Constants
@@ -78,6 +80,10 @@ export type DecisionCardViewState =
 
 export interface DecisionCardViewProps {
   state: DecisionCardViewState;
+  /** pill 좌클릭 핸들러 — 결정 상세 모달 trigger. */
+  onOpenDetail?: () => void;
+  /** 카드 영역 우클릭 핸들러 — 기존 task ContextMenu 재사용. */
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -96,7 +102,11 @@ function cardShellClass(variant: "default" | "manual"): string {
   return `${base} border-[color:var(--color-border-default)]`;
 }
 
-export function DecisionCardView({ state }: DecisionCardViewProps) {
+export function DecisionCardView({
+  state,
+  onOpenDetail,
+  onContextMenu,
+}: DecisionCardViewProps) {
   // ----- Loading skeleton -----
   if (state.kind === "loading") {
     return (
@@ -197,10 +207,11 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
     pillLabel = "불가능";
     pillColorVar = "var(--color-danger)";
   } else if (data.binding_hard_constraints.length > 0) {
-    const names = data.binding_hard_constraints
-      .map((c) => c.korean_name)
-      .join(", ");
-    pillLabel = `제약됨: ${names}`;
+    // 한 줄 join 은 N이 클 때 화면 폭을 전부 먹어 가독성을 망친다.
+    // 첫 이름 + "외 N개" 만 노출하고 전체 list 는 onOpenDetail 모달에서.
+    const first = data.binding_hard_constraints[0].korean_name;
+    const rest = data.binding_hard_constraints.length - 1;
+    pillLabel = rest > 0 ? `제약됨: ${first} 외 ${rest}개` : `제약됨: ${first}`;
     pillColorVar = "var(--color-warning)";
   } else {
     pillLabel = "이동 가능";
@@ -226,6 +237,7 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
       data-testid="decision-card"
       data-manual={isManual ? "true" : "false"}
       className={cardShellClass(variant)}
+      onContextMenu={onContextMenu}
     >
       {/* ============ Zone 1: 한 줄 요약 + pill ============ */}
       <div
@@ -246,16 +258,40 @@ export function DecisionCardView({ state }: DecisionCardViewProps) {
             {data.run_label}
           </span>
         </div>
-        <span
-          data-testid="decision-card-pill"
-          className="inline-flex items-center text-tiny font-medium px-2 py-0.5 rounded-full whitespace-nowrap border"
-          style={{
-            color: pillColorVar,
-            borderColor: pillColorVar,
-          }}
-        >
-          {pillLabel}
-        </span>
+        {/*
+         * Pill 은 onOpenDetail 콜백이 있으면 button 으로 렌더 — 좌클릭으로 결정
+         * 상세 모달을 연다. 콜백이 없으면 (테스트/SSR-only 경로) static span 유지.
+         * 컴팩트 ⋮ hint 아이콘으로 "더 볼 거리 있음" 을 시각화.
+         */}
+        {onOpenDetail ? (
+          <button
+            type="button"
+            data-testid="decision-card-pill"
+            onClick={onOpenDetail}
+            className="inline-flex items-center gap-1 text-tiny font-medium px-2 py-0.5 rounded-full whitespace-nowrap border cursor-pointer hover:opacity-80 transition-opacity"
+            style={{
+              color: pillColorVar,
+              borderColor: pillColorVar,
+            }}
+            title="클릭하여 결정 상세 보기"
+          >
+            {pillLabel}
+            <span aria-hidden className="opacity-60">
+              ⋮
+            </span>
+          </button>
+        ) : (
+          <span
+            data-testid="decision-card-pill"
+            className="inline-flex items-center text-tiny font-medium px-2 py-0.5 rounded-full whitespace-nowrap border"
+            style={{
+              color: pillColorVar,
+              borderColor: pillColorVar,
+            }}
+          >
+            {pillLabel}
+          </span>
+        )}
       </div>
 
       {/* ============ Zone 2: contributions bar chart ============ */}
@@ -374,6 +410,45 @@ export interface DecisionCardProps {
 
 export function DecisionCard({ batchId }: DecisionCardProps) {
   const { data, status, error, refetch } = useDecisionCard(batchId);
+  const tasks = useScheduleStore((s) => s.tasks);
+  const openDecisionDetailModal = useScheduleStore(
+    (s) => s.openDecisionDetailModal,
+  );
+  const openContextMenu = useScheduleStore((s) => s.openContextMenu);
+
+  // batchId 는 string 으로 들어오지만 production_batch.batch_id 는 정수.
+  // store 의 modal state · ScheduleTask.batch_id 와 매칭하려면 number 로 변환.
+  const numericBatchId =
+    batchId == null || batchId === "" ? null : Number(batchId);
+  const validBatchId =
+    numericBatchId != null && Number.isFinite(numericBatchId)
+      ? numericBatchId
+      : null;
+
+  const handleOpenDetail = useCallback(() => {
+    if (validBatchId != null) openDecisionDetailModal(validBatchId);
+  }, [validBatchId, openDecisionDetailModal]);
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (validBatchId == null) return;
+      e.preventDefault();
+      // batch_id 로 ScheduleTask 매칭 — 매칭 실패 시(미배정/legacy) 모달만 열어
+      // 사용자 액션이 무반응으로 보이지 않게 폴백.
+      const task = tasks.find((t) => t.batch_id === validBatchId);
+      if (!task) {
+        handleOpenDetail();
+        return;
+      }
+      openContextMenu({
+        type: "task",
+        x: e.clientX,
+        y: e.clientY,
+        taskId: task.id,
+      });
+    },
+    [validBatchId, tasks, openContextMenu, handleOpenDetail],
+  );
 
   if (batchId === null || status === "idle") return null;
 
@@ -397,5 +472,11 @@ export function DecisionCard({ batchId }: DecisionCardProps) {
     return null;
   }
 
-  return <DecisionCardView state={viewState} />;
+  return (
+    <DecisionCardView
+      state={viewState}
+      onOpenDetail={validBatchId != null ? handleOpenDetail : undefined}
+      onContextMenu={validBatchId != null ? handleContextMenu : undefined}
+    />
+  );
 }

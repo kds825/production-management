@@ -159,7 +159,9 @@ describe("DecisionCardView", () => {
     expect(html).toContain("템플릿");
   });
 
-  it("pill = 제약됨 with binding constraint names when binding_hard_constraints non-empty", () => {
+  it("pill = 제약됨 first + 외 N개 when binding_hard_constraints 2+", () => {
+    // pill 가독성 개선: N 이 클 때 한 줄 join 이 화면 폭을 다 먹어 truncate 되던 회귀를
+    // 막기 위해 첫 이름 + "외 N개" 형태로 단축. 전체 list 는 결정 상세 모달에서 확인.
     const data = mkData({
       binding_hard_constraints: [
         { constraint_id: "h_capacity", korean_name: "설비용량" },
@@ -169,8 +171,21 @@ describe("DecisionCardView", () => {
     const html = renderToStaticMarkup(
       <DecisionCardView state={{ kind: "ok", data }} />,
     );
-    expect(html).toContain("제약됨: 설비용량, 공정경로");
+    expect(html).toContain("제약됨: 설비용량 외 1개");
     expect(html).toContain("var(--color-warning)");
+  });
+
+  it("pill = 제약됨 single name when binding_hard_constraints has 1 entry", () => {
+    const data = mkData({
+      binding_hard_constraints: [
+        { constraint_id: "h_capacity", korean_name: "설비용량" },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      <DecisionCardView state={{ kind: "ok", data }} />,
+    );
+    expect(html).toContain("제약됨: 설비용량");
+    expect(html).not.toContain("외 0개");
   });
 
   it("pill = 불가능 (red) when solver_status=INFEASIBLE", () => {

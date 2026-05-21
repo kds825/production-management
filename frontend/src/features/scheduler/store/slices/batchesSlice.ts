@@ -72,6 +72,11 @@ export interface BatchesSlice {
     taskId: string;
   };
 
+  // 결정 상세 모달 (DecisionCard pill / ContextMenu "상세보기" 가 trigger).
+  // batchId 가 있으면 모달이 열려 있고 DecisionConstraintsModal 이 그 batch 의
+  // DecisionData 를 useDecisionCard 훅으로 페치한다.
+  decisionDetailModal: { batchId: number | null };
+
   // Cross-process cascade preview 상태
   cascadePreview: CascadePreview | null;
   conflictModalOpen: boolean;
@@ -111,6 +116,9 @@ export interface BatchesSlice {
   openSplitModal: (batchGroup: string, taskId: string) => void;
   closeSplitModal: () => void;
 
+  openDecisionDetailModal: (batchId: number) => void;
+  closeDecisionDetailModal: () => void;
+
   previewCascade: (
     taskId: string,
     newStart: Date,
@@ -142,6 +150,7 @@ export const createBatchesSlice: StateCreator<
   contextMenu: null,
   taskFormModal: { isOpen: false, mode: "create" },
   splitModal: { isOpen: false, batchGroup: "", taskId: "" },
+  decisionDetailModal: { batchId: null },
   cascadePreview: null,
   conflictModalOpen: false,
   cascadeOriginalTask: null,
@@ -420,6 +429,18 @@ export const createBatchesSlice: StateCreator<
   closeSplitModal: () => {
     set((state) => {
       state.splitModal = { isOpen: false, batchGroup: "", taskId: "" };
+    });
+  },
+
+  openDecisionDetailModal: (batchId) => {
+    set((state) => {
+      state.decisionDetailModal = { batchId };
+    });
+  },
+
+  closeDecisionDetailModal: () => {
+    set((state) => {
+      state.decisionDetailModal = { batchId: null };
     });
   },
 
