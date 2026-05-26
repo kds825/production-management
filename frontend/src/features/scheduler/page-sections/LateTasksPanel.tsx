@@ -35,7 +35,10 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
         }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-small font-bold" style={{ color: "var(--status-danger-text-strong)" }}>
+          <span
+            className="text-small font-bold"
+            style={{ color: "var(--status-danger-text-strong)" }}
+          >
             납기 초과 배치
           </span>
           <span
@@ -65,6 +68,7 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
             <tr style={{ backgroundColor: "var(--kbi-red-tint-12)" }}>
               {[
                 "지연",
+                "공정",
                 "상태",
                 "설비",
                 "규격",
@@ -106,6 +110,12 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                 >
                   +{lateDays}일
                 </td>
+                <td
+                  className="px-3 py-1.5 text-gray-700"
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {t.process_name ?? "-"}
+                </td>
                 <td className="px-3 py-1.5" style={{ whiteSpace: "nowrap" }}>
                   {t.status === "unassigned" ? (
                     <span
@@ -135,7 +145,10 @@ export function LateTasksPanel({ lateTasks, onClose }: LateTasksPanelProps) {
                 </td>
                 <td
                   className="px-3 py-1.5 font-medium"
-                  style={{ color: "var(--status-danger-text)", whiteSpace: "nowrap" }}
+                  style={{
+                    color: "var(--status-danger-text)",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   {t.delivery_date instanceof Date
                     ? t.delivery_date.toLocaleDateString("ko-KR")
