@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.application.ingest import (
     create_batches,
     detect_split_candidates,
+    execute_auto_splits,
     format_spec_display,
 )
 from app.application.ingest.pipeline_orchestrator import execute_stage1_ingest

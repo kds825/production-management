@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.application.ingest import (
     create_batches,
     detect_split_candidates,
+    execute_auto_splits,
 )
 from app.infrastructure.parsers.erp_parser import parse_erp_file
 from app.application.ingest.run_labeler import new_run_label
