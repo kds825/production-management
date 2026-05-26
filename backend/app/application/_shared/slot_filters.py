@@ -170,6 +170,7 @@ def align_start_to_predecessor_end(
     slots: list,
     db: "Session",
     equipment_code: str,
+    chain_pred_end: "datetime | None" = None,
 ) -> tuple[datetime, datetime]:
     """후공정 종료가 선행공정 종료 + 후공정 1드럼 소요시간 이상이 되도록 시작을 지연한다.
 
@@ -183,6 +184,13 @@ def align_start_to_predecessor_end(
     tail_offset_min 은 호출자가 `후공정 group_duration / drum_count` 로 산정한 per-drum 소요.
     시스 공정(저압시스/고압시스)은 pred_proc 외에 "연합" 종료도 함께 고려.
     pred_proc 가 None 이거나 process_end_by_sq 에 기록이 없으면 입력 그대로 반환.
+
+    chain_pred_end: 이 그룹 주문의 *실제 직속 선행 종료*(predecessor_map 으로 해석).
+      주어지면 pred_proc 항을 이 값으로 대체한다. ``process_end_by_sq`` 는
+      (공정, SQ) → MAX 라서, 같은 SQ 를 공유하는 *무관한 다른 주문 체인*의
+      종료까지 끌어와 과도하게 뒤로 정렬한다(실측: 95SQ 1차 절연이 늦은 2차
+      연선에 정렬돼 설비 유휴에도 납기 초과). per-chain 종료를 쓰면 자기 체인의
+      선행만 본다. "연합"은 직속 선행이 아닌 부가 입력이라 per-SQ MAX 유지.
 
     반환: (aligned_start, aligned_end)
     """
@@ -217,6 +225,15 @@ def align_start_to_predecessor_end(
 
     pred_end_latest: datetime | None = None
     for pp in pipeline_procs:
+        # 직속 선행(pred_proc)은 chain_pred_end 가 주어지면 per-SQ MAX 대신
+        # 그것을 쓴다 (무관한 동일-SQ 체인 결합 방지). "연합" 등 부가 입력은
+        # 기존 per-SQ MAX 유지.
+        if pp == pred_proc and chain_pred_end is not None:
+            if chain_pred_end < datetime.max and (
+                pred_end_latest is None or chain_pred_end > pred_end_latest
+            ):
+                pred_end_latest = chain_pred_end
+            continue
         for sq_i in group_sqs:
             pe = process_end_by_sq.get((pp, sq_i))
             if pe and pe < datetime.max:

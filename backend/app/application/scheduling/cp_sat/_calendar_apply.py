@@ -664,6 +664,22 @@ def apply_calendar_greedy(
         else:
             _lot_count_p = max(sum(int(b.drum_count or 1) for b in gb), 1)
         _per_drum_p = meta["work_dur"] / _lot_count_p if _lot_count_p > 0 else 0.0
+        # per-chain 직속 선행 종료 — 절연/시스 한정. predecessor_map 은 각 주문의
+        # 직전 공정 task 를 가리키므로(공정 순서대로 배치되며 line 748 에서 갱신)
+        # 이 그룹 주문들의 실제 선행 종료 최대값을 구한다. process_end_by_sq 의
+        # per-SQ MAX 가 같은 SQ 의 무관한 다른 주문 체인까지 끌어와 과도 정렬하는
+        # 문제를 차단(실측: 1차 95SQ 절연이 늦은 2차 95SQ 연선에 정렬 → 납기 초과).
+        _chain_pred_end = None
+        if rep.process_name in ("저압절연", "고압절연", "저압시스", "고압시스"):
+            for _b in gb:
+                _pt = predecessor_map.get((_b.sales_order_id, _b.sales_order_line))
+                if not _pt:
+                    continue
+                _ptask = next((t for t in tasks_created if t.task_id == _pt), None)
+                if _ptask and (
+                    _chain_pred_end is None or _ptask.end_datetime > _chain_pred_end
+                ):
+                    _chain_pred_end = _ptask.end_datetime
         best_start, end_dt = align_start_to_predecessor_end(
             process_name=rep.process_name,
             pred_proc=pred_proc,
@@ -676,6 +692,7 @@ def apply_calendar_greedy(
             slots=slots,
             db=db,
             equipment_code=chosen_eq_code,
+            chain_pred_end=_chain_pred_end,
         )
 
         # 정각 올림
