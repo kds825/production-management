@@ -126,6 +126,10 @@ def solve_lex_min_time(
     built: BuiltModel,
     *,
     time_limit_phase_a_sec: int = 20,
+    # Phase A2 (Σ tardiness 최소화) — 납기 최우선. max_tard ≤ T* 고정 후
+    # "회피 가능한" 지연(T* 미만 그룹)까지 모두 줄인다. 8s 는 polish 성격이라
+    # 충분 (구조는 Phase A 에서 이미 결정). 사용자 30s 한계 보호 위해 작게.
+    time_limit_phase_a2_sec: int = 8,
     time_limit_phase_b_sec: int = 20,
     # Phase C default 15s — Phase 6 step 15 (2026-05-17) sweep 결과.
     # 5s → 15s 로 늘릴 때 누적 -7.6% objective 개선 (5s→10s -5.22%, 10s→15s
@@ -193,7 +197,41 @@ def solve_lex_min_time(
         )
     t_star = solver.value(max_tard)
 
-    # ── Phase B: fix max_tard ≤ T*, minimize makespan ─────────────────────
+    # ── Phase A2: max_tard ≤ T* 하에서 Σ tardiness 최소화 (납기 최우선) ──────
+    # Why: Phase A(min-max)는 최악 그룹만 본다. 불가피한 한 체인이 T* 를 정하면
+    # 그 이하로 늦는 다른 그룹들은 Phase A 목적에 무차별 → 회피 가능한 지연이
+    # 방치된다(실측: 저압시스 95SQ 가 절연 설비 유휴에도 납기 초과). 총 지연을
+    # 2차 목적으로 최소화하면 "납기 위반 총량+건수"가 줄어든다. makespan(Phase B)
+    # ·색상체인/idle(Phase C) 보다 상위 우선순위로 둠 = 납기 최우선.
+    #
+    # max_tard ≤ T* + total_tard ≤ S* 를 hard 로 박아 후속 phase 가 납기를
+    # 악화시키지 못하게 잠근다. t_star(=min max) 의미는 그대로 보존(리포트/테스트).
+    model.add(max_tard <= t_star)
+    if built.tardiness_vars:
+        total_tard = model.new_int_var(
+            0, len(built.tardiness_vars) * 2 * horizon, "lex_total_tardiness"
+        )
+        model.add(total_tard == sum(built.tardiness_vars.values()))
+        model.minimize(total_tard)
+        solver.parameters.max_time_in_seconds = float(time_limit_phase_a2_sec)
+        _ta2 = _time.perf_counter()
+        status_a2 = solver.solve(model)
+        _phase_a2_wall = _time.perf_counter() - _ta2
+        logger.info(
+            "lex Phase A2: status=%s sum_tard=%s wall=%.3fs limit=%ds",
+            solver.status_name(status_a2),
+            solver.value(total_tard)
+            if status_a2 in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+            else "n/a",
+            _phase_a2_wall,
+            time_limit_phase_a2_sec,
+        )
+        if status_a2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            # S* 를 hard 로 고정 → Phase B 의 makespan 최소화가 총 지연을 늘릴 수
+            # 없게. time-limit 직전 FEASIBLE 이어도 그 값은 valid upper bound.
+            model.add(total_tard <= int(solver.value(total_tard)))
+
+    # ── Phase B: fix max_tard ≤ T* (+ total_tard ≤ S*), minimize makespan ──
     model.add(max_tard <= t_star)
 
     if not built.end_vars:
