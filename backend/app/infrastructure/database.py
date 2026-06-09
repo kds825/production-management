@@ -18,10 +18,6 @@ engine = create_engine(
     pool_recycle=1800,  # 30min — Supabase idle timeout 대비
     connect_args={
         "options": "-c statement_timeout=600000",  # 10min (ms)
-        "keepalives": 1,
-        "keepalives_idle": 10,
-        "keepalives_interval": 5,
-        "keepalives_count": 3,
     },
 )
 

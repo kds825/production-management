@@ -144,6 +144,25 @@ def execute_stage1_ingest(
         try:
             from app.infrastructure.parsers.wip_parser import parse_wip_file
 
+            # FK cycle 해제 — subquery로 해당 WIP를 참조하는 모든 행 NULL 화
+            _wip_sub = "(SELECT wip_id FROM wip_inventory WHERE run_label = :rl)"
+            db.execute(
+                text("UPDATE production_batch SET wip_matched_id = NULL "
+                     f"WHERE wip_matched_id IN {_wip_sub}"),
+                {"rl": run_label},
+            )
+            db.execute(
+                text("UPDATE sales_order SET wip_id = NULL, use_wip = FALSE, "
+                     "wip_type = NULL, actual_length_m = NULL "
+                     f"WHERE wip_id IN {_wip_sub}"),
+                {"rl": run_label},
+            )
+            db.execute(
+                text("DELETE FROM wip_inventory WHERE run_label = :rl"),
+                {"rl": run_label},
+            )
+            db.flush()
+
             wip_parse = parse_wip_file(wip_content, db, run_label=run_label)
             wip_warnings.extend(wip_parse.get("warnings", []))
             if wip_parse["total"] > 0:

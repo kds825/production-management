@@ -36,8 +36,16 @@ from app.infrastructure.llm import (
     TemplateProvider,
 )
 
-# Module-level singleton — see "Why kiwipiepy" above.
-_kiwi = Kiwi()
+# Lazy singleton — Kiwi() loads a ~50MB model and may fail when the
+# working-directory path contains non-ASCII characters (Windows Korean paths).
+_kiwi: Kiwi | None = None
+
+
+def _get_kiwi() -> Kiwi:
+    global _kiwi
+    if _kiwi is None:
+        _kiwi = Kiwi()
+    return _kiwi
 
 # Floor of always-allowed Korean nouns. Keep this list short and generic;
 # domain-specific nouns belong in the per-request catalog.
@@ -62,7 +70,7 @@ def _korean_nouns(text: str) -> set[str]:
     are nouns we want to validate. Verbs (VV*) and particles (J*) are
     intentionally skipped — they cannot hallucinate domain entities.
     """
-    return {t.form for t in _kiwi.tokenize(text) if t.tag.startswith("NN")}
+    return {t.form for t in _get_kiwi().tokenize(text) if t.tag.startswith("NN")}
 
 
 def detect_hallucinations(text: str, korean_name_catalog: set[str]) -> set[str]:

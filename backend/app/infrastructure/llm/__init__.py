@@ -87,7 +87,7 @@ def get_provider(name: str) -> Provider:
     lazy so that test environments without ``anthropic`` installed still
     boot the app.
     """
-    if name == "anthropic":
+    if name in ("anthropic", "openai"):
         from app.infrastructure.llm.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider()

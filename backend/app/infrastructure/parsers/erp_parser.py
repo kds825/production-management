@@ -30,7 +30,19 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
             "warnings": list[str], # 비치명적 이슈 메시지
         }
     """
-    workbook = xlrd.open_workbook(file_contents=file_content)
+    from io import BytesIO
+
+    # .xlsx(openpyxl) 우선 시도, 실패 시 .xls(xlrd) 폴백
+    use_openpyxl = False
+    try:
+        from openpyxl import load_workbook
+        wb_xlsx = load_workbook(BytesIO(file_content), data_only=True)
+        use_openpyxl = True
+    except Exception:
+        wb_xlsx = None
+
+    if not use_openpyxl:
+        workbook = xlrd.open_workbook(file_contents=file_content)
     result: dict = {
         "total": 0,
         "진행": 0,
@@ -67,88 +79,166 @@ def parse_erp_file(file_content: bytes, run_label: str, db: Session) -> dict:
     # order_line: 전체 INSERT 순번 (1부터 시작)
     line_counter = 0
 
-    for sheet_name in ["진행", "대기"]:
-        if sheet_name not in workbook.sheet_names():
-            result["warnings"].append(f"시트 '{sheet_name}' 없음 — 건너뜀")
-            continue
-
-        sheet = workbook.sheet_by_name(sheet_name)
-
-        # ── 헤더 행 탐지: "수주번호"를 포함한 셀이 있는 첫 번째 행 ──────────────
-        header_row_idx = _find_header_row(sheet, keyword="수주번호", max_scan=25)
-        if header_row_idx is None:
-            result["warnings"].append(
-                f"시트 '{sheet_name}': 헤더 행 탐지 실패 — 건너뜀"
-            )
-            continue
-
-        # ── 컬럼명 → 인덱스 맵 구성 ────────────────────────────────────────────
-        headers = _build_header_map(sheet, header_row_idx)
-        order_id_col_idx = headers.get("수주번호")
-
-        # ── 데이터 행 파싱 ───────────────────────────────────────────────────────
-        for r in range(header_row_idx + 1, sheet.nrows):
-            check_col = order_id_col_idx if order_id_col_idx is not None else 0
-            if not str(sheet.cell_value(r, check_col)).strip():
+    if use_openpyxl:
+        # ── openpyxl 경로 (.xlsx) ──────────────────────────────────────────────
+        for sheet_name in ["진행", "대기"]:
+            if sheet_name not in wb_xlsx.sheetnames:
+                result["warnings"].append(f"시트 '{sheet_name}' 없음 — 건너뜀")
                 continue
 
-            try:
-                order_id = _get_str(sheet, r, headers, "수주번호")
-                if not order_id:
+            ws = wb_xlsx[sheet_name]
+            header_row_idx = _find_header_row_openpyxl(ws, keyword="수주번호", max_scan=25)
+            if header_row_idx is None:
+                result["warnings"].append(f"시트 '{sheet_name}': 헤더 행 탐지 실패 — 건너뜀")
+                continue
+
+            headers = _build_header_map_openpyxl(ws, header_row_idx)
+            order_id_col = headers.get("수주번호")
+
+            for r in range(header_row_idx + 1, ws.max_row + 1):
+                check_col = order_id_col if order_id_col is not None else 1
+                cell_val = ws.cell(r, check_col).value
+                if not str(cell_val or "").strip():
                     continue
 
-                outsource_plan = _get_str(sheet, r, headers, "외주계획") or ""
-                is_outsourced = outsource_plan.strip().upper() == "Y"
+                try:
+                    order_id = _get_str_openpyxl(ws, r, headers, "수주번호")
+                    if not order_id:
+                        continue
 
-                due_date_raw = _get_cell(sheet, r, headers, "납품일")
-                due_date = _parse_date(due_date_raw, workbook.datemode)
+                    outsource_plan = _get_str_openpyxl(ws, r, headers, "외주계획") or ""
+                    is_outsourced = outsource_plan.strip().upper() == "Y"
 
-                spec_raw = _get_str(sheet, r, headers, "규격") or ""
-                core_count = _extract_core_count(spec_raw)
+                    due_date_raw = _get_cell_openpyxl(ws, r, headers, "납품일")
+                    due_date = _parse_date_openpyxl(due_date_raw)
 
-                drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
-                product_group = _get_str(sheet, r, headers, "제품군") or ""
-                voltage = _get_str(sheet, r, headers, "전압")
-                item_code = _resolve_item_code(product_group, voltage)
+                    spec_raw = _get_str_openpyxl(ws, r, headers, "규격") or ""
+                    core_count = _extract_core_count(spec_raw)
 
-                line_counter += 1
-                order = SalesOrder(
-                    order_id=order_id,
-                    order_line=line_counter,
-                    order_status=sheet_name,
-                    item_code=item_code,
-                    product_group=product_group,
-                    voltage=voltage,
-                    spec_raw=spec_raw,
-                    customer_name=_get_str(sheet, r, headers, "거래처명"),
-                    due_date=due_date,
-                    due_type="출하기준",
-                    drum_length_m=drum_length_m,
-                    drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
-                    ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
-                    self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
-                    unit_price_krw=_get_num(sheet, r, headers, "원화단가"),
-                    amount_krw=_get_num(sheet, r, headers, "원화금액"),
-                    cu_weight_kg=_get_num(sheet, r, headers, "CU량"),
-                    al_weight_kg=_get_num(sheet, r, headers, "AL량"),
-                    core_count=core_count,
-                    core_colors=_get_str(sheet, r, headers, "선심색상"),
-                    sheath_color=_get_str(sheet, r, headers, "색상"),
-                    neutral_wire=_get_str(sheet, r, headers, "중성선"),
-                    is_outsourced=is_outsourced,
-                    run_label=run_label,
+                    drum_length_m = _get_num_openpyxl(ws, r, headers, "(수주)조장(M)")
+                    product_group = _get_str_openpyxl(ws, r, headers, "제품군") or ""
+                    voltage = _get_str_openpyxl(ws, r, headers, "전압")
+                    item_code = _resolve_item_code(product_group, voltage)
+
+                    line_counter += 1
+                    order = SalesOrder(
+                        order_id=order_id,
+                        order_line=line_counter,
+                        order_status=sheet_name,
+                        item_code=item_code,
+                        product_group=product_group,
+                        voltage=voltage,
+                        spec_raw=spec_raw,
+                        customer_name=_get_str_openpyxl(ws, r, headers, "거래처명"),
+                        due_date=due_date,
+                        due_type="출하기준",
+                        drum_length_m=drum_length_m,
+                        drum_count=_get_int_openpyxl(ws, r, headers, "(수주)개수(ea)"),
+                        ordered_qty_m=_get_num_openpyxl(ws, r, headers, "(수주)수량(M)"),
+                        self_plan_qty_m=_get_num_openpyxl(ws, r, headers, "(자체)조장"),
+                        unit_price_krw=_get_num_openpyxl(ws, r, headers, "원화단가"),
+                        amount_krw=_get_num_openpyxl(ws, r, headers, "원화금액"),
+                        cu_weight_kg=_get_num_openpyxl(ws, r, headers, "CU량"),
+                        al_weight_kg=_get_num_openpyxl(ws, r, headers, "AL량"),
+                        core_count=core_count,
+                        core_colors=_get_str_openpyxl(ws, r, headers, "선심색상"),
+                        sheath_color=_get_str_openpyxl(ws, r, headers, "색상"),
+                        neutral_wire=_get_str_openpyxl(ws, r, headers, "중성선"),
+                        is_outsourced=is_outsourced,
+                        run_label=run_label,
+                    )
+                    db.add(order)
+                    result["inserted"] += 1
+
+                    if is_outsourced:
+                        result["외주_제외"] += 1
+
+                    result[sheet_name] += 1
+                    result["total"] += 1
+
+                except Exception as e:
+                    result["warnings"].append(f"[{sheet_name}] 행 {r}: {e}")
+    else:
+        # ── xlrd 경로 (.xls) ───────────────────────────────────────────────────
+        for sheet_name in ["진행", "대기"]:
+            if sheet_name not in workbook.sheet_names():
+                result["warnings"].append(f"시트 '{sheet_name}' 없음 — 건너뜀")
+                continue
+
+            sheet = workbook.sheet_by_name(sheet_name)
+
+            header_row_idx = _find_header_row(sheet, keyword="수주번호", max_scan=25)
+            if header_row_idx is None:
+                result["warnings"].append(
+                    f"시트 '{sheet_name}': 헤더 행 탐지 실패 — 건너뜀"
                 )
-                db.add(order)
-                result["inserted"] += 1
+                continue
 
-                if is_outsourced:
-                    result["외주_제외"] += 1
+            headers = _build_header_map(sheet, header_row_idx)
+            order_id_col_idx = headers.get("수주번호")
 
-                result[sheet_name] += 1
-                result["total"] += 1
+            for r in range(header_row_idx + 1, sheet.nrows):
+                check_col = order_id_col_idx if order_id_col_idx is not None else 0
+                if not str(sheet.cell_value(r, check_col)).strip():
+                    continue
 
-            except Exception as e:
-                result["warnings"].append(f"[{sheet_name}] 행 {r + 1}: {e}")
+                try:
+                    order_id = _get_str(sheet, r, headers, "수주번호")
+                    if not order_id:
+                        continue
+
+                    outsource_plan = _get_str(sheet, r, headers, "외주계획") or ""
+                    is_outsourced = outsource_plan.strip().upper() == "Y"
+
+                    due_date_raw = _get_cell(sheet, r, headers, "납품일")
+                    due_date = _parse_date(due_date_raw, workbook.datemode)
+
+                    spec_raw = _get_str(sheet, r, headers, "규격") or ""
+                    core_count = _extract_core_count(spec_raw)
+
+                    drum_length_m = _get_num(sheet, r, headers, "(수주)조장(M)")
+                    product_group = _get_str(sheet, r, headers, "제품군") or ""
+                    voltage = _get_str(sheet, r, headers, "전압")
+                    item_code = _resolve_item_code(product_group, voltage)
+
+                    line_counter += 1
+                    order = SalesOrder(
+                        order_id=order_id,
+                        order_line=line_counter,
+                        order_status=sheet_name,
+                        item_code=item_code,
+                        product_group=product_group,
+                        voltage=voltage,
+                        spec_raw=spec_raw,
+                        customer_name=_get_str(sheet, r, headers, "거래처명"),
+                        due_date=due_date,
+                        due_type="출하기준",
+                        drum_length_m=drum_length_m,
+                        drum_count=_get_int(sheet, r, headers, "(수주)개수(ea)"),
+                        ordered_qty_m=_get_num(sheet, r, headers, "(수주)수량(M)"),
+                        self_plan_qty_m=_get_num(sheet, r, headers, "(자체)조장"),
+                        unit_price_krw=_get_num(sheet, r, headers, "원화단가"),
+                        amount_krw=_get_num(sheet, r, headers, "원화금액"),
+                        cu_weight_kg=_get_num(sheet, r, headers, "CU량"),
+                        al_weight_kg=_get_num(sheet, r, headers, "AL량"),
+                        core_count=core_count,
+                        core_colors=_get_str(sheet, r, headers, "선심색상"),
+                        sheath_color=_get_str(sheet, r, headers, "색상"),
+                        neutral_wire=_get_str(sheet, r, headers, "중성선"),
+                        is_outsourced=is_outsourced,
+                        run_label=run_label,
+                    )
+                    db.add(order)
+                    result["inserted"] += 1
+
+                    if is_outsourced:
+                        result["외주_제외"] += 1
+
+                    result[sheet_name] += 1
+                    result["total"] += 1
+
+                except Exception as e:
+                    result["warnings"].append(f"[{sheet_name}] 행 {r + 1}: {e}")
 
     db.flush()
     return result

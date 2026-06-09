@@ -329,7 +329,7 @@ def _assign_group(
                 # 단일 SQ 그룹: 해당 SQ의 선행 제약만 확인
                 sq_i = next(iter(all_sqs))
                 pred_first = state.process_first_output_by_sq.get((pred_proc, sq_i))
-                if pred_first and pred_first > earliest:
+                if pred_first and pred_first < datetime.max and pred_first > earliest:
                     earliest = pred_first
             if rep.process_name == "고압시스":
                 earliest += timedelta(hours=20)

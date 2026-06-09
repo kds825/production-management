@@ -1,19 +1,13 @@
-"""Anthropic claude-haiku-4-5 narrator with prompt caching.
+"""OpenAI-compatible gateway narrator (PwC GenAI SharedService).
 
-Why claude-haiku-4-5: short Korean sentence summarisation has very low
-quality requirements — Haiku is ~10× cheaper than Sonnet and round-trip
-latency stays under the Decision Card render budget.
+Replaces the previous direct Anthropic SDK provider. The PwC gateway
+exposes an OpenAI-compatible ``/v1/chat/completions`` endpoint that
+routes to various backend models (Bedrock Claude, Azure GPT, Vertex
+Gemini) via a model alias string.
 
-Why ``cache_control`` on the system prompt: the system text is identical
-across every Decision Card render in a session, so paying the one-time
-cache write means every subsequent render reads the cached prefix and
-the API only bills for the (small) per-batch user message. Critical for
-keeping per-render cost bounded as the dashboard scales.
-
-Why lazy ``anthropic`` import inside ``__init__``: keeps the package
-import-safe in test environments that may not have the SDK pinned.
-``LLM_PROVIDER=template`` (the default in conftest) never triggers this
-code path.
+Why ``openai`` SDK: the gateway speaks the OpenAI wire format, so the
+``openai`` Python package is the natural client. ``base_url`` is set to
+the gateway endpoint and ``api_key`` to the gateway token.
 """
 
 from __future__ import annotations
@@ -22,40 +16,39 @@ import os
 
 from app.infrastructure.llm import ExplainPayload
 
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = os.environ.get("LLM_MODEL", "bedrock.anthropic.claude-sonnet-4-6")
 
 
 class AnthropicProvider:
-    def __init__(self) -> None:
-        from anthropic import Anthropic
+    """Name kept for backward-compat with get_provider('anthropic')."""
 
-        # Empty-string fallback: Anthropic SDK raises clearly on a missing
-        # key; using an empty string preserves that error rather than
-        # masking it with a KeyError on env access.
-        self._client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    def __init__(self) -> None:
+        from openai import OpenAI
+
+        self._client = OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            base_url=os.environ.get(
+                "OPENAI_API_BASE",
+                "https://genai-sharedservice-americas.pwcinternal.com/v1",
+            ),
+        )
 
     def explain(self, payload: ExplainPayload) -> str:
         contrib_lines = "\n".join(
             f"- {c.korean_name}({c.constraint_id}): weight {c.weight_applied}"
             for c in payload.contributions
         )
-        msg = self._client.messages.create(
+        resp = self._client.chat.completions.create(
             model=_MODEL,
             max_tokens=200,
-            system=[
+            messages=[
                 {
-                    "type": "text",
-                    "text": (
+                    "role": "system",
+                    "content": (
                         "너는 케이블 제조 스케줄링 시스템의 결정 설명자다. "
                         "한국어로 1문장 요약하라."
                     ),
-                    # Why ephemeral: the system prompt is stable per process
-                    # so a 5-minute TTL covers a typical dashboard session
-                    # without paying for persistent storage.
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[
+                },
                 {
                     "role": "user",
                     "content": (
@@ -63,7 +56,7 @@ class AnthropicProvider:
                         f"{contrib_lines}\n"
                         f"설비: {payload.assigned_equipment_id}"
                     ),
-                }
+                },
             ],
         )
-        return msg.content[0].text
+        return resp.choices[0].message.content or ""
