@@ -18,11 +18,7 @@ class Settings(BaseSettings):
     # browsers treat them as different origins. dev-mode pages opened by
     # one form would fail CORS preflight against an API server bound only
     # to the other form, even on a single laptop.
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://production-management-gules.vercel.app",
-    ]
+    CORS_ORIGINS: list[str] = ["*"]
     APP_TITLE: str = "KBI Production Scheduler API"
 
     class Config:
