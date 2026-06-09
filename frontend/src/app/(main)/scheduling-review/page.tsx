@@ -15,7 +15,7 @@ import { useRunsList } from "@/features/scheduling-review/hooks/useRunsList";
 import { useRunCompare } from "@/features/scheduling-review/hooks/useRunCompare";
 import { useExcelDownload } from "@/features/scheduling-review/hooks/useExcelDownload";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const PROCESS_TABS = [
   "저압연선",

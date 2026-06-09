@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useScheduleStore } from "../store/scheduleStore";
 import type { BatchGroupOrder } from "../page-sections/BatchGroupOrderTable";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /** 감사 설명 응답 (GET /api/audit/explain/{batch_id}) */
 export interface AuditExplanation {

@@ -22,7 +22,7 @@ import type {
   ProcessFlowEntry,
 } from "../hooks/useBatchInspector";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 // 배치 상태 순환 + 시각 설정
 const STATUS_CYCLE: Record<string, string> = {

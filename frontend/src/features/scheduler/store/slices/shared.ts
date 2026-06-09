@@ -6,7 +6,7 @@
  */
 import type { ScheduleTask } from "../../types";
 
-export const API_BASE = "http://localhost:8000/api";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /**
  * 블록 변경 시 AI 재분석을 비동기로 트리거 (fire-and-forget).

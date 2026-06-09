@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import type { PipelineRun } from "@/features/scheduling-review/hooks/useRunsList";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /** GET /api/pipeline/runs/compare 응답 (ScheduleDiffResponse 호환) */
 export interface RunCompareResponse {

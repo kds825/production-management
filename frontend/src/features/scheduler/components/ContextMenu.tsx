@@ -18,7 +18,7 @@ import { useScheduleStore } from "../store/scheduleStore";
 import { UnassignConfirmModal } from "./UnassignConfirmModal";
 import type { ScheduleTask, UnassignReason } from "../types";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 /** 컨텍스트 메뉴 — 빈 영역 또는 작업 바 우클릭 시 표시 */
 export function ContextMenu() {
